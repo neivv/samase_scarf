@@ -4,6 +4,19 @@ version = "0.1.0"
 authors = ["Markus Heikkinen <ittevien@gmail.com>"]
 edition = "2018"
 
+[profile.dev]
+lto = "no"
+codegen-units = 4
+opt-level = 2 # Does not worsen compilation times but halves runtime on scarf
+
+[profile.test]
+opt-level = 2
+
+[profile.release]
+debug = 1
+lto = true
+overflow-checks = true
+
 [dependencies]
 arrayvec = "0.5"
 byteorder = "1.1.0"
