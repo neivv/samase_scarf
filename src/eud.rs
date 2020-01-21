@@ -1,0 +1,409 @@
+use std::rc::Rc;
+
+use scarf::{
+    Operand, OperandContext, Operation, VirtualAddress, DestOperand, OperandType,
+    ExecutionStateX86,
+};
+use scarf::analysis::{self, Control, FuncAnalysis};
+use scarf::exec_state::{InternMap, VirtualAddress as VirtualAddressTrait};
+use scarf::operand::{ArithOpType, Register};
+
+use crate::{Analysis, EntryOf};
+
+type BinaryFile = scarf::BinaryFile<VirtualAddress>;
+
+pub struct Eud {
+    pub address: u32,
+    pub size: u32,
+    pub operand: Rc<Operand>,
+    pub flags: u32,
+}
+
+pub struct EudTable {
+    /// Sorted by address
+    pub euds: Vec<Eud>,
+}
+
+
+static EUD_ADDRS: &[u32] = &[
+    0x0068C14C, 0x006C9E20, 0x00655B3C, 0x00665880, 0x0051642C, 0x00656888, 0x00516630,
+    0x00517448,
+];
+
+fn if_arithmetic_add_or_sub_const(val: &Rc<Operand>) -> Option<(&Rc<Operand>, u64)> {
+    match val.ty {
+        OperandType::Arithmetic(ref a) if a.ty == ArithOpType::Add => {
+            Operand::either(&a.left, &a.right, |x| x.if_constant())
+                .map(|(x, y)| (y, x))
+        }
+        OperandType::Arithmetic(ref a) if a.ty == ArithOpType::Sub => {
+            if let Some(c) = a.right.if_constant() {
+                Some((&a.left, 0u64.wrapping_sub(c)))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+pub fn eud_table<'exec>(
+    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
+    ctx: &OperandContext,
+) -> EudTable {
+    fn finish_euds(result: &mut EudTable) {
+        result.euds.retain(|x| x.operand.if_constant() != Some(0));
+        result.euds.sort_by_key(|x| x.address);
+    }
+
+    let binary = analysis.binary;
+    let mut const_refs = Vec::with_capacity(EUD_ADDRS.len() * 2);
+    for &addr in EUD_ADDRS {
+        find_const_refs_in_code(binary, addr, &mut const_refs);
+    }
+    const_refs.sort();
+    let funcs = analysis.functions();
+    for &cref in &const_refs {
+        let entry = match find_stack_reserve_entry(ctx, binary, &funcs, cref) {
+            Some((e, stack_size)) => {
+                if stack_size < 0x1000 {
+                    continue;
+                } else {
+                    e
+                }
+            }
+            None => continue,
+        };
+        let mut result = analyze_eud_init_fn(ctx, binary, entry);
+        if result.euds.len() > 0x100 {
+            finish_euds(&mut result);
+            return result;
+        }
+    }
+    // Try an alternate way by looking for parent function which has
+    //   cmp reg, 7a99
+    //   jb away
+    //   call init_eud_table
+
+    find_const_refs_in_code(binary, 0x7a99, &mut const_refs);
+    for &cref in &const_refs {
+        let func = match find_init_eud_table_from_parent(ctx, binary, &funcs, cref) {
+            Some(s) => s,
+            None => continue,
+        };
+        let func = match find_stack_reserve_entry(ctx, binary, &funcs, func) {
+            Some((e, stack_size)) => {
+                if stack_size < 0x1000 {
+                    continue;
+                } else {
+                    e
+                }
+            }
+            None => continue,
+        };
+        let mut result = analyze_eud_init_fn(ctx, binary, func);
+        if result.euds.len() > 0x100 {
+            finish_euds(&mut result);
+            return result;
+        }
+    }
+
+    EudTable {
+        euds: Vec::new(),
+    }
+}
+
+// See comment at call site
+fn find_init_eud_table_from_parent(
+    ctx: &OperandContext,
+    binary: &BinaryFile,
+    funcs: &[VirtualAddress],
+    addr: VirtualAddress,
+) -> Option<VirtualAddress> {
+    struct Analyzer {
+        result: EntryOf<VirtualAddress>,
+    }
+
+    #[derive(Clone)]
+    struct State {
+        in_wanted_branch: bool,
+        wanted_branch_start: VirtualAddress,
+    }
+    impl scarf::analysis::AnalysisState for State {
+        fn merge(&mut self, newer: Self) {
+            self.in_wanted_branch |= newer.in_wanted_branch;
+            if self.wanted_branch_start.0 != 0 {
+                self.wanted_branch_start = newer.wanted_branch_start;
+            }
+        }
+    }
+
+    impl<'exec> scarf::Analyzer<'exec> for Analyzer {
+        type State = State;
+        type Exec = ExecutionStateX86<'exec>;
+        fn branch_start(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>) {
+            let address = ctrl.address();
+            let state = ctrl.user_state();
+            if state.wanted_branch_start == address {
+                state.in_wanted_branch = true;
+            }
+        }
+        fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation) {
+            // True if from jump, false if not jump
+            fn branch_from_condition(cond: &Rc<Operand>) -> Option<bool> {
+                match cond.ty {
+                    OperandType::Arithmetic(ref arith) if arith.ty == ArithOpType::GreaterThan => {
+                        if arith.left.if_constant() == Some(0x7a99) {
+                            Some(false)
+                        } else {
+                            None
+                        }
+                    }
+                    OperandType::Arithmetic(ref arith) if arith.ty == ArithOpType::Equal => {
+                        let const_eq =
+                            Operand::either(&arith.left, &arith.right, |x| x.if_constant());
+                        if let Some((c, other)) = const_eq {
+                            if c == 0 {
+                                return branch_from_condition(other).map(|x| !x);
+                            }
+                        }
+                        None
+                    }
+                    _ => None,
+                }
+            }
+            match op {
+                Operation::Jump { ref condition, ref to } => {
+                    let condition = ctrl.resolve(condition);
+                    if let Some(jump) = branch_from_condition(&condition) {
+                        let branch = match jump {
+                            true => VirtualAddress::from_u64(
+                                ctrl.resolve(to).if_constant().unwrap_or(0)
+                            ),
+                            false => ctrl.current_instruction_end(),
+                        };
+                        ctrl.user_state().wanted_branch_start = branch;
+                    }
+                }
+                Operation::Call(to) => {
+                    if ctrl.user_state().in_wanted_branch {
+                        if let Some(to) = ctrl.resolve(to).if_constant() {
+                            self.result = EntryOf::Ok(VirtualAddress::from_u64(to));
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+                _ => (),
+            };
+        }
+    }
+
+    crate::entry_of_until(binary, funcs, addr, |entry| {
+        let mut analyzer = Analyzer {
+            result: EntryOf::Retry,
+        };
+        let mut interner = InternMap::new();
+        let exec_state = ExecutionStateX86::new(&ctx, &mut interner);
+        let state = State {
+            in_wanted_branch: false,
+            wanted_branch_start: VirtualAddress(0),
+        };
+        let mut analysis = FuncAnalysis::custom_state(
+            binary,
+            ctx,
+            entry,
+            exec_state,
+            state,
+            interner,
+        );
+        analysis.analyze(&mut analyzer);
+        analyzer.result
+    }).into_option()
+}
+
+fn analyze_eud_init_fn(
+    ctx: &OperandContext,
+    binary: &BinaryFile,
+    addr: VirtualAddress,
+) -> EudTable {
+    struct Analyzer<'a> {
+        result: EudTable,
+        ctx: &'a OperandContext,
+    }
+    impl<'a> scarf::Analyzer<'a> for Analyzer<'a> {
+        type State = analysis::DefaultState;
+        type Exec = ExecutionStateX86<'a>;
+        fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
+            use scarf::operand_helpers::*;
+            match op {
+                Operation::Call(..) => {
+                    let ctx = self.ctx;
+                    let esp = ctx.register(4);
+                    // A1 has to be a1 to this fn ([esp + 4]),
+                    // a2 ptr,
+                    // a3 length
+                    let a1 = ctrl.resolve(&mem32(esp.clone()));
+                    // Not resolving a2, it'll be resolved later on -- double resolving
+                    // ends up being wrong
+                    let a2 = mem32(operand_add(esp.clone(), ctx.const_4()));
+                    let a3 = ctrl.resolve(&mem32(operand_add(esp.clone(), ctx.const_8())));
+                    let is_a1 = a1.if_mem32()
+                        .and_then(|addr| addr.if_arithmetic_add())
+                        .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
+                        .filter(|&(c, other)| c == 4 && other.if_register() == Some(Register(4)))
+                        .is_some();
+                    if is_a1 {
+                        if let Some(len) = a3.if_constant() {
+                            if len % 0x10 == 0 {
+                                let result = (0..(len / 0x10)).map(|i| {
+                                    let address = ctrl.resolve(&Operand::simplified(mem32(
+                                        operand_add(a2.clone(), ctx.constant(i * 0x10))
+                                    )));
+                                    let size = ctrl.resolve(&mem32(
+                                        operand_add(a2.clone(), ctx.constant(i * 0x10 + 0x4))
+                                    ));
+                                    let operand = ctrl.resolve(&Operand::simplified(mem32(
+                                        operand_add(a2.clone(), ctx.constant(i * 0x10 + 0x8))
+                                    )));
+                                    let flags = ctrl.resolve(&Operand::simplified(mem32(
+                                        operand_add(a2.clone(), ctx.constant(i * 0x10 + 0xc))
+                                    )));
+                                    if let Some(address) = address.if_constant() {
+                                        if let Some(size) = size.if_constant() {
+                                            if let Some(flags) = flags.if_constant() {
+                                                return Ok(Eud {
+                                                    address: address as u32,
+                                                    size: size as u32,
+                                                    operand,
+                                                    flags: flags as u32,
+                                                });
+                                            }
+                                        }
+                                    }
+                                    Err(())
+                                }).collect::<Result<Vec<Eud>, ()>>();
+                                if let Ok(euds) = result {
+                                    self.result.euds = euds;
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => (),
+            }
+        }
+    }
+
+    let mut analyzer = Analyzer {
+        result: EudTable {
+            euds: Vec::new(),
+        },
+        ctx,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, addr);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+/// Finds entry of the function containing address `addr`, assuming
+/// the entry either does an esp subtraction or a call with eax being an constant
+/// (large stack reserve) before anything that doesn't seem to be just pushs/etc
+///
+/// On success returns (entry, stack_reserve). stack_reserve may not be 100% correct if there
+/// are pushes later on in the function, so it should not be relied too much on.
+fn find_stack_reserve_entry(
+    ctx: &OperandContext,
+    binary: &BinaryFile,
+    funcs: &[VirtualAddress],
+    addr: VirtualAddress,
+) -> Option<(VirtualAddress, u32)> {
+    struct Analyzer<'a> {
+        result: EntryOf<u32>,
+        ctx: &'a OperandContext,
+    }
+    impl<'a> scarf::Analyzer<'a> for Analyzer<'a> {
+        type State = analysis::DefaultState;
+        type Exec = ExecutionStateX86<'a>;
+        fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
+            let mut call_reserve = 0;
+            let stop = match op {
+                Operation::Move(to, from, _) => {
+                    if from.if_memory().is_some() {
+                        true
+                    } else {
+                        if let DestOperand::Memory(mem) = to {
+                            // Offset if this is moving to [esp + offset]
+                            let mut off = if_arithmetic_add_or_sub_const(&mem.address)
+                                .filter(|(r, _)| r.if_register() == Some(Register(4)))
+                                .map(|(_, off)| off);
+                            if off.is_none() {
+                                if mem.address.if_register() == Some(Register(4)) {
+                                    off = Some(0);
+                                }
+                            }
+                            // Accept stores up to [orig_esp - 0x10000] as part
+                            // of stack setup
+                            let is_stack_store = off.map(|off| 0u64.wrapping_sub(off) <= 0x1000)
+                                .unwrap_or(false);
+                            !is_stack_store
+                        } else {
+                            false
+                        }
+                    }
+                }
+                Operation::Return(..) => true,
+                Operation::Jump { .. } => true,
+                Operation::Call(..) => {
+                    let eax = ctrl.resolve(&self.ctx.register(0));
+                    if let Some(c) = eax.if_constant() {
+                        if c & 3 == 0 && c > 0x400 {
+                            call_reserve = c;
+                        }
+                    }
+                    true
+                }
+                _ => true,
+            };
+            if stop {
+                let esp = ctrl.resolve(&self.ctx.register(4));
+                let off = if_arithmetic_add_or_sub_const(&esp)
+                    .filter(|(r, _)| r.if_register() == Some(Register(4)));
+                if let Some((_, off)) = off {
+                    let neg_offset = 0u64.wrapping_sub(off);
+                    if neg_offset < 0x80000 {
+                        if let Some(val) = neg_offset.checked_add(call_reserve) {
+                            self.result = EntryOf::Ok(val as u32);
+                        }
+                    }
+                }
+                ctrl.end_analysis();
+            }
+        }
+    }
+
+    crate::entry_of_until(binary, funcs, addr, |entry| {
+        let mut analyzer = Analyzer {
+            result: EntryOf::Retry,
+            ctx,
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+        analysis.analyze(&mut analyzer);
+        analyzer.result
+    }).into_option_with_entry()
+}
+
+fn find_const_refs_in_code(binary: &BinaryFile, value: u32, out: &mut Vec<VirtualAddress>) {
+    use memmem::{TwoWaySearcher, Searcher};
+
+    let code_section = binary.code_section();
+    let mut haystack = &code_section.data[..];
+    let mut pos = 0;
+    let needle = value.to_le_bytes();
+    let searcher = TwoWaySearcher::new(&needle[..]);
+    while let Some(index) = searcher.search_in(haystack) {
+        pos += index as u32;
+        out.push(code_section.virtual_address + pos);
+        haystack = &haystack[index + 4..];
+    }
+}
