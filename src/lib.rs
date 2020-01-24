@@ -1294,7 +1294,6 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
             result: Option<Rc<Operand>>,
             binary: &'a BinaryFile,
             ctx: &'a OperandContext,
-            errors: &'a mut Vec<Error>,
         }
         impl<'a> analysis::Analyzer<'a> for AiTownAnalyzer<'a> {
             type State = AiTownState;
@@ -1311,7 +1310,6 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
                                 self.binary,
                                 dest,
                                 &self.ctx,
-                                &mut self.errors,
                             );
                             if single_result_assign(res, &mut self.result) {
                                 ctrl.end_analysis();
@@ -1352,7 +1350,6 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
 
         let binary = self.binary;
         let ctx = &OperandContext::new();
-        let mut errors = Vec::new();
 
         let aiscript = self.aiscript_hook();
 
@@ -1360,10 +1357,7 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
         for aiscript_hook in aiscript.iter() {
             let start_town = match binary.read_u32(aiscript_hook.switch_table + 0x3 * 4) {
                 Ok(o) => VirtualAddress(o),
-                Err(e) => {
-                    errors.push(e.into());
-                    continue;
-                }
+                Err(_) => continue,
             };
 
             let state = AiTownState {
@@ -1377,7 +1371,6 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
                 result: None,
                 binary,
                 ctx,
-                errors: &mut errors,
             };
             analysis.analyze(&mut analyzer);
             if single_result_assign(analyzer.result, &mut result) {
@@ -1385,9 +1378,6 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
             }
         }
 
-        for e in errors {
-            debug!("player_ai_towns: {}", e);
-        }
         self.player_ai_towns.cache(&result);
         result
     }

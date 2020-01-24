@@ -171,7 +171,7 @@ pub fn find_dialog_global<'exec, E: ExecutionState<'exec>>(
     str_ref: &StringRefs<E::VirtualAddress>,
 ) -> EntryOf<E::VirtualAddress> {
     let ctx = analysis.ctx;
-    let return_marker = ctx.truncate(ctx.custom(0), E::VirtualAddress::SIZE as u8 * 8);
+    let return_marker = ctx.truncate(&ctx.custom(0), E::VirtualAddress::SIZE as u8 * 8);
     let args = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(analysis.binary, &ctx, func);
     let mut analyzer = DialogGlobalAnalyzer {

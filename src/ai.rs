@@ -89,7 +89,6 @@ pub fn ai_towns_child_func(
     binary: &BinaryFile<VirtualAddress>,
     func: VirtualAddress,
     ctx: &OperandContext,
-    errors: &mut Vec<Error>,
 ) -> Option<Rc<Operand>> {
     use scarf::operand_helpers::*;
 
@@ -120,9 +119,6 @@ pub fn ai_towns_child_func(
             }
         }
     }
-    errors.extend(analysis.errors.into_iter().map(|(a, b)| {
-        Error::Scarf(crate::to_default_base(binary, a), b)
-    }));
     result
 }
 
