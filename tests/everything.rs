@@ -388,7 +388,9 @@ fn everything_1221() {
 
 #[test]
 fn everything_1221b() {
-    test_with_extra_checks(Path::new("1221b.exe"), |_analysis| {
+    test_with_extra_checks(Path::new("1221b.exe"), |analysis| {
+        let init = analysis.init_game_network().unwrap();
+        assert_eq!(init.0, 0x006ed550);
     })
 }
 
@@ -749,6 +751,9 @@ fn everything_1232e() {
         assert_eq!(*step.player_turns.as_ref().unwrap(), constval(0x01071118));
         assert_eq!(*step.player_turns_size.as_ref().unwrap(), constval(0x01071148));
         assert_eq!(*step.network_ready.as_ref().unwrap(), mem8(constval(0x0106F57D)));
+
+        let init = analysis.init_game_network().unwrap();
+        assert_eq!(init.0, 0x00713cb0);
     })
 }
 
@@ -1085,6 +1090,9 @@ where F: for<'e> FnOnce(&mut samase_scarf::Analysis<'e, ExecutionStateX86<'e>>),
     check_global_struct_opt(&step.net_player_flags, &binary, "net player flags");
     check_global_struct_opt(&step.player_turns, &binary, "net player turns");
     check_global_struct_opt(&step.player_turns_size, &binary, "net player turns size");
+
+    let init_network = analysis.init_game_network();
+    assert!(init_network.is_some());
 }
 
 fn op_register_anywidth(op: &Operand) -> Option<Register> {

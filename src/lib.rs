@@ -188,6 +188,7 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     images_loaded: Cached<Option<Rc<Operand>>>,
     local_player_name: Cached<Option<Rc<Operand>>>,
     step_network: Cached<Rc<StepNetwork<E::VirtualAddress>>>,
+    init_game_network: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables,
     binary: &'a scarf::BinaryFile<E::VirtualAddress>,
     ctx: &'a scarf::OperandContext,
@@ -441,6 +442,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
             images_loaded: Default::default(),
             local_player_name: Default::default(),
             step_network: Default::default(),
+            init_game_network: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -886,6 +888,15 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         }
         let result = Rc::new(commands::step_network(self));
         self.step_network.cache(&result);
+        result
+    }
+
+    pub fn init_game_network(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.init_game_network.cached() {
+            return cached;
+        }
+        let result = game_init::init_game_network(self);
+        self.init_game_network.cache(&result);
         result
     }
 }

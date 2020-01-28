@@ -1247,3 +1247,86 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheckLocalPlayerName<
         }
     }
 }
+
+pub fn init_game_network<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
+    let single_player_start = analysis.single_player_start();
+    let local_storm_player = single_player_start.local_storm_player_id.as_ref()?;
+    let vtables = crate::vtables::vtables(analysis, b".?AVGameLobbyScreen@glues@@\0");
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    // Lobby screen vtable's Control::init calls init_game_network,
+    // init_game_network immediately compares local_storm_player == 0
+    let mut result = None;
+    for vtable in vtables {
+        let addr = match binary.read_address(vtable + E::VirtualAddress::SIZE * 3) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let mut analyzer = FindInitGameNetwork::<E> {
+            result: None,
+            local_storm_player: &local_storm_player,
+            inlining: false,
+            jump_limit: 0,
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, addr);
+        analysis.analyze(&mut analyzer);
+        if crate::single_result_assign(analyzer.result, &mut result) {
+            break;
+        }
+    }
+    result
+}
+
+struct FindInitGameNetwork<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    local_storm_player: &'a Rc<Operand>,
+    inlining: bool,
+    jump_limit: u8,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitGameNetwork<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        match op {
+            Operation::Call(dest) => {
+                if !self.inlining {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        self.inlining = true;
+                        // Assert-enabled builds have a lot of assertions at start
+                        self.jump_limit = 10;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inlining = false;
+                        if self.result.is_some() {
+                            self.result = Some(dest);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Jump { condition, .. } => {
+                if self.inlining {
+                    let condition = ctrl.resolve(condition);
+                    let ok = if_arithmetic_eq_neq(&condition)
+                        .map(|(l, r, _)| (l, r))
+                        .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
+                        .filter(|&x| x == self.local_storm_player)
+                        .is_some();
+                    if ok {
+                        // Set properly in Call branch
+                        self.result = Some(E::VirtualAddress::from_u64(0));
+                    }
+                    self.jump_limit -= 1;
+                    if ok || self.jump_limit == 0 {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}

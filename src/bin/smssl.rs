@@ -247,6 +247,9 @@ fn main() {
     println!("player_turns_size: {}", format_op_operand(&step.player_turns_size));
     println!("network_ready: {}", format_op_operand(&step.network_ready));
 
+    let init_game_network = analysis.init_game_network();
+    println!("init_game_network: {:?}", init_game_network);
+
     let undef = ctx.undefined_rc();
     println!();
     println!("Undefined count: {}", match undef.ty {
