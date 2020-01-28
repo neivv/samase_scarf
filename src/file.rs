@@ -71,8 +71,6 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
     binary: &'e BinaryFile<E::VirtualAddress>,
     load_dat_fn: E::VirtualAddress,
 ) -> Vec<E::VirtualAddress> {
-    use scarf::operand_helpers::*;
-
     let arg_cache = &analysis.arg_cache;
     let rdata = binary.section(b".rdata\0\0").unwrap();
     let ctx = analysis.ctx;
@@ -91,7 +89,7 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
 
         let mut interner = InternMap::new();
         let mut state = E::initial_state(ctx, binary, &mut interner);
-        let arg1_store = mem64(ctx.custom(0));
+        let arg1_store = ctx.mem64(&ctx.custom(0));
         let arg1_addr = arg_cache.on_entry(0);
         let arg1 = state.resolve(&arg1_addr, &mut interner);
         state.move_to(&DestOperand::from_oper(&arg1_store), arg1, &mut interner);

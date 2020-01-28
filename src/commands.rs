@@ -48,7 +48,6 @@ pub fn print_text<'e, E: ExecutionState<'e>>(
         type State = analysis::DefaultState;
         type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-            use scarf::operand_helpers::*;
             match op {
                 Operation::Call(dest) => {
                     let dest = ctrl.resolve(dest);
@@ -56,9 +55,7 @@ pub fn print_text<'e, E: ExecutionState<'e>>(
                         let arg1 = ctrl.resolve(&self.arg1);
                         let arg2 = ctrl.resolve(&self.arg2);
                         if let Some(addr) = arg2.if_mem8() {
-                            let addr_plus_1 = Operand::simplified(
-                                operand_add(addr.clone(), self.ctx.const_1())
-                            );
+                            let addr_plus_1 = self.ctx.add_const(&addr, 1);
                             if addr_plus_1 == arg1 {
                                 let dest =
                                     <E::VirtualAddress as VirtualAddressTrait>::from_u64(dest);
@@ -192,14 +189,13 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        use scarf::operand_helpers::*;
         match op {
             Operation::Call(dest) => {
                 let (state, i) = ctrl.exec_state();
                 if let Some(dest) = if_callable_const(self.binary, state, dest, i) {
                     // Check if calling send_command(&[COMMAND_STIM], 1)
                     let arg1 = ctrl.resolve(&self.arg_cache.on_call(0));
-                    let arg1_inner = ctrl.resolve(&mem_variable_rc(MemAccessSize::Mem8, arg1));
+                    let arg1_inner = ctrl.resolve(&ctrl.ctx().mem8(&arg1));
                     if arg1_inner.if_constant() == Some(0x36) {
                         let arg2 = ctrl.resolve(&self.arg_cache.on_call(1));
                         if arg2.if_constant() == Some(1) {
@@ -315,7 +311,6 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindStormCommandUser<
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        use scarf::operand_helpers::*;
         match op {
             Operation::Move(ref dest, ref val, _) => {
                 let val = ctrl.resolve(val);
@@ -323,7 +318,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindStormCommandUser<
                     if let DestOperand::Memory(mem) = dest {
                         let dest = ctrl.resolve(&mem.address);
                         if op_is_fully_defined(&dest) {
-                            self.result = Some(mem32(dest));
+                            self.result = Some(ctrl.ctx().mem32(&dest));
                             ctrl.end_analysis();
                         }
                     }
@@ -379,7 +374,6 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CommandUserAnalyzer<'
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        use scarf::operand_helpers::*;
         match op {
             Operation::Call(dest) => {
                 if !self.inlining {
@@ -399,7 +393,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CommandUserAnalyzer<'
                     if mem.size == MemAccessSize::Mem8 {
                         // The alliance command writes bytes to game + e544 + x * 0xc
                         let addr = ctrl.resolve(&mem.address);
-                        let offset = Operand::simplified(operand_sub(addr, self.game.clone()));
+                        let offset = ctrl.ctx().sub(&addr, &self.game);
                         let command_user = offset.if_arithmetic_add()
                             .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
                             .and_then(|(c, other)| match c == 0xe544 {
@@ -823,13 +817,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwor
     type State = StepNetworkState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        use scarf::operand_helpers::*;
         if ctrl.user_state().after_receive_storm_turns {
             if let Operation::Move(dest, val, None) = op {
                 if let DestOperand::Memory(mem) = dest {
                     if ctrl.resolve(val).if_constant() == Some(1) {
                         self.result.network_ready =
-                            Some(mem_variable_rc(mem.size, mem.address.clone()));
+                            Some(ctrl.ctx().mem_variable_rc(mem.size, &mem.address));
                         ctrl.end_analysis();
                     }
                 }

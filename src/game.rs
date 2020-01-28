@@ -293,7 +293,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGame<'e, E> {
             }
             Operation::Move(_dest, val, _cond) => {
                 let val = ctrl.resolve(val);
-                let val = game_detect_check(&val);
+                let val = game_detect_check(ctrl.ctx(), &val);
                 if single_result_assign(val, &mut self.result) {
                     ctrl.end_analysis();
                 }
@@ -303,23 +303,22 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGame<'e, E> {
     }
 }
 
-fn game_detect_check(val: &Rc<Operand>) -> Option<Rc<Operand>> {
+fn game_detect_check(ctx: &OperandContext, val: &Rc<Operand>) -> Option<Rc<Operand>> {
     // Check for map_width_tiles * map_height_tiles, at UpdateFog or ProgressCreepDisappearance
     // (They're at game + 0xe4 and game + 0xe6)
-    use scarf::operand_helpers::*;
     val.iter_no_mem_addr().filter_map(|x| x.if_arithmetic_mul())
         .filter_map(|(l, r)| {
             l.if_memory().and_then(|l| r.if_memory().map(|r| (l, r)))
         }).filter(|&(l, r)| {
             l.size == MemAccessSize::Mem16 && r.size == MemAccessSize::Mem16
         }).filter_map(|(l, r)| {
-            let l_minus_2 = Operand::simplified(operand_sub(l.address.clone(), constval(2)));
+            let l_minus_2 = ctx.sub_const(&l.address, 2);
             if l_minus_2 == r.address {
-                Some(Operand::simplified(operand_sub(r.address.clone(), constval(0xe4))))
+                Some(ctx.sub_const(&r.address, 0xe4))
             } else {
-                let r_minus_2 = Operand::simplified(operand_sub(r.address.clone(), constval(2)));
+                let r_minus_2 = ctx.sub_const(&r.address, 2);
                 if r_minus_2 == l.address {
-                    Some(Operand::simplified(operand_sub(l.address.clone(), constval(0xe4))))
+                    Some(ctx.sub_const(&l.address, 0xe4))
                 } else {
                     None
                 }

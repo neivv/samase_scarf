@@ -714,7 +714,6 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type State = SinglePlayerStartState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        use scarf::operand_helpers::*;
         match *ctrl.user_state() {
             SinglePlayerStartState::SearchingStorm101 => {
                 if let Operation::Call(_) = op {
@@ -730,7 +729,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if ok {
                         let arg10 = ctrl.resolve(&self.arg_cache.on_call(9));
                         *ctrl.user_state() = SinglePlayerStartState::AssigningPlayerMappings;
-                        self.result.local_storm_player_id = Some(mem32(arg10));
+                        self.result.local_storm_player_id = Some(self.ctx.mem32(&arg10));
                     }
                 }
             }
@@ -780,9 +779,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 } else if let Operation::Special(bytes) = op {
                     // (Rep) movs dword
                     if bytes == &[0xf3, 0xa5] {
-                        let len = ctrl.resolve(&self.ctx.register(1));
-                        let from = ctrl.resolve(&self.ctx.register(6));
-                        let dest = ctrl.resolve(&self.ctx.register(7));
+                        let len = ctrl.resolve(self.ctx.register_ref(1));
+                        let from = ctrl.resolve(self.ctx.register_ref(6));
+                        let dest = ctrl.resolve(self.ctx.register_ref(7));
                         if len.if_constant() == Some(0x23) {
                             if from == self.arg_cache.on_entry(0) {
                                 self.result.game_data = Some(dest);
@@ -827,8 +826,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         Operation::Special(bytes) => {
                             // (Rep) movs dword
                             if bytes == &[0xf3, 0xa5] {
-                                let from = ctrl.resolve(&self.ctx.register(6));
-                                let dest = ctrl.resolve(&self.ctx.register(7));
+                                let from = ctrl.resolve(ctx.register_ref(6));
+                                let dest = ctrl.resolve(ctx.register_ref(7));
                                 Some((dest, from))
                             } else {
                                 None
@@ -844,9 +843,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             if let Some(size) = index.1.if_constant() {
                                 if let Some(ref storm_id) = result.local_storm_player_id {
                                     if index.0 == storm_id {
-                                        let addr = Operand::simplified(
-                                            operand_sub(addr, ctx.constant(0x14))
-                                        );
+                                        let addr = ctx.sub_const(&addr, 0x14);
                                         if size > 16 {
                                             crate::single_result_assign(
                                                 Some(addr),
@@ -875,8 +872,6 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 pub fn select_map_entry<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
 ) -> SelectMapEntry<E::VirtualAddress> {
-    use scarf::operand_helpers::*;
-
     let mut result = SelectMapEntry::default();
     let start = analysis.single_player_start();
     let single_player_start = match start.single_player_start{
@@ -913,7 +908,7 @@ pub fn select_map_entry<'e, E: ExecutionState<'e>>(
                     .map(|x| &x.1)
                     .filter(|&x| !not_is_multiplayer.iter().any(|y| x == y))
                     .next()
-                    .map(|x| mem8(x.clone()));
+                    .map(|x| ctx.mem8(&x));
                 result.is_multiplayer = is_multiplayer;
                 EntryOf::Ok(())
             } else {
