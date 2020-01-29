@@ -29,6 +29,7 @@ mod game;
 mod game_init;
 mod iscript;
 mod map;
+mod network;
 mod pathing;
 mod players;
 mod renderer;
@@ -60,6 +61,7 @@ pub use crate::eud::EudTable;
 pub use crate::firegraft::RequirementTables;
 pub use crate::game_init::{GameInit, SinglePlayerStart, SelectMapEntry};
 pub use crate::iscript::StepIscript;
+pub use crate::network::SnpDefinitions;
 pub use crate::pathing::RegionRelated;
 pub use crate::players::NetPlayers;
 pub use crate::rng::Rng;
@@ -189,6 +191,7 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     local_player_name: Cached<Option<Rc<Operand>>>,
     step_network: Cached<Rc<StepNetwork<E::VirtualAddress>>>,
     init_game_network: Cached<Option<E::VirtualAddress>>,
+    snp_definitions: Cached<Option<SnpDefinitions>>,
     dat_tables: DatTables,
     binary: &'a scarf::BinaryFile<E::VirtualAddress>,
     ctx: &'a scarf::OperandContext,
@@ -443,6 +446,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
             local_player_name: Default::default(),
             step_network: Default::default(),
             init_game_network: Default::default(),
+            snp_definitions: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -897,6 +901,15 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         }
         let result = game_init::init_game_network(self);
         self.init_game_network.cache(&result);
+        result
+    }
+
+    pub fn snp_definitions(&mut self) -> Option<SnpDefinitions> {
+        if let Some(cached) = self.snp_definitions.cached() {
+            return cached;
+        }
+        let result = network::snp_definitions(self);
+        self.snp_definitions.cache(&result);
         result
     }
 }

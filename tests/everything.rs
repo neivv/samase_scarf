@@ -754,6 +754,9 @@ fn everything_1232e() {
 
         let init = analysis.init_game_network().unwrap();
         assert_eq!(init.0, 0x00713cb0);
+
+        let snp_definitions = analysis.snp_definitions().unwrap();
+        assert_eq!(snp_definitions.snp_definitions, constval(0x00E065E0));
     })
 }
 
@@ -1090,6 +1093,10 @@ where F: for<'e> FnOnce(&mut samase_scarf::Analysis<'e, ExecutionStateX86<'e>>),
     check_global_struct_opt(&step.net_player_flags, &binary, "net player flags");
     check_global_struct_opt(&step.player_turns, &binary, "net player turns");
     check_global_struct_opt(&step.player_turns_size, &binary, "net player turns size");
+
+    let snp_definitions = analysis.snp_definitions().unwrap();
+    check_global_struct(&snp_definitions.snp_definitions, &binary, "snp definitions");
+    assert_eq!(snp_definitions.entry_size, 0x90);
 
     let init_network = analysis.init_game_network();
     assert!(init_network.is_some());

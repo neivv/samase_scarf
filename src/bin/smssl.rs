@@ -250,6 +250,13 @@ fn main() {
     let init_game_network = analysis.init_game_network();
     println!("init_game_network: {:?}", init_game_network);
 
+    let snp_definitions = analysis.snp_definitions();
+    if let Some(defs) = snp_definitions {
+        println!("snp_definitions: {}, {:x} bytes", defs.snp_definitions, defs.entry_size);
+    } else {
+        println!("snp_definitions: None");
+    }
+
     let undef = ctx.undefined_rc();
     println!();
     println!("Undefined count: {}", match undef.ty {
