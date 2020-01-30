@@ -304,8 +304,9 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
                     // Check for default case jump
                     (Some(cond), &OperandType::Constant(to)) => {
                         let resolved = ctrl.resolve(cond);
+                        let ctx = ctrl.ctx();
                         let (state, interner) = ctrl.exec_state();
-                        let jumps = is_aiscript_switch_jump(&resolved, state, interner);
+                        let jumps = is_aiscript_switch_jump(ctx, &resolved, state, interner);
                         if let Some((jumps_to_default, opcode)) = jumps {
                             trace!("Ais default jump {}", resolved);
                             self.op_default_jump = Some(OpDefaultJump {
@@ -378,38 +379,38 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
 ///
 /// The second value is opcode operand (unresolved)
 fn is_aiscript_switch_jump<'e, E: ExecutionState<'e>>(
+    ctx: &'e OperandContext,
     condition: &Rc<Operand>,
     state: &mut E,
     interner: &mut InternMap,
 ) -> Option<(bool, Rc<Operand>)> {
-    use scarf::operand_helpers::*;
     // The chances of there being another jump with different constresults when Mem8[x]
     // is replaced by 0x70 and 0x71 is low, so use that instead of trying to match all
     // gt/lt/ge/le variations
-    let simplified_70 = Operand::simplified(Operand::transform(condition, |x| match x.ty {
+    let simplified_70 = ctx.transform(condition, |x| match x.ty {
         OperandType::Memory(ref mem) => {
             if mem.size == MemAccessSize::Mem8 {
-                Some(constval(0x70))
+                Some(ctx.constant(0x70))
             } else {
                 None
             }
         }
         _ => None,
-    }));
+    });
     let const_70 = match simplified_70.if_constant() {
         Some(x) => x,
         _ => return None,
     };
-    let simplified_71 = Operand::simplified(Operand::transform(condition, |x| match x.ty {
+    let simplified_71 = ctx.transform(condition, |x| match x.ty {
         OperandType::Memory(ref mem) => {
             if mem.size == MemAccessSize::Mem8 {
-                Some(constval(0x71))
+                Some(ctx.constant(0x71))
             } else {
                 None
             }
         }
         _ => None,
-    }));
+    });
     let const_71 = match simplified_71.if_constant() {
         Some(x) => x,
         _ => return None,
