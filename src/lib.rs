@@ -192,6 +192,7 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     step_network: Cached<Rc<StepNetwork<E::VirtualAddress>>>,
     init_game_network: Cached<Option<E::VirtualAddress>>,
     snp_definitions: Cached<Option<SnpDefinitions>>,
+    lobby_state: Cached<Option<Rc<Operand>>>,
     dat_tables: DatTables,
     binary: &'a scarf::BinaryFile<E::VirtualAddress>,
     ctx: &'a scarf::OperandContext,
@@ -447,6 +448,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
             step_network: Default::default(),
             init_game_network: Default::default(),
             snp_definitions: Default::default(),
+            lobby_state: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -910,6 +912,15 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         }
         let result = network::snp_definitions(self);
         self.snp_definitions.cache(&result);
+        result
+    }
+
+    pub fn lobby_state(&mut self) -> Option<Rc<Operand>> {
+        if let Some(cached) = self.lobby_state.cached() {
+            return cached;
+        }
+        let result = game_init::lobby_state(self);
+        self.lobby_state.cache(&result);
         result
     }
 }

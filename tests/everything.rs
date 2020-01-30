@@ -6,7 +6,7 @@ extern crate scarf;
 use std::path::Path;
 use std::rc::Rc;
 
-use scarf::{Operand, OperandType, VirtualAddress, ExecutionStateX86};
+use scarf::{Operand, OperandType, VirtualAddress, ExecutionStateX86, OperandContext};
 use scarf::operand::Register;
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 use samase_scarf::DatType;
@@ -389,8 +389,12 @@ fn everything_1221() {
 #[test]
 fn everything_1221b() {
     test_with_extra_checks(Path::new("1221b.exe"), |analysis| {
+        let ctx = OperandContext::new();
         let init = analysis.init_game_network().unwrap();
         assert_eq!(init.0, 0x006ed550);
+
+        let lobby_state = analysis.lobby_state();
+        assert_eq!(*lobby_state.as_ref().unwrap(), ctx.mem8(&ctx.constant(0x01060fc5)));
     })
 }
 
@@ -757,6 +761,9 @@ fn everything_1232e() {
 
         let snp_definitions = analysis.snp_definitions().unwrap();
         assert_eq!(snp_definitions.snp_definitions, constval(0x00E065E0));
+
+        let lobby_state = analysis.lobby_state();
+        assert_eq!(*lobby_state.as_ref().unwrap(), mem8(constval(0x0106f475)));
     })
 }
 
@@ -1097,6 +1104,9 @@ where F: for<'e> FnOnce(&mut samase_scarf::Analysis<'e, ExecutionStateX86<'e>>),
     let snp_definitions = analysis.snp_definitions().unwrap();
     check_global_struct(&snp_definitions.snp_definitions, &binary, "snp definitions");
     assert_eq!(snp_definitions.entry_size, 0x90);
+
+    let lobby_state = analysis.lobby_state();
+    check_global(lobby_state.as_ref().unwrap(), &binary, "lobby state");
 
     let init_network = analysis.init_game_network();
     assert!(init_network.is_some());

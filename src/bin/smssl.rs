@@ -257,6 +257,9 @@ fn main() {
         println!("snp_definitions: None");
     }
 
+    let lobby_state = analysis.lobby_state();
+    println!("init_game_network: {}", format_op_operand(&lobby_state));
+
     let undef = ctx.undefined_rc();
     println!();
     println!("Undefined count: {}", match undef.ty {

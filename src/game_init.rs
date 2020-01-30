@@ -1325,3 +1325,76 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitGameNetwo
         }
     }
 }
+
+pub fn lobby_state<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Rc<Operand>> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let (switch, _) = analysis.process_lobby_commands_switch()?;
+
+    // Command 0x48 compares state == 8 at start of the function
+    let branch = switch.branch(0x48)?;
+    let mut analyzer = FindLobbyState::<E> {
+        result: None,
+        inlining: false,
+        jump_limit: 0,
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, branch);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct FindLobbyState<'e, E: ExecutionState<'e>> {
+    result: Option<Rc<Operand>>,
+    inlining: bool,
+    jump_limit: u8,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLobbyState<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        match op {
+            Operation::Call(dest) => {
+                if !self.inlining {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        self.jump_limit = 7;
+                        self.inlining = true;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inlining = false;
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Jump { condition, to } => {
+                if !self.inlining {
+                    if to.if_constant().is_none() {
+                        // Stop at switch jump
+                        ctrl.end_branch();
+                    }
+                } else {
+                    let cond = ctrl.resolve(condition);
+                    let lobby_state = if_arithmetic_eq_neq(&cond)
+                        .map(|(l, r, _)| (l, r))
+                        .and_either_other(|x| x.if_constant().filter(|&c| c == 8));
+                    if let Some(lobby_state) = lobby_state {
+                        self.result = Some(lobby_state.clone());
+                        ctrl.end_analysis();
+                    }
+                    self.jump_limit -= 1;
+                    if self.jump_limit == 0 {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
