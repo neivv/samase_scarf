@@ -51,6 +51,7 @@ use scarf::analysis::{self, Control, FuncCallPair, RelocValues};
 use scarf::exec_state::{InternMap};
 use scarf::operand::{MemAccessSize, OperandContext};
 
+pub use scarf;
 pub use scarf::{BinarySection, VirtualAddress};
 pub use crate::ai::AiScriptHook;
 pub use crate::bullets::BulletCreation;
