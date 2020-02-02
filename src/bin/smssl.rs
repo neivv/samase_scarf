@@ -258,7 +258,9 @@ fn main() {
     }
 
     let lobby_state = analysis.lobby_state();
-    println!("init_game_network: {}", format_op_operand(&lobby_state));
+    println!("lobby_state: {}", format_op_operand(&lobby_state));
+    let init_storm_networking = analysis.init_storm_networking();
+    println!("init_storm_networking: {:?}", init_storm_networking);
 
     let undef = ctx.undefined_rc();
     println!();

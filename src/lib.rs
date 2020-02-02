@@ -194,6 +194,7 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     init_game_network: Cached<Option<E::VirtualAddress>>,
     snp_definitions: Cached<Option<SnpDefinitions>>,
     lobby_state: Cached<Option<Rc<Operand>>>,
+    init_storm_networking: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables,
     binary: &'a scarf::BinaryFile<E::VirtualAddress>,
     ctx: &'a scarf::OperandContext,
@@ -450,6 +451,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
             init_game_network: Default::default(),
             snp_definitions: Default::default(),
             lobby_state: Default::default(),
+            init_storm_networking: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -922,6 +924,15 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         }
         let result = game_init::lobby_state(self);
         self.lobby_state.cache(&result);
+        result
+    }
+
+    pub fn init_storm_networking(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.init_storm_networking.cached() {
+            return cached;
+        }
+        let result = network::init_storm_networking(self);
+        self.init_storm_networking.cache(&result);
         result
     }
 }
