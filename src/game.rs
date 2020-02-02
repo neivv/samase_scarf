@@ -37,13 +37,11 @@ pub fn step_objects<'e, E: ExecutionState<'e>>(
         .filter(|&x| is_branchless_leaf(analysis, x))
         .collect::<Vec<_>>();
     let funcs = analysis.functions();
-    debug!("Rng Set funcs {:?}", set_funcs);
     rng_refs.extend(set_funcs.iter().flat_map(|&fun| {
         find_callers(analysis, fun).into_iter().map(|call_pos| entry_of(&funcs, call_pos))
     }));
     rng_refs.sort();
     rng_refs.dedup();
-    debug!("Rng enable refs {:?}", rng_refs);
     let mut checked_vision_funcs = Vec::new();
     let mut result = None;
     for addr in rng_refs {

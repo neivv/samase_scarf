@@ -1452,8 +1452,6 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
         }
         let str_refs = string_refs(binary, self, b"arr\\units.dat\0");
 
-        debug!("Unit refs {:?}", unit_refs);
-        debug!("Order refs {:?}", order_refs);
         let mut common = unit_refs.iter()
             .filter(|x| order_refs.iter().any(|y| x.func_entry == y.func_entry))
             .filter(|x| str_refs.iter().any(|y| x.func_entry == y.func_entry))
