@@ -214,7 +214,7 @@ fn everything_1213b() {
 
         let rclick = analysis.game_screen_rclick();
         assert_eq!(rclick.game_screen_rclick.unwrap().0, 0x006b2400);
-        assert_eq!(*rclick.client_selection.as_ref().unwrap(), mem32(constval(0x00ec3750)));
+        assert_eq!(*rclick.client_selection.as_ref().unwrap(), constval(0x00ec3750));
     })
 }
 
@@ -959,7 +959,7 @@ where F: for<'e> FnOnce(&mut samase_scarf::Analysis<'e, ExecutionStateX86<'e>>),
 
     let rclick = analysis.game_screen_rclick();
     assert!(rclick.game_screen_rclick.is_some());
-    check_global(&rclick.client_selection.as_ref().unwrap(), &binary, "client selection");
+    check_global_struct(&rclick.client_selection.as_ref().unwrap(), &binary, "client selection");
 
     let first_ai_script = analysis.first_ai_script();
     check_global(&first_ai_script.unwrap(), &binary, "first ai script");

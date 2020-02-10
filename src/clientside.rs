@@ -140,8 +140,6 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        use scarf::operand_helpers::*;
-
         let address = ctrl.address();
         if !self.call_found {
             let in_possible_range =
@@ -184,13 +182,9 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
                             false => None,
                         })
                         .map(|mem| {
-                            Operand::simplified(
-                                mem32(
-                                    operand_sub(
-                                        mem.address.clone(),
-                                        self.ctx.constant(11 * 4),
-                                    )
-                                )
+                            self.ctx.sub(
+                                &mem.address,
+                                &self.ctx.constant(11 * 4),
                             )
                         });
                     if let Some(csl) = client_selection {
