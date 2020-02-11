@@ -1,79 +1,37 @@
 use std::rc::Rc;
 
-use scarf::{DestOperand, ExecutionStateX86, Operand, Operation, VirtualAddress};
-use scarf::analysis::{self, AnalysisState,Cfg, Control};
+use scarf::{BinaryFile, DestOperand, ExecutionStateX86, Operand, Operation, VirtualAddress};
+use scarf::analysis::{self, FuncAnalysis, AnalysisState,Cfg, Control};
 use scarf::exec_state::{InternMap};
 use scarf::operand::OperandContext;
 
-use crate::{Analysis, Error, to_default_base, OptionExt};
+use crate::{
+    Analysis, OptionExt, find_callers, entry_of_until, single_result_assign, EntryOf,
+};
+use crate::switch::{full_switch_info};
 
 use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
-type BinaryFile = scarf::BinaryFile<VirtualAddress>;
-type FuncAnalysis<'a, T> = analysis::FuncAnalysis<'a, ExecutionStateX86<'a>, T>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum StepOrderHiddenHook {
+pub enum StepOrderHiddenHook<Va: VirtualAddressTrait> {
     Inlined {
-        entry: VirtualAddress,
-        exit: VirtualAddress,
+        entry: Va,
+        exit: Va,
         // Unresolved at entry
         unit: Rc<Operand>,
     },
-    Separate(VirtualAddress),
+    Separate(Va),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SecondaryOrderHook {
+pub enum SecondaryOrderHook<Va: VirtualAddressTrait> {
     Inlined {
-        entry: VirtualAddress,
-        exit: VirtualAddress,
+        entry: Va,
+        exit: Va,
         // Unresolved at entry
         unit: Rc<Operand>,
     },
-    Separate(VirtualAddress),
-}
-
-pub fn step_secondary_order_inner(
-    binary: &BinaryFile,
-    addr: VirtualAddress,
-    mut state: ExecutionStateX86,
-    ctx: &OperandContext,
-    mut interner: InternMap,
-    errors: &mut Vec<Error>,
-) -> Option<SecondaryOrderHook> {
-    use scarf::operand_helpers::*;
-    let esp = ctx.register(4);
-    state.move_to(&DestOperand::from_oper(&esp), operand_sub(esp, ctx.const_4()), &mut interner);
-    let mut analysis = FuncAnalysis::with_state(binary, &ctx, addr, state, interner);
-    let mut secondary_order_hallu_check = None;
-    'outer: while let Some(mut branch) = analysis.next_branch() {
-        let mut operations = branch.operations();
-        while let Some((op, state, ins_address, i)) = operations.next() {
-            match *op {
-                Operation::Jump { ref condition, .. } => {
-                    let condition = state.resolve(condition, i);
-                    let unit = step_secondary_order_hallu_jump_check(&condition);
-                    if let Some(unit) = unit.and_then(|u| state.unresolve(&u, i)) {
-                        secondary_order_hallu_check = Some((ins_address, unit));
-                        break 'outer;
-                    }
-                }
-                _ => (),
-            }
-        }
-    }
-    errors.extend(analysis.errors.drain(..).map(|(a, b)| {
-        Error::Scarf(to_default_base(binary, a), b)
-    }));
-    if let Some((jump_addr, unit)) = secondary_order_hallu_check {
-        let (cfg, errs) = analysis.finish();
-        errors.extend(errs.into_iter().map(|(a, b)| {
-            Error::Scarf(to_default_base(binary, a), b)
-        }));
-        step_secondary_order_hook_info(binary, ctx, cfg, addr, jump_addr, &unit)
-    } else {
-        None
-    }
+    Separate(Va),
 }
 
 // Checks for comparing secondary_order to 0x95 (Hallucination)
@@ -96,104 +54,135 @@ pub fn step_secondary_order_hallu_jump_check(condition: &Rc<Operand>) -> Option<
 }
 
 // Unit needs to be unresolved
-pub fn step_secondary_order_hook_info<'exec>(
-    binary: &'exec BinaryFile,
-    ctx: &'exec OperandContext,
-    mut cfg: Cfg<'exec, ExecutionStateX86<'exec>, analysis::DefaultState>,
-    func_entry: VirtualAddress,
-    jump_addr: VirtualAddress,
+pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    ctx: &'e OperandContext,
+    mut cfg: Cfg<'e, E, analysis::DefaultState>,
+    func_entry: E::VirtualAddress,
+    jump_addr: E::VirtualAddress,
     unit: &Rc<Operand>,
-) -> Option<SecondaryOrderHook> {
-    fn resolve_at_addr(
-        binary: &BinaryFile,
-        ctx: &OperandContext,
-        start: VirtualAddress,
+) -> Option<SecondaryOrderHook<E::VirtualAddress>> {
+    fn resolve_at_addr<'f, F: ExecutionState<'f>>(
+        binary: &'f BinaryFile<F::VirtualAddress>,
+        ctx: &'f OperandContext,
+        start: F::VirtualAddress,
         unresolved: &Rc<Operand>,
-        resolve_pos: VirtualAddress,
+        resolve_pos: F::VirtualAddress,
     ) -> Option<Rc<Operand>> {
-        let mut analysis = FuncAnalysis::new(binary, ctx, start);
-        let mut branch = analysis.next_branch()
-            .expect("New analysis should always have a branch.");
-        let mut ops = branch.operations();
-        while let Some((op, state, address, i)) = ops.next() {
-            if address == resolve_pos {
-                return Some(state.resolve(unresolved, i));
-            } else {
-                match *op {
-                    Operation::Jump { .. } | Operation::Return(_) => return None,
+        struct Analyzer<'c, 'g, G: ExecutionState<'g>> {
+            resolve_pos: G::VirtualAddress,
+            unresolved: &'c Rc<Operand>,
+            result: Option<Rc<Operand>>,
+        }
+        impl<'c, 'g, G: ExecutionState<'g>> scarf::Analyzer<'g> for Analyzer<'c, 'g, G> {
+            type State = analysis::DefaultState;
+            type Exec = G;
+            fn operation(&mut self, ctrl: &mut Control<'g, '_, '_, Self>, op: &Operation) {
+                if ctrl.address() == self.resolve_pos {
+                    self.result = Some(ctrl.resolve(self.unresolved));
+                    ctrl.end_analysis();
+                }
+                match op {
+                    Operation::Jump { .. } | Operation::Return(_) => ctrl.end_analysis(),
                     _ => (),
                 }
             }
         }
-        None
+
+        let mut analysis = FuncAnalysis::<F, _>::new(binary, ctx, start);
+        let mut analyzer = Analyzer {
+            resolve_pos,
+            unresolved,
+            result: None,
+        };
+        analysis.analyze(&mut analyzer);
+        analyzer.result
     }
 
     // Return address and unresolved unit at address
-    fn find_secondary_order_access(
-        binary: &BinaryFile,
-        ctx: &OperandContext,
-        start: VirtualAddress,
+    fn find_secondary_order_access<'f, F: ExecutionState<'f>>(
+        binary: &'f BinaryFile<F::VirtualAddress>,
+        ctx: &'f OperandContext,
+        start: F::VirtualAddress,
         unit: &Rc<Operand>,
-    ) -> Option<(VirtualAddress, Rc<Operand>)> {
-        use scarf::operand_helpers::*;
-
-        let check = |val: &Rc<Operand>, state: &mut ExecutionStateX86, i: &mut _| -> Option<Rc<Operand>> {
-            let result = val.if_memory()
-                .and_then(|mem| mem.address.if_arithmetic_add())
-                .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                .and_then(|(c, other)| if c == 0xa6 && other == unit {
-                    Some(other)
-                } else {
-                    None
-                });
-            if let Some(unit) = result.and_then(|x| state.unresolve(x, i)) {
-                return Some(unit);
-            }
-            let result = val.if_arithmetic_eq()
-                .map(|(l, r)| {
-                    // Strip == 0 from comparisions
-                    Operand::either(l, r, |x| x.if_constant().filter(|&c| c == 0))
-                        .and_then(|x| x.1.if_arithmetic_eq())
-                        .unwrap_or((l, r))
-                })
-                .and_then(|(l, r)| Operand::either(l, r, |x| x.if_memory()))
-                .filter(|&(_, c)| c.if_constant() == Some(0x95))
-                .and_then(|(mem, _)| mem.address.if_arithmetic_add())
-                .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                .and_then(|(c, other)| if c == 0xa6 && other == unit {
-                    Some(other)
-                } else {
-                    None
-                });
-            if let Some(unit) = result.and_then(|x| state.unresolve(x, i)) {
-                return Some(unit);
-            }
-            None
-        };
-
-        let mut analysis = FuncAnalysis::new(binary, ctx, start);
-        let mut branch = analysis.next_branch()
-            .expect("New analysis should always have a branch.");
-        let mut ops = branch.operations();
-        while let Some((op, state, address, i)) = ops.next() {
-            match op {
-                Operation::Move(_, val, _) => {
-                    let val = state.resolve(val, i);
-                    if let Some(result) = check(&val, state, i) {
-                        return Some((address, result));
+    ) -> Option<(F::VirtualAddress, Rc<Operand>)> {
+        struct Analyzer<'c, 'g, G: ExecutionState<'g>> {
+            result: Option<(G::VirtualAddress, Rc<Operand>)>,
+            unit: &'c Rc<Operand>,
+        }
+        impl<'c, 'g, G: ExecutionState<'g>> scarf::Analyzer<'g> for Analyzer<'c, 'g, G> {
+            type State = analysis::DefaultState;
+            type Exec = G;
+            fn operation(&mut self, ctrl: &mut Control<'g, '_, '_, Self>, op: &Operation) {
+                let ctx = ctrl.ctx();
+                match op {
+                    Operation::Move(_, val, _) => {
+                        let val = ctrl.resolve(val);
+                        if let Some(result) = self.check(&val, ctrl) {
+                            self.result = Some((ctrl.address(), result));
+                            ctrl.end_analysis();
+                        }
                     }
-                }
-                Operation::SetFlags(arith, _) => {
-                    let op = operand_eq(arith.left.clone(), arith.right.clone());
-                    let val = state.resolve(&op, i);
-                    if let Some(result) = check(&val, state, i) {
-                        return Some((address, result));
+                    Operation::SetFlags(arith, _) => {
+                        let op = ctx.eq(&arith.left, &arith.right);
+                        let val = ctrl.resolve(&op);
+                        if let Some(result) = self.check(&val, ctrl) {
+                            self.result = Some((ctrl.address(), result));
+                            ctrl.end_analysis();
+                        }
                     }
+                    _ => (),
                 }
-                _ => (),
             }
         }
-        None
+        impl<'c, 'g, G: ExecutionState<'g>> Analyzer<'c, 'g, G> {
+            fn check(
+                &mut self,
+                val: &Rc<Operand>,
+                ctrl: &mut Control<'g, '_, '_, Self>,
+            ) -> Option<Rc<Operand>> {
+                let (state, i) = ctrl.exec_state();
+                let result = val.if_memory()
+                    .and_then(|mem| mem.address.if_arithmetic_add())
+                    .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
+                    .and_then(|(c, other)| if c == 0xa6 && other == self.unit {
+                        Some(other)
+                    } else {
+                        None
+                    });
+                if let Some(unit) = result.and_then(|x| state.unresolve(x, i)) {
+                    return Some(unit);
+                }
+                let result = val.if_arithmetic_eq()
+                    .map(|(l, r)| {
+                        // Strip == 0 from comparisions
+                        Operand::either(l, r, |x| x.if_constant().filter(|&c| c == 0))
+                            .and_then(|x| x.1.if_arithmetic_eq())
+                            .unwrap_or((l, r))
+                    })
+                    .and_then(|(l, r)| Operand::either(l, r, |x| x.if_memory()))
+                    .filter(|&(_, c)| c.if_constant() == Some(0x95))
+                    .and_then(|(mem, _)| mem.address.if_arithmetic_add())
+                    .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
+                    .and_then(|(c, other)| if c == 0xa6 && other == self.unit {
+                        Some(other)
+                    } else {
+                        None
+                    });
+                if let Some(unit) = result.and_then(|x| state.unresolve(x, i)) {
+                    return Some(unit);
+                }
+                None
+            }
+        }
+
+        let mut analysis = FuncAnalysis::<F, _>::new(binary, ctx, start);
+        let mut analyzer = Analyzer {
+            result: None,
+            unit,
+        };
+        analysis.analyze(&mut analyzer);
+        analyzer.result
     }
 
     cfg.calculate_node_indices();
@@ -204,8 +193,9 @@ pub fn step_secondary_order_hook_info<'exec>(
         // Can't hook it inline since a separate func tail calls the orders.
         Some(SecondaryOrderHook::Separate(addr))
     } else {
-        let resolved = resolve_at_addr(binary, ctx, addr, &unit, jump_addr)?;
-        let (entry, unit_at_hook) = find_secondary_order_access(binary, ctx, addr, &resolved)?;
+        let resolved = resolve_at_addr::<E>(binary, ctx, addr, &unit, jump_addr)?;
+        let (entry, unit_at_hook) =
+            find_secondary_order_access::<E>(binary, ctx, addr, &resolved)?;
         let end = cfg.immediate_postdominator(node.index)?;
 
         Some(SecondaryOrderHook::Inlined {
@@ -317,22 +307,21 @@ pub fn find_order_function<'exec>(
     analyzer.result
 }
 
-pub fn step_order_hook_info<'exec>(
-    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
-    func_entry: VirtualAddress,
-    ctx: &OperandContext,
-) -> Option<StepOrderHiddenHook> {
+fn step_order_hook_info<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+    func_entry: E::VirtualAddress,
+) -> Option<StepOrderHiddenHook<E::VirtualAddress>> {
     /// Finds `cmp order, 0xb0` jump that is the first thing done in step_order_hidden,
     /// `addr` being the function that step_order_hidden has been inlined to.
-    struct Analyzer {
+    struct Analyzer<'f, F: ExecutionState<'f>> {
         // Jump addr, unit unresolved
-        result: Option<(VirtualAddress, Rc<Operand>)>,
+        result: Option<(F::VirtualAddress, Rc<Operand>)>,
     }
 
-    impl<'a> scarf::Analyzer<'a> for Analyzer {
+    impl<'f, F: ExecutionState<'f>> scarf::Analyzer<'f> for Analyzer<'f, F> {
         type State = analysis::DefaultState;
-        type Exec = ExecutionStateX86<'a>;
-        fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
+        type Exec = F;
+        fn operation(&mut self, ctrl: &mut Control<'f, '_, '_, Self>, op: &Operation) {
             if self.result.is_some() {
                 return;
             }
@@ -359,8 +348,9 @@ pub fn step_order_hook_info<'exec>(
         }
     }
 
+    let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let mut analyzer = Analyzer {
+    let mut analyzer = Analyzer::<E> {
         result: None,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, func_entry);
@@ -378,7 +368,7 @@ pub fn step_order_hook_info<'exec>(
         let end = cfg.immediate_postdominator(node.index)?;
 
         Some(StepOrderHiddenHook::Inlined {
-            entry: skip_past_calls(addr, ctx, binary),
+            entry: skip_past_calls::<E>(addr, ctx, binary),
             exit: end.address,
             unit: unit_at_hook,
         })
@@ -394,19 +384,19 @@ pub fn step_order_hook_info<'exec>(
 ///     je somewhere
 ///
 /// returns the address after call
-fn skip_past_calls(
-    start: VirtualAddress,
-    ctx: &OperandContext,
-    binary: &BinaryFile,
-) -> VirtualAddress {
-    struct Analyzer {
-        result: VirtualAddress,
+fn skip_past_calls<'e, E: ExecutionState<'e>>(
+    start: E::VirtualAddress,
+    ctx: &'e OperandContext,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+) -> E::VirtualAddress {
+    struct Analyzer<'f, F: ExecutionState<'f>> {
+        result: F::VirtualAddress,
     }
 
-    impl<'a> scarf::Analyzer<'a> for Analyzer {
+    impl<'f, F: ExecutionState<'f>> scarf::Analyzer<'f> for Analyzer<'f, F> {
         type State = analysis::DefaultState;
-        type Exec = ExecutionStateX86<'a>;
-        fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
+        type Exec = F;
+        fn operation(&mut self, ctrl: &mut Control<'f, '_, '_, Self>, op: &Operation) {
             match op {
                 Operation::Jump { .. } => ctrl.end_analysis(),
                 Operation::Call(..) => {
@@ -417,10 +407,254 @@ fn skip_past_calls(
         }
     }
 
-    let mut analyzer = Analyzer {
+    let mut analyzer = Analyzer::<E> {
         result: start,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, start);
     analysis.analyze(&mut analyzer);
     analyzer.result
+}
+
+pub fn step_order<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
+    let order_issuing = analysis.order_issuing();
+    let binary = analysis.binary;
+    let funcs = analysis.functions();
+    let funcs = &funcs[..];
+    let ctx = analysis.ctx;
+    let switches = analysis.switch_tables();
+
+    let init_arbiter_callers = order_issuing.order_init_arbiter.iter().flat_map(|&o| {
+        find_callers(analysis, o)
+    }).collect::<Vec<_>>();
+    let mut result = None;
+    for caller in init_arbiter_callers {
+        let val = entry_of_until(binary, funcs, caller, |entry| {
+            let mut analyzer = IsStepOrder {
+                ok: false,
+                call_found: false,
+                caller,
+                switches: &switches,
+                analysis,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            if analyzer.ok {
+                EntryOf::Ok(entry)
+            } else if analyzer.call_found {
+                EntryOf::Stop
+            } else {
+                EntryOf::Retry
+            }
+        }).into_option();
+        if single_result_assign(val, &mut result) {
+            break;
+        }
+    }
+    result
+}
+
+
+struct IsStepOrder<'a, 'e, E: ExecutionState<'e>> {
+    ok: bool,
+    call_found: bool,
+    caller: E::VirtualAddress,
+    switches: &'a [crate::SwitchTable<E::VirtualAddress>],
+    analysis: &'a mut Analysis<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        match op {
+            Operation::Call(_) => {
+                if ctrl.address() == self.caller {
+                    self.call_found = true;
+                }
+            }
+            Operation::Jump { to, .. } => {
+                let to = ctrl.resolve(to);
+                self.ok = to.if_mem32()
+                    .and_then(|x| x.if_arithmetic_add())
+                    .and_either(|x| x.if_constant())
+                    .map(|(c, _)| E::VirtualAddress::from_u64(c))
+                    .and_then(|addr| {
+                        self.switches.binary_search_by_key(&addr, |x| x.address).ok()
+                            .map(|x| &self.switches[x])
+                    })
+                    .and_then(|switch| {
+                        full_switch_info(self.analysis, switch)
+                    })
+                    .filter(|(switch, _)| switch.cases.len() >= 0xad)
+                    .is_some();
+                if self.ok {
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+pub fn step_order_hidden<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Vec<StepOrderHiddenHook<E::VirtualAddress>> {
+    let switches = analysis.switch_tables();
+
+    let result = switches.iter().filter_map(|switch| {
+        if switch.cases.len() < 11 || switch.cases.len() > 12 {
+            None
+        } else {
+            full_switch_info(analysis, switch)
+        }
+    }).filter(|&(ref switch, _entry)| {
+        if switch.cases.len() < 0xa8 {
+            return false;
+        }
+        let default_case = switch.cases[0x1];
+        switch.cases.iter().take(0x90).enumerate().all(|(i, &x)| {
+            match i {
+                0x0 | 0x3 | 0x4 | 0x11 | 0x16 | 0x17 | 0x18 | 0x1d | 0x53 | 0x5c | 0x61 |
+                    0x7d =>
+                {
+                    x != default_case
+                }
+                _ => x == default_case,
+            }
+        })
+    }).map(|(_, entry)| {
+        entry
+    }).collect::<Vec<_>>();
+    let result = result.iter().filter_map(|&addr| {
+        step_order_hook_info(analysis, addr)
+    }).collect();
+    result
+}
+
+pub fn step_secondary_order<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Vec<SecondaryOrderHook<E::VirtualAddress>> {
+    let binary = analysis.binary;
+    let funcs = analysis.functions();
+    let ctx = analysis.ctx;
+
+    let step_order = analysis.step_order();
+    let mut callers = step_order.iter()
+        .flat_map(|&x| find_callers(analysis, x))
+        .collect::<Vec<_>>();
+    callers.sort();
+    callers.dedup();
+    let mut checked_funcs = Vec::new();
+    let result = callers.into_iter().filter_map(|caller| {
+        entry_of_until(binary, &funcs, caller, |entry| {
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            let mut analyzer = StepSecondaryOrderAnalyzer::<E> {
+                result: None,
+                pre_result: None,
+                call_found: false,
+                inlining: false,
+                caller,
+                checked_funcs: &mut checked_funcs,
+                binary,
+                ctx,
+            };
+            analysis.analyze(&mut analyzer);
+            if let Some(res) = analyzer.result {
+                return EntryOf::Ok(res);
+            }
+            if let Some((jump_addr, unit)) = analyzer.pre_result {
+                let (cfg, _) = analysis.finish();
+                let res = step_secondary_order_hook_info(
+                    binary,
+                    &ctx,
+                    cfg,
+                    entry,
+                    jump_addr,
+                    &unit,
+                );
+                if let Some(res) = res {
+                    return EntryOf::Ok(res);
+                }
+            }
+            if analyzer.call_found {
+                EntryOf::Stop
+            } else {
+                EntryOf::Retry
+            }
+        }).into_option()
+    }).collect::<Vec<_>>();
+    result
+}
+
+struct StepSecondaryOrderAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<SecondaryOrderHook<E::VirtualAddress>>,
+    pre_result: Option<(E::VirtualAddress, Rc<Operand>)>,
+    call_found: bool,
+    inlining: bool,
+    caller: E::VirtualAddress,
+    checked_funcs: &'a mut Vec<E::VirtualAddress>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    ctx: &'e OperandContext,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    StepSecondaryOrderAnalyzer<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        if self.pre_result.is_some() {
+            return;
+        }
+        // step_secondary_order is supposed to begin with a check if the order
+        // is 0x95 (Hallucinated unit)
+        match op {
+            Operation::Call(dest) => {
+                if ctrl.address() == self.caller {
+                    self.call_found = true;
+                }
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if !self.inlining && !self.checked_funcs.iter().any(|&x| x == dest) {
+                        self.inlining = true;
+                        self.checked_funcs.push(dest);
+                        let mut analysis = FuncAnalysis::new(self.binary, self.ctx, dest);
+                        analysis.analyze(self);
+                        if let Some((jump_addr, unit)) = self.pre_result.take() {
+                            let (cfg, _) = analysis.finish();
+                            self.result = step_secondary_order_hook_info(
+                                self.binary,
+                                self.ctx,
+                                cfg,
+                                dest,
+                                jump_addr,
+                                &unit,
+                            );
+                            if self.result.is_some() {
+                                ctrl.end_analysis();
+                            }
+                        }
+                        self.inlining = false;
+                    }
+                }
+            }
+            Operation::Jump { ref condition, .. } => {
+                let condition = ctrl.resolve(condition);
+                let unit = step_secondary_order_hallu_jump_check(&condition);
+                let (state, i) = ctrl.exec_state();
+                if let Some(unit) = unit.and_then(|u| state.unresolve(&u, i)) {
+                    self.pre_result = Some((ctrl.address(), unit));
+                }
+            }
+            _ => (),
+        }
+    }
+
+    fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if self.pre_result.is_some() {
+            ctrl.end_analysis();
+        }
+    }
 }

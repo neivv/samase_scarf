@@ -38,6 +38,10 @@ fern = { version = "0.5", optional = true }
 git = "https://github.com/neivv/scarf"
 rev = "d04b637"
 
+[dev-dependencies]
+fern = "0.5"
+
+
 [features]
 test_assertions = []
 binaries = ['fern']

@@ -155,9 +155,9 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     send_command: Cached<Option<E::VirtualAddress>>,
     print_text: Cached<Option<E::VirtualAddress>>,
     step_order: Cached<Option<E::VirtualAddress>>,
-    step_order_hidden: Cached<Rc<Vec<step_order::StepOrderHiddenHook>>>,
+    step_order_hidden: Cached<Rc<Vec<step_order::StepOrderHiddenHook<E::VirtualAddress>>>>,
     init_units: Cached<Option<E::VirtualAddress>>,
-    step_secondary_order: Cached<Rc<Vec<step_order::SecondaryOrderHook>>>,
+    step_secondary_order: Cached<Rc<Vec<step_order::SecondaryOrderHook<E::VirtualAddress>>>>,
     init_game: Cached<Rc<InitGame>>,
     units: Cached<Option<Rc<Operand>>>,
     game_screen_rclick: Cached<Rc<GameScreenRClick<E::VirtualAddress>>>,
@@ -935,220 +935,42 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         self.init_storm_networking.cache(&result);
         result
     }
-}
 
-impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
-    pub fn step_order(&mut self) -> Option<VirtualAddress> {
+    pub fn step_order(&mut self) -> Option<E::VirtualAddress> {
         if let Some(cached) = self.step_order.cached() {
             return cached;
         }
-        let order_issuing = self.order_issuing();
-        let binary = self.binary;
-        let funcs = self.functions();
-        let funcs = &funcs[..];
-        let ctx = OperandContext::new();
-        let mut errors = Vec::new();
-        let switches = self.switch_tables();
-
-        let init_arbiter_callers = order_issuing.order_init_arbiter.iter().flat_map(|&o| {
-            find_callers(self, o)
-        }).collect::<Vec<_>>();
-        let mut result = None;
-        for caller in init_arbiter_callers {
-            let val = entry_of_until(binary, funcs, caller, |entry| {
-                let mut analysis = FuncAnalysis::new(binary, &ctx, entry);
-                let mut ok = false;
-                let mut call_found = false;
-                'outer: while let Some(mut branch) = analysis.next_branch() {
-                    let mut operations = branch.operations();
-                    while let Some((op, state, ins_address, interner)) = operations.next() {
-                        match *op {
-                            Operation::Call(_) => {
-                                if ins_address == caller {
-                                    call_found = true;
-                                }
-                            }
-                            Operation::Jump { ref to, .. } => {
-                                let to = state.resolve(to, interner);
-                                ok = to.if_mem32()
-                                    .and_then(|x| x.if_arithmetic_add())
-                                    .and_either(|x| x.if_constant())
-                                    .map(|(c, _)| VirtualAddress::from_u64(c))
-                                    .and_then(|addr| {
-                                        switches.binary_search_by_key(&addr, |x| x.address).ok()
-                                            .map(|x| &switches[x])
-                                    })
-                                    .and_then(|switch| {
-                                        full_switch_info(self, switch)
-                                    })
-                                    .filter(|(switch, _)| switch.cases.len() >= 0xad)
-                                    .is_some();
-                                if ok {
-                                    break 'outer;
-                                }
-                            }
-                            _ => (),
-                        }
-                    }
-                }
-                errors.extend(analysis.errors.into_iter().map(|(a, b)| {
-                    Error::Scarf(to_default_base(binary, a), b)
-                }));
-                if ok {
-                    EntryOf::Ok(entry)
-                } else if call_found {
-                    EntryOf::Stop
-                } else {
-                    EntryOf::Retry
-                }
-            }).into_option();
-            if single_result_assign(val, &mut result) {
-                break;
-            }
-        }
-        for e in errors {
-            debug!("step_order {}", e);
-        }
+        let result = step_order::step_order(self);
         self.step_order.cache(&result);
         result
     }
 
-    pub fn step_order_hidden(&mut self) -> Rc<Vec<step_order::StepOrderHiddenHook>> {
+    pub fn step_order_hidden(&mut self) ->
+        Rc<Vec<step_order::StepOrderHiddenHook<E::VirtualAddress>>>
+    {
         if let Some(cached) = self.step_order_hidden.cached() {
             return cached;
         }
-        let switches = self.switch_tables();
-
-        let result = switches.iter().filter_map(|switch| {
-            if switch.cases.len() < 11 || switch.cases.len() > 12 {
-                None
-            } else {
-                full_switch_info(self, switch)
-            }
-        }).filter(|&(ref switch, _entry)| {
-            if switch.cases.len() < 0xa8 {
-                return false;
-            }
-            let default_case = switch.cases[0x1];
-            switch.cases.iter().take(0x90).enumerate().all(|(i, &x)| {
-                match i {
-                    0x0 | 0x3 | 0x4 | 0x11 | 0x16 | 0x17 | 0x18 | 0x1d | 0x53 | 0x5c | 0x61 |
-                        0x7d =>
-                    {
-                        x != default_case
-                    }
-                    _ => x == default_case,
-                }
-            })
-        }).map(|(_, entry)| {
-            entry
-        }).collect::<Vec<_>>();
-        let result = result.iter().filter_map(|&addr| {
-            step_order::step_order_hook_info(self, addr, self.ctx)
-        }).collect();
+        let result = step_order::step_order_hidden(self);
         let result = Rc::new(result);
         self.step_order_hidden.cache(&result);
         result
     }
 
-    pub fn step_secondary_order(&mut self) -> Rc<Vec<step_order::SecondaryOrderHook>> {
-        use crate::step_order::*;
-
+    pub fn step_secondary_order(&mut self) ->
+        Rc<Vec<step_order::SecondaryOrderHook<E::VirtualAddress>>>
+    {
         if let Some(cached) = self.step_secondary_order.cached() {
             return cached;
         }
-        let binary = self.binary;
-        let mut errors = Vec::new();
-        let funcs = self.functions();
-        let ctx = OperandContext::new();
-
-        let step_order = self.step_order();
-        let mut callers = step_order.iter()
-            .flat_map(|&x| find_callers(self, x))
-            .collect::<Vec<_>>();
-        callers.sort();
-        callers.dedup();
-        let mut checked_inner = Vec::new();
-        let result = callers.into_iter().filter_map(|caller| {
-            entry_of_until(binary, &funcs, caller, |entry| {
-                let mut analysis = FuncAnalysis::new(binary, &ctx, entry);
-                let mut inner_result = None;
-                // step_secondary_order is supposed to begin with a check if the order
-                // is 0x95 (Hallucinated unit)
-                let mut secondary_order_hallu_check = None;
-                let mut call_found = false;
-                'outer: while let Some(mut branch) = analysis.next_branch() {
-                    let mut operations = branch.operations();
-                    while let Some((op, state, ins_address, i)) = operations.next() {
-                        match *op {
-                            Operation::Call(ref dest) => {
-                                if ins_address == caller {
-                                    call_found = true;
-                                }
-                                if let Some(dest) = if_callable_const(binary, state, dest, i) {
-                                    if !checked_inner.iter().any(|&x| x == dest) {
-                                        checked_inner.push(dest);
-                                        inner_result = step_secondary_order_inner(
-                                            binary,
-                                            dest,
-                                            state.clone(),
-                                            &ctx,
-                                            i.clone(),
-                                            &mut errors,
-                                        );
-                                        if inner_result.is_some() {
-                                            break 'outer;
-                                        }
-                                    }
-                                }
-                            }
-                            Operation::Jump { ref condition, .. } => {
-                                let condition = state.resolve(condition, i);
-                                let unit = step_secondary_order_hallu_jump_check(&condition);
-                                if let Some(unit) = unit.and_then(|u| state.unresolve(&u, i)) {
-                                    secondary_order_hallu_check = Some((ins_address, unit));
-                                    break 'outer;
-                                }
-                            }
-                            _ => (),
-                        }
-                    }
-                }
-                errors.extend(analysis.errors.drain(..).map(|(a, b)| {
-                    Error::Scarf(to_default_base(binary, a), b)
-                }));
-                if let Some(res) = inner_result {
-                    return EntryOf::Ok(res);
-                }
-                if let Some((jump_addr, unit)) = secondary_order_hallu_check {
-                    let (cfg, errs) = analysis.finish();
-                    errors.extend(errs.into_iter().map(|(a, b)| {
-                        Error::Scarf(to_default_base(binary, a), b)
-                    }));
-                    let res = step_secondary_order_hook_info(
-                        binary,
-                        &ctx,
-                        cfg,
-                        entry,
-                        jump_addr,
-                        &unit,
-                    );
-                    if let Some(res) = res {
-                        return EntryOf::Ok(res);
-                    }
-                }
-                if call_found {
-                    EntryOf::Stop
-                } else {
-                    EntryOf::Retry
-                }
-            }).into_option()
-        }).collect::<Vec<_>>();
+        let result = step_order::step_secondary_order(self);
         let result = Rc::new(result);
         self.step_secondary_order.cache(&result);
         result
     }
+}
 
+impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
     pub fn units(&mut self) -> Option<Rc<Operand>> {
         fn check_memcpy(
             state: &mut ExecutionState,
