@@ -4,6 +4,10 @@ version = "0.1.0"
 authors = ["Markus Heikkinen <ittevien@gmail.com>"]
 edition = "2018"
 
+[[bin]]
+name = "smssl"
+required-features = ["binaries"]
+
 [profile.dev]
 lto = "no"
 codegen-units = 4
@@ -35,6 +39,5 @@ git = "https://github.com/neivv/scarf"
 rev = "d04b637"
 
 [features]
-default = ['binaries']
 test_assertions = []
 binaries = ['fern']
