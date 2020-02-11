@@ -25,7 +25,6 @@ overflow-checks = true
 arrayvec = "0.5"
 byteorder = "1.1.0"
 fxhash = "0.2.1"
-itertools = "0.8.0"
 log = "0.4"
 memchr = "2.0"
 memmem = "0.1.1"
@@ -36,11 +35,10 @@ fern = { version = "0.5", optional = true }
 
 [dependencies.scarf]
 git = "https://github.com/neivv/scarf"
-rev = "d04b637"
+rev = "9b3978fa8b141b968fb2936c22ffc395b5d2369b"
 
 [dev-dependencies]
 fern = "0.5"
-
 
 [features]
 test_assertions = []

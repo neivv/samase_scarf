@@ -1,7 +1,5 @@
 use std::rc::Rc;
 
-use itertools::Itertools;
-
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, OperandContext, Operand, DestOperand, Operation, MemAccessSize};
@@ -30,7 +28,7 @@ pub fn step_objects<'e, E: ExecutionState<'e>>(
         .flat_map(|enable_addr| {
             find_functions_using_global(analysis, enable_addr).into_iter().map(|x| x.func_entry)
         })
-        .collect_vec();
+        .collect::<Vec<_>>();
     rng_refs.sort();
     rng_refs.dedup();
     let set_funcs = rng_refs.iter().cloned()

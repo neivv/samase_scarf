@@ -43,7 +43,6 @@ mod vtables;
 use std::rc::Rc;
 
 use byteorder::{ReadBytesExt, LE};
-use itertools::Itertools;
 use quick_error::quick_error;
 
 use scarf::{DestOperand, Operand, OperandType, Operation, Rva};
@@ -1093,7 +1092,7 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
                     find_functions_using_global(self, VirtualAddress(times))
                         .into_iter()
                         .map(|global_ref| (VirtualAddress(times), global_ref.use_address))
-                        .collect_vec()
+                        .collect::<Vec<_>>()
                 })
             }).unwrap_or_else(|| Vec::new())
         };
@@ -1269,7 +1268,7 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
                     .filter_map(|x| x.if_constant())
                     .flat_map(|x| {
                         find_functions_using_global(self, VirtualAddress::from_u64(x))
-                    }).collect_vec();
+                    }).collect::<Vec<_>>()
             }
         }
         let str_refs = string_refs(binary, self, b"arr\\units.dat\0");
@@ -1377,7 +1376,10 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
                                         invalid_handle_cmps.push((ins_address, h));
                                     }
                                     if invalid_handle_cmps.len() >= 3 {
-                                        if invalid_handle_cmps.iter().map(|x| &x.1).all_equal() {
+                                        let first = &invalid_handle_cmps[0].1;
+                                        let ok = (&invalid_handle_cmps[1..]).iter()
+                                            .all(|x| x.1 == *first);
+                                        if ok {
                                             return Some(invalid_handle_cmps.swap_remove(0).1);
                                         }
                                     }
