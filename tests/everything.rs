@@ -771,6 +771,14 @@ fn everything_1232e() {
     })
 }
 
+#[test]
+fn everything_1233a() {
+    test_with_extra_checks(Path::new("1233a.exe"), |analysis| {
+        let open_file = analysis.file_hook();
+        assert_eq!(open_file[0].0, 0x00544720);
+    })
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_| {});
 }
@@ -1105,9 +1113,14 @@ where F: for<'e> FnOnce(&mut samase_scarf::Analysis<'e, ExecutionStateX86<'e>>),
     check_global_struct_opt(&step.player_turns, &binary, "net player turns");
     check_global_struct_opt(&step.player_turns_size, &binary, "net player turns size");
 
-    let snp_definitions = analysis.snp_definitions().unwrap();
-    check_global_struct(&snp_definitions.snp_definitions, &binary, "snp definitions");
-    assert_eq!(snp_definitions.entry_size, 0x90);
+    let snp_definitions = analysis.snp_definitions();
+    if minor_version < 23 || (minor_version == 23 && patch_version < 3) {
+        let snp_definitions = snp_definitions.unwrap();
+        check_global_struct(&snp_definitions.snp_definitions, &binary, "snp definitions");
+        assert_eq!(snp_definitions.entry_size, 0x90);
+    } else {
+        assert!(snp_definitions.is_none());
+    }
 
     let lobby_state = analysis.lobby_state();
     check_global(lobby_state.as_ref().unwrap(), &binary, "lobby state");

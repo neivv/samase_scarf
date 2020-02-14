@@ -108,6 +108,7 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
             binary,
             rdata,
             arg_cache,
+            inlining: false,
         };
         analysis.analyze(&mut analyzer);
 
@@ -119,6 +120,7 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
             binary: &'e BinaryFile<E::VirtualAddress>,
             rdata: &'e BinarySection<E::VirtualAddress>,
             arg_cache: &'a ArgCache<'e, E>,
+            inlining: bool,
         };
         impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for Analyzer<'a, 'e, E> {
             type State = analysis::DefaultState;
@@ -133,6 +135,19 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
                             address: dest,
                             filename_arg: new_arg,
                         });
+                    } else if self.filename_arg == Arg::Stack(1) && !self.ok {
+                        // Inline if arg1 is currently being passed as ecx
+                        if let Some(dest) = dest {
+                            let ctx = ctrl.ctx();
+                            if !self.inlining {
+                                let ecx = ctrl.resolve(ctx.register_ref(1));
+                                if ecx == self.arg_cache.on_entry(0) {
+                                    self.inlining = true;
+                                    ctrl.analyze_with_current_state(self, dest);
+                                    self.inlining = false;
+                                }
+                            }
+                        }
                     }
                 }
             }
