@@ -395,7 +395,7 @@ fn everything_1221b() {
 
         let lobby_state = analysis.lobby_state();
         assert_eq!(*lobby_state.as_ref().unwrap(), ctx.mem8(&ctx.constant(0x01060fc5)));
-        let init = analysis.init_storm_networking().unwrap();
+        let init = analysis.init_storm_networking().init_storm_networking.unwrap();
         assert_eq!(init.0, 0x006F0BB0);
     })
 }
@@ -766,7 +766,7 @@ fn everything_1232e() {
 
         let lobby_state = analysis.lobby_state();
         assert_eq!(*lobby_state.as_ref().unwrap(), mem8(constval(0x0106f475)));
-        let init = analysis.init_storm_networking().unwrap();
+        let init = analysis.init_storm_networking().init_storm_networking.unwrap();
         assert_eq!(init.0, 0x00716F70);
     })
 }
@@ -776,6 +776,12 @@ fn everything_1233a() {
     test_with_extra_checks(Path::new("1233a.exe"), |analysis| {
         let open_file = analysis.file_hook();
         assert_eq!(open_file[0].0, 0x00544720);
+
+        let init = analysis.init_storm_networking();
+        let init_storm = init.init_storm_networking.unwrap();
+        assert_eq!(init_storm.0, 0x0073b2e0);
+        let load_snps = init.load_snp_list.unwrap();
+        assert_eq!(load_snps.0, 0x007A4590);
     })
 }
 
@@ -1128,7 +1134,8 @@ where F: for<'e> FnOnce(&mut samase_scarf::Analysis<'e, ExecutionStateX86<'e>>),
     let init_network = analysis.init_game_network();
     assert!(init_network.is_some());
     let init_storm_networking = analysis.init_storm_networking();
-    assert!(init_storm_networking.is_some());
+    assert!(init_storm_networking.init_storm_networking.is_some());
+    assert!(init_storm_networking.load_snp_list.is_some());
 }
 
 fn op_register_anywidth(op: &Operand) -> Option<Register> {

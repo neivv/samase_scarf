@@ -260,7 +260,8 @@ fn main() {
     let lobby_state = analysis.lobby_state();
     println!("lobby_state: {}", format_op_operand(&lobby_state));
     let init_storm_networking = analysis.init_storm_networking();
-    println!("init_storm_networking: {:?}", init_storm_networking);
+    println!("init_storm_networking: {:?}", init_storm_networking.init_storm_networking);
+    println!("load_snp_list: {:?}", init_storm_networking.load_snp_list);
 
     let undef = ctx.undefined_rc();
     println!();

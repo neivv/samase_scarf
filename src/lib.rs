@@ -61,7 +61,7 @@ pub use crate::eud::EudTable;
 pub use crate::firegraft::RequirementTables;
 pub use crate::game_init::{GameInit, SinglePlayerStart, SelectMapEntry};
 pub use crate::iscript::StepIscript;
-pub use crate::network::SnpDefinitions;
+pub use crate::network::{InitStormNetworking, SnpDefinitions};
 pub use crate::pathing::RegionRelated;
 pub use crate::players::NetPlayers;
 pub use crate::rng::Rng;
@@ -193,7 +193,7 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     init_game_network: Cached<Option<E::VirtualAddress>>,
     snp_definitions: Cached<Option<SnpDefinitions>>,
     lobby_state: Cached<Option<Rc<Operand>>>,
-    init_storm_networking: Cached<Option<E::VirtualAddress>>,
+    init_storm_networking: Cached<Rc<InitStormNetworking<E::VirtualAddress>>>,
     dat_tables: DatTables,
     binary: &'a scarf::BinaryFile<E::VirtualAddress>,
     ctx: &'a scarf::OperandContext,
@@ -926,11 +926,11 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn init_storm_networking(&mut self) -> Option<E::VirtualAddress> {
+    pub fn init_storm_networking(&mut self) -> Rc<InitStormNetworking<E::VirtualAddress>> {
         if let Some(cached) = self.init_storm_networking.cached() {
             return cached;
         }
-        let result = network::init_storm_networking(self);
+        let result = Rc::new(network::init_storm_networking(self));
         self.init_storm_networking.cache(&result);
         result
     }

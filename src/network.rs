@@ -12,6 +12,12 @@ pub struct SnpDefinitions {
     pub entry_size: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitStormNetworking<Va: VirtualAddress> {
+    pub init_storm_networking: Option<Va>,
+    pub load_snp_list: Option<Va>,
+}
+
 pub fn snp_definitions<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
 ) -> Option<SnpDefinitions> {
@@ -49,14 +55,18 @@ pub fn snp_definitions<'e, E: ExecutionState<'e>>(
 
 pub fn init_storm_networking<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<E::VirtualAddress> {
+) -> InitStormNetworking<E::VirtualAddress> {
+    let mut result = InitStormNetworking {
+        init_storm_networking: None,
+        load_snp_list: None,
+    };
+
     // Init function of AVSelectConnectionScreen calls init_storm_networking,
     // init_storm_networking calls load_snp_list(&[fnptr, fnptr], 1)
     let vtables = crate::vtables::vtables(analysis, b".?AVSelectConnectionScreen@glues@@\0");
     let binary = analysis.binary;
     let text = binary.section(b".text\0\0\0").unwrap();
     let ctx = analysis.ctx;
-    let mut result = None;
     let arg_cache = &analysis.arg_cache;
     for vtable in vtables {
         let func = match binary.read_address(vtable + 0x3 * E::VirtualAddress::SIZE) {
@@ -64,7 +74,7 @@ pub fn init_storm_networking<'e, E: ExecutionState<'e>>(
             Err(_) => continue,
         };
         let mut analyzer = FindInitStormNetworking::<E> {
-            result: None,
+            result: &mut result,
             inlining: false,
             text,
             binary,
@@ -72,7 +82,7 @@ pub fn init_storm_networking<'e, E: ExecutionState<'e>>(
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, func);
         analysis.analyze(&mut analyzer);
-        if single_result_assign(analyzer.result, &mut result) {
+        if result.init_storm_networking.is_some() {
             break;
         }
     }
@@ -80,7 +90,7 @@ pub fn init_storm_networking<'e, E: ExecutionState<'e>>(
 }
 
 struct FindInitStormNetworking<'a, 'e, E: ExecutionState<'e>> {
-    result: Option<E::VirtualAddress>,
+    result: &'a mut InitStormNetworking<E::VirtualAddress>,
     inlining: bool,
     text: &'a BinarySection<E::VirtualAddress>,
     binary: &'a BinaryFile<E::VirtualAddress>,
@@ -98,8 +108,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetw
                         let dest = E::VirtualAddress::from_u64(dest);
                         self.inlining = true;
                         ctrl.analyze_with_current_state(self, dest);
-                        if self.result.is_some() {
-                            self.result = Some(dest);
+                        if self.result.init_storm_networking.is_some() {
+                            self.result.init_storm_networking = Some(dest);
                             ctrl.end_analysis();
                         }
                         self.inlining = false;
@@ -137,7 +147,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetw
                         .filter(|&c| c >= text_start && c < text_end)
                         .is_some();
                     if ok {
-                        self.result = Some(E::VirtualAddress::from_u64(0));
+                        self.result.init_storm_networking = Some(E::VirtualAddress::from_u64(0));
+                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                            self.result.load_snp_list = Some(E::VirtualAddress::from_u64(dest));
+                        }
                         ctrl.end_analysis();
                     }
                 }
