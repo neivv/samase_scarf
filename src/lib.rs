@@ -163,7 +163,7 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     first_ai_script: Cached<Option<Rc<Operand>>>,
     first_guard_ai: Cached<Option<Rc<Operand>>>,
     player_ai_towns: Cached<Option<Rc<Operand>>>,
-    step_iscript: Cached<Rc<StepIscript>>,
+    step_iscript: Cached<Rc<StepIscript<E::VirtualAddress>>>,
     sprites: Cached<Rc<Sprites>>,
     eud: Cached<Rc<EudTable>>,
     map_tile_flags: Cached<Rc<map::MapTileFlags>>,
@@ -967,6 +967,25 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         self.step_secondary_order.cache(&result);
         result
     }
+
+    pub fn step_iscript(&mut self) -> Rc<StepIscript<E::VirtualAddress>> {
+        if let Some(cached) = self.step_iscript.cached() {
+            return cached;
+        }
+        let result = iscript::step_iscript(self);
+        let result = Rc::new(result);
+        self.step_iscript.cache(&result);
+        result
+    }
+
+    pub fn add_overlay_iscript(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.add_overlay_iscript.cached() {
+            return cached;
+        }
+        let result = iscript::add_overlay_iscript(self);
+        self.add_overlay_iscript.cache(&result);
+        result
+    }
 }
 
 impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
@@ -1491,17 +1510,6 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
         result
     }
 
-    pub fn step_iscript(&mut self) -> Rc<StepIscript> {
-        if let Some(cached) = self.step_iscript.cached() {
-            return cached;
-        }
-        let ctx = OperandContext::new();
-        let result = iscript::step_iscript(self, &ctx);
-        let result = Rc::new(result);
-        self.step_iscript.cache(&result);
-        result
-    }
-
     pub fn sprites(&mut self) -> Rc<Sprites> {
         if let Some(cached) = self.sprites.cached() {
             return cached;
@@ -1594,15 +1602,6 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
         let result = game_init::game_init(self, &ctx);
         let result = Rc::new(result);
         self.game_init.cache(&result);
-        result
-    }
-
-    pub fn add_overlay_iscript(&mut self) -> Option<VirtualAddress> {
-        if let Some(cached) = self.add_overlay_iscript.cached() {
-            return cached;
-        }
-        let result = iscript::add_overlay_iscript(self);
-        self.add_overlay_iscript.cache(&result);
         result
     }
 

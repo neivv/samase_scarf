@@ -1,45 +1,43 @@
 use std::rc::Rc;
 
 use scarf::{
-    ArithOpType, MemAccessSize, Operand, OperandType, OperandContext, Operation, VirtualAddress,
+    ArithOpType, MemAccessSize, Operand, OperandType, OperandContext, Operation, BinaryFile,
 };
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::ExecutionState;
-use scarf::ExecutionStateX86;
-use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
-
-type BinaryFile = scarf::BinaryFile<VirtualAddress>;
+use scarf::exec_state::VirtualAddress;
 
 use crate::{
     Analysis, ArgCache, entry_of_until, EntryOfResult, EntryOf, find_functions_using_global,
     OptionExt, single_result_assign,
 };
 
-pub struct StepIscript {
-    pub step_fn: Option<VirtualAddress>,
+pub struct StepIscript<Va: VirtualAddress> {
+    pub step_fn: Option<Va>,
     pub script_operand_at_switch: Option<Rc<Operand>>,
-    pub switch_table: Option<VirtualAddress>,
+    pub switch_table: Option<Va>,
     pub iscript_bin: Option<Rc<Operand>>,
-    pub opcode_check: Option<(VirtualAddress, u32)>,
+    pub opcode_check: Option<(Va, u32)>,
 }
 
 // Note that this returns the `*const u8` script pointer, which can be a local and differ from
 // what the iscript structure has, as it may only be written on return
-fn get_iscript_operand_from_goto(
-    binary: &BinaryFile,
-    ctx: &OperandContext,
-    address: VirtualAddress,
+fn get_iscript_operand_from_goto<'e, E: ExecutionState<'e>>(
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    ctx: &'e OperandContext,
+    address: E::VirtualAddress,
 ) -> Option<Rc<Operand>> {
     // Goto should just read mem16[x], or possibly do a single x + 2 < y compare first
-    struct Analyzer {
+    struct Analyzer<'f, F: ExecutionState<'f>> {
         is_first_branch: bool,
         is_inlining: bool,
         result: Option<Rc<Operand>>,
+        phantom: std::marker::PhantomData<(*const F, &'f ())>,
     }
-    impl<'exec> scarf::Analyzer<'exec> for Analyzer {
+    impl<'f, F: ExecutionState<'f>> scarf::Analyzer<'f> for Analyzer<'f, F> {
         type State = analysis::DefaultState;
-        type Exec = scarf::ExecutionStateX86<'exec>;
-        fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation) {
+        type Exec = F;
+        fn operation(&mut self, ctrl: &mut Control<'f, '_, '_, Self>, op: &Operation) {
             match *op {
                 Operation::Move(_, ref from, None) => {
                     if let Some(mem) = from.if_memory() {
@@ -60,7 +58,7 @@ fn get_iscript_operand_from_goto(
                     }
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
                         self.is_inlining = true;
-                        ctrl.analyze_with_current_state(self, VirtualAddress::from_u64(dest));
+                        ctrl.analyze_with_current_state(self, F::VirtualAddress::from_u64(dest));
                         if self.result.is_some() {
                             ctrl.end_analysis();
                             return;
@@ -99,20 +97,21 @@ fn get_iscript_operand_from_goto(
         }
     }
 
-    let mut analyzer = Analyzer {
+    let mut analyzer = Analyzer::<E> {
         is_first_branch: true,
         is_inlining: false,
         result: None,
+        phantom: Default::default(),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, address);
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-pub fn step_iscript<'a>(
-    analysis: &mut Analysis<'a, ExecutionStateX86<'a>>,
-    ctx: &OperandContext,
-) -> StepIscript {
+pub fn step_iscript<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> StepIscript<E::VirtualAddress> {
+    let ctx = analysis.ctx;
     let binary = analysis.binary;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
@@ -122,7 +121,7 @@ pub fn step_iscript<'a>(
         if cases.len() < 0x40 {
             return None;
         }
-        get_iscript_operand_from_goto(binary, ctx, cases[0x7]).map(|x| (x, switch))
+        get_iscript_operand_from_goto::<E>(binary, ctx, cases[0x7]).map(|x| (x, switch))
     });
     let mut result = StepIscript {
         step_fn: None,
@@ -135,16 +134,14 @@ pub fn step_iscript<'a>(
         let users = find_functions_using_global(analysis, switch.address);
         for user in users {
             let func_result = entry_of_until(binary, funcs, user.func_entry, |entry| {
+                let arg_cache = &analysis.arg_cache;
                 let mut analyzer = IscriptFromSwitchAnalyzer {
                     switch_addr: switch.address,
                     iscript_bin: None,
                     opcode_check: None,
                     result: EntryOf::Retry,
                     wait_check_seen: false,
-                    arg1: {
-                        use scarf::operand_helpers::*;
-                        Operand::simplified(mem32(operand_add(ctx.const_4(), ctx.register(4))))
-                    }
+                    arg_cache,
                 };
                 let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                 analysis.analyze(&mut analyzer);
@@ -183,21 +180,21 @@ pub fn step_iscript<'a>(
     result
 }
 
-struct IscriptFromSwitchAnalyzer {
-    switch_addr: VirtualAddress,
+struct IscriptFromSwitchAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    switch_addr: E::VirtualAddress,
     iscript_bin: Option<Rc<Operand>>,
-    result: EntryOf<(Option<Rc<Operand>>, Option<(VirtualAddress, u32)>)>,
+    result: EntryOf<(Option<Rc<Operand>>, Option<(E::VirtualAddress, u32)>)>,
     wait_check_seen: bool,
-    arg1: Rc<Operand>,
-    opcode_check: Option<(VirtualAddress, u32)>,
+    arg_cache: &'a ArgCache<'e, E>,
+    opcode_check: Option<(E::VirtualAddress, u32)>,
 }
 
-impl<'exec> scarf::Analyzer<'exec> for IscriptFromSwitchAnalyzer {
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IscriptFromSwitchAnalyzer<'a, 'e, E> {
     type State = analysis::DefaultState;
-    type Exec = ExecutionStateX86<'exec>;
-    fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation) {
-        match *op {
-            Operation::Move(_, ref val, None) => {
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        match op {
+            Operation::Move(_, val, None) => {
                 if self.iscript_bin.is_none() {
                     let val = ctrl.resolve(&val);
                     let iscript_bin = val.if_mem8()
@@ -211,7 +208,7 @@ impl<'exec> scarf::Analyzer<'exec> for IscriptFromSwitchAnalyzer {
                     }
                 }
             }
-            Operation::Jump { ref condition, ref to } => {
+            Operation::Jump { condition, to } => {
                 let to = ctrl.resolve(&to);
                 let is_switch_jump = to.iter().any(|x| match x.if_constant() {
                     Some(s) => s == self.switch_addr.as_u64(),
@@ -230,7 +227,7 @@ impl<'exec> scarf::Analyzer<'exec> for IscriptFromSwitchAnalyzer {
                     .filter_map(|x| x.if_mem8())
                     .filter_map(|x| x.if_arithmetic_add())
                     .filter_map(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                    .filter(|&(c, other)| c == 7 && *other == self.arg1)
+                    .filter(|&(c, other)| c == 7 && *other == self.arg_cache.on_entry(0))
                     .next().is_some();
                 if has_wait_check {
                     self.wait_check_seen = true;
@@ -241,8 +238,9 @@ impl<'exec> scarf::Analyzer<'exec> for IscriptFromSwitchAnalyzer {
                     let has_mem8 = condition.iter_no_mem_addr()
                         .any(|x| x.if_mem8().is_some());
                     if has_opcode_limit_constant && has_mem8 {
-                        let len = (ctrl.current_instruction_end() - ctrl.address()).0;
-                        self.opcode_check = Some((ctrl.address(), len));
+                        let len =
+                            ctrl.current_instruction_end().as_u64() - ctrl.address().as_u64();
+                        self.opcode_check = Some((ctrl.address(), len as u32));
                     }
                 }
             }
@@ -251,20 +249,21 @@ impl<'exec> scarf::Analyzer<'exec> for IscriptFromSwitchAnalyzer {
     }
 }
 
-pub fn add_overlay_iscript<'exec>(
-    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
-) -> Option<VirtualAddress> {
+pub fn add_overlay_iscript<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
     let iscript = analysis.step_iscript();
-    let ctx = &OperandContext::new();
+    let ctx = analysis.ctx;
     let binary = analysis.binary;
     // Search for a 5-argument fn(img, sprite (Mem32[x + 3c]), x, y, 1) from
     // iscript opcode 8 (imgol)
     // Sprite is actually unused, but checking for it anyway as the function signature
     // changing isn't anticipated.
     let switch_table = iscript.switch_table?;
-    let case_8 = binary.read_address(switch_table + VirtualAddress::SIZE * 8).ok()?;
+    let word_size = <E::VirtualAddress as VirtualAddress>::SIZE;
+    let case_8 = binary.read_address(switch_table + word_size * 8).ok()?;
 
-    let mut analyzer = AddOverlayAnalyzer::<ExecutionStateX86<'_>> {
+    let mut analyzer = AddOverlayAnalyzer::<E> {
         result: None,
         args: &analysis.arg_cache,
     };
@@ -282,7 +281,7 @@ impl<'e, 'b, Exec: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyze
     type State = analysis::DefaultState;
     type Exec = Exec;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        let word_size = <Exec::VirtualAddress as VirtualAddressTrait>::SIZE;
+        let word_size = <Exec::VirtualAddress as VirtualAddress>::SIZE;
         match op {
             Operation::Jump { to, .. } => {
                 let to = ctrl.resolve(to);
