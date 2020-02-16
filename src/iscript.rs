@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use scarf::{
     ArithOpType, MemAccessSize, Operand, OperandType, OperandContext, Operation, BinaryFile,
+    DestOperand,
 };
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::ExecutionState;
@@ -321,6 +322,78 @@ impl<'e, 'b, Exec: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyze
                     if single_result_assign(result, &mut self.result) {
                         ctrl.end_analysis();
                     }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+pub fn draw_cursor_marker<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Rc<Operand>> {
+    let iscript = analysis.step_iscript();
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+    // hide_cursor_marker is iscript opcode 0x2d
+    let cases = iscript.switch_table?;
+    let case =
+        binary.read_address(cases + 0x2d * <E::VirtualAddress as VirtualAddress>::SIZE).ok()?;
+
+    let mut analyzer = FindDrawCursorMarker::<E> {
+        result: None,
+        inlining: false,
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, case);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct FindDrawCursorMarker<'e, E: ExecutionState<'e>> {
+    result: Option<Rc<Operand>>,
+    inlining: bool,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDrawCursorMarker<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        match op {
+            Operation::Jump { to, .. } => {
+                if to.if_constant().is_none() {
+                    // Skip switch branch
+                    ctrl.end_branch();
+                }
+            }
+            Operation::Call(dest) => {
+                if !self.inlining {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        self.inlining = true;
+                        ctrl.analyze_with_current_state(self, E::VirtualAddress::from_u64(dest));
+                        self.inlining = false;
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                } else {
+                    ctrl.end_analysis();
+                }
+            }
+            Operation::Move(dest, val, None) => {
+                if let DestOperand::Memory(mem) = dest {
+                    if mem.size == MemAccessSize::Mem8 {
+                        let val = ctrl.resolve(val);
+                        if val.if_constant() == Some(0) {
+                            let ctx = ctrl.ctx();
+                            self.result = Some(ctx.mem_variable_rc(mem.size, &mem.address));
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+                if self.inlining {
+                    ctrl.end_analysis();
                 }
             }
             _ => (),

@@ -263,6 +263,9 @@ fn main() {
     println!("init_storm_networking: {:?}", init_storm_networking.init_storm_networking);
     println!("load_snp_list: {:?}", init_storm_networking.load_snp_list);
 
+    let draw_cursor_marker = analysis.draw_cursor_marker();
+    println!("draw_cursor_marker: {}", format_op_operand(&draw_cursor_marker));
+
     let undef = ctx.undefined_rc();
     println!();
     println!("Undefined count: {}", match undef.ty {

@@ -194,6 +194,7 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     snp_definitions: Cached<Option<SnpDefinitions>>,
     lobby_state: Cached<Option<Rc<Operand>>>,
     init_storm_networking: Cached<Rc<InitStormNetworking<E::VirtualAddress>>>,
+    draw_cursor_marker: Cached<Option<Rc<Operand>>>,
     dat_tables: DatTables,
     binary: &'a scarf::BinaryFile<E::VirtualAddress>,
     ctx: &'a scarf::OperandContext,
@@ -451,6 +452,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
             snp_definitions: Default::default(),
             lobby_state: Default::default(),
             init_storm_networking: Default::default(),
+            draw_cursor_marker: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -984,6 +986,15 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         }
         let result = iscript::add_overlay_iscript(self);
         self.add_overlay_iscript.cache(&result);
+        result
+    }
+
+    pub fn draw_cursor_marker(&mut self) -> Option<Rc<Operand>> {
+        if let Some(cached) = self.draw_cursor_marker.cached() {
+            return cached;
+        }
+        let result = iscript::draw_cursor_marker(self);
+        self.draw_cursor_marker.cache(&result);
         result
     }
 }

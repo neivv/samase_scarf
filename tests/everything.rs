@@ -774,6 +774,7 @@ fn everything_1232e() {
 #[test]
 fn everything_1233a() {
     test_with_extra_checks(Path::new("1233a.exe"), |analysis| {
+        let ctx = OperandContext::new();
         let open_file = analysis.file_hook();
         assert_eq!(open_file[0].0, 0x00544720);
 
@@ -782,6 +783,9 @@ fn everything_1233a() {
         assert_eq!(init_storm.0, 0x0073b2e0);
         let load_snps = init.load_snp_list.unwrap();
         assert_eq!(load_snps.0, 0x007A4590);
+
+        let draw_cursor_marker = analysis.draw_cursor_marker();
+        assert_eq!(*draw_cursor_marker.as_ref().unwrap(), ctx.mem8(&ctx.constant(0x00ee6c21)));
     })
 }
 
@@ -1136,6 +1140,9 @@ where F: for<'e> FnOnce(&mut samase_scarf::Analysis<'e, ExecutionStateX86<'e>>),
     let init_storm_networking = analysis.init_storm_networking();
     assert!(init_storm_networking.init_storm_networking.is_some());
     assert!(init_storm_networking.load_snp_list.is_some());
+
+    let draw_cursor_marker = analysis.draw_cursor_marker();
+    check_global(draw_cursor_marker.as_ref().unwrap(), &binary, "draw cursor marker");
 }
 
 fn op_register_anywidth(op: &Operand) -> Option<Register> {
