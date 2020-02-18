@@ -174,7 +174,7 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     bullet_creation: Cached<Rc<BulletCreation>>,
     net_players: Cached<Rc<NetPlayers>>,
     play_smk: Cached<Option<E::VirtualAddress>>,
-    game_init: Cached<Rc<GameInit>>,
+    game_init: Cached<Rc<GameInit<E::VirtualAddress>>>,
     add_overlay_iscript: Cached<Option<E::VirtualAddress>>,
     campaigns: Cached<Option<Rc<Operand>>>,
     run_dialog: Cached<Option<E::VirtualAddress>>,
@@ -997,6 +997,25 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         self.draw_cursor_marker.cache(&result);
         result
     }
+
+    pub fn play_smk(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.play_smk.cached() {
+            return cached;
+        }
+        let result = game_init::play_smk(self);
+        self.play_smk.cache(&result);
+        result
+    }
+
+    pub fn game_init(&mut self) -> Rc<GameInit<E::VirtualAddress>> {
+        if let Some(cached) = self.game_init.cached() {
+            return cached;
+        }
+        let result = game_init::game_init(self);
+        let result = Rc::new(result);
+        self.game_init.cache(&result);
+        result
+    }
 }
 
 impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
@@ -1592,27 +1611,6 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
         let result = players::net_players(self, &ctx);
         let result = Rc::new(result);
         self.net_players.cache(&result);
-        result
-    }
-
-    pub fn play_smk(&mut self) -> Option<VirtualAddress> {
-        if let Some(cached) = self.play_smk.cached() {
-            return cached;
-        }
-        let ctx = OperandContext::new();
-        let result = game_init::play_smk(self, &ctx);
-        self.play_smk.cache(&result);
-        result
-    }
-
-    pub fn game_init(&mut self) -> Rc<GameInit> {
-        if let Some(cached) = self.game_init.cached() {
-            return cached;
-        }
-        let ctx = OperandContext::new();
-        let result = game_init::game_init(self, &ctx);
-        let result = Rc::new(result);
-        self.game_init.cache(&result);
         result
     }
 

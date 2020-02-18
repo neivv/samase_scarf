@@ -1,26 +1,24 @@
 use std::rc::Rc;
 
-use scarf::{DestOperand, Operand, OperandContext, Operation, VirtualAddress, ExecutionStateX86};
+use scarf::{DestOperand, Operand, OperandContext, Operation, BinaryFile};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 
 use crate::{
-    Analysis, ArgCache, entry_of_until, entry_of_until_call, EntryOfResult, EntryOf, OptionExt,
+    Analysis, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt,
     string_refs, if_arithmetic_eq_neq,
 };
 
-use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
-type BinaryFile = scarf::BinaryFile<VirtualAddress>;
+use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-#[derive(Default)]
-pub struct GameInit {
-    pub sc_main: Option<VirtualAddress>,
-    pub mainmenu_entry_hook: Option<VirtualAddress>,
-    pub game_loop: Option<VirtualAddress>,
+pub struct GameInit<Va: VirtualAddress> {
+    pub sc_main: Option<Va>,
+    pub mainmenu_entry_hook: Option<Va>,
+    pub game_loop: Option<Va>,
     pub scmain_state: Option<Rc<Operand>>,
 }
 
-pub struct SinglePlayerStart<Va: VirtualAddressTrait> {
+pub struct SinglePlayerStart<Va: VirtualAddress> {
     pub single_player_start: Option<Va>,
     pub local_storm_player_id: Option<Rc<Operand>>,
     pub local_unique_player_id: Option<Rc<Operand>>,
@@ -32,12 +30,12 @@ pub struct SinglePlayerStart<Va: VirtualAddressTrait> {
     pub skins_size: u32,
 }
 
-pub struct SelectMapEntry<Va: VirtualAddressTrait> {
+pub struct SelectMapEntry<Va: VirtualAddress> {
     pub select_map_entry: Option<Va>,
     pub is_multiplayer: Option<Rc<Operand>>,
 }
 
-impl<Va: VirtualAddressTrait> Default for SinglePlayerStart<Va> {
+impl<Va: VirtualAddress> Default for SinglePlayerStart<Va> {
     fn default() -> Self {
         SinglePlayerStart {
             single_player_start: None,
@@ -53,7 +51,7 @@ impl<Va: VirtualAddressTrait> Default for SinglePlayerStart<Va> {
     }
 }
 
-impl<Va: VirtualAddressTrait> Default for SelectMapEntry<Va> {
+impl<Va: VirtualAddress> Default for SelectMapEntry<Va> {
     fn default() -> Self {
         SelectMapEntry {
             select_map_entry: None,
@@ -62,11 +60,11 @@ impl<Va: VirtualAddressTrait> Default for SelectMapEntry<Va> {
     }
 }
 
-pub fn play_smk<'exec>(
-    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
-    ctx: &OperandContext,
-) -> Option<VirtualAddress> {
+pub fn play_smk<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
+    let ctx = analysis.ctx;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
 
@@ -76,17 +74,16 @@ pub fn play_smk<'exec>(
     let str_ref_addrs = crate::find_strings_casei(&rdata.data, b"smk\\blizzard.");
 
     let data_rvas = str_ref_addrs.iter().flat_map(|&str_rva| {
-        let bytes = (rdata.virtual_address + str_rva).0.to_le_bytes();
-        crate::find_bytes(&data.data, &bytes[..])
+        crate::find_address_refs(&data.data, rdata.virtual_address + str_rva.0)
     }).collect::<Vec<_>>();
     let global_refs = data_rvas.iter().flat_map(|&rva| {
-        crate::find_functions_using_global(analysis, data.virtual_address + rva)
+        crate::find_functions_using_global(analysis, data.virtual_address + rva.0)
     }).collect::<Vec<_>>();
 
     let mut result = None;
     for global in global_refs {
         let new = entry_of_until(binary, funcs, global.use_address, |entry| {
-            let mut analyzer = IsPlaySmk {
+            let mut analyzer = IsPlaySmk::<E> {
                 result: EntryOf::Retry,
                 use_address: global.use_address,
             };
@@ -103,17 +100,17 @@ pub fn play_smk<'exec>(
     result
 }
 
-struct IsPlaySmk {
+struct IsPlaySmk<'e, E: ExecutionState<'e>> {
     result: EntryOf<()>,
-    use_address: VirtualAddress,
+    use_address: E::VirtualAddress,
 }
 
-impl<'exec> analysis::Analyzer<'exec> for IsPlaySmk {
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsPlaySmk<'e, E> {
     type State = analysis::DefaultState;
-    type Exec = scarf::ExecutionStateX86<'exec>;
-    fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation) {
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
         let address = ctrl.address();
-        if address > self.use_address - 8 && address < self.use_address {
+        if address.as_u64() > self.use_address.as_u64() - 8 && address < self.use_address {
             if let Operation::Move(_, value, None) = op {
                 let value = ctrl.resolve(value);
                 let ok = value.if_mem32()
@@ -141,11 +138,15 @@ fn is_arg1(operand: &Rc<Operand>) -> bool {
         .is_some()
 }
 
-pub fn game_init<'exec>(
-    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
-    ctx: &OperandContext,
-) -> GameInit {
-    let mut result = GameInit::default();
+pub fn game_init<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> GameInit<E::VirtualAddress> {
+    let mut result = GameInit {
+        sc_main: None,
+        mainmenu_entry_hook: None,
+        game_loop: None,
+        scmain_state: None,
+    };
     let play_smk = match analysis.play_smk() {
         Some(s) => s,
         None => return result,
@@ -161,27 +162,22 @@ pub fn game_init<'exec>(
     // Since the function is being obfuscated, confirm it being sc_main by that it writes to a
     // game pointer.
     let callers = crate::find_callers(analysis, play_smk);
+    let ctx = analysis.ctx;
     let binary = analysis.binary;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
-    let mut errors = Vec::new();
     for caller in callers {
-        let new = entry_of_until_call(
-            binary,
-            funcs,
-            caller,
-            ctx,
-            &mut errors,
-            |_reset, op, state, _addr, i| {
-                if let Operation::Move(DestOperand::Memory(mem), _, None) = op {
-                    let addr = state.resolve(&mem.address, i);
-                    if game_pointers.iter().any(|x| addr == **x) {
-                        return Some(());
-                    }
-                }
-                None
-            },
-        ).into_option_with_entry().map(|x| x.0);
+        let new = entry_of_until(binary, funcs, caller, |entry| {
+            let mut analyzer = IsScMain::<E> {
+                result: EntryOf::Retry,
+                play_smk,
+                game_pointers: &game_pointers,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.result
+        }).into_option_with_entry().map(|x| x.0);
+
         if crate::single_result_assign(new, &mut result.sc_main) {
             break;
         }
@@ -191,10 +187,9 @@ pub fn game_init<'exec>(
             result: &mut result,
             binary,
             make_undef: None,
-            ctx,
         };
         let mut interner = scarf::exec_state::InternMap::new();
-        let exec_state = scarf::ExecutionStateX86::new(ctx, &mut interner);
+        let exec_state = E::initial_state(ctx, binary, &mut interner);
         let mut analysis = FuncAnalysis::custom_state(
             binary,
             ctx,
@@ -219,11 +214,40 @@ fn collect_game_pointers<'a>(operand: &'a Rc<Operand>, out: &mut Vec<&'a Rc<Oper
     }
 }
 
-struct ScMainAnalyzer<'a> {
-    result: &'a mut GameInit,
-    binary: &'a BinaryFile,
+struct IsScMain<'a, 'e, E: ExecutionState<'e>> {
+    result: EntryOf<()>,
+    play_smk: E::VirtualAddress,
+    game_pointers: &'a [&'a Rc<Operand>],
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsScMain<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        match op {
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    if dest == self.play_smk.as_u64() {
+                        self.result = EntryOf::Stop;
+                    }
+                }
+            }
+            Operation::Move(DestOperand::Memory(mem), _, None) => {
+                let addr = ctrl.resolve(&mem.address);
+                if self.game_pointers.iter().any(|x| addr == **x) {
+                    self.result = EntryOf::Ok(());
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+struct ScMainAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut GameInit<E::VirtualAddress>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
     make_undef: Option<DestOperand>,
-    ctx: &'a OperandContext,
 }
 
 #[allow(bad_style)]
@@ -242,13 +266,14 @@ impl analysis::AnalysisState for ScMainAnalyzerState {
     }
 }
 
-impl<'exec> analysis::Analyzer<'exec> for ScMainAnalyzer<'exec> {
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a, 'e, E> {
     type State = ScMainAnalyzerState;
-    type Exec = scarf::ExecutionStateX86<'exec>;
-    fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation) {
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
         if let Some(to) = self.make_undef.take() {
+            let ctx = ctrl.ctx();
             let (exec_state, i) = ctrl.exec_state();
-            exec_state.move_to(&to, self.ctx.undefined_rc(), i);
+            exec_state.move_to(&to, ctx.undefined_rc(), i);
         }
         match op {
             Operation::Jump { to, condition } => {
@@ -268,14 +293,14 @@ impl<'exec> analysis::Analyzer<'exec> for ScMainAnalyzer<'exec> {
                                         .map(|o| (switch_table, o))
                                 });
                             if let Some((base, offset)) = base_offset {
-                                let case = VirtualAddress::from_u64(base + 3 * 4);
-                                if let Ok(addr) = self.binary.read_u32(case) {
+                                let addr_size = <E::VirtualAddress as VirtualAddress>::SIZE;
+                                let case = E::VirtualAddress::from_u64(base) + 3 * addr_size;
+                                if let Ok(addr) = self.binary.read_address(case) {
                                     let offset = ctrl.unresolve_memory(&offset)
                                         .unwrap_or_else(|| offset.clone());
                                     self.result.scmain_state = Some(offset);
                                     *ctrl.user_state() =
                                         ScMainAnalyzerState::SearchingGameLoop_SwitchJumped;
-                                    let addr = VirtualAddress(addr);
                                     ctrl.analyze_with_current_state(self, addr);
                                     ctrl.end_analysis();
                                 }
@@ -304,7 +329,7 @@ impl<'exec> analysis::Analyzer<'exec> for ScMainAnalyzer<'exec> {
                 if *ctrl.user_state() == ScMainAnalyzerState::SearchingGameLoop_SwitchJumped {
                     let to = ctrl.resolve(to);
                     if let Some(dest) = to.if_constant() {
-                        self.result.game_loop = Some(VirtualAddress::from_u64(dest));
+                        self.result.game_loop = Some(E::VirtualAddress::from_u64(dest));
                         ctrl.end_analysis();
                     }
                 }
