@@ -1782,7 +1782,7 @@ pub struct StringRefs<Va> {
     pub string_address: Va,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct GlobalRefs<Va: VirtualAddressTrait> {
     pub use_address: Va,
     pub func_entry: Va,

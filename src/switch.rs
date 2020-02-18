@@ -29,13 +29,14 @@ pub fn full_switch_info<'exec, E: ExecutionState<'exec>>(
 ) -> Option<(CompleteSwitch<E::VirtualAddress>, E::VirtualAddress)> {
     let users = find_functions_using_global(analysis, switch.address);
     let funcs = analysis.functions();
-    let entry = users.first().map(|x| x.func_entry)?;
+    let crate::GlobalRefs {
+        func_entry: entry,
+        use_address,
+        ..
+    } = *users.first()?;
     let binary = analysis.binary;
     let result = entry_of_until(binary, &funcs[..], entry, |entry| {
-        match full_switch_info_in_function(analysis, switch, entry) {
-            Some(s) => EntryOf::Ok(s),
-            None => EntryOf::Retry,
-        }
+        full_switch_info_in_function(analysis, switch, entry, use_address)
     });
     match result {
         EntryOfResult::Ok(entry, s) => Some((s, entry)),
@@ -47,26 +48,29 @@ fn full_switch_info_in_function<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
     switch: &SwitchTable<E::VirtualAddress>,
     entry: E::VirtualAddress,
-) -> Option<CompleteSwitch<E::VirtualAddress>> {
+    use_address: E::VirtualAddress,
+) -> EntryOf<CompleteSwitch<E::VirtualAddress>> {
 
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
     let mut analyzer: FullSwitchInfo<E> = FullSwitchInfo {
-        result: None,
+        result: EntryOf::Retry,
         text: binary.section(b".text\0\0\0").unwrap(),
         switch,
         binary,
+        use_address,
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
 struct FullSwitchInfo<'a, 'e, E: ExecutionState<'e>> {
-    result: Option<CompleteSwitch<E::VirtualAddress>>,
+    result: EntryOf<CompleteSwitch<E::VirtualAddress>>,
     text: &'e BinarySection<E::VirtualAddress>,
     switch: &'a SwitchTable<E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
+    use_address: E::VirtualAddress,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> FullSwitchInfo<'a, 'e, E> {
@@ -96,10 +100,18 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FullSwitchInfo<'a
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        if {
+            self.use_address < ctrl.address() ||
+                self.use_address >= ctrl.current_instruction_end()
+        } {
+            return;
+        }
+        // Stop unless the match below finds result
+        self.result = EntryOf::Stop;
         match op {
             Operation::Jump { to, .. } => {
                 let to = ctrl.resolve(to);
-                self.result = ctrl.if_mem_word(&to)
+                let result = ctrl.if_mem_word(&to)
                     .and_then(|addr| addr.if_arithmetic_add())
                     .and_then(|(l, r)| {
                         let binary = self.binary;
@@ -137,12 +149,13 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FullSwitchInfo<'a
                             offset,
                         })
                     });
-                if self.result.is_some() {
-                    ctrl.end_analysis();
+                if let Some(result) = result {
+                    self.result = EntryOf::Ok(result);
                 }
             }
             _ => (),
         }
+        ctrl.end_analysis();
     }
 }
 
