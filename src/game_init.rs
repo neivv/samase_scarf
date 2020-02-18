@@ -444,7 +444,6 @@ impl analysis::AnalysisState for IsInitMapFromPathState {
     }
 }
 
-
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsInitMapFromPath<'a, 'e, E> {
     type State = IsInitMapFromPathState;
     type Exec = E;

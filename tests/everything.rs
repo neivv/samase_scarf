@@ -786,6 +786,14 @@ fn everything_1233a() {
 
         let draw_cursor_marker = analysis.draw_cursor_marker();
         assert_eq!(*draw_cursor_marker.as_ref().unwrap(), ctx.mem8(&ctx.constant(0x00ee6c21)));
+
+        let misc = analysis.misc_clientside();
+        assert_eq!(*misc.is_paused.as_ref().unwrap(), ctx.mem32(&ctx.constant(0x00eed95c)));
+        assert_eq!(
+            *misc.is_placing_building.as_ref().unwrap(),
+            ctx.mem32(&ctx.constant(0x010e748c)),
+        );
+        assert_eq!(*misc.is_targeting.as_ref().unwrap(), ctx.mem8(&ctx.constant(0x010f54f2)));
     })
 }
 
@@ -1143,6 +1151,11 @@ where F: for<'e> FnOnce(&mut samase_scarf::Analysis<'e, ExecutionStateX86<'e>>),
 
     let draw_cursor_marker = analysis.draw_cursor_marker();
     check_global(draw_cursor_marker.as_ref().unwrap(), &binary, "draw cursor marker");
+
+    let misc = analysis.misc_clientside();
+    check_global(misc.is_paused.as_ref().unwrap(), &binary, "is_paused");
+    check_global(misc.is_placing_building.as_ref().unwrap(), &binary, "is_placing_building");
+    check_global(misc.is_targeting.as_ref().unwrap(), &binary, "is_targeting");
 }
 
 fn op_register_anywidth(op: &Operand) -> Option<Register> {

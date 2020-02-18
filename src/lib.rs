@@ -54,7 +54,7 @@ pub use scarf;
 pub use scarf::{BinarySection, VirtualAddress};
 pub use crate::ai::AiScriptHook;
 pub use crate::bullets::BulletCreation;
-pub use crate::clientside::{GameScreenRClick, GameCoordConversion};
+pub use crate::clientside::{GameScreenRClick, GameCoordConversion, MiscClientSide};
 pub use crate::commands::{ProcessCommands, Selections, StepNetwork};
 pub use crate::dat::{DatTablePtr};
 pub use crate::eud::EudTable;
@@ -195,6 +195,7 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     lobby_state: Cached<Option<Rc<Operand>>>,
     init_storm_networking: Cached<Rc<InitStormNetworking<E::VirtualAddress>>>,
     draw_cursor_marker: Cached<Option<Rc<Operand>>>,
+    misc_clientside: Cached<Rc<MiscClientSide>>,
     dat_tables: DatTables,
     binary: &'a scarf::BinaryFile<E::VirtualAddress>,
     ctx: &'a scarf::OperandContext,
@@ -453,6 +454,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
             lobby_state: Default::default(),
             init_storm_networking: Default::default(),
             draw_cursor_marker: Default::default(),
+            misc_clientside: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1014,6 +1016,16 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         let result = game_init::game_init(self);
         let result = Rc::new(result);
         self.game_init.cache(&result);
+        result
+    }
+
+    pub fn misc_clientside(&mut self) -> Rc<MiscClientSide> {
+        if let Some(cached) = self.misc_clientside.cached() {
+            return cached;
+        }
+        let result = clientside::misc_clientside(self);
+        let result = Rc::new(result);
+        self.misc_clientside.cache(&result);
         result
     }
 }

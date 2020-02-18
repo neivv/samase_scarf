@@ -266,6 +266,11 @@ fn main() {
     let draw_cursor_marker = analysis.draw_cursor_marker();
     println!("draw_cursor_marker: {}", format_op_operand(&draw_cursor_marker));
 
+    let misc_clientside = analysis.misc_clientside();
+    println!("is_paused: {}", format_op_operand(&misc_clientside.is_paused));
+    println!("is_placing_building: {}", format_op_operand(&misc_clientside.is_placing_building));
+    println!("is_targeting: {}", format_op_operand(&misc_clientside.is_targeting));
+
     let undef = ctx.undefined_rc();
     println!();
     println!("Undefined count: {}", match undef.ty {

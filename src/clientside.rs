@@ -1,8 +1,10 @@
 use std::rc::Rc;
 
-use scarf::analysis::{self, Control};
+use fxhash::FxHashMap;
+
+use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState};
-use scarf::{DestOperand, Operand, Operation, VirtualAddress};
+use scarf::{BinaryFile, DestOperand, Operand, Operation, Rva, VirtualAddress};
 use scarf::operand::{OperandContext, Register};
 
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
@@ -10,10 +12,10 @@ use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 use crate::{
     Analysis, ArgCache, EntryOf, EntryOfResult, find_callers, entry_of_until,
     single_result_assign, OptionExt, DatType, find_functions_using_global,
+    if_arithmetic_eq_neq,
 };
 
 use scarf::ExecutionStateX86;
-type FuncAnalysis<'a, T> = scarf::analysis::FuncAnalysis<'a, ExecutionStateX86<'a>, T>;
 
 pub enum ResultOrEntries<T, Va: VirtualAddressTrait> {
     Result(T),
@@ -32,6 +34,13 @@ pub struct GameCoordConversion {
 pub struct GameScreenRClick<Va: VirtualAddressTrait> {
     pub game_screen_rclick: Option<Va>,
     pub client_selection: Option<Rc<Operand>>,
+}
+
+#[derive(Default)]
+pub struct MiscClientSide {
+    pub is_paused: Option<Rc<Operand>>,
+    pub is_targeting: Option<Rc<Operand>>,
+    pub is_placing_building: Option<Rc<Operand>>,
 }
 
 // Candidates are either a global ref with Some(global), or a call with None
@@ -56,7 +65,7 @@ fn game_screen_rclick_inner<'e, E: ExecutionState<'e>>(
                 ctx,
                 global_addr,
             };
-            let mut analysis = analysis::FuncAnalysis::new(binary, ctx, entry);
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             analysis.analyze(&mut analyzer);
             if let Some(res) = analyzer.result {
                 return EntryOf::Ok(res);
@@ -81,7 +90,7 @@ fn game_screen_rclick_inner<'e, E: ExecutionState<'e>>(
                                 ins: f,
                                 result: false,
                             };
-                            let mut analysis = analysis::FuncAnalysis::new(binary, ctx, entry);
+                            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                             analysis.analyze(&mut analyzer);
                             if analyzer.result {
                                 EntryOf::Stop
@@ -243,7 +252,7 @@ pub fn is_outside_game_screen<'a>(
         result: None,
         args: &analysis.arg_cache,
     };
-    let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_rclick);
+    let mut analysis = FuncAnalysis::<ExecutionStateX86<'_>, _>::new(binary, ctx, game_screen_rclick);
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
@@ -413,7 +422,7 @@ pub fn game_coord_conversion<'a>(
         ctx,
         args: &analysis.arg_cache,
     };
-    let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_rclick);
+    let mut analysis = FuncAnalysis::<ExecutionStateX86<'_>, _>::new(binary, ctx, game_screen_rclick);
     analysis.analyze(&mut analyzer);
 
     result
@@ -460,5 +469,384 @@ pub fn game_screen_rclick<'e, E: ExecutionState<'e>>(
             client_selection: None,
             game_screen_rclick: None,
         },
+    }
+}
+
+pub fn misc_clientside<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> MiscClientSide {
+    let mut result = MiscClientSide {
+        is_paused: None,
+        is_placing_building: None,
+        is_targeting: None,
+    };
+    // Options menu popup does the usual pausing game/canceling placement/targeting
+    // Get init func from its vtable, then search for a inner function
+    // if this.vtable_fn() == 0 {
+    //    ui_switching_to_dialog();
+    // }
+    //
+    // ui_switching_to_dialog has the checks:
+    // if is_multiplayer == 0 {
+    //    pause_game()
+    // }
+    // if scmain_state == 3 {
+    //   if is_placing_building {
+    //     end_building_placement()
+    //   }
+    //   if is_targeting {
+    //     end_targeting()
+    //   }
+    // }
+    let vtables = crate::vtables::vtables(analysis, b".?AVOptionsMenuPopup@glues@@\0");
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let vtable_fn_result_op = &ctx.custom(0);
+    let sel = analysis.select_map_entry();
+    let game_init = analysis.game_init();
+    let is_multiplayer = match sel.is_multiplayer.as_ref() {
+        Some(s) => s,
+        None => return result,
+    };
+    let scmain_state = match game_init.scmain_state.as_ref() {
+        Some(s) => s,
+        None => return result,
+    };
+    for vtable in vtables {
+        let init_func = match binary.read_address(vtable + 0x3 * E::VirtualAddress::SIZE) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        let state = MiscClientSideAnalyzerState::Begin;
+        let mut analyzer = MiscClientSideAnalyzer {
+            result: &mut result,
+            done: false,
+            inline_depth: 0,
+            vtable_fn_result_op,
+            is_multiplayer,
+            scmain_state,
+            branch_start_states: Default::default(),
+            binary,
+        };
+        let mut i = scarf::exec_state::InternMap::new();
+        let exec = E::initial_state(ctx, binary, &mut i);
+        let mut analysis = FuncAnalysis::custom_state(binary, ctx, init_func, exec, state, i);
+        analysis.analyze(&mut analyzer);
+        // Not taking half-complete results for this, I don't have the confidence
+        // that they would be right.
+        if analyzer.done {
+            break;
+        } else {
+            result = MiscClientSide {
+                is_paused: None,
+                is_placing_building: None,
+                is_targeting: None,
+            };
+        }
+    }
+    result
+}
+
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+enum MiscClientSideAnalyzerState {
+    // Checking for this.vtable_fn() == 0
+    Begin,
+    // Checking for multiplayer == 0
+    OnVtableFnZeroBranch,
+    // Checking for is_paused if not found yet, once it is checking
+    // for scmain_state == 3
+    MultiplayerZeroBranch,
+    // Checking for is_placing_building == 0
+    ScMainStateThreeBranch,
+    // Checking for is_targeting == 0
+    IsPlacingBuildingFound,
+    End,
+}
+
+impl analysis::AnalysisState for MiscClientSideAnalyzerState {
+    fn merge(&mut self, newer: Self) {
+        use MiscClientSideAnalyzerState::*;
+        let (low, high) = match *self < newer {
+            true => (*self, newer),
+            false => (newer, *self),
+        };
+        match (low, high) {
+            (a, b) if a == b => (),
+            // When leaving the `this.vtable_fn() == 0` branch and
+            // merging with `Begin`, merge to `End` (Nothing important to be found
+            // after that)
+            (Begin, _) => *self = End,
+            // scmain_state == 3 branch is after `Multiplayer == 0` branch (searching pause game)
+            // and its else branch join, so they merge to MultiplayerZeroBranch to
+            // keep analysis
+            (OnVtableFnZeroBranch, MultiplayerZeroBranch) => *self = high,
+            // Otherwise merge to `End`
+            (OnVtableFnZeroBranch, _) => *self = End,
+            // However, rest of the checks are all inside scmain_state == 3, so
+            // MultiplayerZeroBranch joining with higher state means end
+            (MultiplayerZeroBranch, _) => *self = End,
+            // is_placing_building == 0 also joins with else branch before is_targeting == 0
+            // check.
+            (ScMainStateThreeBranch, IsPlacingBuildingFound) => *self = high,
+            (ScMainStateThreeBranch, _) => *self = End,
+            (IsPlacingBuildingFound, _) => *self = End,
+            (End, _) => *self = End,
+        }
+    }
+}
+
+struct MiscClientSideAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut MiscClientSide,
+    done: bool,
+    inline_depth: u8,
+    vtable_fn_result_op: &'a Rc<Operand>,
+    is_multiplayer: &'a Rc<Operand>,
+    scmain_state: &'a Rc<Operand>,
+    branch_start_states: FxHashMap<Rva, MiscClientSideAnalyzerState>,
+    binary: &'a BinaryFile<E::VirtualAddress>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MiscClientSideAnalyzer<'a, 'e, E> {
+    type State = MiscClientSideAnalyzerState;
+    type Exec = E;
+
+    fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        let rva = Rva((ctrl.address().as_u64() - self.binary.base.as_u64()) as u32);
+        if let Some(state) = self.branch_start_states.remove(&rva) {
+            if state == MiscClientSideAnalyzerState::MultiplayerZeroBranch {
+                self.inline_depth = 0;
+            }
+            *ctrl.user_state() = state;
+        }
+    }
+
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        use MiscClientSideAnalyzerState as State;
+        match *ctrl.user_state() {
+            State::End => {
+                ctrl.end_branch();
+            }
+            State::Begin => self.state_begin(ctrl, op),
+            State::OnVtableFnZeroBranch => self.state_vtable_fn_zero_branch(ctrl, op),
+            State::MultiplayerZeroBranch => self.state_multiplayer_zero_branch(ctrl, op),
+            State::ScMainStateThreeBranch | State::IsPlacingBuildingFound => {
+                self.state_check_placing_building_or_targeting(ctrl, op);
+            }
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
+    fn state_begin(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        use MiscClientSideAnalyzerState as State;
+        // Check for the this.vtable_fn() call and
+        match op {
+            Operation::Call(dest) => {
+                let dest = ctrl.resolve(dest);
+                // call [[ecx] + offset]
+                let is_vtable_fn = ctrl.if_mem_word(&dest)
+                    .and_then(|x| x.if_arithmetic_add())
+                    .and_either_other(|x| x.if_constant())
+                    .and_then(|x| ctrl.if_mem_word(&x))
+                    .and_then(|x| x.if_register())
+                    .filter(|r| r.0 == 1)
+                    .is_some();
+                if is_vtable_fn {
+                    ctrl.skip_operation();
+                    let (exec_state, i) = ctrl.exec_state();
+                    exec_state.move_to(
+                        &DestOperand::Register64(Register(0)),
+                        self.vtable_fn_result_op.clone(),
+                        i,
+                    );
+                }
+
+            }
+            Operation::Jump { condition, to } => {
+                let cond = ctrl.resolve(condition);
+                let cond_ok = if_arithmetic_eq_neq(&cond)
+                    .and_then(|(l, r, is_eq)| {
+                        Some((l, r))
+                            .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
+                            .map(|x| Operand::and_masked(x).0)
+                            .filter(|&x| x == self.vtable_fn_result_op)?;
+                        Some(is_eq)
+                    });
+                if let Some(is_eq) = cond_ok {
+                    // is_eq: true jumps if x == 0
+                    // is_eq: false jumps if x != 0
+                    let branch_start = match is_eq {
+                        true => match ctrl.resolve(to).if_constant() {
+                            Some(s) => E::VirtualAddress::from_u64(s),
+                            None => return,
+                        },
+                        false => ctrl.current_instruction_end(),
+                    };
+                    let rva = Rva((branch_start.as_u64() - self.binary.base.as_u64()) as u32);
+                    self.branch_start_states.insert(rva, State::OnVtableFnZeroBranch);
+                }
+            }
+            _ => (),
+        }
+    }
+
+    fn state_vtable_fn_zero_branch(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        op: &Operation,
+    ) {
+        use MiscClientSideAnalyzerState as State;
+        match op {
+            Operation::Call(dest) => {
+                if self.inline_depth < 2 {
+                    // Inline once fully to ui_switching_to_dialog,
+                    // also allow partial inlining is is_multiplayer read
+                    // is inside function
+                    let old_inline_depth = self.inline_depth;
+                    self.inline_depth += 1;
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        ctrl.inline(self, dest);
+                        ctrl.skip_operation();
+                    }
+                    self.inline_depth = old_inline_depth;
+                    if self.done {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            Operation::Jump { condition, to } => {
+                if self.inline_depth == 2 {
+                    ctrl.end_analysis();
+                }
+                let cond = ctrl.resolve(condition);
+                let cond_ok = if_arithmetic_eq_neq(&cond)
+                    .and_then(|(l, r, is_eq)| {
+                        Some((l, r))
+                            .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
+                            .filter(|&x| x == self.is_multiplayer)?;
+                        Some(is_eq)
+                    });
+                if let Some(is_eq) = cond_ok {
+                    let branch_start = match is_eq {
+                        true => match ctrl.resolve(to).if_constant() {
+                            Some(s) => E::VirtualAddress::from_u64(s),
+                            None => return,
+                        },
+                        false => ctrl.current_instruction_end(),
+                    };
+                    let rva = Rva((branch_start.as_u64() - self.binary.base.as_u64()) as u32);
+                    self.branch_start_states.insert(rva, State::MultiplayerZeroBranch);
+                }
+            }
+            _ => (),
+        }
+    }
+
+    fn state_multiplayer_zero_branch(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        op: &Operation,
+    ) {
+        use MiscClientSideAnalyzerState as State;
+        match op {
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if self.inline_depth == 0 {
+                        self.inline_depth += 1;
+                        ctrl.inline(self, dest);
+                        ctrl.skip_operation();
+                        self.inline_depth -= 1;
+                    }
+                }
+            }
+            Operation::Jump { condition, to } => {
+                let cond = ctrl.resolve(condition);
+                // Check for if_paused if inlining,
+                // otherwise for scmain_state == 3
+                if self.inline_depth == 0 {
+                    let cond_ok = if_arithmetic_eq_neq(&cond)
+                        .and_then(|(l, r, is_eq)| {
+                            Some((l, r))
+                                .and_either_other(|x| x.if_constant().filter(|&c| c == 3))
+                                .map(|x| Operand::and_masked(x).0)
+                                .filter(|&x| x == self.scmain_state)?;
+                            Some(is_eq)
+                        });
+                    if let Some(is_eq) = cond_ok {
+                        let branch_start = match is_eq {
+                            true => match ctrl.resolve(to).if_constant() {
+                                Some(s) => E::VirtualAddress::from_u64(s),
+                                None => return,
+                            },
+                            false => ctrl.current_instruction_end(),
+                        };
+                        let rva = Rva((branch_start.as_u64() - self.binary.base.as_u64()) as u32);
+                        self.branch_start_states.insert(rva, State::ScMainStateThreeBranch);
+                    }
+                } else {
+                    if self.result.is_paused.is_none() {
+                        let is_paused = if_arithmetic_eq_neq(&cond)
+                            .map(|(l, r, _)| (l, r))
+                            .and_either_other(|x| x.if_constant().filter(|&c| c == 0));
+                        if let Some(is_paused) = is_paused {
+                            self.result.is_paused = Some(is_paused.clone());
+                        }
+                    }
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
+        }
+    }
+
+    fn state_check_placing_building_or_targeting(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        op: &Operation,
+    ) {
+        use MiscClientSideAnalyzerState as State;
+        // These two are similar checks.
+        match op {
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if self.inline_depth == 0 {
+                        self.inline_depth += 1;
+                        ctrl.inline(self, dest);
+                        ctrl.skip_operation();
+                        self.inline_depth -= 1;
+                    }
+                }
+            }
+            Operation::Jump { condition, .. } => {
+                let cond = ctrl.resolve(condition);
+                if self.inline_depth == 0 {
+                    let cond_ok = if_arithmetic_eq_neq(&cond)
+                        .and_then(|(l, r, _)| {
+                            let op = Some((l, r))
+                                .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
+                                .map(|x| Operand::and_masked(x).0)?;
+                            Some(op)
+                        });
+                    if let Some(op) = cond_ok {
+                        if *ctrl.user_state() == State::ScMainStateThreeBranch {
+                            self.result.is_placing_building = Some(op.clone());
+                            *ctrl.user_state() = State::IsPlacingBuildingFound;
+                        } else {
+                            self.result.is_targeting = Some(op.clone());
+                            self.done = true;
+                            *ctrl.user_state() = State::End;
+                            ctrl.end_analysis();
+                        }
+                    }
+                } else {
+                    // Only inline functions which are jumpless (e.g. get_is_targeting)
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
+        }
     }
 }
