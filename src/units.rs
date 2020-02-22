@@ -5,8 +5,8 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operand, OperandType, Operation};
 
 use crate::{
-    Analysis, DatType, OptionExt, EntryOf, ArgCache, single_result_assign,
-    find_functions_using_global, entry_of_until,
+    Analysis, DatType, OptionExt, EntryOf, ArgCache, StringRefs, single_result_assign,
+    find_functions_using_global, entry_of_until, string_refs,
 };
 
 #[derive(Clone, Debug)]
@@ -259,4 +259,152 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for OrderIssuingAnaly
             _ => (),
         }
     }
+}
+
+pub fn units<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Rc<Operand>> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let init_units = analysis.init_units()?;
+
+    let arg_cache = &analysis.arg_cache;
+    let mut analyzer = UnitsAnalyzer {
+        result: None,
+        arg_cache,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, init_units);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct UnitsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<Rc<Operand>>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for UnitsAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        match op {
+            Operation::Call(dest) => {
+                if ctrl.resolve(dest).if_constant().is_some() {
+                    let new = self.check_memcpy(ctrl);
+                    if single_result_assign(new, &mut self.result) {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> UnitsAnalyzer<'a, 'e, E> {
+    fn check_memcpy(&self, ctrl: &mut Control<'e, '_, '_, Self>) -> Option<Rc<Operand>> {
+        let arg2 = ctrl.resolve(&self.arg_cache.on_call(1));
+        if arg2.ty != OperandType::Constant(0) {
+            return None;
+        }
+        let arg3 = ctrl.resolve(&self.arg_cache.on_call(2));
+        let unit_size = if E::VirtualAddress::SIZE == 4 {
+            0x150
+        } else {
+            0x1e8
+        };
+        let arg3_ok = (
+            arg3.if_arithmetic_mul()
+                .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
+                .map(|(c, _)| c == unit_size)
+                .unwrap_or(false)
+            ) || (
+                arg3.if_constant().map(|c| c == unit_size * 1700).unwrap_or(false)
+            );
+        if arg3_ok {
+            Some(ctrl.resolve(&self.arg_cache.on_call(0)))
+        } else {
+            None
+        }
+    }
+
+}
+
+pub fn init_units<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let units = analysis.dat(DatType::Units)?;
+    let orders = analysis.dat(DatType::Orders)?;
+    let mut unit_refs = Vec::new();
+    let mut order_refs = Vec::new();
+    {
+        let mut arr = [(&units, &mut unit_refs), (&orders, &mut order_refs)];
+        for &mut (ref dat, ref mut out) in &mut arr {
+            **out = dat.address.iter()
+                .filter_map(|x| x.if_constant())
+                .flat_map(|x| {
+                    find_functions_using_global(analysis, E::VirtualAddress::from_u64(x))
+                }).collect::<Vec<_>>()
+        }
+    }
+    let str_refs = string_refs(binary, analysis, b"arr\\units.dat\0");
+
+    let mut common = unit_refs.iter()
+        .filter(|x| order_refs.iter().any(|y| x.func_entry == y.func_entry))
+        .filter(|x| str_refs.iter().any(|y| x.func_entry == y.func_entry))
+        .map(|x| x.func_entry)
+        .next();
+    if common.is_none() {
+        // Different strategy if a fake call happens to be in between orders and units
+        struct Analyzer<'a, 'f, F: ExecutionState<'f>> {
+            units_dat_seen: bool,
+            units_dat: &'a Rc<Operand>,
+            units_dat_str_seen: bool,
+            units_dat_str_refs: &'a [StringRefs<F::VirtualAddress>],
+        }
+        impl<'a, 'f: 'a, F: ExecutionState<'f>> scarf::Analyzer<'f> for Analyzer<'a, 'f, F> {
+            type State = analysis::DefaultState;
+            type Exec = F;
+            fn operation(&mut self, ctrl: &mut Control<'f, '_, '_, Self>, op: &Operation) {
+                match *op {
+                    Operation::Move(_, ref from, None) => {
+                        let from = ctrl.resolve(from);
+                        for oper in from.iter() {
+                            if *oper == **self.units_dat {
+                                self.units_dat_seen = true;
+                            }
+                        }
+                        let str_ref_addr = self.units_dat_str_refs.iter().any(|x| {
+                            x.use_address >= ctrl.address() &&
+                                x.use_address < ctrl.current_instruction_end()
+                        });
+                        if str_ref_addr {
+                            self.units_dat_str_seen = true;
+                        }
+                        if self.units_dat_seen && self.units_dat_str_seen {
+                            ctrl.end_analysis();
+                        }
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        common = order_refs.iter().filter(|order_ref| {
+            let mut analyzer = Analyzer::<E> {
+                units_dat_seen: false,
+                units_dat: &units.address,
+                units_dat_str_seen: false,
+                units_dat_str_refs: &str_refs[..],
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, order_ref.func_entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.units_dat_seen && analyzer.units_dat_str_seen
+        }).map(|x| x.func_entry).next();
+    }
+
+    common
 }

@@ -1028,73 +1028,28 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         self.misc_clientside.cache(&result);
         result
     }
-}
 
-impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
-    pub fn units(&mut self) -> Option<Rc<Operand>> {
-        fn check_memcpy(
-            state: &mut ExecutionState,
-            ctx: &OperandContext,
-            i: &mut InternMap,
-        ) -> Option<Rc<Operand>> {
-            use scarf::operand_helpers::*;
-            let esp = ctx.register(4);
-            let arg2_loc = mem32(operand_add(esp.clone(), constval(4)));
-            let arg2 = state.resolve(&arg2_loc, i);
-            if arg2.ty != OperandType::Constant(0) {
-                return None;
-            }
-            let arg3_loc = mem32(operand_add(esp.clone(), constval(8)));
-            let arg3 = state.resolve(&arg3_loc, i);
-            let arg3_ok = (
-                arg3.if_arithmetic_mul()
-                    .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                    .map(|(c, _)| c == 0x150)
-                    .unwrap_or(false)
-                ) || (
-                    arg3.if_constant().map(|c| c == 0x150 * 1700).unwrap_or(false)
-                );
-            if arg3_ok {
-                let arg1_loc = mem32(esp.clone());
-                Some(state.resolve(&arg1_loc, i))
-            } else {
-                None
-            }
+    pub fn init_units(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.init_units.cached() {
+            return cached;
         }
+        let result = units::init_units(self);
+        self.init_units.cache(&result);
+        result
+    }
 
+    pub fn units(&mut self) -> Option<Rc<Operand>> {
         if let Some(cached) = self.units.cached() {
             return cached;
         }
 
-        let binary = self.binary;
-        let ctx = &OperandContext::new();
-        let init_units = self.init_units();
-        let result = init_units.as_ref().and_then(|&entry| {
-            let mut result = None;
-            let mut analysis = FuncAnalysis::new(binary, &ctx, entry);
-            'outer: while let Some(mut branch) = analysis.next_branch() {
-                let mut operations = branch.operations();
-                while let Some((op, state, _address, i)) = operations.next() {
-                    match *op {
-                        Operation::Call(ref dest) => {
-                            if if_callable_const(binary, state, dest, i).is_some() {
-                                let new = check_memcpy(state, &ctx, i);
-                                if single_result_assign(new, &mut result) {
-                                    break 'outer;
-                                }
-                            }
-                        }
-                        _ => (),
-                    }
-                }
-            }
-            result
-        });
-
+        let result = units::units(self);
         self.units.cache(&result);
         result
     }
+}
 
+impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
     pub fn first_ai_script(&mut self) -> Option<Rc<Operand>> {
         use crate::ai::*;
         if let Some(cached) = self.first_ai_script.cached() {
@@ -1308,89 +1263,6 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
         }
 
         self.player_ai_towns.cache(&result);
-        result
-    }
-
-    pub fn init_units(&mut self) -> Option<VirtualAddress> {
-        if let Some(cached) = self.init_units.cached() {
-            return cached;
-        }
-        let binary = self.binary;
-        let ctx = &OperandContext::new();
-
-        let units = self.dat(DatType::Units)?;
-        let orders = self.dat(DatType::Orders)?;
-        let mut unit_refs = Vec::new();
-        let mut order_refs = Vec::new();
-        {
-            let mut arr = [(&units, &mut unit_refs), (&orders, &mut order_refs)];
-            for &mut (ref dat, ref mut out) in &mut arr {
-                **out = dat.address.iter()
-                    .filter_map(|x| x.if_constant())
-                    .flat_map(|x| {
-                        find_functions_using_global(self, VirtualAddress::from_u64(x))
-                    }).collect::<Vec<_>>()
-            }
-        }
-        let str_refs = string_refs(binary, self, b"arr\\units.dat\0");
-
-        let mut common = unit_refs.iter()
-            .filter(|x| order_refs.iter().any(|y| x.func_entry == y.func_entry))
-            .filter(|x| str_refs.iter().any(|y| x.func_entry == y.func_entry))
-            .map(|x| x.func_entry)
-            .next();
-        if common.is_none() {
-            // Different strategy if a fake call happens to be in between orders and units
-            struct Analyzer<'a> {
-                units_dat_seen: bool,
-                units_dat: &'a Rc<Operand>,
-                units_dat_str_seen: bool,
-                units_dat_str_refs: &'a [StringRefs<VirtualAddress>],
-            }
-            impl<'a, 'exec: 'a> scarf::Analyzer<'exec> for Analyzer<'a> {
-                type State = analysis::DefaultState;
-                type Exec = scarf::ExecutionStateX86<'exec>;
-                fn operation(&mut self, ctrl: &mut Control<Self>, op: &Operation) {
-                    match *op {
-                        Operation::Move(_, ref from, None) => {
-                            let from = ctrl.resolve(from);
-                            for oper in from.iter() {
-                                if *oper == **self.units_dat {
-                                    self.units_dat_seen = true;
-                                }
-                            }
-                            let str_ref_addr = self.units_dat_str_refs.iter().any(|x| {
-                                x.use_address >= ctrl.address() &&
-                                    x.use_address < ctrl.current_instruction_end()
-                            });
-                            if str_ref_addr {
-                                self.units_dat_str_seen = true;
-                            }
-                            if self.units_dat_seen && self.units_dat_str_seen {
-                                ctrl.end_analysis();
-                            }
-                        }
-                        _ => (),
-                    }
-                }
-            }
-
-            common = order_refs.iter().filter(|order_ref| {
-                let mut analyzer = Analyzer {
-                    units_dat_seen: false,
-                    units_dat: &units.address,
-                    units_dat_str_seen: false,
-                    units_dat_str_refs: &str_refs[..],
-                };
-                let mut analysis = FuncAnalysis::new(binary, ctx, order_ref.func_entry);
-                analysis.analyze(&mut analyzer);
-                analyzer.units_dat_seen && analyzer.units_dat_str_seen
-            }).map(|x| x.func_entry).next();
-        }
-
-        debug!("init_units {:?}", common);
-        let result = common;
-        self.init_units.cache(&result);
         result
     }
 
