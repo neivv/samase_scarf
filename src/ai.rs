@@ -5,121 +5,71 @@ use scarf::{
     self, DestOperand, Operand, Operation, VirtualAddress, MemAccessSize, OperandContext,
     OperandType, BinaryFile,
 };
-use scarf::analysis::{self, Control};
+use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{InternMap, ExecutionState};
 
 use scarf::ExecutionStateX86;
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
-type FuncAnalysis<'a, T> = scarf::analysis::FuncAnalysis<'a, ExecutionStateX86<'a>, T>;
 
 use crate::{
-    ArgCache, Error, OptionExt, entry_of_until_call, single_result_assign, Analysis,
-    find_functions_using_global,
+    ArgCache, OptionExt, single_result_assign, Analysis, find_functions_using_global,
+    entry_of_until, EntryOf, find_callers, DatType,
 };
 
-pub fn check_step_ai_scripts(
-    binary: &BinaryFile<VirtualAddress>,
-    funcs: &[VirtualAddress],
-    ctx: &OperandContext,
-    call_pos: VirtualAddress,
-    errors: &mut Vec<Error>,
+fn check_step_ai_scripts<'e, E: ExecutionState<'e>>(
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    funcs: &[E::VirtualAddress],
+    ctx: &'e OperandContext,
+    call_pos: E::VirtualAddress,
 ) -> Option<Rc<Operand>> {
-    let mut first_branch = false;
-    entry_of_until_call(binary, funcs, call_pos, ctx, errors, |reset, op, state, _addr, i| {
-        if reset {
-            first_branch = true;
+    entry_of_until(binary, funcs, call_pos, |entry| {
+        let mut analyzer = StepAiScriptsAnalyzer::<E> {
+            first_ai_script: None,
+            phantom: Default::default(),
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+        analysis.analyze(&mut analyzer);
+        match analyzer.first_ai_script {
+            Some(s) => EntryOf::Ok(s),
+            None => EntryOf::Retry,
         }
-        if first_branch {
-            match *op {
-                Operation::Jump { ref condition, .. } => {
-                    first_branch = false;
-                    let cond = state.resolve(condition, i);
-                    let result = cond.if_arithmetic_eq()
-                        .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                        .and_then(|(c, other)| match c {
-                            0 => Some(other),
-                            _ => None,
-                        })
-                        .and_then(|other| {
-                            if let Some((l, r)) = other.if_arithmetic_eq() {
-                                Operand::either(l, r, |x| x.if_constant())
-                                    .and_then(|(c, other)| match c {
-                                        0 => Some(other.clone()),
-                                        _ => None,
-                                    })
-                            } else {
-                                Some(other.clone())
-                            }
-                        });
-                    if let Some(res) = result {
-                        return Some(res);
-                    }
-                }
-                _ => (),
-            }
-        }
-        None
     }).into_option()
 }
 
-pub fn ai_towns_check(
-    val: &Rc<Operand>,
-    state: &mut ExecutionStateX86,
-    i: &mut InternMap,
-    ctx: &OperandContext
-) -> Option<Rc<Operand>> {
-    use scarf::operand_helpers::*;
-
-    // aiscript_start_town accesses player's first ai town
-    if let Some(mem) = val.if_memory() {
-        let resolved = state.resolve(&mem.address, i);
-        resolved.if_arithmetic_add()
-            .and_then(|(l, r)| Operand::either(l, r, |x| x.if_arithmetic_mul()))
-            .and_then(|((l, r), other)| {
-                Operand::either(l, r, |x| x.if_constant())
-                    .filter(|&(c, _)| c == 8)
-                    .map(|_| Operand::simplified(operand_sub(other.clone(), ctx.const_4())))
-            })
-    } else {
-        None
-    }
+struct StepAiScriptsAnalyzer<'e, E: ExecutionState<'e>> {
+    first_ai_script: Option<Rc<Operand>>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
-pub fn ai_towns_child_func(
-    binary: &BinaryFile<VirtualAddress>,
-    func: VirtualAddress,
-    ctx: &OperandContext,
-) -> Option<Rc<Operand>> {
-    use scarf::operand_helpers::*;
-
-    let mut analysis = FuncAnalysis::new(binary, ctx, func);
-    let mut result = None;
-    let jump_count_marker = mem32(ctx.undefined_rc());
-    'outer: while let Some(mut branch) = analysis.next_branch() {
-        let mut operations = branch.operations();
-        while let Some((op, state, _address, i)) = operations.next() {
-            match *op {
-                Operation::Call(..) | Operation::Jump { .. } => {
-                    let jumps_calls_done =
-                        state.resolve(&jump_count_marker, i).if_constant().unwrap_or(0);
-                    if jumps_calls_done > 4 {
-                        break 'outer;
-                    }
-                    let dest = DestOperand::from_oper(&jump_count_marker);
-                    let val = ctx.constant(jumps_calls_done + 1);
-                    state.move_to(&dest, val, i);
-                }
-                Operation::Move(ref _dest, ref val, ref _cond) => {
-                    let res = ai_towns_check(val, state, i, &ctx);
-                    if single_result_assign(res, &mut result) {
-                        break 'outer;
-                    }
-                }
-                _ => (),
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepAiScriptsAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        match op {
+            Operation::Jump { condition, .. } => {
+                let cond = ctrl.resolve(condition);
+                self.first_ai_script = cond.if_arithmetic_eq()
+                    .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
+                    .and_then(|(c, other)| match c {
+                        0 => Some(other),
+                        _ => None,
+                    })
+                    .and_then(|other| {
+                        if let Some((l, r)) = other.if_arithmetic_eq() {
+                            Operand::either(l, r, |x| x.if_constant())
+                                .and_then(|(c, other)| match c {
+                                    0 => Some(other.clone()),
+                                    _ => None,
+                                })
+                        } else {
+                            Some(other.clone())
+                        }
+                    });
+                ctrl.end_analysis();
             }
+            _ => (),
         }
     }
-    result
 }
 
 pub fn ai_update_attack_target<'a>(
@@ -161,7 +111,7 @@ pub fn ai_update_attack_target<'a>(
         result: None,
         args: &analysis.arg_cache,
     };
-    let mut analysis = FuncAnalysis::new(analysis.binary, ctx, order_computer_return);
+    let mut analysis = FuncAnalysis::<ExecutionStateX86<'_>, _>::new(analysis.binary, ctx, order_computer_return);
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
@@ -201,7 +151,7 @@ pub fn aiscript_hook<'e, E: ExecutionState<'e>>(
         find_functions_using_global(analysis, switch_table.address)
             .into_iter().map(move |f| (f.func_entry, switch_table.address))
     }).filter_map(|(entry, switch_table)| {
-        let mut analysis = analysis::FuncAnalysis::new(binary, &ctx, entry);
+        let mut analysis = FuncAnalysis::new(binary, &ctx, entry);
         let mut analyzer: AiscriptHookAnalyzer<E> = AiscriptHookAnalyzer {
             aiscript_operand: None,
             switch_state: None,
@@ -437,7 +387,7 @@ fn aiscript_find_switch_loop_and_end<'e, E: ExecutionState<'e>>(
     let second_opcode_case = binary.read_u32(switch_table + 0x2b * 4).ok()?;
     let wait_case = binary.read_u32(switch_table + 0x2 * 4).ok()?;
     let opcode_case = E::VirtualAddress::from_u64(opcode_case as u64);
-    let mut analysis = analysis::FuncAnalysis::new(binary, ctx, opcode_case);
+    let mut analysis = FuncAnalysis::new(binary, ctx, opcode_case);
     let mut analyzer: AiscriptFindSwitchLoop<E> = AiscriptFindSwitchLoop {
         first_op_jumps: ArrayVec::new(),
         first_op: true,
@@ -445,7 +395,7 @@ fn aiscript_find_switch_loop_and_end<'e, E: ExecutionState<'e>>(
     };
     analysis.analyze(&mut analyzer);
     let second_opcode_case = E::VirtualAddress::from_u64(second_opcode_case as u64);
-    let mut analysis = analysis::FuncAnalysis::new(binary, &ctx, second_opcode_case);
+    let mut analysis = FuncAnalysis::new(binary, &ctx, second_opcode_case);
     analyzer.first_op = false;
     analysis.analyze(&mut analyzer);
 
@@ -494,7 +444,7 @@ fn aiscript_find_switch_loop_end<'e, E: ExecutionState<'e>>(
     ctx: &'e OperandContext,
     wait_case: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
-    let mut analysis = analysis::FuncAnalysis::new(binary, &ctx, wait_case);
+    let mut analysis = FuncAnalysis::new(binary, &ctx, wait_case);
     let mut analyzer: AiscriptFindSwitchEnd<E> = AiscriptFindSwitchEnd {
         result: None,
         first_branch: true,
@@ -582,5 +532,328 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchEnd
 
     fn branch_end(&mut self, _ctrl: &mut Control<'e, '_, '_, Self>) {
         self.first_branch = false;
+    }
+}
+
+pub fn first_ai_script<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Rc<Operand>> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let funcs = &analysis.functions();
+    let aiscript_hook = analysis.aiscript_hook();
+    let aiscript_hook = (*aiscript_hook).as_ref()?;
+    let hook_start = aiscript_hook.op_limit_hook_begin;
+
+    let result = entry_of_until(binary, &funcs, hook_start, |entry| {
+        let mut result = None;
+        let callers = find_callers(analysis, entry);
+        for caller in callers {
+            let new = check_step_ai_scripts::<E>(binary, funcs, ctx, caller);
+            if single_result_assign(new, &mut result) {
+                break;
+            }
+        }
+        if let Some(res) = result {
+            EntryOf::Ok(res)
+        } else {
+            EntryOf::Retry
+        }
+    }).into_option();
+    result
+}
+
+pub fn first_guard_ai<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Rc<Operand>> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    // There's a function referring build times and looping through all guard ais,
+    // guard ais are the first memaccess
+    let funcs = &analysis.functions();
+    let build_time_refs = {
+        let units_dat = analysis.dat_virtual_address(DatType::Units);
+        units_dat.and_then(|(dat, dat_table_size)| {
+            binary.read_address(dat + 0x2a * dat_table_size).ok().map(|times| {
+                find_functions_using_global(analysis, times)
+                    .into_iter()
+                    .map(|global_ref| global_ref.use_address)
+                    .collect::<Vec<_>>()
+            })
+        }).unwrap_or_else(|| Vec::new())
+    };
+    let mut result = None;
+    // Since the guard ai should be first memaccess, and there are several unrelated
+    // functions checking unit build time, try just first entry suggestion for each
+    // use at first, and if that doesn't work then run through all of them.
+    'outer: for &retry in &[false, true] {
+        for &use_address in &build_time_refs {
+            let new = entry_of_until(binary, &funcs, use_address, |entry| {
+                let mut analyzer = GuardAiAnalyzer::<E> {
+                    result: if retry { EntryOf::Retry } else { EntryOf::Stop },
+                    phantom: Default::default(),
+                    jump_limit: 5,
+                    use_address,
+                };
+                let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+                analysis.analyze(&mut analyzer);
+                analyzer.result
+            }).into_option();
+            if single_result_assign(new, &mut result) {
+                break 'outer;
+            }
+        }
+    }
+    result
+}
+
+struct GuardAiAnalyzer<'e, E: ExecutionState<'e>> {
+    result: EntryOf<Rc<Operand>>,
+    jump_limit: u8,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+    use_address: E::VirtualAddress,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GuardAiAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        let use_address = self.use_address;
+        if ctrl.address() >= use_address && ctrl.current_instruction_end() < use_address {
+            self.result = EntryOf::Stop;
+        }
+        match op {
+            Operation::Call(..) | Operation::Jump { .. } => {
+                self.jump_limit -= 1;
+                if self.jump_limit == 0 {
+                    ctrl.end_analysis();
+                }
+            }
+            Operation::Move(_, ref val, _) => {
+                let val = ctrl.resolve(val);
+                let ctx = ctrl.ctx();
+                let result = val.if_mem32()
+                    .and_then(|address| address.if_arithmetic_add())
+                    .and_either(|x| x.if_arithmetic_mul())
+                    .and_then(|((l, r), base)| {
+                        Some((l, r))
+                            .and_either(|x| x.if_constant().filter(|&c| c == 8))
+                            .map(|_| base)
+                    })
+                    .map(|val| ctx.sub(val, &ctx.constant(4)));
+                if let Some(result) = result {
+                    self.result = EntryOf::Ok(result);
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+pub fn player_ai_towns<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Rc<Operand>> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let aiscript = analysis.aiscript_hook();
+    let aiscript = (*aiscript).as_ref()?;
+
+    let addr_size = E::VirtualAddress::SIZE;
+    let start_town = binary.read_address(aiscript.switch_table + 0x3 * addr_size).ok()?;
+
+    let state = AiTownState {
+        jump_count: 0,
+    };
+    let mut i = InternMap::new();
+    let exec_state = E::initial_state(ctx, binary, &mut i);
+    let mut analysis =
+        FuncAnalysis::custom_state(binary, ctx, start_town, exec_state, state, i);
+    let mut analyzer = AiTownAnalyzer {
+        result: None,
+        inlining: false,
+        phantom: Default::default(),
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+#[derive(Clone)]
+struct AiTownState {
+    jump_count: u32,
+}
+
+impl analysis::AnalysisState for AiTownState {
+    fn merge(&mut self, new: AiTownState) {
+        self.jump_count = self.jump_count.max(new.jump_count);
+    }
+}
+
+struct AiTownAnalyzer<'e, E: ExecutionState<'e>> {
+    result: Option<Rc<Operand>>,
+    inlining: bool,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiTownAnalyzer<'e, E> {
+    type State = AiTownState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        let mut jump_check = false;
+        match op {
+            Operation::Call(dest) => {
+                if !self.inlining {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        self.inlining = true;
+                        let old_jump_count = ctrl.user_state().jump_count;
+                        ctrl.user_state().jump_count = 0;
+                        ctrl.analyze_with_current_state(self, dest);
+                        ctrl.user_state().jump_count = old_jump_count;
+                        self.inlining = false;
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                } else {
+                    jump_check = true;
+                }
+            }
+            Operation::Move(_dest, val, _cond) => {
+                let res = self.ai_towns_check(val, ctrl);
+                if single_result_assign(res, &mut self.result) {
+                    ctrl.end_analysis();
+                }
+            }
+            Operation::Jump { to, .. } => {
+                if to.if_constant().is_none() {
+                    ctrl.end_analysis();
+                    return;
+                }
+                jump_check = true;
+            }
+            _ => (),
+        }
+        if jump_check {
+            let state = ctrl.user_state();
+            state.jump_count += 1;
+            if self.inlining && state.jump_count > 5 {
+                ctrl.end_analysis();
+            } else if !self.inlining && state.jump_count > 2 {
+                ctrl.end_branch();
+            }
+        }
+    }
+}
+
+impl<'e, E: ExecutionState<'e>> AiTownAnalyzer<'e, E> {
+    fn ai_towns_check(
+        &self,
+        val: &Rc<Operand>,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+    ) -> Option<Rc<Operand>> {
+        let ctx = ctrl.ctx();
+        let val = ctrl.resolve(&val);
+        // aiscript_start_town accesses player's first ai town
+        if let Some(mem) = val.if_memory() {
+            mem.address.if_arithmetic_add()
+                .and_either(|x| x.if_arithmetic_mul())
+                .and_then(|((l, r), other)| {
+                    Operand::either(l, r, |x| x.if_constant())
+                        .filter(|&(c, _)| c == 8)
+                        .map(|_| ctx.sub(other, &ctx.const_4()))
+                })
+        } else {
+            None
+        }
+    }
+}
+
+pub fn player_ai<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Rc<Operand>> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let aiscript = analysis.aiscript_hook();
+    let aiscript_hook = (*aiscript).as_ref()?;
+
+    let addr_size = E::VirtualAddress::SIZE;
+    let farms_notiming = binary.read_address(aiscript_hook.switch_table + 0x32 * addr_size).ok()?;
+
+    // Set script->player to 0
+    let mut interner = InternMap::new();
+    let mut state = E::initial_state(ctx, binary, &mut interner);
+    let player_offset = if addr_size == 4 { 0x10 } else { 0x18 };
+    let player = ctx.mem32(&ctx.add(
+        &aiscript_hook.script_operand_at_switch,
+        &ctx.constant(player_offset),
+    ));
+    state.move_to(&DestOperand::from_oper(&player), ctx.const_0(), &mut interner);
+    let mut analysis = FuncAnalysis::with_state(
+        binary,
+        &ctx,
+        farms_notiming,
+        state,
+        interner,
+    );
+    let mut analyzer = PlayerAiAnalyzer {
+        result: None,
+        inlining: false,
+        phantom: Default::default(),
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct PlayerAiAnalyzer<'e, E: ExecutionState<'e>> {
+    result: Option<Rc<Operand>>,
+    inlining: bool,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlayerAiAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        match op {
+            Operation::Call(dest) => {
+                if !self.inlining {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        self.inlining = true;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inlining = false;
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Move(dest, val, _cond) => {
+                if let DestOperand::Memory(mem) = dest {
+                    let dest = ctrl.resolve(&mem.address);
+                    let val = ctrl.resolve(val);
+                    let ctx = ctrl.ctx();
+                    let result = val.if_arithmetic_or()
+                        .and_either_other(|x| x.if_memory().filter(|mem| mem.address == dest))
+                        .and_then(|y| y.if_constant())
+                        .filter(|&c| c == 0x10)
+                        .map(|_| ctx.sub(&dest, &ctx.constant(0x218)));
+                    if single_result_assign(result, &mut self.result) {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            Operation::Jump { .. } => {
+                if !self.inlining {
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
+        }
     }
 }

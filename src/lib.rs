@@ -45,7 +45,7 @@ use std::rc::Rc;
 use byteorder::{ReadBytesExt, LE};
 use quick_error::quick_error;
 
-use scarf::{DestOperand, Operand, OperandType, Operation, Rva};
+use scarf::{Operand, Operation, Rva};
 use scarf::analysis::{self, Control, FuncCallPair, RelocValues};
 use scarf::exec_state::{InternMap};
 use scarf::operand::{MemAccessSize, OperandContext};
@@ -1047,225 +1047,48 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         self.units.cache(&result);
         result
     }
-}
 
-impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
     pub fn first_ai_script(&mut self) -> Option<Rc<Operand>> {
-        use crate::ai::*;
         if let Some(cached) = self.first_ai_script.cached() {
             return cached;
         }
 
-        let binary = self.binary;
-        let ctx = &OperandContext::new();
-        let mut errors = Vec::new();
-
-        let funcs = &self.functions();
-        let aiscript_hook = self.aiscript_hook();
-        let aiscript_hook = (*aiscript_hook).as_ref();
-        let result = aiscript_hook.map(|x| x.op_limit_hook_begin).and_then(|hook_start| {
-            entry_of_until(binary, &funcs, hook_start, |entry| {
-                let mut result = None;
-                let callers = find_callers(self, entry);
-                for caller in callers {
-                    let new = check_step_ai_scripts(binary, funcs, ctx, caller, &mut errors);
-                    if single_result_assign(new, &mut result) {
-                        break;
-                    }
-                }
-                if let Some(res) = result {
-                    EntryOf::Ok(res)
-                } else {
-                    EntryOf::Retry
-                }
-            }).into_option()
-        });
-
-        for e in errors {
-            debug!("first_ai_script {}", e);
-        }
+        let result = ai::first_ai_script(self);
         self.first_ai_script.cache(&result);
         result
     }
 
     pub fn first_guard_ai(&mut self) -> Option<Rc<Operand>> {
-        use scarf::operand_helpers::*;
-
         if let Some(cached) = self.first_guard_ai.cached() {
             return cached;
         }
 
-        let binary = self.binary;
-        let ctx = &OperandContext::new();
-
-        // There's a function referring build times and looping through all guard ais,
-        // guard ais are the first memaccess
-        let funcs = &self.functions();
-        let build_time_refs = {
-            let units_dat = self.dat_virtual_address(DatType::Units);
-            units_dat.and_then(|(dat, dat_table_size)| {
-                binary.read_u32(dat + 0x2a * dat_table_size).ok().map(|times| {
-                    find_functions_using_global(self, VirtualAddress(times))
-                        .into_iter()
-                        .map(|global_ref| (VirtualAddress(times), global_ref.use_address))
-                        .collect::<Vec<_>>()
-                })
-            }).unwrap_or_else(|| Vec::new())
-        };
-        let mut result = None;
-        for (dat_address, use_address) in build_time_refs {
-            let mut jump_limit = 0;
-            let new = entry_of_until_memref(
-                binary,
-                &funcs,
-                dat_address,
-                use_address,
-                &ctx,
-                |reset, op, state, _ins_address, i| {
-                    if reset {
-                        jump_limit = 5;
-                    }
-                    if jump_limit == 0 {
-                        return None;
-                    }
-                    match op {
-                        Operation::Call(..) | Operation::Jump { .. } => {
-                            jump_limit -= 1;
-                        }
-                        Operation::Move(_, ref val, _) => {
-                            let val = state.resolve(val, i);
-                            return val.if_memory()
-                                .filter(|mem| mem.size == MemAccessSize::Mem32)
-                                .and_then(|mem| mem.address.if_arithmetic_add())
-                                .and_then(|(l, r)| {
-                                    Operand::either(l, r, |x| x.if_arithmetic_mul())
-                                })
-                                .and_then(|((l, r), other)| {
-                                    Operand::either(l, r, |x| x.if_constant())
-                                        .filter(|&(c, _)| c == 8)
-                                        .map(|_| other)
-                                }).map(|val| {
-                                    Operand::simplified(operand_sub(val.clone(), ctx.const_4()))
-                                });
-                        }
-                        _ => (),
-                    }
-                    None
-                },
-            ).into_option();
-            if single_result_assign(new, &mut result) {
-                break;
-            }
-        }
-
+        let result = ai::first_guard_ai(self);
         self.first_guard_ai.cache(&result);
         result
     }
 
     pub fn player_ai_towns(&mut self) -> Option<Rc<Operand>> {
-        use crate::ai::*;
-
-        #[derive(Clone)]
-        struct AiTownState {
-            jump_count: u32,
-        }
-        impl analysis::AnalysisState for AiTownState {
-            fn merge(&mut self, new: AiTownState) {
-                self.jump_count = self.jump_count.max(new.jump_count);
-            }
-        }
-        struct AiTownAnalyzer<'a> {
-            result: Option<Rc<Operand>>,
-            binary: &'a BinaryFile,
-            ctx: &'a OperandContext,
-        }
-        impl<'a> analysis::Analyzer<'a> for AiTownAnalyzer<'a> {
-            type State = AiTownState;
-            type Exec = scarf::ExecutionStateX86<'a>;
-            fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
-                match *op {
-                    Operation::Call(ref dest) => {
-                        let dest = {
-                            let (state, i) = ctrl.exec_state();
-                            if_callable_const(self.binary, state, dest, i)
-                        };
-                        if let Some(dest) = dest {
-                            let res = ai_towns_child_func(
-                                self.binary,
-                                dest,
-                                &self.ctx,
-                            );
-                            if single_result_assign(res, &mut self.result) {
-                                ctrl.end_analysis();
-                            }
-                        }
-                    }
-                    Operation::Move(ref _dest, ref val, ref _cond) => {
-                        let res = {
-                            let (state, i) = ctrl.exec_state();
-                            ai_towns_check(val, state, i, &self.ctx)
-                        };
-                        if single_result_assign(res, &mut self.result) {
-                            ctrl.end_analysis();
-                        }
-                    }
-                    Operation::Jump { ref to, .. } => {
-                        let end = {
-                            let state = ctrl.user_state();
-                            if to.if_constant().is_none() {
-                                state.jump_count = !0;
-                            } else {
-                                state.jump_count += 1;
-                            };
-                            state.jump_count > 2
-                        };
-                        if end {
-                            ctrl.end_branch();
-                        }
-                    }
-                    _ => (),
-                }
-            }
-        }
-
         if let Some(cached) = self.player_ai_towns.cached() {
             return cached;
         }
 
-        let binary = self.binary;
-        let ctx = &OperandContext::new();
-
-        let aiscript = self.aiscript_hook();
-
-        let mut result = None;
-        for aiscript_hook in aiscript.iter() {
-            let start_town = match binary.read_u32(aiscript_hook.switch_table + 0x3 * 4) {
-                Ok(o) => VirtualAddress(o),
-                Err(_) => continue,
-            };
-
-            let state = AiTownState {
-                jump_count: 0,
-            };
-            let mut i = InternMap::new();
-            let exec_state = ExecutionState::new(&ctx, &mut i);
-            let mut analysis =
-                FuncAnalysis::custom_state(binary, ctx, start_town, exec_state, state, i);
-            let mut analyzer = AiTownAnalyzer {
-                result: None,
-                binary,
-                ctx,
-            };
-            analysis.analyze(&mut analyzer);
-            if single_result_assign(analyzer.result, &mut result) {
-                break;
-            }
-        }
-
+        let result = ai::player_ai_towns(self);
         self.player_ai_towns.cache(&result);
         result
     }
 
+    pub fn player_ai(&mut self) -> Option<Rc<Operand>> {
+        if let Some(cached) = self.player_ai.cached() {
+            return cached;
+        }
+        let result = ai::player_ai(self);
+        self.player_ai.cache(&result);
+        result
+    }
+}
+
+impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
     pub fn init_game(&mut self) -> Rc<InitGame> {
         if let Some(cached) = self.init_game.cached() {
             return cached;
@@ -1342,85 +1165,6 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
         };
         let result = Rc::new(result);
         self.init_game.cache(&result);
-        result
-    }
-
-    pub fn player_ai(&mut self) -> Option<Rc<Operand>> {
-        if let Some(cached) = self.player_ai.cached() {
-            return cached;
-        }
-        let binary = self.binary;
-        let aiscript = self.aiscript_hook();
-        let mut errors = Vec::new();
-        let mut result = None;
-        'outest: for aiscript_hook in aiscript.iter() {
-            use scarf::operand_helpers::*;
-
-            let farms_notiming = match binary.read_u32(aiscript_hook.switch_table + 0x32 * 4) {
-                Ok(o) => VirtualAddress(o),
-                Err(_) => continue,
-            };
-
-            let ctx = OperandContext::new();
-            // Set script->player to 0
-            let mut interner = InternMap::new();
-            let mut state = ExecutionState::new(&ctx, &mut interner);
-            let player = mem32(operand_add(
-                aiscript_hook.script_operand_at_switch.clone(),
-                ctx.constant(0x10),
-            ));
-            state.move_to(&DestOperand::from_oper(&player), ctx.const_0(), &mut interner);
-            let mut analysis = FuncAnalysis::with_state(
-                binary,
-                &ctx,
-                farms_notiming,
-                state,
-                interner,
-            );
-            'fn_branches: while let Some(mut branch) = analysis.next_branch() {
-                let mut operations = branch.operations();
-                while let Some((op, state, _address, interner)) = operations.next() {
-                    match *op {
-                        Operation::Call(ref dest) => {
-                            if let Some(dest) = if_callable_const(binary, state, dest, interner) {
-                                let res = find_player_ai_child_func(
-                                    binary,
-                                    dest,
-                                    state.clone(),
-                                    &ctx,
-                                    interner.clone(),
-                                    &mut errors,
-                                );
-                                if single_result_assign(res, &mut result) {
-                                    break 'outest;
-                                }
-                            }
-                        }
-                        Operation::Move(ref dest, ref val, ref _cond) => {
-                            let ai = player_ai_detect_write(dest, val, state, interner);
-                            if single_result_assign(ai, &mut result) {
-                                break 'outest;
-                            }
-                        }
-                        Operation::Jump { .. } => {
-                            // Early break as optimization since jumps shouldn't be needed ever
-                            // (Now only in tests since single_result_assign, oh well)
-                            if result.is_some() {
-                                break 'fn_branches;
-                            }
-                        }
-                        _ => (),
-                    }
-                }
-            }
-            errors.extend(analysis.errors.into_iter().map(|(a, b)| {
-                Error::Scarf(to_default_base(binary, a), b)
-            }));
-        }
-        for e in errors {
-            debug!("player_ai {}", e);
-        }
-        self.player_ai.cache(&result);
         result
     }
 
@@ -1601,64 +1345,6 @@ fn first_definite_entry<Va: VirtualAddressTrait>(
     (index, end)
 }
 
-fn find_player_ai_child_func(
-    binary: &BinaryFile,
-    func: VirtualAddress,
-    mut state: ExecutionState,
-    ctx: &OperandContext,
-    mut interner: InternMap,
-    errors: &mut Vec<Error>,
-) -> Option<Rc<Operand>> {
-    use scarf::operand_helpers::*;
-
-    trace!("player_ai child func {:x}", func.0);
-    let esp = ctx.register(4);
-    state.move_to(&DestOperand::from_oper(&esp), operand_sub(esp, ctx.const_4()), &mut interner);
-    let mut analysis = FuncAnalysis::with_state(binary, &ctx, func, state, interner);
-    let mut result = None;
-    'outer: while let Some(mut branch) = analysis.next_branch() {
-        let mut operations = branch.operations();
-        while let Some((op, state, _address, interner)) = operations.next() {
-            match *op {
-                Operation::Move(ref dest, ref val, ref _cond) => {
-                    let ai = player_ai_detect_write(dest, val, state, interner);
-                    if single_result_assign(ai, &mut result) {
-                        break 'outer;
-                    }
-                }
-                _ => (),
-            }
-        }
-    }
-    errors.extend(analysis.errors.into_iter().map(|(a, b)| {
-        Error::Scarf(to_default_base(binary, a), b)
-    }));
-    result
-}
-
-fn player_ai_detect_write(
-    dest: &DestOperand,
-    val: &Rc<Operand>,
-    state: &mut ExecutionState,
-    interner: &mut InternMap,
-) -> Option<Rc<Operand>> {
-    use scarf::operand_helpers::*;
-    if let DestOperand::Memory(ref mem) = *dest {
-        let dest = state.resolve(&mem.address, interner);
-        let val = state.resolve(val, interner);
-        val.if_arithmetic_or()
-            .and_either_other(|x| x.if_memory().filter(|mem| mem.address == dest))
-            .and_then(|y| y.if_constant())
-            .and_then(|c| match c {
-                // mem.address is &player_ai[0].flags
-                0x10 => Some(Operand::simplified(operand_sub(dest, constval(0x218)))),
-                _ => None,
-            })
-    } else {
-        None
-    }
-}
-
 #[derive(Debug)]
 pub struct StringRefs<Va> {
     pub use_address: Va,
@@ -1753,86 +1439,6 @@ impl<R, Va: VirtualAddressTrait> EntryOfResult<R, Va> {
             _ => None,
         }
     }
-}
-
-fn entry_of_until_memref<'a, F, R>(
-    binary: &'a BinaryFile,
-    funcs: &[VirtualAddress],
-    mem_address: VirtualAddress,
-    ref_address: VirtualAddress,
-    ctx: &'a OperandContext,
-    mut cb: F,
-) -> EntryOfResult<R, VirtualAddress>
-where F: FnMut(
-    bool,
-    &Operation,
-    &mut ExecutionState<'a>,
-    VirtualAddress,
-    &mut InternMap,
-) -> Option<R>
-{
-    fn check_op(operand: &Rc<Operand>, addr: VirtualAddress) -> bool {
-        operand.iter().any(|x| match x.ty {
-            OperandType::Constant(c) => c == addr.as_u64(),
-            _ => false,
-        })
-    }
-    entry_of_until(binary, funcs, ref_address, |entry| {
-        let mut reset = true;
-        let mut analysis = FuncAnalysis::new(binary, ctx, entry);
-        let mut call_found = false;
-        let mut result = None;
-        'outer: while let Some(mut branch) = analysis.next_branch() {
-            let mut operations = branch.operations();
-            while let Some((op, state, ins_address, i)) = operations.next() {
-                if !call_found {
-                    if ins_address >= ref_address && ins_address < ref_address + 16 {
-                        match *op {
-                            // All of these are intentionally unresolved, assuming
-                            // that if a globalref was found, it'd be in a unresolved
-                            // ins as well.
-                            Operation::Move(ref to, ref from, _) => {
-                                if check_op(from, mem_address) {
-                                    call_found = true;
-                                } else {
-                                    if let DestOperand::Memory(ref mem) = *to {
-                                        if check_op(&mem.address, mem_address) {
-                                            call_found = true;
-                                        }
-                                    }
-                                }
-                            }
-                            Operation::Jump { ref to, .. } => {
-                                // Skipping cond since x86 can't globalref in conds
-                                if check_op(to, mem_address) {
-                                    call_found = true;
-                                }
-                            }
-                            Operation::Call(ref dest) => {
-                                if check_op(dest, mem_address) {
-                                    call_found = true;
-                                }
-                            }
-                            _ => (),
-                        }
-                    }
-                }
-                result = cb(reset, op, state, ins_address, i);
-                reset = false;
-                if result.is_some() {
-                    break 'outer;
-                }
-            }
-        }
-        if let Some(res) = result {
-            return EntryOf::Ok(res);
-        }
-        if call_found {
-            EntryOf::Stop
-        } else {
-            EntryOf::Retry
-        }
-    })
 }
 
 fn entry_of_until_call<'a, F, R>(
