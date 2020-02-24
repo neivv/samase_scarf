@@ -1,18 +1,19 @@
-use scarf::{OperandContext, Operation, VirtualAddress, ExecutionStateX86};
+use scarf::{Operation};
 use scarf::exec_state::{ExecutionState};
 use scarf::analysis::{self, Control, FuncAnalysis};
 
 use crate::{Analysis, EntryOf, OptionExt, entry_of_until, single_result_assign};
 
-struct DrawImageEntryCheck {
+struct DrawImageEntryCheck<'e, E: ExecutionState<'e>> {
     result: bool,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
 // First check in DrawImage is `if (image->flags & hidden) { return; }`
-impl<'exec> scarf::Analyzer<'exec> for DrawImageEntryCheck {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DrawImageEntryCheck<'e, E> {
     type State = analysis::DefaultState;
-    type Exec = scarf::ExecutionStateX86<'exec>;
-    fn operation(&mut self, ctrl: &mut Control<Self>, op: &Operation) {
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
         match *op {
             Operation::Call(..) => {
                 ctrl.end_analysis();
@@ -34,10 +35,9 @@ impl<'exec> scarf::Analyzer<'exec> for DrawImageEntryCheck {
     }
 }
 
-pub fn draw_image<'exec>(
-    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
-    ctx: &OperandContext,
-) -> Option<VirtualAddress> {
+pub fn draw_image<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
     let switch_tables = analysis.switch_tables();
     // Switch table for drawfunc-specific code.
     // Hopefully not going to be changed. Starts from func #2 (Cloaking start)
@@ -53,6 +53,7 @@ pub fn draw_image<'exec>(
     });
     let funcs = analysis.functions();
     let binary = analysis.binary;
+    let ctx = analysis.ctx;
     let mut result = None;
     for table in switches {
         let value = entry_of_until(
@@ -60,8 +61,9 @@ pub fn draw_image<'exec>(
             &funcs,
             table.cases[0],
             |addr| {
-                let mut analyzer = DrawImageEntryCheck {
+                let mut analyzer = DrawImageEntryCheck::<E> {
                     result: false,
+                    phantom: Default::default(),
                 };
                 let mut analysis = FuncAnalysis::new(binary, ctx, addr);
                 analysis.analyze(&mut analyzer);

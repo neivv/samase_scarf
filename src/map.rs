@@ -1,37 +1,35 @@
 use std::rc::Rc;
 
-use scarf::{DestOperand, Operand, OperandContext, Operation, VirtualAddress, ExecutionStateX86};
+use scarf::{DestOperand, Operand, Operation};
 use scarf::analysis::{self, Control, FuncAnalysis};
 
-use scarf::exec_state::{VirtualAddress as VirtualAddressTrait};
+use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::{Analysis, OptionExt};
 
-#[derive(Default)]
-pub struct MapTileFlags {
+pub struct MapTileFlags<Va: VirtualAddress> {
     pub map_tile_flags: Option<Rc<Operand>>,
-    pub update_visibility_point: Option<VirtualAddress>,
+    pub update_visibility_point: Option<Va>,
 }
 
-pub fn map_tile_flags<'exec>(
-    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
-    ctx: &OperandContext,
-) -> MapTileFlags {
-    struct Analyzer<'a, 'b, 'c> {
-        result: &'c mut MapTileFlags,
-        ctx: &'a OperandContext,
-        analysis: &'a mut Analysis<'b, ExecutionStateX86<'b>>,
+pub fn map_tile_flags<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> MapTileFlags<E::VirtualAddress> {
+    struct Analyzer<'a, 'b, 'c, F: ExecutionState<'b>> {
+        result: &'c mut MapTileFlags<F::VirtualAddress>,
+        analysis: &'a mut Analysis<'b, F>,
     }
-    impl<'a, 'b, 'c> scarf::Analyzer<'a> for Analyzer<'a, 'b, 'c> {
+    impl<'a, 'b, 'c, F: ExecutionState<'b>> scarf::Analyzer<'b> for Analyzer<'a, 'b, 'c, F> {
         type State = analysis::DefaultState;
-        type Exec = ExecutionStateX86<'a>;
-        fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
+        type Exec = F;
+        fn operation(&mut self, ctrl: &mut Control<'b, '_, '_, Self>, op: &Operation) {
             match op {
                 Operation::Call(dest) => {
                     // order_nuke_track calls update_visibility_point([unit + 0xd0])
                     // But it also calls set_sprite_elevation, so the first match
                     // isn't necessarily correct
-                    let arg_this = ctrl.resolve(&self.ctx.register(1));
+                    let ctx = ctrl.ctx();
+                    let arg_this = ctrl.resolve(ctx.register_ref(1));
                     let ok = arg_this.if_mem32()
                         .and_then(|x| x.if_arithmetic_add())
                         .and_either(|x| x.if_constant().filter(|&c| c == 0xd0))
@@ -40,13 +38,12 @@ pub fn map_tile_flags<'exec>(
                         if let Some(dest) = ctrl.resolve(&dest).if_constant() {
                             let result = tile_flags_from_update_visibility_point(
                                 self.analysis,
-                                self.ctx,
-                                VirtualAddress::from_u64(dest),
+                                F::VirtualAddress::from_u64(dest),
                             );
                             if let Some(result) = result {
                                 self.result.map_tile_flags = Some(result);
                                 self.result.update_visibility_point =
-                                    Some(VirtualAddress::from_u64(dest));
+                                    Some(F::VirtualAddress::from_u64(dest));
                                 ctrl.end_analysis();
                             }
                         }
@@ -69,16 +66,19 @@ pub fn map_tile_flags<'exec>(
         }
     }
 
-    let mut result = MapTileFlags::default();
-    let order_nuke_track = match crate::step_order::find_order_nuke_track(analysis, ctx) {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let mut result = MapTileFlags {
+        map_tile_flags: None,
+        update_visibility_point: None,
+    };
+    let order_nuke_track = match crate::step_order::find_order_nuke_track(analysis) {
         Some(s) => s,
         None => return result,
     };
 
-    let binary = analysis.binary;
     let mut analyzer = Analyzer {
         result: &mut result,
-        ctx,
         analysis,
     };
 
@@ -87,18 +87,18 @@ pub fn map_tile_flags<'exec>(
     result
 }
 
-fn tile_flags_from_update_visibility_point<'exec>(
-    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
-    ctx: &OperandContext,
-    addr: VirtualAddress,
+fn tile_flags_from_update_visibility_point<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+    addr: E::VirtualAddress,
 ) -> Option<Rc<Operand>> {
-    struct Analyzer {
+    struct Analyzer<'f, F: ExecutionState<'f>> {
         result: Option<Rc<Operand>>,
+        phantom: std::marker::PhantomData<(*const F, &'f ())>,
     }
-    impl<'exec> scarf::Analyzer<'exec> for Analyzer {
+    impl<'f, F: ExecutionState<'f>> scarf::Analyzer<'f> for Analyzer<'f, F> {
         type State = analysis::DefaultState;
-        type Exec = ExecutionStateX86<'exec>;
-        fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation) {
+        type Exec = F;
+        fn operation(&mut self, ctrl: &mut Control<'f, '_, '_, Self>, op: &Operation) {
             match op {
                 Operation::Move(_, from, None) => {
                     let from = ctrl.resolve(from);
@@ -122,11 +122,12 @@ fn tile_flags_from_update_visibility_point<'exec>(
         }
     }
 
-    let mut analyzer = Analyzer {
+    let mut analyzer = Analyzer::<E> {
         result: None,
+        phantom: Default::default(),
     };
 
-    let mut analysis = FuncAnalysis::new(analysis.binary, ctx, addr);
+    let mut analysis = FuncAnalysis::new(analysis.binary, analysis.ctx, addr);
     analysis.analyze(&mut analyzer);
     analyzer.result
 }

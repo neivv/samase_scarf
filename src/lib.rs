@@ -61,6 +61,7 @@ pub use crate::eud::EudTable;
 pub use crate::firegraft::RequirementTables;
 pub use crate::game_init::{GameInit, InitGame, SinglePlayerStart, SelectMapEntry};
 pub use crate::iscript::StepIscript;
+pub use crate::map::MapTileFlags;
 pub use crate::network::{InitStormNetworking, SnpDefinitions};
 pub use crate::pathing::RegionRelated;
 pub use crate::players::NetPlayers;
@@ -72,7 +73,6 @@ pub use crate::units::{ActiveHiddenUnits, OrderIssuing};
 use crate::switch::{CompleteSwitch, full_switch_info};
 
 use scarf::exec_state::ExecutionState as ExecutionStateTrait;
-use scarf::ExecutionStateX86;
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
 pub fn test_assertions() -> bool {
@@ -161,15 +161,15 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     first_guard_ai: Cached<Option<Rc<Operand>>>,
     player_ai_towns: Cached<Option<Rc<Operand>>>,
     step_iscript: Cached<Rc<StepIscript<E::VirtualAddress>>>,
-    sprites: Cached<Rc<Sprites>>,
+    sprites: Cached<Rc<Sprites<E::VirtualAddress>>>,
     eud: Cached<Rc<EudTable>>,
-    map_tile_flags: Cached<Rc<map::MapTileFlags>>,
+    map_tile_flags: Cached<Rc<MapTileFlags<E::VirtualAddress>>>,
     players: Cached<Option<Rc<Operand>>>,
     draw_image: Cached<Option<E::VirtualAddress>>,
     renderer_vtables: Cached<Rc<Vec<E::VirtualAddress>>>,
     local_player_id: Cached<Option<Rc<Operand>>>,
-    bullet_creation: Cached<Rc<BulletCreation>>,
-    net_players: Cached<Rc<NetPlayers>>,
+    bullet_creation: Cached<Rc<BulletCreation<E::VirtualAddress>>>,
+    net_players: Cached<Rc<NetPlayers<E::VirtualAddress>>>,
     play_smk: Cached<Option<E::VirtualAddress>>,
     game_init: Cached<Rc<GameInit<E::VirtualAddress>>>,
     add_overlay_iscript: Cached<Option<E::VirtualAddress>>,
@@ -1086,15 +1086,12 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         self.init_game.cache(&result);
         result
     }
-}
 
-impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
-    pub fn sprites(&mut self) -> Rc<Sprites> {
+    pub fn sprites(&mut self) -> Rc<Sprites<E::VirtualAddress>> {
         if let Some(cached) = self.sprites.cached() {
             return cached;
         }
-        let ctx = OperandContext::new();
-        let result = sprites::sprites(self, &ctx);
+        let result = sprites::sprites(self);
         let result = Rc::new(result);
         self.sprites.cache(&result);
         result
@@ -1104,19 +1101,17 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
         if let Some(cached) = self.eud.cached() {
             return cached;
         }
-        let ctx = OperandContext::new();
-        let result = eud::eud_table(self, &ctx);
+        let result = eud::eud_table(self);
         let result = Rc::new(result);
         self.eud.cache(&result);
         result
     }
 
-    pub fn map_tile_flags(&mut self) -> Rc<map::MapTileFlags> {
+    pub fn map_tile_flags(&mut self) -> Rc<MapTileFlags<E::VirtualAddress>> {
         if let Some(cached) = self.map_tile_flags.cached() {
             return cached;
         }
-        let ctx = OperandContext::new();
-        let result = Rc::new(map::map_tile_flags(self, &ctx));
+        let result = Rc::new(map::map_tile_flags(self));
         self.map_tile_flags.cache(&result);
         result
     }
@@ -1125,39 +1120,35 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
         if let Some(cached) = self.players.cached() {
             return cached;
         }
-        let ctx = OperandContext::new();
-        let result = players::players(self, &ctx);
+        let result = players::players(self);
         self.players.cache(&result);
         result
     }
 
-    pub fn draw_image(&mut self) -> Option<VirtualAddress> {
+    pub fn draw_image(&mut self) -> Option<E::VirtualAddress> {
         if let Some(cached) = self.draw_image.cached() {
             return cached;
         }
-        let ctx = OperandContext::new();
-        let result = renderer::draw_image(self, &ctx);
+        let result = renderer::draw_image(self);
         self.draw_image.cache(&result);
         result
     }
 
-    pub fn bullet_creation(&mut self) -> Rc<BulletCreation> {
+    pub fn bullet_creation(&mut self) -> Rc<BulletCreation<E::VirtualAddress>> {
         if let Some(cached) = self.bullet_creation.cached() {
             return cached;
         }
-        let ctx = OperandContext::new();
-        let result = bullets::bullet_creation(self, &ctx);
+        let result = bullets::bullet_creation(self);
         let result = Rc::new(result);
         self.bullet_creation.cache(&result);
         result
     }
 
-    pub fn net_players(&mut self) -> Rc<NetPlayers> {
+    pub fn net_players(&mut self) -> Rc<NetPlayers<E::VirtualAddress>> {
         if let Some(cached) = self.net_players.cached() {
             return cached;
         }
-        let ctx = OperandContext::new();
-        let result = players::net_players(self, &ctx);
+        let result = players::net_players(self);
         let result = Rc::new(result);
         self.net_players.cache(&result);
         result
@@ -1172,7 +1163,7 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
         result
     }
 
-    pub fn run_dialog(&mut self) -> Option<VirtualAddress> {
+    pub fn run_dialog(&mut self) -> Option<E::VirtualAddress> {
         if let Some(cached) = self.run_dialog.cached() {
             return cached;
         }
@@ -1181,7 +1172,7 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
         result
     }
 
-    pub fn ai_update_attack_target(&mut self) -> Option<VirtualAddress> {
+    pub fn ai_update_attack_target(&mut self) -> Option<E::VirtualAddress> {
         if let Some(cached) = self.ai_update_attack_target.cached() {
             return cached;
         }
@@ -1190,7 +1181,7 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
         result
     }
 
-    pub fn is_outside_game_screen(&mut self) -> Option<VirtualAddress> {
+    pub fn is_outside_game_screen(&mut self) -> Option<E::VirtualAddress> {
         if let Some(cached) = self.is_outside_game_screen.cached() {
             return cached;
         }
@@ -1537,9 +1528,9 @@ impl<'a> OptionExt<'a> for Option<(&'a Rc<Operand>, &'a Rc<Operand>)> {
 
 /// Returns true if the stack is setup for a call that seems to be reporting an assertion
 /// error
-fn seems_assertion_call<'exec, A: analysis::Analyzer<'exec>>(
+fn seems_assertion_call<'exec, A: analysis::Analyzer<'exec>, Va: VirtualAddressTrait>(
     ctrl: &mut Control<'exec, '_, '_, A>,
-    binary: &BinaryFile<VirtualAddress>,
+    binary: &BinaryFile<Va>,
 ) -> bool {
     use scarf::operand_helpers::*;
     let esp = operand_register(4);
@@ -1563,13 +1554,13 @@ fn seems_assertion_call<'exec, A: analysis::Analyzer<'exec>>(
         return false;
     }
     // Could check that these are strings
-    if binary.section_by_addr(VirtualAddress::from_u64(arg1)).is_none() {
+    if binary.section_by_addr(Va::from_u64(arg1)).is_none() {
         return false;
     }
-    if binary.section_by_addr(VirtualAddress::from_u64(arg2)).is_none() {
+    if binary.section_by_addr(Va::from_u64(arg2)).is_none() {
         return false;
     }
-    if binary.section_by_addr(VirtualAddress::from_u64(arg3)).is_none() {
+    if binary.section_by_addr(Va::from_u64(arg3)).is_none() {
         return false;
     }
     true

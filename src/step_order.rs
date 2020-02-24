@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use scarf::{BinaryFile, DestOperand, ExecutionStateX86, Operand, Operation, VirtualAddress};
+use scarf::{BinaryFile, DestOperand, Operand, Operation};
 use scarf::analysis::{self, FuncAnalysis, AnalysisState,Cfg, Control};
 use scarf::exec_state::{InternMap};
 use scarf::operand::OperandContext;
@@ -10,10 +10,10 @@ use crate::{
 };
 use crate::switch::{full_switch_info};
 
-use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
+use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum StepOrderHiddenHook<Va: VirtualAddressTrait> {
+pub enum StepOrderHiddenHook<Va: VirtualAddress> {
     Inlined {
         entry: Va,
         exit: Va,
@@ -24,7 +24,7 @@ pub enum StepOrderHiddenHook<Va: VirtualAddressTrait> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SecondaryOrderHook<Va: VirtualAddressTrait> {
+pub enum SecondaryOrderHook<Va: VirtualAddress> {
     Inlined {
         entry: Va,
         exit: Va,
@@ -206,26 +206,21 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
     }
 }
 
-pub fn find_order_nuke_track<'exec>(
-    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
-    ctx: &OperandContext,
-) -> Option<VirtualAddress> {
-    find_order_function(analysis, ctx, 0x81)
+pub fn find_order_nuke_track<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>
+) -> Option<E::VirtualAddress> {
+    find_order_function(analysis, 0x81)
 }
 
-pub fn find_order_function<'exec>(
-    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
-    ctx: &OperandContext,
+pub fn find_order_function<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
     order: u32,
-) -> Option<VirtualAddress> {
-    use scarf::operand_helpers::*;
-
+) -> Option<E::VirtualAddress> {
     // Just take the last call when [ecx+4d] has been set to correct order.
     // Also guess long jumps as tail calls
-    struct Analyzer<'a> {
-        result: Option<VirtualAddress>,
-        start: VirtualAddress,
-        ctx: &'a OperandContext,
+    struct Analyzer<'f, F: ExecutionState<'f>> {
+        result: Option<F::VirtualAddress>,
+        start: F::VirtualAddress,
     }
     #[derive(Eq, Copy, Clone, PartialEq)]
     enum State {
@@ -239,9 +234,9 @@ pub fn find_order_function<'exec>(
             }
         }
     }
-    impl<'a> scarf::Analyzer<'a> for Analyzer<'a> {
+    impl<'a, F: ExecutionState<'a>> scarf::Analyzer<'a> for Analyzer<'a, F> {
         type State = State;
-        type Exec = ExecutionStateX86<'a>;
+        type Exec = F;
         fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
             match op {
                 Operation::Jump { condition, to } => {
@@ -256,9 +251,9 @@ pub fn find_order_function<'exec>(
                                     );
 
                                 if seems_tail_call {
-                                    let ecx = self.ctx.register(1);
+                                    let ecx = ctrl.ctx().register_ref(1);
                                     // Tail call needs to have this == orig this
-                                    if ctrl.resolve(&ecx) == ecx {
+                                    if ctrl.resolve(ecx) == *ecx {
                                         self.result = Some(VirtualAddress::from_u64(dest));
                                         ctrl.end_analysis();
                                     }
@@ -288,12 +283,14 @@ pub fn find_order_function<'exec>(
     let mut analyzer = Analyzer {
         result: None,
         start: step_order,
-        ctx,
     };
+    let ctx = analysis.ctx;
     let binary = analysis.binary;
     let mut interner = InternMap::new();
-    let mut state = ExecutionStateX86::with_binary(binary, &ctx, &mut interner);
-    let dest = DestOperand::from_oper(&mem8(operand_add(ctx.register(1), ctx.constant(0x4d))));
+    let mut state = E::initial_state(ctx, binary, &mut interner);
+    let dest = DestOperand::from_oper(
+        &ctx.mem8(&ctx.add(ctx.register_ref(1), &ctx.constant(0x4d)))
+    );
     state.move_to(&dest, ctx.constant(order as u64), &mut interner);
     let mut analysis = FuncAnalysis::custom_state(
         binary,

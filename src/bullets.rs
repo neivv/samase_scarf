@@ -2,33 +2,26 @@ use std::rc::Rc;
 
 use fxhash::FxHashMap;
 
-use scarf::{
-    MemAccessSize, Operand, OperandContext, Operation, VirtualAddress, DestOperand,
-    ExecutionStateX86,
-};
+use scarf::{MemAccessSize, Operand, Operation, DestOperand};
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
-use scarf::exec_state::{VirtualAddress as VirtualAddressTrait};
+use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{Analysis, OptionExt};
+use crate::{Analysis, ArgCache, OptionExt};
 
-#[derive(Default)]
-pub struct BulletCreation {
+pub struct BulletCreation<Va: VirtualAddress> {
     pub first_active_bullet: Option<Rc<Operand>>,
     pub last_active_bullet: Option<Rc<Operand>>,
     pub first_free_bullet: Option<Rc<Operand>>,
     pub last_free_bullet: Option<Rc<Operand>>,
-    pub create_bullet: Option<VirtualAddress>,
+    pub create_bullet: Option<Va>,
     pub active_iscript_unit: Option<Rc<Operand>>,
 }
 
-struct FindCreateBullet<'a> {
-    ctx: &'a OperandContext,
+struct FindCreateBullet<'a, 'e, E: ExecutionState<'e>> {
     is_inlining: bool,
-    result: Option<VirtualAddress>,
+    result: Option<E::VirtualAddress>,
     active_iscript_unit: Option<Rc<Operand>>,
-    arg1: Rc<Operand>,
-    arg4: Rc<Operand>,
-    arg6: Rc<Operand>,
+    arg_cache: &'a ArgCache<'e, E>,
     calls_seen: u32,
 }
 
@@ -42,22 +35,23 @@ impl AnalysisState for FindCreateBulletState {
     }
 }
 
-impl<'a> scarf::Analyzer<'a> for FindCreateBullet<'a> {
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a, 'e, E> {
     type State = FindCreateBulletState;
-    type Exec = scarf::ExecutionStateX86<'a>;
-    fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
         match *op {
             Operation::Call(ref to) => {
                 if !self.is_inlining {
                     if let Some(dest) = ctrl.resolve(&to).if_constant() {
-                        let arg1 = ctrl.resolve(&self.arg1);
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        let arg1 = ctrl.resolve(&self.arg_cache.on_call(0));
                         if arg1.if_mem8().is_some() {
                             self.is_inlining = true;
-                            let ecx = ctrl.resolve(&self.ctx.register(1));
+                            let ecx = ctrl.resolve(ctrl.ctx().register_ref(1));
                             self.active_iscript_unit = Some(ecx);
                             ctrl.user_state().calls_seen = 0;
                             self.calls_seen = 0;
-                            ctrl.analyze_with_current_state(self, VirtualAddress::from_u64(dest));
+                            ctrl.analyze_with_current_state(self, dest);
                             if self.result.is_some() && self.calls_seen == 2 {
                                 ctrl.end_analysis();
                             } else {
@@ -70,13 +64,13 @@ impl<'a> scarf::Analyzer<'a> for FindCreateBullet<'a> {
                     }
                 }
 
-                let unit = ctrl.resolve(&self.arg6);
+                let unit = ctrl.resolve(&self.arg_cache.on_call(5));
                 if let Some(ref active_unit) = self.active_iscript_unit {
                     if unit != *active_unit {
                         return;
                     }
                 }
-                let arg4 = ctrl.resolve(&self.arg4);
+                let arg4 = ctrl.resolve(&self.arg_cache.on_call(3));
                 let is_player = arg4.if_mem8()
                     .and_then(|x| x.if_arithmetic_add())
                     .and_either_other(|x| x.if_constant().filter(|&c| c == 0x4c))
@@ -91,7 +85,7 @@ impl<'a> scarf::Analyzer<'a> for FindCreateBullet<'a> {
                             return;
                         }
                     }
-                    self.result = Some(VirtualAddress::from_u64(dest));
+                    self.result = Some(E::VirtualAddress::from_u64(dest));
                     self.active_iscript_unit = Some(unit);
                     let new_calls_seen = ctrl.user_state().calls_seen + 1;
                     if new_calls_seen > self.calls_seen {
@@ -114,12 +108,11 @@ impl<'a> scarf::Analyzer<'a> for FindCreateBullet<'a> {
     }
 }
 
-struct FindBulletLists<'a> {
-    ctx: &'a OperandContext,
+struct FindBulletLists<'e, E: ExecutionState<'e>> {
     is_inlining: bool,
     // first active, first_free
     active_bullets: Option<(Rc<Operand>, Rc<Operand>)>,
-    active_list_candidate_branches: FxHashMap<VirtualAddress, Rc<Operand>>,
+    active_list_candidate_branches: FxHashMap<E::VirtualAddress, Rc<Operand>>,
     is_checking_active_list_candidate: Option<Rc<Operand>>,
     active_list_candidate_head: Option<Rc<Operand>>,
     active_list_candidate_tail: Option<Rc<Operand>>,
@@ -131,17 +124,16 @@ struct FindBulletLists<'a> {
     last_ptr_candidates: Vec<(Rc<Operand>, Rc<Operand>)>,
 }
 
-impl<'a> scarf::Analyzer<'a> for FindBulletLists<'a> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'e, E> {
     type State = analysis::DefaultState;
-    type Exec = scarf::ExecutionStateX86<'a>;
-    fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
-        use scarf::operand_helpers::*;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
         match op {
             Operation::Call(to) => {
                 if !self.is_inlining {
                     if let Some(dest) = ctrl.resolve(&to).if_constant() {
                         self.is_inlining = true;
-                        ctrl.analyze_with_current_state(self, VirtualAddress::from_u64(dest));
+                        ctrl.analyze_with_current_state(self, E::VirtualAddress::from_u64(dest));
                         self.is_inlining = false;
                         if self.active_bullets.is_some() {
                             ctrl.end_analysis();
@@ -155,10 +147,11 @@ impl<'a> scarf::Analyzer<'a> for FindBulletLists<'a> {
                 }
                 let dest_addr = ctrl.resolve(&mem.address);
                 let value = ctrl.resolve(&value);
+                let ctx = ctrl.ctx();
                 // first_free_bullet = (*first_free_bullet).next, e.g.
                 // mov [first_free_bullet], [[first_free_bullet] + 4]
-                let first_free_next = Operand::simplified(
-                    mem32(operand_add(mem32(dest_addr.clone()), self.ctx.const_4()))
+                let first_free_next = ctx.mem32(
+                    &ctx.add(&ctx.mem32(&dest_addr), &ctx.const_4())
                 );
                 if value == first_free_next {
                     self.first_free = Some(dest_addr.clone());
@@ -199,7 +192,7 @@ impl<'a> scarf::Analyzer<'a> for FindBulletLists<'a> {
             Operation::Jump { ref condition, ref to } => {
                 let condition = ctrl.resolve(&condition);
                 let dest_addr = match ctrl.resolve(&to).if_constant() {
-                    Some(s) => VirtualAddress::from_u64(s),
+                    Some(s) => E::VirtualAddress::from_u64(s),
                     None => return,
                 };
                 fn if_arithmetic_eq_zero(op: &Rc<Operand>) -> Option<&Rc<Operand>> {
@@ -226,12 +219,12 @@ impl<'a> scarf::Analyzer<'a> for FindBulletLists<'a> {
         }
     }
 
-    fn branch_start(&mut self, ctrl: &mut Control<'a, '_, '_, Self>) {
+    fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         let head_candidate = self.active_list_candidate_branches.get(&ctrl.address());
         self.is_checking_active_list_candidate = head_candidate.cloned();
     }
 
-    fn branch_end(&mut self, _ctrl: &mut Control<'a, '_, '_, Self>) {
+    fn branch_end(&mut self, _ctrl: &mut Control<'e, '_, '_, Self>) {
         if let Some(_) = self.is_checking_active_list_candidate.take() {
             let head = self.active_list_candidate_head.take();
             let tail = self.active_list_candidate_tail.take();
@@ -242,7 +235,7 @@ impl<'a> scarf::Analyzer<'a> for FindBulletLists<'a> {
     }
 }
 
-impl<'a> FindBulletLists<'a> {
+impl<'e, E: ExecutionState<'e>> FindBulletLists<'e, E> {
     fn last_ptr_first_known(&self, first: &Rc<Operand>) -> Option<Rc<Operand>> {
         self.last_ptr_candidates.iter().find(|x| x.0 == *first).map(|x| x.1.clone())
     }
@@ -255,34 +248,37 @@ impl<'a> FindBulletLists<'a> {
     }
 }
 
-pub fn bullet_creation<'a>(
-    analysis: &mut Analysis<'a, ExecutionStateX86<'a>>,
-    ctx: &OperandContext,
-) -> BulletCreation {
-    use scarf::operand_helpers::*;
-
-    let mut result = BulletCreation::default();
+pub fn bullet_creation<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> BulletCreation<E::VirtualAddress> {
+    let mut result = BulletCreation {
+        first_active_bullet: None,
+        last_active_bullet: None,
+        first_free_bullet: None,
+        last_free_bullet: None,
+        create_bullet: None,
+        active_iscript_unit: None,
+    };
     let iscript_switch = match analysis.step_iscript().switch_table {
         Some(s) => s,
         None => return result,
     };
     let binary = analysis.binary;
-    let useweapon = match binary.read_u32(iscript_switch + 0x28 * 4) {
-        Ok(o) => VirtualAddress(o),
+    let ctx = analysis.ctx;
+    let word_size = E::VirtualAddress::SIZE;
+    let useweapon = match binary.read_address(iscript_switch + 0x28 * word_size) {
+        Ok(o) => o,
         Err(_) => return result,
     };
     let mut analyzer = FindCreateBullet {
-        ctx,
         is_inlining: false,
         result: None,
         active_iscript_unit: None,
         calls_seen: 0,
-        arg1: Operand::simplified(mem32(ctx.register(4))),
-        arg4: Operand::simplified(mem32(operand_add(ctx.register(4), ctx.constant(12)))),
-        arg6: Operand::simplified(mem32(operand_add(ctx.register(4), ctx.constant(20)))),
+        arg_cache: &analysis.arg_cache,
     };
     let mut interner = scarf::exec_state::InternMap::new();
-    let exec_state = scarf::ExecutionStateX86::new(ctx, &mut interner);
+    let exec_state = E::initial_state(ctx, binary, &mut interner);
     let mut analysis = FuncAnalysis::custom_state(
         binary,
         ctx,
@@ -297,8 +293,7 @@ pub fn bullet_creation<'a>(
     result.create_bullet = analyzer.result;
     result.active_iscript_unit = analyzer.active_iscript_unit;
     if let Some(create_bullet) = analyzer.result {
-        let mut analyzer = FindBulletLists {
-            ctx,
+        let mut analyzer = FindBulletLists::<E> {
             is_inlining: false,
             active_bullets: None,
             first_free: None,

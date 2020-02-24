@@ -2,23 +2,20 @@ use std::rc::Rc;
 
 use smallvec::SmallVec;
 
-use scarf::{DestOperand, Operand, OperandContext, Operation, VirtualAddress, ExecutionStateX86};
+use scarf::{BinaryFile, DestOperand, Operand, OperandContext, Operation};
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
 use scarf::operand::{MemAccess, MemAccessSize, OperandType, Register, ArithOpType};
 use scarf::operand_helpers::*;
 
-use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
+use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{Analysis};
+use crate::{Analysis, ArgCache};
 use crate::OptionExt;
 
-type BinaryFile = scarf::BinaryFile<VirtualAddress>;
-
-#[derive(Default)]
-pub struct NetPlayers {
+pub struct NetPlayers<Va: VirtualAddress> {
     // Array, struct size
     pub net_players: Option<(Rc<Operand>, usize)>,
-    pub init_net_player: Option<VirtualAddress>,
+    pub init_net_player: Option<Va>,
 }
 
 // Search for `player_ai_flags |= 0x2`
@@ -36,17 +33,17 @@ impl AnalysisState for PlayersState {
     }
 }
 
-struct PlayersAnalyzer<'a> {
+struct PlayersAnalyzer<'e, E: ExecutionState<'e>> {
     result: Option<Rc<Operand>>,
-    ctx: &'a OperandContext,
     in_child_func: bool,
     child_func_state: Option<PlayersState>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
-impl<'a> scarf::Analyzer<'a> for PlayersAnalyzer<'a> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayersAnalyzer<'e, E> {
     type State = PlayersState;
-    type Exec = ExecutionStateX86<'a>;
-    fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
         match op {
             Operation::Jump { to, condition } => {
                 let condition = ctrl.resolve(condition);
@@ -86,7 +83,7 @@ impl<'a> scarf::Analyzer<'a> for PlayersAnalyzer<'a> {
                             });
                             if ok {
                                 terms.constant -= 8;
-                                Some(Operand::simplified(terms.join(self.ctx)))
+                                Some(terms.join(ctrl.ctx()))
                             } else {
                                 None
                             }
@@ -100,7 +97,7 @@ impl<'a> scarf::Analyzer<'a> for PlayersAnalyzer<'a> {
                 if !self.in_child_func {
                     if let Some(dest) = ctrl.resolve(&dest).if_constant() {
                         self.in_child_func = true;
-                        let dest = VirtualAddress::from_u64(dest);
+                        let dest = E::VirtualAddress::from_u64(dest);
                         ctrl.analyze_with_current_state(self, dest);
                         if let Some(state) = self.child_func_state.take() {
                             *ctrl.user_state() = state;
@@ -136,24 +133,25 @@ impl<'a> scarf::Analyzer<'a> for PlayersAnalyzer<'a> {
     }
 }
 
-pub fn players<'exec>(
-    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
-    ctx: &OperandContext,
+pub fn players<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
 ) -> Option<Rc<Operand>> {
+    let ctx = analysis.ctx;
     let binary = analysis.binary;
     let aiscript = analysis.aiscript_hook();
     let aiscript = (*aiscript).as_ref()?;
-    let start_town_case = VirtualAddress(binary.read_u32(aiscript.switch_table + 0x3 * 4).ok()?);
+    let word_size = E::VirtualAddress::SIZE;
+    let start_town_case = binary.read_address(aiscript.switch_table + 0x3 * word_size).ok()?;
 
     let mut analyzer = PlayersAnalyzer {
         result: None,
-        ctx,
         in_child_func: false,
         child_func_state: None,
+        phantom: Default::default(),
     };
 
     let mut interner = scarf::exec_state::InternMap::new();
-    let exec_state = ExecutionStateX86::new(ctx, &mut interner);
+    let exec_state = E::initial_state(ctx, binary, &mut interner);
     let mut analysis = FuncAnalysis::custom_state(
         binary,
         ctx,
@@ -209,15 +207,14 @@ impl<'a> AddTerms<'a> {
     }
 
     pub fn join(&self, ctx: &OperandContext) -> Rc<Operand> {
-        use scarf::operand_helpers::*;
         let mut tree = match self.terms.get(0) {
             Some(&(op, negate)) => if negate {
-                operand_sub(ctx.constant(self.constant), op.clone())
+                ctx.sub(&ctx.constant(self.constant), &op)
             } else {
                 if self.constant == 0 {
                     op.clone()
                 } else {
-                    operand_add(ctx.constant(self.constant), op.clone())
+                    ctx.add(&ctx.constant(self.constant), &op)
                 }
             },
             None => return ctx.constant(self.constant),
@@ -383,17 +380,16 @@ pub fn local_player_id<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-struct FindInitNetPlayer {
-    result: Option<VirtualAddress>,
-    arg3: Rc<Operand>,
-    arg4: Rc<Operand>,
+struct FindInitNetPlayer<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
     in_child_func: bool,
 }
 
-impl<'a> scarf::Analyzer<'a> for FindInitNetPlayer {
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindInitNetPlayer<'a, 'e, E> {
     type State = analysis::DefaultState;
-    type Exec = scarf::ExecutionStateX86<'a>;
-    fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
         match op {
             Operation::Jump { to, .. } => {
                 if to.if_memory().is_some() {
@@ -403,12 +399,12 @@ impl<'a> scarf::Analyzer<'a> for FindInitNetPlayer {
             }
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve(&dest).if_constant() {
-                    let dest = VirtualAddress::from_u64(dest);
+                    let dest = E::VirtualAddress::from_u64(dest);
                     // Check that
                     // arg3 == mem16[data + 4],
                     // arg4 == mem16[data + 6],
-                    let arg3 = ctrl.resolve(&self.arg3);
-                    let arg4 = ctrl.resolve(&self.arg4);
+                    let arg3 = ctrl.resolve(&self.arg_cache.on_call(2));
+                    let arg4 = ctrl.resolve(&self.arg_cache.on_call(3));
                     let arg3_base = arg3.if_mem16()
                         .and_then(|x| x.if_arithmetic_add())
                         .and_either_other(|x| x.if_constant().filter(|&c| c == 4));
@@ -435,17 +431,16 @@ impl<'a> scarf::Analyzer<'a> for FindInitNetPlayer {
     }
 }
 
-struct FindNetPlayerArr<'exec> {
+struct FindNetPlayerArr<'e, E: ExecutionState<'e>> {
     result: Option<(Rc<Operand>, usize)>,
-    binary: &'exec BinaryFile,
-    ctx: &'exec OperandContext,
+    binary: &'e BinaryFile<E::VirtualAddress>,
     delay_eax_move: Option<Rc<Operand>>,
 }
 
-impl<'exec> scarf::Analyzer<'exec> for FindNetPlayerArr<'exec> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'e, E> {
     type State = analysis::DefaultState;
-    type Exec = scarf::ExecutionStateX86<'exec>;
-    fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation) {
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
         fn is_arg1(operand: &Rc<Operand>) -> bool {
             operand.if_memory()
                 .and_then(|x| x.address.if_arithmetic_add())
@@ -476,8 +471,10 @@ impl<'exec> scarf::Analyzer<'exec> for FindNetPlayerArr<'exec> {
                     return;
                 }
                 if let Some(dest) = ctrl.resolve(&dest).if_constant() {
-                    let mut analyzer = CollectReturnValues::new(self.ctx);
-                    ctrl.analyze_with_current_state(&mut analyzer, VirtualAddress::from_u64(dest));
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    let ctx = ctrl.ctx();
+                    let mut analyzer = CollectReturnValues::<'e, E>::new();
+                    ctrl.analyze_with_current_state(&mut analyzer, dest);
                     if !analyzer.return_values.is_empty() {
                         if let Some((base, mul, other)) = base_mul(&analyzer.return_values[0]) {
                             let mut arg1_seen = is_arg1(other);
@@ -495,13 +492,13 @@ impl<'exec> scarf::Analyzer<'exec> for FindNetPlayerArr<'exec> {
                                 }
                             });
                             if all_match && arg1_seen {
-                                self.delay_eax_move = Some(operand_add(
-                                    base.clone(),
-                                    operand_mul(
-                                        self.ctx.constant(mul),
-                                        mem32(operand_add(
-                                            self.ctx.register(4),
-                                            self.ctx.const_4(),
+                                self.delay_eax_move = Some(ctx.add(
+                                    &base,
+                                    &ctx.mul(
+                                        &ctx.constant(mul),
+                                        &ctx.mem32(&ctx.add(
+                                            ctx.register_ref(4),
+                                            &ctx.const_4(),
                                         )),
                                     ),
                                 ));
@@ -525,10 +522,11 @@ impl<'exec> scarf::Analyzer<'exec> for FindNetPlayerArr<'exec> {
                         if is_arg4 {
                             if let Some((base, size, rest)) = base_mul(&addr) {
                                 if is_arg1(&rest) {
-                                    let base = Operand::simplified(operand_sub(
-                                        base.clone(),
-                                        self.ctx.constant(6),
-                                    ));
+                                    let ctx = ctrl.ctx();
+                                    let base = ctx.sub(
+                                        base,
+                                        &ctx.constant(6),
+                                    );
                                     self.result = Some((base, size as usize));
                                 }
                             }
@@ -541,36 +539,39 @@ impl<'exec> scarf::Analyzer<'exec> for FindNetPlayerArr<'exec> {
     }
 }
 
-struct CollectReturnValues {
-    eax: Rc<Operand>,
+struct CollectReturnValues<'e, E: ExecutionState<'e>> {
     return_values: Vec<Rc<Operand>>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
-impl CollectReturnValues {
-    fn new(ctx: &OperandContext) -> CollectReturnValues {
+impl<'e, E: ExecutionState<'e>> CollectReturnValues<'e, E> {
+    fn new() -> CollectReturnValues<'e, E> {
         CollectReturnValues {
             return_values: Vec::with_capacity(4),
-            eax: ctx.register(0),
+            phantom: Default::default(),
         }
     }
 }
 
-impl<'exec> scarf::Analyzer<'exec> for CollectReturnValues {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CollectReturnValues<'e, E> {
     type State = analysis::DefaultState;
-    type Exec = scarf::ExecutionStateX86<'exec>;
-    fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation) {
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
         if let Operation::Return(..) = op {
-            let eax = ctrl.resolve(&self.eax);
+            let eax = ctrl.ctx().register_ref(0);
+            let eax = ctrl.resolve(eax);
             self.return_values.push(eax);
         }
     }
 }
 
-pub fn net_players<'exec>(
-    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
-    ctx: &OperandContext,
-) -> NetPlayers {
-    let mut result = NetPlayers::default();
+pub fn net_players<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> NetPlayers<E::VirtualAddress> {
+    let mut result = NetPlayers {
+        net_players: None,
+        init_net_player: None,
+    };
     let lobby_cmd_switch = match analysis.process_lobby_commands_switch() {
         Some(s) => s.0,
         None => return result,
@@ -580,20 +581,19 @@ pub fn net_players<'exec>(
         None => return result,
     };
     let binary = analysis.binary;
+    let ctx = analysis.ctx;
     let mut analyzer = FindInitNetPlayer {
         result: None,
-        arg3: mem32(operand_add(ctx.register(4), ctx.const_8())),
-        arg4: mem32(operand_add(ctx.register(4), ctx.constant(0xc))),
+        arg_cache: &analysis.arg_cache,
         in_child_func: false,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, cmd_3f);
     analysis.analyze(&mut analyzer);
     result.init_net_player = analyzer.result;
     if let Some(init_net_player) = analyzer.result {
-        let mut analyzer = FindNetPlayerArr {
+        let mut analyzer = FindNetPlayerArr::<E> {
             result: None,
             binary,
-            ctx,
             delay_eax_move: None,
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, init_net_player);

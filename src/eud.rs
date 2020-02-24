@@ -1,16 +1,11 @@
 use std::rc::Rc;
 
-use scarf::{
-    Operand, OperandContext, Operation, VirtualAddress, DestOperand, OperandType,
-    ExecutionStateX86,
-};
+use scarf::{BinaryFile, Operand, OperandContext, Operation, DestOperand, OperandType};
 use scarf::analysis::{self, Control, FuncAnalysis};
-use scarf::exec_state::{InternMap, VirtualAddress as VirtualAddressTrait};
+use scarf::exec_state::{ExecutionState, InternMap, VirtualAddress};
 use scarf::operand::{ArithOpType, Register};
 
 use crate::{Analysis, EntryOf};
-
-type BinaryFile = scarf::BinaryFile<VirtualAddress>;
 
 pub struct Eud {
     pub address: u32,
@@ -47,9 +42,8 @@ fn if_arithmetic_add_or_sub_const(val: &Rc<Operand>) -> Option<(&Rc<Operand>, u6
     }
 }
 
-pub fn eud_table<'exec>(
-    analysis: &mut Analysis<'exec, ExecutionStateX86<'exec>>,
-    ctx: &OperandContext,
+pub fn eud_table<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
 ) -> EudTable {
     fn finish_euds(result: &mut EudTable) {
         result.euds.retain(|x| x.operand.if_constant() != Some(0));
@@ -57,6 +51,7 @@ pub fn eud_table<'exec>(
     }
 
     let binary = analysis.binary;
+    let ctx = analysis.ctx;
     let mut const_refs = Vec::with_capacity(EUD_ADDRS.len() * 2);
     for &addr in EUD_ADDRS {
         find_const_refs_in_code(binary, addr, &mut const_refs);
@@ -64,7 +59,7 @@ pub fn eud_table<'exec>(
     const_refs.sort();
     let funcs = analysis.functions();
     for &cref in &const_refs {
-        let entry = match find_stack_reserve_entry(ctx, binary, &funcs, cref) {
+        let entry = match find_stack_reserve_entry::<E>(ctx, binary, &funcs, cref) {
             Some((e, stack_size)) => {
                 if stack_size < 0x1000 {
                     continue;
@@ -74,7 +69,7 @@ pub fn eud_table<'exec>(
             }
             None => continue,
         };
-        let mut result = analyze_eud_init_fn(ctx, binary, entry);
+        let mut result = analyze_eud_init_fn::<E>(ctx, binary, entry);
         if result.euds.len() > 0x100 {
             finish_euds(&mut result);
             return result;
@@ -87,11 +82,11 @@ pub fn eud_table<'exec>(
 
     find_const_refs_in_code(binary, 0x7a99, &mut const_refs);
     for &cref in &const_refs {
-        let func = match find_init_eud_table_from_parent(ctx, binary, &funcs, cref) {
+        let func = match find_init_eud_table_from_parent::<E>(ctx, binary, &funcs, cref) {
             Some(s) => s,
             None => continue,
         };
-        let func = match find_stack_reserve_entry(ctx, binary, &funcs, func) {
+        let func = match find_stack_reserve_entry::<E>(ctx, binary, &funcs, func) {
             Some((e, stack_size)) => {
                 if stack_size < 0x1000 {
                     continue;
@@ -101,7 +96,7 @@ pub fn eud_table<'exec>(
             }
             None => continue,
         };
-        let mut result = analyze_eud_init_fn(ctx, binary, func);
+        let mut result = analyze_eud_init_fn::<E>(ctx, binary, func);
         if result.euds.len() > 0x100 {
             finish_euds(&mut result);
             return result;
@@ -114,41 +109,41 @@ pub fn eud_table<'exec>(
 }
 
 // See comment at call site
-fn find_init_eud_table_from_parent(
-    ctx: &OperandContext,
-    binary: &BinaryFile,
-    funcs: &[VirtualAddress],
-    addr: VirtualAddress,
-) -> Option<VirtualAddress> {
-    struct Analyzer {
-        result: EntryOf<VirtualAddress>,
+fn find_init_eud_table_from_parent<'e, E: ExecutionState<'e>>(
+    ctx: &'e OperandContext,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    funcs: &[E::VirtualAddress],
+    addr: E::VirtualAddress,
+) -> Option<E::VirtualAddress> {
+    struct Analyzer<'e, E: ExecutionState<'e>> {
+        result: EntryOf<E::VirtualAddress>,
     }
 
     #[derive(Clone)]
-    struct State {
+    struct State<Va: VirtualAddress> {
         in_wanted_branch: bool,
-        wanted_branch_start: VirtualAddress,
+        wanted_branch_start: Va,
     }
-    impl scarf::analysis::AnalysisState for State {
+    impl<Va: VirtualAddress> scarf::analysis::AnalysisState for State<Va> {
         fn merge(&mut self, newer: Self) {
             self.in_wanted_branch |= newer.in_wanted_branch;
-            if self.wanted_branch_start.0 != 0 {
+            if self.wanted_branch_start.as_u64() != 0 {
                 self.wanted_branch_start = newer.wanted_branch_start;
             }
         }
     }
 
-    impl<'exec> scarf::Analyzer<'exec> for Analyzer {
-        type State = State;
-        type Exec = ExecutionStateX86<'exec>;
-        fn branch_start(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>) {
+    impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
+        type State = State<E::VirtualAddress>;
+        type Exec = E;
+        fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
             let address = ctrl.address();
             let state = ctrl.user_state();
             if state.wanted_branch_start == address {
                 state.in_wanted_branch = true;
             }
         }
-        fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation) {
+        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
             // True if from jump, false if not jump
             fn branch_from_condition(cond: &Rc<Operand>) -> Option<bool> {
                 match cond.ty {
@@ -203,10 +198,10 @@ fn find_init_eud_table_from_parent(
             result: EntryOf::Retry,
         };
         let mut interner = InternMap::new();
-        let exec_state = ExecutionStateX86::new(&ctx, &mut interner);
+        let exec_state = E::initial_state(ctx, binary, &mut interner);
         let state = State {
             in_wanted_branch: false,
-            wanted_branch_start: VirtualAddress(0),
+            wanted_branch_start: E::VirtualAddress::from_u64(0),
         };
         let mut analysis = FuncAnalysis::custom_state(
             binary,
@@ -221,23 +216,23 @@ fn find_init_eud_table_from_parent(
     }).into_option()
 }
 
-fn analyze_eud_init_fn(
-    ctx: &OperandContext,
-    binary: &BinaryFile,
-    addr: VirtualAddress,
+fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
+    ctx: &'e OperandContext,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    addr: E::VirtualAddress,
 ) -> EudTable {
-    struct Analyzer<'a> {
+    struct Analyzer<'e, E: ExecutionState<'e>> {
         result: EudTable,
-        ctx: &'a OperandContext,
+        phantom: std::marker::PhantomData<(*const E, &'e ())>,
     }
-    impl<'a> scarf::Analyzer<'a> for Analyzer<'a> {
+    impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for Analyzer<'a, E> {
         type State = analysis::DefaultState;
-        type Exec = ExecutionStateX86<'a>;
+        type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
             use scarf::operand_helpers::*;
             match op {
                 Operation::Call(..) => {
-                    let ctx = self.ctx;
+                    let ctx = ctrl.ctx();
                     let esp = ctx.register(4);
                     // A1 has to be a1 to this fn ([esp + 4]),
                     // a2 ptr,
@@ -295,11 +290,11 @@ fn analyze_eud_init_fn(
         }
     }
 
-    let mut analyzer = Analyzer {
+    let mut analyzer = Analyzer::<E> {
         result: EudTable {
             euds: Vec::new(),
         },
-        ctx,
+        phantom: Default::default(),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, addr);
     analysis.analyze(&mut analyzer);
@@ -312,19 +307,19 @@ fn analyze_eud_init_fn(
 ///
 /// On success returns (entry, stack_reserve). stack_reserve may not be 100% correct if there
 /// are pushes later on in the function, so it should not be relied too much on.
-fn find_stack_reserve_entry(
-    ctx: &OperandContext,
-    binary: &BinaryFile,
-    funcs: &[VirtualAddress],
-    addr: VirtualAddress,
-) -> Option<(VirtualAddress, u32)> {
-    struct Analyzer<'a> {
+fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
+    ctx: &'e OperandContext,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    funcs: &[E::VirtualAddress],
+    addr: E::VirtualAddress,
+) -> Option<(E::VirtualAddress, u32)> {
+    struct Analyzer<'e, E: ExecutionState<'e>> {
         result: EntryOf<u32>,
-        ctx: &'a OperandContext,
+        phantom: std::marker::PhantomData<(*const E, &'e ())>,
     }
-    impl<'a> scarf::Analyzer<'a> for Analyzer<'a> {
+    impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for Analyzer<'a, E> {
         type State = analysis::DefaultState;
-        type Exec = ExecutionStateX86<'a>;
+        type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
             let mut call_reserve = 0;
             let stop = match op {
@@ -355,7 +350,7 @@ fn find_stack_reserve_entry(
                 Operation::Return(..) => true,
                 Operation::Jump { .. } => true,
                 Operation::Call(..) => {
-                    let eax = ctrl.resolve(&self.ctx.register(0));
+                    let eax = ctrl.resolve(ctrl.ctx().register_ref(0));
                     if let Some(c) = eax.if_constant() {
                         if c & 3 == 0 && c > 0x400 {
                             call_reserve = c;
@@ -366,7 +361,7 @@ fn find_stack_reserve_entry(
                 _ => true,
             };
             if stop {
-                let esp = ctrl.resolve(&self.ctx.register(4));
+                let esp = ctrl.resolve(ctrl.ctx().register_ref(4));
                 let off = if_arithmetic_add_or_sub_const(&esp)
                     .filter(|(r, _)| r.if_register() == Some(Register(4)));
                 if let Some((_, off)) = off {
@@ -383,9 +378,9 @@ fn find_stack_reserve_entry(
     }
 
     crate::entry_of_until(binary, funcs, addr, |entry| {
-        let mut analyzer = Analyzer {
+        let mut analyzer = Analyzer::<E> {
             result: EntryOf::Retry,
-            ctx,
+            phantom: Default::default(),
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, entry);
         analysis.analyze(&mut analyzer);
@@ -393,7 +388,11 @@ fn find_stack_reserve_entry(
     }).into_option_with_entry()
 }
 
-fn find_const_refs_in_code(binary: &BinaryFile, value: u32, out: &mut Vec<VirtualAddress>) {
+fn find_const_refs_in_code<Va: VirtualAddress>(
+    binary: &BinaryFile<Va>,
+    value: u32,
+    out: &mut Vec<Va>,
+) {
     use memmem::{TwoWaySearcher, Searcher};
 
     let code_section = binary.code_section();

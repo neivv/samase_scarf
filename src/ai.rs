@@ -2,13 +2,11 @@ use std::rc::Rc;
 
 use arrayvec::ArrayVec;
 use scarf::{
-    self, DestOperand, Operand, Operation, VirtualAddress, MemAccessSize, OperandContext,
-    OperandType, BinaryFile,
+    DestOperand, Operand, Operation, MemAccessSize, OperandContext, OperandType, BinaryFile,
 };
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{InternMap, ExecutionState};
 
-use scarf::ExecutionStateX86;
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
 use crate::{
@@ -72,12 +70,12 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepAiScriptsAnalyzer
     }
 }
 
-pub fn ai_update_attack_target<'a>(
-    analysis: &mut Analysis<'a, ExecutionStateX86<'a>>,
-) -> Option<VirtualAddress> {
+pub fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
     let ctx = analysis.ctx;
     // Order 0xa3 (Computer return) immediately calls ai_update_attack_target
-    let order_computer_return = crate::step_order::find_order_function(analysis, ctx, 0xa3)?;
+    let order_computer_return = crate::step_order::find_order_function(analysis, 0xa3)?;
 
     struct Analyzer<'exec, 'b, E: ExecutionState<'exec>> {
         result: Option<E::VirtualAddress>,
@@ -111,7 +109,7 @@ pub fn ai_update_attack_target<'a>(
         result: None,
         args: &analysis.arg_cache,
     };
-    let mut analysis = FuncAnalysis::<ExecutionStateX86<'_>, _>::new(analysis.binary, ctx, order_computer_return);
+    let mut analysis = FuncAnalysis::new(analysis.binary, ctx, order_computer_return);
     analysis.analyze(&mut analyzer);
     analyzer.result
 }

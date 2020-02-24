@@ -3,11 +3,9 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
-use scarf::exec_state::{ExecutionState};
-use scarf::{BinaryFile, DestOperand, Operand, Operation, Rva, VirtualAddress};
+use scarf::exec_state::{ExecutionState, VirtualAddress};
+use scarf::{BinaryFile, DestOperand, Operand, Operation, Rva};
 use scarf::operand::{OperandContext, Register};
-
-use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
 use crate::{
     Analysis, ArgCache, EntryOf, EntryOfResult, find_callers, entry_of_until,
@@ -15,9 +13,7 @@ use crate::{
     if_arithmetic_eq_neq,
 };
 
-use scarf::ExecutionStateX86;
-
-pub enum ResultOrEntries<T, Va: VirtualAddressTrait> {
+pub enum ResultOrEntries<T, Va: VirtualAddress> {
     Result(T),
     /// "not ok", but have entries of the functions for further analysis.
     Entries(Vec<Va>),
@@ -31,7 +27,7 @@ pub struct GameCoordConversion {
 }
 
 #[derive(Clone, Debug)]
-pub struct GameScreenRClick<Va: VirtualAddressTrait> {
+pub struct GameScreenRClick<Va: VirtualAddress> {
     pub game_screen_rclick: Option<Va>,
     pub client_selection: Option<Rc<Operand>>,
 }
@@ -211,9 +207,9 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
 }
 
 // Candidates are either a global ref with Some(global), or a call with None
-pub fn is_outside_game_screen<'a>(
-    analysis: &mut Analysis<'a, ExecutionStateX86<'a>>,
-) -> Option<VirtualAddress> {
+pub fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
+    analysis: &mut Analysis<'a, E>,
+) -> Option<E::VirtualAddress> {
     let game_screen_rclick = analysis.game_screen_rclick().game_screen_rclick?;
     struct Analyzer<'a, 'b, E: ExecutionState<'a>> {
         result: Option<E::VirtualAddress>,
@@ -252,7 +248,7 @@ pub fn is_outside_game_screen<'a>(
         result: None,
         args: &analysis.arg_cache,
     };
-    let mut analysis = FuncAnalysis::<ExecutionStateX86<'_>, _>::new(binary, ctx, game_screen_rclick);
+    let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_rclick);
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
@@ -288,8 +284,8 @@ fn if_f32_div(operand: &Rc<Operand>) -> Option<(&Rc<Operand>, &Rc<Operand>)> {
     }
 }
 
-pub fn game_coord_conversion<'a>(
-    analysis: &mut Analysis<'a, ExecutionStateX86<'a>>,
+pub fn game_coord_conversion<'a, E: ExecutionState<'a>>(
+    analysis: &mut Analysis<'a, E>,
 ) -> GameCoordConversion {
     let mut result = GameCoordConversion::default();
     let game_screen_rclick = match analysis.game_screen_rclick().game_screen_rclick {
@@ -422,7 +418,7 @@ pub fn game_coord_conversion<'a>(
         ctx,
         args: &analysis.arg_cache,
     };
-    let mut analysis = FuncAnalysis::<ExecutionStateX86<'_>, _>::new(binary, ctx, game_screen_rclick);
+    let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_rclick);
     analysis.analyze(&mut analyzer);
 
     result

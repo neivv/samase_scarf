@@ -18,7 +18,7 @@ fn main() {
     let relocs = scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary).unwrap();
     binary.set_relocs(relocs);
     let ctx = scarf::OperandContext::new();
-    let mut analysis = samase_scarf::Analysis::new(&binary, &ctx);
+    let mut analysis = samase_scarf::Analysis::<scarf::ExecutionStateX86<'_>>::new(&binary, &ctx);
 
     let open_file = analysis.file_hook();
     println!("open_file: {:?}", open_file);
