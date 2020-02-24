@@ -45,7 +45,7 @@ use std::rc::Rc;
 use byteorder::{ReadBytesExt, LE};
 use quick_error::quick_error;
 
-use scarf::{Operand, Operation, Rva};
+use scarf::{BinaryFile, Operand, Rva};
 use scarf::analysis::{self, Control, FuncCallPair, RelocValues};
 use scarf::exec_state::{InternMap};
 use scarf::operand::{MemAccessSize, OperandContext};
@@ -59,7 +59,7 @@ pub use crate::commands::{ProcessCommands, Selections, StepNetwork};
 pub use crate::dat::{DatTablePtr};
 pub use crate::eud::EudTable;
 pub use crate::firegraft::RequirementTables;
-pub use crate::game_init::{GameInit, SinglePlayerStart, SelectMapEntry};
+pub use crate::game_init::{GameInit, InitGame, SinglePlayerStart, SelectMapEntry};
 pub use crate::iscript::StepIscript;
 pub use crate::network::{InitStormNetworking, SnpDefinitions};
 pub use crate::pathing::RegionRelated;
@@ -73,9 +73,6 @@ use crate::switch::{CompleteSwitch, full_switch_info};
 
 use scarf::exec_state::ExecutionState as ExecutionStateTrait;
 use scarf::ExecutionStateX86;
-use scarf::ExecutionStateX86 as ExecutionState;
-type BinaryFile = scarf::BinaryFile<VirtualAddress>;
-type FuncAnalysis<'a, T> = analysis::FuncAnalysis<'a, ExecutionState<'a>, T>;
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
 pub fn test_assertions() -> bool {
@@ -157,7 +154,7 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     step_order_hidden: Cached<Rc<Vec<step_order::StepOrderHiddenHook<E::VirtualAddress>>>>,
     init_units: Cached<Option<E::VirtualAddress>>,
     step_secondary_order: Cached<Rc<Vec<step_order::SecondaryOrderHook<E::VirtualAddress>>>>,
-    init_game: Cached<Rc<InitGame>>,
+    init_game: Cached<Rc<InitGame<E::VirtualAddress>>>,
     units: Cached<Option<Rc<Operand>>>,
     game_screen_rclick: Cached<Rc<GameScreenRClick<E::VirtualAddress>>>,
     first_ai_script: Cached<Option<Rc<Operand>>>,
@@ -197,7 +194,7 @@ pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
     draw_cursor_marker: Cached<Option<Rc<Operand>>>,
     misc_clientside: Cached<Rc<MiscClientSide>>,
     dat_tables: DatTables,
-    binary: &'a scarf::BinaryFile<E::VirtualAddress>,
+    binary: &'a BinaryFile<E::VirtualAddress>,
     ctx: &'a scarf::OperandContext,
     arg_cache: ArgCache<'a, E>,
 }
@@ -350,12 +347,6 @@ pub struct SwitchTable<Va: VirtualAddressTrait> {
     cases: Vec<Va>,
 }
 
-#[derive(Clone, Debug)]
-pub struct InitGame {
-    pub loaded_save: Option<Rc<Operand>>,
-    pub init_game: Option<VirtualAddress>,
-}
-
 // When not testing, immediatly end once a value is found, for tests require all values
 // to be same.
 #[cfg(not(feature = "test_assertions"))]
@@ -385,7 +376,7 @@ where T: std::fmt::Debug + PartialEq,
 
 impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
     pub fn new(
-        binary: &'a scarf::BinaryFile<E::VirtualAddress>,
+        binary: &'a BinaryFile<E::VirtualAddress>,
         ctx: &'a scarf::OperandContext,
     ) -> Analysis<'a, E> {
         Analysis {
@@ -1086,88 +1077,18 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         self.player_ai.cache(&result);
         result
     }
-}
 
-impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
-    pub fn init_game(&mut self) -> Rc<InitGame> {
+    pub fn init_game(&mut self) -> Rc<InitGame<E::VirtualAddress>> {
         if let Some(cached) = self.init_game.cached() {
             return cached;
         }
-        let binary = self.binary;
-        let ctx = &OperandContext::new();
-
-        let init_units = self.init_units();
-        let functions = self.functions();
-
-        //let mut result = Vec::new();
-        let mut errors = Vec::new();
-        let mut result = None;
-        'outer: for &x in init_units.iter() {
-            let callers = find_callers(self, x);
-            for call in callers {
-                let mut invalid_handle_cmps: Vec<(VirtualAddress, _)> = Vec::new();
-                result = entry_of_until_call(
-                    binary,
-                    &functions,
-                    call,
-                    ctx,
-                    &mut errors,
-                    |reset, op, state, ins_address, i| {
-                        if reset {
-                            invalid_handle_cmps.clear();
-                        }
-                        match *op {
-                            Operation::Jump { ref condition, .. } => {
-                                let cond = state.resolve(condition, i);
-                                let cmp_invalid_handle = cond.iter_no_mem_addr()
-                                    .filter_map(|x| x.if_arithmetic_eq())
-                                    .filter_map(|(l, r)| {
-                                        Operand::either(l, r, |x| x.if_constant())
-                                    })
-                                    .filter(|&(c, _)| c as u32 == u32::max_value())
-                                    .map(|x| x.1.clone())
-                                    .next();
-                                if let Some(h) = cmp_invalid_handle {
-                                    if !invalid_handle_cmps.iter().any(|x| x.0 == ins_address) {
-                                        invalid_handle_cmps.push((ins_address, h));
-                                    }
-                                    if invalid_handle_cmps.len() >= 3 {
-                                        let first = &invalid_handle_cmps[0].1;
-                                        let ok = (&invalid_handle_cmps[1..]).iter()
-                                            .all(|x| x.1 == *first);
-                                        if ok {
-                                            return Some(invalid_handle_cmps.swap_remove(0).1);
-                                        }
-                                    }
-                                }
-                            }
-                            _ => (),
-                        }
-                        None
-                    },
-                ).into_option_with_entry();
-                if result.is_some() {
-                    break 'outer;
-                }
-            }
-        }
-
-        let result = if let Some((entry, loaded_save)) = result {
-            InitGame {
-                init_game: Some(entry),
-                loaded_save: Some(loaded_save),
-            }
-        } else {
-            InitGame {
-                init_game: None,
-                loaded_save: None,
-            }
-        };
-        let result = Rc::new(result);
+        let result = Rc::new(game_init::init_game(self));
         self.init_game.cache(&result);
         result
     }
+}
 
+impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
     pub fn sprites(&mut self) -> Rc<Sprites> {
         if let Some(cached) = self.sprites.cached() {
             return cached;
@@ -1302,13 +1223,13 @@ impl<'a> Analysis<'a, ExecutionStateX86<'a>> {
 // Tries to return a func index to the address less or equal to `entry` that is definitely a
 // function entry. Has still a hard limit.
 fn first_definite_entry<Va: VirtualAddressTrait>(
-    binary: &scarf::BinaryFile<Va>,
+    binary: &BinaryFile<Va>,
     entry: Va,
     funcs: &[Va],
     limit: usize,
 ) -> (usize, usize) {
     fn is_definitely_entry<Va: VirtualAddressTrait>(
-        binary: &scarf::BinaryFile<Va>,
+        binary: &BinaryFile<Va>,
         entry: Va,
     ) -> bool {
         if entry.as_u64() & 0xf != 0 {
@@ -1359,7 +1280,7 @@ pub struct GlobalRefs<Va: VirtualAddressTrait> {
 }
 
 pub fn string_refs<'a, E: ExecutionStateTrait<'a>>(
-    binary: &scarf::BinaryFile<E::VirtualAddress>,
+    binary: &BinaryFile<E::VirtualAddress>,
     cache: &mut Analysis<'a, E>,
     string: &[u8],
 ) -> Vec<StringRefs<E::VirtualAddress>> {
@@ -1441,58 +1362,10 @@ impl<R, Va: VirtualAddressTrait> EntryOfResult<R, Va> {
     }
 }
 
-fn entry_of_until_call<'a, F, R>(
-    binary: &'a BinaryFile,
-    funcs: &[VirtualAddress],
-    caller: VirtualAddress,
-    ctx: &'a OperandContext,
-    errors: &mut Vec<Error>,
-    mut cb: F,
-) -> EntryOfResult<R, VirtualAddress>
-where F: FnMut(
-    bool,
-    &Operation,
-    &mut ExecutionState<'a>,
-    VirtualAddress,
-    &mut InternMap,
-) -> Option<R>
-{
-    entry_of_until(binary, funcs, caller, |entry| {
-        let mut reset = true;
-        let mut analysis = FuncAnalysis::new(binary, ctx, entry);
-        let mut call_found = false;
-        let mut result = None;
-        'outer: while let Some(mut branch) = analysis.next_branch() {
-            let mut operations = branch.operations();
-            while let Some((op, state, ins_address, i)) = operations.next() {
-                if ins_address == caller {
-                    call_found = true;
-                }
-                result = cb(reset, op, state, ins_address, i);
-                reset = false;
-                if result.is_some() {
-                    break 'outer;
-                }
-            }
-        }
-        errors.extend(analysis.errors.into_iter().map(|(a, b)| {
-            Error::Scarf(to_default_base(binary, a), b)
-        }));
-        if let Some(res) = result {
-            return EntryOf::Ok(res);
-        }
-        if call_found {
-            EntryOf::Stop
-        } else {
-            EntryOf::Retry
-        }
-    })
-}
-
 /// Better version of entry_of, retries with an earlier func if the cb returns false,
 /// helps against false positive func entries.
 fn entry_of_until<'a, Va: VirtualAddressTrait, R, F>(
-    binary: &scarf::BinaryFile<Va>,
+    binary: &BinaryFile<Va>,
     funcs: &[Va],
     caller: Va,
     mut cb: F,
@@ -1548,11 +1421,6 @@ fn find_functions_using_global<'exec, E: ExecutionStateTrait<'exec>>(
 fn read_u32_at<Va: VirtualAddressTrait>(section: &BinarySection<Va>, offset: Rva) -> Option<u32> {
     section.data.get(offset.0 as usize..offset.0 as usize + 4)
         .and_then(|mut x| x.read_u32::<LE>().ok())
-}
-
-fn to_default_base(binary: &BinaryFile, addr: VirtualAddress) -> VirtualAddress {
-    let text = binary.section(b".text\0\0\0").unwrap();
-    VirtualAddress(0x0040_1000) + (addr - text.virtual_address)
 }
 
 /// Returns any matching strings as Rvas.
@@ -1623,7 +1491,7 @@ fn find_bytes(mut data: &[u8], needle: &[u8]) -> Vec<Rva> {
 }
 
 fn if_callable_const<'e, E: ExecutionStateTrait<'e>>(
-    binary: &scarf::BinaryFile<E::VirtualAddress>,
+    binary: &BinaryFile<E::VirtualAddress>,
     state: &mut E,
     dest: &Rc<Operand>,
     interner: &mut InternMap,
@@ -1671,7 +1539,7 @@ impl<'a> OptionExt<'a> for Option<(&'a Rc<Operand>, &'a Rc<Operand>)> {
 /// error
 fn seems_assertion_call<'exec, A: analysis::Analyzer<'exec>>(
     ctrl: &mut Control<'exec, '_, '_, A>,
-    binary: &BinaryFile,
+    binary: &BinaryFile<VirtualAddress>,
 ) -> bool {
     use scarf::operand_helpers::*;
     let esp = operand_register(4);

@@ -5,17 +5,24 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 
 use crate::{
-    Analysis, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt,
+    Analysis, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, find_callers,
     string_refs, if_arithmetic_eq_neq,
 };
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
+/// Actually a better name would be ProcessInit
 pub struct GameInit<Va: VirtualAddress> {
     pub sc_main: Option<Va>,
     pub mainmenu_entry_hook: Option<Va>,
     pub game_loop: Option<Va>,
     pub scmain_state: Option<Rc<Operand>>,
+}
+
+/// Data related to game (map) (gameplay state) initialization
+pub struct InitGame<Va: VirtualAddress> {
+    pub loaded_save: Option<Rc<Operand>>,
+    pub init_game: Option<Va>,
 }
 
 pub struct SinglePlayerStart<Va: VirtualAddress> {
@@ -1415,6 +1422,95 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLobbyState<'e, E>
                     self.jump_limit -= 1;
                     if self.jump_limit == 0 {
                         ctrl.end_analysis();
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+pub fn init_game<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> InitGame<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let mut result = InitGame {
+        loaded_save: None,
+        init_game: None,
+    };
+    let init_units = match analysis.init_units() {
+        Some(s) => s,
+        None => return result,
+    };
+    let functions = analysis.functions();
+
+    let callers = find_callers(analysis, init_units);
+    for call in callers {
+        let mut invalid_handle_cmps: Vec<(E::VirtualAddress, _)> = Vec::new();
+        let val = entry_of_until(binary, &functions, call, |entry| {
+            invalid_handle_cmps.clear();
+            let mut analyzer = InitGameAnalyzer::<E> {
+                result: EntryOf::Retry,
+                init_units,
+                invalid_handle_cmps: &mut invalid_handle_cmps,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.result
+        }).into_option_with_entry();
+        if let Some((entry, loaded_save)) = val {
+            result.loaded_save = Some(loaded_save);
+            result.init_game = Some(entry);
+            break;
+        }
+    }
+
+    result
+}
+
+struct InitGameAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    invalid_handle_cmps: &'a mut Vec<(E::VirtualAddress, Rc<Operand>)>,
+    result: EntryOf<Rc<Operand>>,
+    init_units: E::VirtualAddress,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for InitGameAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        match op {
+            Operation::Jump { condition, .. } => {
+                let cond = ctrl.resolve(condition);
+                let cmp_invalid_handle = cond.iter_no_mem_addr()
+                    .filter_map(|x| x.if_arithmetic_eq())
+                    .filter_map(|(l, r)| {
+                        Operand::either(l, r, |x| x.if_constant())
+                    })
+                    .filter(|&(c, _)| c as u32 == u32::max_value())
+                    .map(|x| x.1.clone())
+                    .next();
+                if let Some(h) = cmp_invalid_handle {
+                    let address = ctrl.address();
+                    if !self.invalid_handle_cmps.iter().any(|x| x.0 == address) {
+                        self.invalid_handle_cmps.push((address, h));
+                    }
+                    if self.invalid_handle_cmps.len() >= 3 {
+                        let first = &self.invalid_handle_cmps[0].1;
+                        let ok = (&self.invalid_handle_cmps[1..]).iter()
+                            .all(|x| x.1 == *first);
+                        if ok {
+                            self.result = EntryOf::Ok(self.invalid_handle_cmps.swap_remove(0).1);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Call(dest) => {
+                if let Some(c) = ctrl.resolve(dest).if_constant() {
+                    if c == self.init_units.as_u64() {
+                        self.result = EntryOf::Stop;
                     }
                 }
             }
