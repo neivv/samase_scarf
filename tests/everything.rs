@@ -797,6 +797,12 @@ fn everything_1233a() {
     })
 }
 
+#[test]
+fn everything_1233b() {
+    test_with_extra_checks(Path::new("1233b.exe"), |_analysis| {
+    })
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_| {});
 }
