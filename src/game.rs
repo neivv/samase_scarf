@@ -5,8 +5,8 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, OperandContext, Operand, DestOperand, Operation, MemAccessSize};
 
 use crate::{
-    Analysis, OptionExt, find_functions_using_global, find_callers, entry_of,
-    single_result_assign, if_callable_const,
+    Analysis, OptionExt, find_functions_using_global, find_callers, EntryOf,
+    single_result_assign, if_callable_const, entry_of_until,
 };
 
 pub fn step_objects<'e, E: ExecutionState<'e>>(
@@ -19,43 +19,55 @@ pub fn step_objects<'e, E: ExecutionState<'e>>(
     // 0x64 and [x] - 1 to [x]; x is vision update counter.
     let rng = analysis.rng();
     let rng_enable = rng.enable.as_ref()?;
-    let mut rng_refs = rng_enable.iter_no_mem_addr()
-        .filter_map(|x| {
-            x.if_memory()
-                .and_then(|mem| mem.address.if_constant())
-                .map(|x| E::VirtualAddress::from_u64(x))
-        })
-        .flat_map(|enable_addr| {
-            find_functions_using_global(analysis, enable_addr).into_iter().map(|x| x.func_entry)
-        })
-        .collect::<Vec<_>>();
-    rng_refs.sort();
-    rng_refs.dedup();
-    let set_funcs = rng_refs.iter().cloned()
-        .filter(|&x| is_branchless_leaf(analysis, x))
-        .collect::<Vec<_>>();
-    let funcs = analysis.functions();
-    rng_refs.extend(set_funcs.iter().flat_map(|&fun| {
-        find_callers(analysis, fun).into_iter().map(|call_pos| entry_of(&funcs, call_pos))
-    }));
+    // Use addresses of RNG or call location addresses of RNG set func
+    let mut rng_refs = Vec::with_capacity(16);
+    for part in rng_enable.iter_no_mem_addr() {
+        if let Some(enable_addr) = part.if_memory().and_then(|x| x.address.if_constant()) {
+            let enable_addr = E::VirtualAddress::from_u64(enable_addr);
+            let globals = find_functions_using_global(analysis, enable_addr);
+            for global_ref in globals {
+                if is_branchless_leaf(analysis, global_ref.func_entry) {
+                    rng_refs.extend(find_callers(analysis, global_ref.func_entry));
+                } else {
+                    rng_refs.push(global_ref.use_address);
+                }
+            }
+        }
+    }
     rng_refs.sort();
     rng_refs.dedup();
     let mut checked_vision_funcs = Vec::new();
     let mut result = None;
-    for addr in rng_refs {
-        let ctx = analysis.ctx;
-        let mut analysis = FuncAnalysis::new(binary, &ctx, addr);
-        let mut analyzer: IsStepObjects<E> = IsStepObjects {
-            ok: false,
-            vision_state: VisionStepState::new(),
-            checked_vision_funcs: &mut checked_vision_funcs,
-            binary,
-            ctx,
-        };
-        analysis.analyze(&mut analyzer);
-        if analyzer.ok || analyzer.vision_state.is_ok() {
-            if single_result_assign(Some(addr), &mut result) {
-                break;
+    let funcs = analysis.functions();
+    let funcs = &funcs[..];
+    let ctx = analysis.ctx;
+    let mut checked_functions = Vec::with_capacity(8);
+    'outer: for &first_candidate_only in &[true, false] {
+        for &addr in &rng_refs {
+            let res = entry_of_until(binary, funcs, addr, |entry| {
+                let mut analyzer: IsStepObjects<E> = IsStepObjects {
+                    vision_state: VisionStepState::new(),
+                    checked_vision_funcs: &mut checked_vision_funcs,
+                    binary,
+                    ctx,
+                    result: EntryOf::Retry,
+                    rng_ref_address: addr,
+                    rng_ref_seen: false,
+                };
+                if !checked_functions.iter().any(|&x| x == entry) {
+                    checked_functions.push(entry);
+                    let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+                    analysis.analyze(&mut analyzer);
+                }
+                if first_candidate_only {
+                    if let EntryOf::Retry = analyzer.result {
+                        analyzer.result = EntryOf::Stop;
+                    }
+                }
+                analyzer.result
+            }).into_option_with_entry().map(|x| x.0);
+            if single_result_assign(res, &mut result) {
+                break 'outer;
             }
         }
     }
@@ -63,11 +75,16 @@ pub fn step_objects<'e, E: ExecutionState<'e>>(
 }
 
 struct IsStepObjects<'a, 'e, E: ExecutionState<'e>> {
-    ok: bool,
     vision_state: VisionStepState,
     checked_vision_funcs: &'a mut Vec<(E::VirtualAddress, bool)>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: &'e OperandContext,
+    result: EntryOf<()>,
+    // Can either be mem access or call
+    rng_ref_address: E::VirtualAddress,
+    // rng enable is the first call (or inlinied), if not seen by first call
+    // should stop.
+    rng_ref_seen: bool,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepObjects<'a, 'e, E> {
@@ -76,6 +93,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepObjects<'a,
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
         match op {
             Operation::Call(dest) => {
+                self.check_rng_ref(ctrl);
+                if !self.rng_ref_seen {
+                    ctrl.end_analysis();
+                    return;
+                }
                 let (state, interner) = ctrl.exec_state();
                 if let Some(dest) = if_callable_const(self.binary, state, dest, interner) {
                     let cached = self.checked_vision_funcs.iter()
@@ -90,15 +112,32 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepObjects<'a,
                         }
                     };
                     if is {
-                        self.ok = true;
+                        self.result = EntryOf::Ok(());
                         ctrl.end_analysis();
                     }
                 }
             }
             Operation::Move(dest, val, _cond) => {
+                self.check_rng_ref(ctrl);
                 self.vision_state.update(dest, &ctrl.resolve(val));
+                if self.vision_state.is_ok() {
+                    self.result = EntryOf::Ok(());
+                    ctrl.end_analysis();
+                }
             }
             _ => (),
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> IsStepObjects<'a, 'e, E> {
+    fn check_rng_ref(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if !self.rng_ref_seen {
+            let ok = self.rng_ref_address >= ctrl.address() &&
+                self.rng_ref_address < ctrl.current_instruction_end();
+            if ok {
+                self.rng_ref_seen = true;
+            }
         }
     }
 }
