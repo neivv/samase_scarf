@@ -47,7 +47,6 @@ use quick_error::quick_error;
 
 use scarf::{BinaryFile, Operand, Rva};
 use scarf::analysis::{self, Control, FuncCallPair, RelocValues};
-use scarf::exec_state::{InternMap};
 use scarf::operand::{MemAccessSize, OperandContext};
 
 pub use scarf;
@@ -1481,15 +1480,14 @@ fn find_bytes(mut data: &[u8], needle: &[u8]) -> Vec<Rva> {
     ret
 }
 
-fn if_callable_const<'e, E: ExecutionStateTrait<'e>>(
-    binary: &BinaryFile<E::VirtualAddress>,
-    state: &mut E,
+fn if_callable_const<'e, A: analysis::Analyzer<'e>>(
+    binary: &BinaryFile<<A::Exec as ExecutionStateTrait<'e>>::VirtualAddress>,
     dest: &Rc<Operand>,
-    interner: &mut InternMap,
-) -> Option<E::VirtualAddress> {
-    state.resolve(dest, interner).if_constant()
+    ctrl: &mut Control<'e, '_, '_, A>
+) -> Option<<A::Exec as ExecutionStateTrait<'e>>::VirtualAddress> {
+    ctrl.resolve(dest).if_constant()
         .and_then(|dest| {
-            let dest = E::VirtualAddress::from_u64(dest);
+            let dest = <A::Exec as ExecutionStateTrait<'_>>::VirtualAddress::from_u64(dest);
             let code_section = binary.code_section();
             let code_section_end = code_section.virtual_address + code_section.virtual_size;
             if dest > code_section.virtual_address && dest < code_section_end {

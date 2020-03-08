@@ -97,8 +97,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindDatRoot<'a, '
             self.addr_found = true;
         }
         if let Operation::Call(dest) = op {
-            let (state, interner) = ctrl.exec_state();
-            let dest = if_callable_const(self.binary, state, dest, interner);
+            let dest = if_callable_const(self.binary, dest, ctrl);
             let arg1 = ctrl.resolve(&self.arg_cache.on_call(0)).if_constant();
             let arg2 = ctrl.resolve(&self.arg_cache.on_call(1)).if_constant();
             if let (Some(_dest), Some(arg1), Some(arg2)) = (dest, arg1, arg2) {

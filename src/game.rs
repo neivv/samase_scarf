@@ -98,8 +98,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepObjects<'a,
                     ctrl.end_analysis();
                     return;
                 }
-                let (state, interner) = ctrl.exec_state();
-                if let Some(dest) = if_callable_const(self.binary, state, dest, interner) {
+                if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
                     let cached = self.checked_vision_funcs.iter()
                         .find(|x| x.0 == dest)
                         .map(|x| x.1);
@@ -304,8 +303,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGame<'e, E> {
         match op {
             Operation::Call(dest) => {
                 if self.call_depth < 3 {
-                    let (state, interner) = ctrl.exec_state();
-                    if let Some(dest) = if_callable_const(self.binary, state, dest, interner) {
+                    if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
                         let jump_limit = self.jump_limit;
                         self.jump_limit = 3;
                         self.call_depth += 1;

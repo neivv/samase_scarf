@@ -141,7 +141,6 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
                 val: &Rc<Operand>,
                 ctrl: &mut Control<'g, '_, '_, Self>,
             ) -> Option<Rc<Operand>> {
-                let (state, i) = ctrl.exec_state();
                 let result = val.if_memory()
                     .and_then(|mem| mem.address.if_arithmetic_add())
                     .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
@@ -150,7 +149,7 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
                     } else {
                         None
                     });
-                if let Some(unit) = result.and_then(|x| state.unresolve(x, i)) {
+                if let Some(unit) = result.and_then(|x| ctrl.unresolve(x)) {
                     return Some(unit);
                 }
                 let result = val.if_arithmetic_eq()
@@ -169,7 +168,7 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
                     } else {
                         None
                     });
-                if let Some(unit) = result.and_then(|x| state.unresolve(x, i)) {
+                if let Some(unit) = result.and_then(|x| ctrl.unresolve(x)) {
                     return Some(unit);
                 }
                 None
@@ -640,8 +639,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             Operation::Jump { ref condition, .. } => {
                 let condition = ctrl.resolve(condition);
                 let unit = step_secondary_order_hallu_jump_check(&condition);
-                let (state, i) = ctrl.exec_state();
-                if let Some(unit) = unit.and_then(|u| state.unresolve(&u, i)) {
+                if let Some(unit) = unit.and_then(|u| ctrl.unresolve(&u)) {
                     self.pre_result = Some((ctrl.address(), unit));
                 }
             }

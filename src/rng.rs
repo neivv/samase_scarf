@@ -82,8 +82,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
         use scarf::operand_helpers::*;
         match op {
             Operation::Call(dest) => {
-                let (state, i) = ctrl.exec_state();
-                if let Some(dest) = if_callable_const(self.binary, state, dest, i) {
+                if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
                     let arg1 = ctrl.resolve(&self.arg_cache.on_call(0));
                     if arg1.if_constant() == Some(0x24) {
                         if !self.is_inlining {

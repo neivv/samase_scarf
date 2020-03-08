@@ -191,8 +191,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
         match op {
             Operation::Call(dest) => {
-                let (state, i) = ctrl.exec_state();
-                if let Some(dest) = if_callable_const(self.binary, state, dest, i) {
+                if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
                     // Check if calling send_command(&[COMMAND_STIM], 1)
                     let arg1 = ctrl.resolve(&self.arg_cache.on_call(0));
                     let arg1_inner = ctrl.resolve(&ctrl.ctx().mem8(&arg1));

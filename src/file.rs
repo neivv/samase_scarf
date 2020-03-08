@@ -19,8 +19,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLoadDat<'a, '
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
         if let Operation::Call(ref dest) = *op {
-            let (state, interner) = ctrl.exec_state();
-            let dest = if_callable_const(self.binary, state, dest, interner);
+            let dest = if_callable_const(self.binary, dest, ctrl);
             let arg1 = ctrl.resolve(&self.arg_cache.on_call(0)).if_constant();
             let arg2 = ctrl.resolve(&self.arg_cache.on_call(1)).if_constant();
             if let (Some(dest), Some(arg1), Some(_)) = (dest, arg1, arg2) {
@@ -127,9 +126,8 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
             type Exec = E;
             fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
                 if let Operation::Call(ref dest) = op {
-                    let (state, i) = ctrl.exec_state();
-                    let dest = if_callable_const(self.binary, state, dest, i);
-                    let new_arg_pos = find_name_arg(self.arg_cache, state, self.filename_arg, i);
+                    let dest = if_callable_const(self.binary, dest, ctrl);
+                    let new_arg_pos = find_name_arg(self.arg_cache, self.filename_arg, ctrl);
                     if let (Some(dest), Some(new_arg)) = (dest, new_arg_pos) {
                         self.functions.push(OpenFileFnIntermediate {
                             address: dest,
@@ -180,14 +178,13 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
 }
 
 /// State has to be right before call ins
-fn find_name_arg<'e, E: ExecutionState<'e>>(
-    arg_cache: &ArgCache<'e, E>,
-    state: &mut E,
+fn find_name_arg<'e, A: analysis::Analyzer<'e>>(
+    arg_cache: &ArgCache<'e, A::Exec>,
     arg: Arg,
-    interner: &mut InternMap,
+    ctrl: &mut Control<'e, '_, '_, A>
 ) -> Option<Arg> {
     (0..10).filter_map(|i| {
-        let resolved = state.resolve(&arg_cache.on_call(i), interner);
+        let resolved = ctrl.resolve(&arg_cache.on_call(i));
         match arg {
             Arg::Stack(s) => {
                 let equiv = arg_cache.on_entry(s);
