@@ -1,9 +1,7 @@
-use std::rc::Rc;
-
 use scarf::{BinaryFile, DestOperand, Operand, OperandType, Operation};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
-use scarf::operand::{ArithOpType, MemAccessSize, OperandContext};
+use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 
 use crate::{
     Analysis, ArgCache, EntryOf, EntryOfResult, OptionExt, if_callable_const, find_callers,
@@ -11,51 +9,51 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct ProcessCommands<Va: VirtualAddressTrait> {
+pub struct ProcessCommands<'e, Va: VirtualAddressTrait> {
     pub process_commands: Option<Va>,
-    pub storm_command_user: Option<Rc<Operand>>,
+    pub storm_command_user: Option<Operand<'e>>,
     pub switch: Option<crate::switch::CompleteSwitch<Va>>,
 }
 
 #[derive(Clone, Debug)]
-pub struct Selections {
-    pub unique_command_user: Option<Rc<Operand>>,
-    pub selections: Option<Rc<Operand>>,
+pub struct Selections<'e> {
+    pub unique_command_user: Option<Operand<'e>>,
+    pub selections: Option<Operand<'e>>,
 }
 
 #[derive(Clone, Debug)]
-pub struct StepNetwork<Va: VirtualAddressTrait> {
+pub struct StepNetwork<'e, Va: VirtualAddressTrait> {
     pub step_network: Option<Va>,
     pub receive_storm_turns: Option<Va>,
-    pub menu_screen_id: Option<Rc<Operand>>,
-    pub net_player_flags: Option<Rc<Operand>>,
-    pub player_turns: Option<Rc<Operand>>,
-    pub player_turns_size: Option<Rc<Operand>>,
-    pub network_ready: Option<Rc<Operand>>,
+    pub menu_screen_id: Option<Operand<'e>>,
+    pub net_player_flags: Option<Operand<'e>>,
+    pub player_turns: Option<Operand<'e>>,
+    pub player_turns_size: Option<Operand<'e>>,
+    pub network_ready: Option<Operand<'e>>,
 }
 
 pub fn print_text<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
 ) -> Option<E::VirtualAddress> {
     struct Analyzer<'e, E: ExecutionState<'e>> {
-        arg1: Rc<Operand>,
-        arg2: Rc<Operand>,
-        ctx: &'e OperandContext,
+        arg1: Operand<'e>,
+        arg2: Operand<'e>,
+        ctx: OperandCtx<'e>,
         result: Option<E::VirtualAddress>,
     }
 
     impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
         type State = analysis::DefaultState;
         type Exec = E;
-        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-            match op {
+        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+            match *op {
                 Operation::Call(dest) => {
                     let dest = ctrl.resolve(dest);
                     if let Some(dest) = dest.if_constant() {
-                        let arg1 = ctrl.resolve(&self.arg1);
-                        let arg2 = ctrl.resolve(&self.arg2);
+                        let arg1 = ctrl.resolve(self.arg1);
+                        let arg2 = ctrl.resolve(self.arg2);
                         if let Some(addr) = arg2.if_mem8() {
-                            let addr_plus_1 = self.ctx.add_const(&addr, 1);
+                            let addr_plus_1 = self.ctx.add_const(addr, 1);
                             if addr_plus_1 == arg1 {
                                 let dest =
                                     <E::VirtualAddress as VirtualAddressTrait>::from_u64(dest);
@@ -163,7 +161,7 @@ pub fn send_command<'e, E: ExecutionState<'e>>(
 
     let mut result = None;
     for stim_func in stim_funcs {
-        let mut analysis = FuncAnalysis::new(binary, &ctx, stim_func);
+        let mut analysis = FuncAnalysis::new(binary, ctx, stim_func);
         let mut analyzer = FindSendCommand {
             result: None,
             binary,
@@ -188,15 +186,15 @@ struct FindSendCommand<'a, 'e, E: ExecutionState<'e>> {
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(dest) => {
                 if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
                     // Check if calling send_command(&[COMMAND_STIM], 1)
-                    let arg1 = ctrl.resolve(&self.arg_cache.on_call(0));
-                    let arg1_inner = ctrl.resolve(&ctrl.ctx().mem8(&arg1));
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg1_inner = ctrl.resolve(ctrl.ctx().mem8(arg1));
                     if arg1_inner.if_constant() == Some(0x36) {
-                        let arg2 = ctrl.resolve(&self.arg_cache.on_call(1));
+                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
                         if arg2.if_constant() == Some(1) {
                             if single_result_assign(Some(dest), &mut self.result) {
                                 ctrl.end_analysis();
@@ -222,7 +220,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'
 
 pub fn process_commands<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> ProcessCommands<E::VirtualAddress> {
+) -> ProcessCommands<'e, E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let funcs = analysis.functions();
@@ -301,7 +299,7 @@ pub fn process_commands<'e, E: ExecutionState<'e>>(
 }
 
 struct FindStormCommandUser<'e, E: ExecutionState<'e>> {
-    result: Option<Rc<Operand>>,
+    result: Option<Operand<'e>>,
     call_found: bool,
     caller: E::VirtualAddress,
 }
@@ -309,15 +307,15 @@ struct FindStormCommandUser<'e, E: ExecutionState<'e>> {
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindStormCommandUser<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
-            Operation::Move(ref dest, ref val, _) => {
-                let val = ctrl.resolve(val);
-                if val.ty == OperandType::Constant(7) {
-                    if let DestOperand::Memory(mem) = dest {
-                        let dest = ctrl.resolve(&mem.address);
-                        if op_is_fully_defined(&dest) {
-                            self.result = Some(ctrl.ctx().mem32(&dest));
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Move(ref dest, val, _) => {
+                if let DestOperand::Memory(mem) = dest {
+                    let val = ctrl.resolve(val);
+                    if val.if_constant() == Some(7) {
+                        let dest = ctrl.resolve(mem.address);
+                        if op_is_fully_defined(dest) {
+                            self.result = Some(ctrl.ctx().mem32(dest));
                             ctrl.end_analysis();
                         }
                     }
@@ -333,8 +331,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindStormCommandUser<
     }
 }
 
-fn op_is_fully_defined(op: &Operand) -> bool {
-    op.iter().all(|x| match x.ty {
+fn op_is_fully_defined(op: Operand<'_>) -> bool {
+    op.iter().all(|x| match x.ty() {
         OperandType::Memory(_) | OperandType::Constant(_) | OperandType::Arithmetic(_) => true,
         _ => false
     })
@@ -342,7 +340,7 @@ fn op_is_fully_defined(op: &Operand) -> bool {
 
 pub fn command_user<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
@@ -363,17 +361,17 @@ pub fn command_user<'e, E: ExecutionState<'e>>(
 }
 
 struct CommandUserAnalyzer<'e, E: ExecutionState<'e>> {
-    result: Option<Rc<Operand>>,
+    result: Option<Operand<'e>>,
     inlining: bool,
-    game: Rc<Operand>,
+    game: Operand<'e>,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CommandUserAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(dest) => {
                 if !self.inlining {
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
@@ -387,12 +385,12 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CommandUserAnalyzer<'
                     }
                 }
             }
-            Operation::Move(dest, _, _) => {
+            Operation::Move(ref dest, _, _) => {
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem8 {
                         // The alliance command writes bytes to game + e544 + x * 0xc
-                        let addr = ctrl.resolve(&mem.address);
-                        let offset = ctrl.ctx().sub(&addr, &self.game);
+                        let addr = ctrl.resolve(mem.address);
+                        let offset = ctrl.ctx().sub(addr, self.game);
                         let command_user = offset.if_arithmetic_add()
                             .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
                             .and_then(|(c, other)| match c == 0xe544 {
@@ -403,20 +401,18 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CommandUserAnalyzer<'
                             .and_then(|(c, other)| match c == 0xc {
                                 true => Some(other),
                                 false => None,
-                            })
-                            .cloned();
+                            });
                         if single_result_assign(command_user, &mut self.result) {
                             ctrl.end_analysis();
                         }
                     }
                 }
             }
-            Operation::Jump { ref to, .. } => {
+            Operation::Jump { to, .. } => {
                 if !self.inlining {
                     // Don't follow through the switch loop
-                    match to.ty {
-                        OperandType::Constant(_) => (),
-                        _ => ctrl.end_branch(),
+                    if to.if_constant().is_none() {
+                        ctrl.end_branch();
                     }
                 }
             }
@@ -427,7 +423,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CommandUserAnalyzer<'
 
 pub fn selections<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Selections {
+) -> Selections<'e> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
@@ -454,14 +450,14 @@ pub fn selections<'e, E: ExecutionState<'e>>(
     result
 }
 
-enum SelectionState {
+enum SelectionState<'e> {
     Start,
-    LimitJumped(Rc<Operand>),
+    LimitJumped(Operand<'e>),
 }
 
 struct SelectionsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    result: &'a mut Selections,
-    sel_state: SelectionState,
+    result: &'a mut Selections<'e>,
+    sel_state: SelectionState<'e>,
     checked_calls: Vec<E::VirtualAddress>,
     inline_depth: u8,
 }
@@ -469,8 +465,8 @@ struct SelectionsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SelectionsAnalyzer<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(dest) => {
                 if self.inline_depth < 3 {
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
@@ -490,12 +486,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SelectionsAnalyze
             Operation::Jump { to, condition } => {
                 // Don't follow through the switch loop in process_commands
                 if self.inline_depth == 0 {
-                    match to.ty {
-                        OperandType::Constant(_) => (),
-                        _ => {
-                            ctrl.end_branch();
-                            return;
-                        }
+                    if to.if_constant().is_none() {
+                        ctrl.end_branch();
+                        return;
                     }
                 }
                 let condition = ctrl.resolve(condition);
@@ -505,7 +498,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SelectionsAnalyze
                             self.sel_state = SelectionState::LimitJumped(r.clone());
                         }
                     }
-                } else if let SelectionState::LimitJumped(ref selection_pos) = self.sel_state {
+                } else if let SelectionState::LimitJumped(selection_pos) = self.sel_state {
                     // Check if the condition is
                     // (selections + (unique_command_user * 0xc + selection_pos) * 4) == 0
                     let x = condition.if_arithmetic_eq()
@@ -559,7 +552,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SelectionsAnalyze
 
 pub fn is_replay<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
@@ -572,12 +565,11 @@ pub fn is_replay<'e, E: ExecutionState<'e>>(
     //     process(cmd[1..5]);
     // }
     // Try check for that, should be fine even with inlining
-    let mut i = scarf::exec_state::InternMap::new();
-    let exec_state = E::initial_state(ctx, binary, &mut i);
+    let exec_state = E::initial_state(ctx, binary);
     let state = IsReplayState {
         possible_result: None,
     };
-    let mut analysis = FuncAnalysis::custom_state(binary, ctx, command, exec_state, state, i);
+    let mut analysis = FuncAnalysis::custom_state(binary, ctx, command, exec_state, state);
     let mut analyzer = IsReplayAnalyzer::<E> {
         checked_calls: Vec::new(),
         result: None,
@@ -588,17 +580,17 @@ pub fn is_replay<'e, E: ExecutionState<'e>>(
 }
 
 struct IsReplayAnalyzer<'e, E: ExecutionState<'e>> {
-    result: Option<Rc<Operand>>,
+    result: Option<Operand<'e>>,
     checked_calls: Vec<E::VirtualAddress>,
     inline_depth: u8,
 }
 
 #[derive(Default, Clone, Debug)]
-struct IsReplayState {
-    possible_result: Option<Rc<Operand>>,
+struct IsReplayState<'e> {
+    possible_result: Option<Operand<'e>>,
 }
 
-impl analysis::AnalysisState for IsReplayState {
+impl<'e> analysis::AnalysisState for IsReplayState<'e> {
     fn merge(&mut self, newer: Self) {
         if self.possible_result != newer.possible_result {
             self.possible_result = None;
@@ -607,10 +599,10 @@ impl analysis::AnalysisState for IsReplayState {
 }
 
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyzer<'e, E> {
-    type State = IsReplayState;
+    type State = IsReplayState<'e>;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(dest) => {
                 if self.inline_depth < 2 {
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
@@ -642,26 +634,20 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyzer<'e, 
                     }
                 }
             }
-            Operation::Jump { ref to, ref condition } => {
+            Operation::Jump { to, condition } => {
                 // Don't follow through the switch loop in process_commands
                 if self.inline_depth == 0 {
-                    match to.ty {
-                        OperandType::Constant(_) => (),
-                        _ => {
-                            ctrl.end_branch();
-                            return;
-                        }
+                    if to.if_constant().is_none() {
+                        ctrl.end_branch();
+                        return;
                     }
                 }
                 let condition = ctrl.resolve(condition);
                 let other = condition.if_arithmetic_eq()
                     .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                    .filter(|other| other.iter().all(|x| match x.ty {
-                        OperandType::Undefined(..) => false,
-                        _ => true,
-                    }));
+                    .filter(|other| other.iter().all(|x| !x.is_undefined()));
 
-                ctrl.user_state().possible_result = other.cloned();
+                ctrl.user_state().possible_result = other;
             }
             _ => (),
         }
@@ -670,7 +656,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyzer<'e, 
 
 pub fn step_network<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> StepNetwork<E::VirtualAddress> {
+) -> StepNetwork<'e, E::VirtualAddress> {
     let mut result = StepNetwork {
         step_network: None,
         receive_storm_turns: None,
@@ -730,13 +716,12 @@ pub fn step_network<'e, E: ExecutionState<'e>>(
     }
     let arg_cache = &analysis.arg_cache;
     if let Some(step_network) = result.step_network {
-        let mut i = scarf::exec_state::InternMap::new();
-        let exec_state = E::initial_state(ctx, binary, &mut i);
+        let exec_state = E::initial_state(ctx, binary);
         let state = StepNetworkState {
             after_receive_storm_turns: false,
         };
         let mut analysis =
-            FuncAnalysis::custom_state(binary, ctx, step_network, exec_state, state, i);
+            FuncAnalysis::custom_state(binary, ctx, step_network, exec_state, state);
         let mut analyzer = AnalyzeStepNetwork::<E> {
             result: &mut result,
             arg_cache,
@@ -748,7 +733,7 @@ pub fn step_network<'e, E: ExecutionState<'e>>(
 }
 
 struct IsStepNetwork<'e, E: ExecutionState<'e>> {
-    result: EntryOf<Rc<Operand>>,
+    result: EntryOf<Operand<'e>>,
     child: E::VirtualAddress,
     inlining: bool,
     first_branch: bool,
@@ -757,8 +742,8 @@ struct IsStepNetwork<'e, E: ExecutionState<'e>> {
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepNetwork<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
@@ -780,7 +765,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepNetwork<'e, E> 
             Operation::Jump { condition, .. } => {
                 if self.first_branch {
                     let condition = ctrl.resolve(condition);
-                    let menu_screen_id = if_arithmetic_eq_neq(&condition)
+                    let menu_screen_id = if_arithmetic_eq_neq(condition)
                         .map(|(l, r, _)| (l, r))
                         .and_either_other(|x| x.if_constant().filter(|&c| c > 0x20 && c < 0x80));
                     if let Some(menu_screen_id) = menu_screen_id {
@@ -796,7 +781,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepNetwork<'e, E> 
 }
 
 struct AnalyzeStepNetwork<'a, 'e, E: ExecutionState<'e>> {
-    result: &'a mut StepNetwork<E::VirtualAddress>,
+    result: &'a mut StepNetwork<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     inlining: bool,
 }
@@ -815,13 +800,13 @@ impl analysis::AnalysisState for StepNetworkState {
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwork<'a, 'e, E> {
     type State = StepNetworkState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if ctrl.user_state().after_receive_storm_turns {
-            if let Operation::Move(dest, val, None) = op {
+            if let Operation::Move(ref dest, val, None) = *op {
                 if let DestOperand::Memory(mem) = dest {
                     if ctrl.resolve(val).if_constant() == Some(1) {
                         self.result.network_ready =
-                            Some(ctrl.ctx().mem_variable_rc(mem.size, &mem.address));
+                            Some(ctrl.ctx().mem_variable_rc(mem.size, mem.address));
                         ctrl.end_analysis();
                     }
                 }
@@ -829,23 +814,23 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwor
                 ctrl.user_state().after_receive_storm_turns = false;
             }
         } else {
-            if let Operation::Call(dest) = op {
+            if let Operation::Call(dest) = *op {
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
                     // Check that receive_storm_turns didn't get inlined.
                     // receive_storm_turns calls storm_122 with same arguments
                     // but adds arg6 = 4.
-                    let ok = Some(ctrl.resolve(&self.arg_cache.on_call(0)))
+                    let ok = Some(ctrl.resolve(self.arg_cache.on_call(0)))
                         .filter(|x| x.if_constant() == Some(0))
-                        .map(|_| ctrl.resolve(&self.arg_cache.on_call(1)))
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
                         .filter(|x| x.if_constant() == Some(0xc))
-                        .map(|_| ctrl.resolve(&self.arg_cache.on_call(5)))
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call(5)))
                         .filter(|x| x.if_constant() != Some(0x4))
                         .is_some();
                     if ok {
-                        let arg3 = ctrl.resolve(&self.arg_cache.on_call(2));
-                        let arg4 = ctrl.resolve(&self.arg_cache.on_call(3));
-                        let arg5 = ctrl.resolve(&self.arg_cache.on_call(4));
+                        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                        let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
+                        let arg5 = ctrl.resolve(self.arg_cache.on_call(4));
                         let ok = arg3.if_constant().is_some() &&
                             arg4.if_constant().is_some() &&
                             arg5.if_constant().is_some();

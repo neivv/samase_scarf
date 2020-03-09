@@ -47,7 +47,7 @@ use quick_error::quick_error;
 
 use scarf::{BinaryFile, Operand, Rva};
 use scarf::analysis::{self, Control, FuncCallPair, RelocValues};
-use scarf::operand::{MemAccessSize, OperandContext};
+use scarf::operand::{MemAccessSize, OperandCtx};
 
 pub use scarf;
 pub use scarf::{BinarySection, VirtualAddress};
@@ -125,89 +125,87 @@ impl<T: Clone> Default for Cached<T> {
     }
 }
 
-pub struct Analysis<'a, E: ExecutionStateTrait<'a>> {
+pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     relocs: Cached<Rc<Vec<E::VirtualAddress>>>,
     relocs_with_values: Cached<Rc<Vec<RelocValues<E::VirtualAddress>>>>,
     functions: Cached<Rc<Vec<E::VirtualAddress>>>,
     functions_with_callers: Cached<Rc<Vec<FuncCallPair<E::VirtualAddress>>>>,
     switch_tables: Cached<Rc<Vec<SwitchTable<E::VirtualAddress>>>>,
     open_file: Cached<Rc<Vec<E::VirtualAddress>>>,
-    aiscript_hook: Cached<Rc<Option<AiScriptHook<E::VirtualAddress>>>>,
-    game: Cached<Option<Rc<Operand>>>,
-    rng: Cached<Rc<Rng>>,
+    aiscript_hook: Cached<Rc<Option<AiScriptHook<'e, E::VirtualAddress>>>>,
+    game: Cached<Option<Operand<'e>>>,
+    rng: Cached<Rc<Rng<'e>>>,
     step_objects: Cached<Option<E::VirtualAddress>>,
-    player_ai: Cached<Option<Rc<Operand>>>,
-    regions: Cached<Rc<RegionRelated<E::VirtualAddress>>>,
-    pathing: Cached<Option<Rc<Operand>>>,
-    active_hidden_units: Cached<Rc<ActiveHiddenUnits>>,
+    player_ai: Cached<Option<Operand<'e>>>,
+    regions: Cached<Rc<RegionRelated<'e, E::VirtualAddress>>>,
+    pathing: Cached<Option<Operand<'e>>>,
+    active_hidden_units: Cached<Rc<ActiveHiddenUnits<'e>>>,
     order_issuing: Cached<Rc<OrderIssuing<E::VirtualAddress>>>,
-    process_commands: Cached<Rc<ProcessCommands<E::VirtualAddress>>>,
+    process_commands: Cached<Rc<ProcessCommands<'e, E::VirtualAddress>>>,
     command_lengths: Cached<Rc<Vec<u32>>>,
-    command_user: Cached<Option<Rc<Operand>>>,
-    selections: Cached<Rc<Selections>>,
-    is_replay: Cached<Option<Rc<Operand>>>,
+    command_user: Cached<Option<Operand<'e>>>,
+    selections: Cached<Rc<Selections<'e>>>,
+    is_replay: Cached<Option<Operand<'e>>>,
     process_lobby_commands: Cached<Option<(CompleteSwitch<E::VirtualAddress>, E::VirtualAddress)>>,
     send_command: Cached<Option<E::VirtualAddress>>,
     print_text: Cached<Option<E::VirtualAddress>>,
     step_order: Cached<Option<E::VirtualAddress>>,
-    step_order_hidden: Cached<Rc<Vec<step_order::StepOrderHiddenHook<E::VirtualAddress>>>>,
+    step_order_hidden: Cached<Rc<Vec<StepOrderHiddenHook<'e, E::VirtualAddress>>>>,
     init_units: Cached<Option<E::VirtualAddress>>,
-    step_secondary_order: Cached<Rc<Vec<step_order::SecondaryOrderHook<E::VirtualAddress>>>>,
-    init_game: Cached<Rc<InitGame<E::VirtualAddress>>>,
-    units: Cached<Option<Rc<Operand>>>,
-    game_screen_rclick: Cached<Rc<GameScreenRClick<E::VirtualAddress>>>,
-    first_ai_script: Cached<Option<Rc<Operand>>>,
-    first_guard_ai: Cached<Option<Rc<Operand>>>,
-    player_ai_towns: Cached<Option<Rc<Operand>>>,
-    step_iscript: Cached<Rc<StepIscript<E::VirtualAddress>>>,
-    sprites: Cached<Rc<Sprites<E::VirtualAddress>>>,
-    eud: Cached<Rc<EudTable>>,
-    map_tile_flags: Cached<Rc<MapTileFlags<E::VirtualAddress>>>,
-    players: Cached<Option<Rc<Operand>>>,
+    step_secondary_order: Cached<Rc<Vec<SecondaryOrderHook<'e, E::VirtualAddress>>>>,
+    init_game: Cached<Rc<InitGame<'e, E::VirtualAddress>>>,
+    units: Cached<Option<Operand<'e>>>,
+    game_screen_rclick: Cached<Rc<GameScreenRClick<'e, E::VirtualAddress>>>,
+    first_ai_script: Cached<Option<Operand<'e>>>,
+    first_guard_ai: Cached<Option<Operand<'e>>>,
+    player_ai_towns: Cached<Option<Operand<'e>>>,
+    step_iscript: Cached<Rc<StepIscript<'e, E::VirtualAddress>>>,
+    sprites: Cached<Rc<Sprites<'e, E::VirtualAddress>>>,
+    eud: Cached<Rc<EudTable<'e>>>,
+    map_tile_flags: Cached<Rc<MapTileFlags<'e, E::VirtualAddress>>>,
+    players: Cached<Option<Operand<'e>>>,
     draw_image: Cached<Option<E::VirtualAddress>>,
     renderer_vtables: Cached<Rc<Vec<E::VirtualAddress>>>,
-    local_player_id: Cached<Option<Rc<Operand>>>,
-    bullet_creation: Cached<Rc<BulletCreation<E::VirtualAddress>>>,
-    net_players: Cached<Rc<NetPlayers<E::VirtualAddress>>>,
+    local_player_id: Cached<Option<Operand<'e>>>,
+    bullet_creation: Cached<Rc<BulletCreation<'e, E::VirtualAddress>>>,
+    net_players: Cached<Rc<NetPlayers<'e, E::VirtualAddress>>>,
     play_smk: Cached<Option<E::VirtualAddress>>,
-    game_init: Cached<Rc<GameInit<E::VirtualAddress>>>,
+    game_init: Cached<Rc<GameInit<'e, E::VirtualAddress>>>,
     add_overlay_iscript: Cached<Option<E::VirtualAddress>>,
-    campaigns: Cached<Option<Rc<Operand>>>,
+    campaigns: Cached<Option<Operand<'e>>>,
     run_dialog: Cached<Option<E::VirtualAddress>>,
     ai_update_attack_target: Cached<Option<E::VirtualAddress>>,
     is_outside_game_screen: Cached<Option<E::VirtualAddress>>,
-    game_coord_conversion: Cached<Rc<GameCoordConversion>>,
-    fow_sprites: Cached<Rc<FowSprites>>,
+    game_coord_conversion: Cached<Rc<GameCoordConversion<'e>>>,
+    fow_sprites: Cached<Rc<FowSprites<'e>>>,
     init_map_from_path: Cached<Option<E::VirtualAddress>>,
     choose_snp: Cached<Option<E::VirtualAddress>>,
-    single_player_start: Cached<Rc<SinglePlayerStart<E::VirtualAddress>>>,
-    select_map_entry: Cached<Rc<SelectMapEntry<E::VirtualAddress>>>,
+    single_player_start: Cached<Rc<SinglePlayerStart<'e, E::VirtualAddress>>>,
+    select_map_entry: Cached<Rc<SelectMapEntry<'e, E::VirtualAddress>>>,
     load_images: Cached<Option<E::VirtualAddress>>,
-    images_loaded: Cached<Option<Rc<Operand>>>,
-    local_player_name: Cached<Option<Rc<Operand>>>,
-    step_network: Cached<Rc<StepNetwork<E::VirtualAddress>>>,
+    images_loaded: Cached<Option<Operand<'e>>>,
+    local_player_name: Cached<Option<Operand<'e>>>,
+    step_network: Cached<Rc<StepNetwork<'e, E::VirtualAddress>>>,
     init_game_network: Cached<Option<E::VirtualAddress>>,
-    snp_definitions: Cached<Option<SnpDefinitions>>,
-    lobby_state: Cached<Option<Rc<Operand>>>,
+    snp_definitions: Cached<Option<SnpDefinitions<'e>>>,
+    lobby_state: Cached<Option<Operand<'e>>>,
     init_storm_networking: Cached<Rc<InitStormNetworking<E::VirtualAddress>>>,
-    draw_cursor_marker: Cached<Option<Rc<Operand>>>,
-    misc_clientside: Cached<Rc<MiscClientSide>>,
-    dat_tables: DatTables,
-    binary: &'a BinaryFile<E::VirtualAddress>,
-    ctx: &'a scarf::OperandContext,
-    arg_cache: ArgCache<'a, E>,
+    draw_cursor_marker: Cached<Option<Operand<'e>>>,
+    misc_clientside: Cached<Rc<MiscClientSide<'e>>>,
+    dat_tables: DatTables<'e>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    ctx: scarf::OperandCtx<'e>,
+    arg_cache: ArgCache<'e, E>,
 }
 
 struct ArgCache<'e, E: ExecutionStateTrait<'e>> {
-    args: Vec<Rc<Operand>>,
-    ctx: &'e scarf::OperandContext,
+    args: Vec<Operand<'e>>,
+    ctx: scarf::OperandCtx<'e>,
     phantom: std::marker::PhantomData<E>,
 }
 
 impl<'e, E: ExecutionStateTrait<'e>> ArgCache<'e, E> {
-    fn new(ctx: &'e OperandContext) -> ArgCache<'e, E> {
-        use scarf::operand_helpers::*;
-
+    fn new(ctx: OperandCtx<'e>) -> ArgCache<'e, E> {
         let is_x64 = <E::VirtualAddress as VirtualAddressTrait>::SIZE == 8;
         let stack_pointer = ctx.register(4);
         let args = (0..8).map(|i| {
@@ -217,20 +215,16 @@ impl<'e, E: ExecutionStateTrait<'e>> ArgCache<'e, E> {
                     1 => ctx.register(2),
                     2 => ctx.register(8),
                     3 => ctx.register(9),
-                    _ => Operand::simplified(
-                        mem64(operand_add(
-                            stack_pointer.clone(),
-                            ctx.constant(i * 8),
-                        )),
-                    ),
+                    _ => ctx.mem64(ctx.add(
+                        stack_pointer,
+                        ctx.constant(i * 8),
+                    )),
                 }
             } else {
-                Operand::simplified(
-                    mem32(operand_add(
-                        stack_pointer.clone(),
-                        ctx.constant(i * 4),
-                    )),
-                )
+                ctx.mem32(ctx.add(
+                    stack_pointer,
+                    ctx.constant(i * 4),
+                ))
             }
         }).collect();
         ArgCache {
@@ -242,11 +236,9 @@ impl<'e, E: ExecutionStateTrait<'e>> ArgCache<'e, E> {
 
     /// Returns operand corresponding to location of argument *before* call instruction
     /// is executed.
-    pub fn on_call(&self, index: u8) -> Rc<Operand> {
-        use scarf::operand_helpers::*;
-
+    pub fn on_call(&self, index: u8) -> Operand<'e> {
         if (index as usize) < self.args.len() {
-            self.args[index as usize].clone()
+            self.args[index as usize]
         } else {
             let size = <E::VirtualAddress as VirtualAddressTrait>::SIZE as u64;
             let is_x64 = <E::VirtualAddress as VirtualAddressTrait>::SIZE == 8;
@@ -255,42 +247,35 @@ impl<'e, E: ExecutionStateTrait<'e>> ArgCache<'e, E> {
                 true => MemAccessSize::Mem64,
                 false => MemAccessSize::Mem32,
             };
-            Operand::simplified(
-                mem_variable_rc(mem_size, operand_add(
-                    stack_pointer.clone(),
-                    self.ctx.constant(index as u64 * size),
-                )),
-            )
+            self.ctx.mem_variable_rc(mem_size, self.ctx.add(
+                stack_pointer,
+                self.ctx.constant(index as u64 * size),
+            ))
         }
     }
 
     /// Returns operand corresponding to location of argument *on function entry*.
-    pub fn on_entry(&self, index: u8) -> Rc<Operand> {
-        use scarf::operand_helpers::*;
-
+    pub fn on_entry(&self, index: u8) -> Operand<'e> {
         let is_x64 = <E::VirtualAddress as VirtualAddressTrait>::SIZE == 8;
-        let stack_pointer = self.ctx.register(4);
+        let ctx = self.ctx;
+        let stack_pointer = ctx.register(4);
         if !is_x64 {
             if index as usize + 1 < self.args.len() {
-                self.args[index as usize + 1].clone()
+                self.args[index as usize + 1]
             } else {
-                Operand::simplified(
-                    mem32(operand_add(
-                        stack_pointer.clone(),
-                        self.ctx.constant((index as u64 + 1) * 4),
-                    )),
-                )
+                ctx.mem32(ctx.add(
+                    stack_pointer,
+                    ctx.constant((index as u64 + 1) * 4),
+                ))
             }
         } else {
             if index < 4 {
-                self.args[index as usize].clone()
+                self.args[index as usize]
             } else {
-                Operand::simplified(
-                    mem64(operand_add(
-                        stack_pointer.clone(),
-                        self.ctx.constant((index as u64 + 1) * 8),
-                    )),
-                )
+                ctx.mem64(ctx.add(
+                    stack_pointer,
+                    ctx.constant((index as u64 + 1) * 8),
+                ))
             }
         }
     }
@@ -298,19 +283,19 @@ impl<'e, E: ExecutionStateTrait<'e>> ArgCache<'e, E> {
 
 macro_rules! declare_dat {
     ($($struct_field:ident, $filename:expr, $enum_variant:ident,)*) => {
-        struct DatTables {
-            $($struct_field: Option<Option<DatTablePtr>>,)*
+        struct DatTables<'e> {
+            $($struct_field: Option<Option<DatTablePtr<'e>>>,)*
         }
 
-        impl DatTables {
-            fn new() -> DatTables {
+        impl<'e> DatTables<'e> {
+            fn new() -> DatTables<'e> {
                 DatTables {
                     $($struct_field: None,)*
                 }
             }
 
             fn field(&mut self, field: DatType) ->
-                (&mut Option<Option<DatTablePtr>>, &'static str)
+                (&mut Option<Option<DatTablePtr<'e>>>, &'static str)
             {
                 match field {
                     $(DatType::$enum_variant =>
@@ -376,7 +361,7 @@ where T: std::fmt::Debug + PartialEq,
 impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
     pub fn new(
         binary: &'a BinaryFile<E::VirtualAddress>,
-        ctx: &'a scarf::OperandContext,
+        ctx: scarf::OperandCtx<'a>,
     ) -> Analysis<'a, E> {
         Analysis {
             relocs: Default::default(),
@@ -453,7 +438,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
     }
 }
 
-impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
+impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     fn is_valid_function(address: E::VirtualAddress) -> bool {
         address.as_u64() & 0xf == 0
     }
@@ -586,7 +571,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn dat(&mut self, ty: DatType) -> Option<DatTablePtr> {
+    pub fn dat(&mut self, ty: DatType) -> Option<DatTablePtr<'e>> {
         let filename = {
             let (field, filename) = self.dat_tables.field(ty);
             if let Some(ref f) = *field {
@@ -609,7 +594,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn rng(&mut self) -> Rc<Rng> {
+    pub fn rng(&mut self) -> Rc<Rng<'e>> {
         if let Some(cached) = self.rng.cached() {
             return cached;
         }
@@ -627,7 +612,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn game(&mut self) -> Option<Rc<Operand>> {
+    pub fn game(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.game.cached() {
             return cached;
         }
@@ -636,7 +621,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn aiscript_hook(&mut self) -> Rc<Option<AiScriptHook<E::VirtualAddress>>> {
+    pub fn aiscript_hook(&mut self) -> Rc<Option<AiScriptHook<'e, E::VirtualAddress>>> {
         if let Some(cached) = self.aiscript_hook.cached() {
             return cached;
         }
@@ -645,7 +630,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn regions(&mut self) -> Rc<RegionRelated<E::VirtualAddress>> {
+    pub fn regions(&mut self) -> Rc<RegionRelated<'e, E::VirtualAddress>> {
         if let Some(cached) = self.regions.cached() {
             return cached;
         }
@@ -655,7 +640,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn pathing(&mut self) -> Option<Rc<Operand>> {
+    pub fn pathing(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.pathing.cached() {
             return cached;
         }
@@ -665,7 +650,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn active_hidden_units(&mut self) -> Rc<ActiveHiddenUnits> {
+    pub fn active_hidden_units(&mut self) -> Rc<ActiveHiddenUnits<'e>> {
         if let Some(cached) = self.active_hidden_units.cached() {
             return cached;
         }
@@ -684,7 +669,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn process_commands(&mut self) -> Rc<ProcessCommands<E::VirtualAddress>> {
+    pub fn process_commands(&mut self) -> Rc<ProcessCommands<'e, E::VirtualAddress>> {
         if let Some(cached) = self.process_commands.cached() {
             return cached;
         }
@@ -693,7 +678,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn command_user(&mut self) -> Option<Rc<Operand>> {
+    pub fn command_user(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.command_user.cached() {
             return cached;
         }
@@ -715,7 +700,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn selections(&mut self) -> Rc<Selections> {
+    pub fn selections(&mut self) -> Rc<Selections<'e>> {
         if let Some(cached) = self.selections.cached() {
             return cached;
         }
@@ -726,7 +711,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn is_replay(&mut self) -> Option<Rc<Operand>> {
+    pub fn is_replay(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.is_replay.cached() {
             return cached;
         }
@@ -820,7 +805,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn single_player_start(&mut self) -> Rc<SinglePlayerStart<E::VirtualAddress>> {
+    pub fn single_player_start(&mut self) -> Rc<SinglePlayerStart<'e, E::VirtualAddress>> {
         if let Some(cached) = self.single_player_start.cached() {
             return cached;
         }
@@ -829,7 +814,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn local_player_id(&mut self) -> Option<Rc<Operand>> {
+    pub fn local_player_id(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.local_player_id.cached() {
             return cached;
         }
@@ -838,7 +823,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn game_screen_rclick(&mut self) -> Rc<GameScreenRClick<E::VirtualAddress>> {
+    pub fn game_screen_rclick(&mut self) -> Rc<GameScreenRClick<'e, E::VirtualAddress>> {
         if let Some(cached) = self.game_screen_rclick.cached() {
             return cached;
         }
@@ -848,7 +833,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn select_map_entry(&mut self) -> Rc<SelectMapEntry<E::VirtualAddress>> {
+    pub fn select_map_entry(&mut self) -> Rc<SelectMapEntry<'e, E::VirtualAddress>> {
         if let Some(cached) = self.select_map_entry.cached() {
             return cached;
         }
@@ -866,7 +851,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn images_loaded(&mut self) -> Option<Rc<Operand>> {
+    pub fn images_loaded(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.images_loaded.cached() {
             return cached;
         }
@@ -875,7 +860,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn local_player_name(&mut self) -> Option<Rc<Operand>> {
+    pub fn local_player_name(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.local_player_name.cached() {
             return cached;
         }
@@ -884,7 +869,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn step_network(&mut self) -> Rc<StepNetwork<E::VirtualAddress>> {
+    pub fn step_network(&mut self) -> Rc<StepNetwork<'e, E::VirtualAddress>> {
         if let Some(cached) = self.step_network.cached() {
             return cached;
         }
@@ -902,7 +887,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn snp_definitions(&mut self) -> Option<SnpDefinitions> {
+    pub fn snp_definitions(&mut self) -> Option<SnpDefinitions<'e>> {
         if let Some(cached) = self.snp_definitions.cached() {
             return cached;
         }
@@ -911,7 +896,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn lobby_state(&mut self) -> Option<Rc<Operand>> {
+    pub fn lobby_state(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.lobby_state.cached() {
             return cached;
         }
@@ -939,7 +924,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
     }
 
     pub fn step_order_hidden(&mut self) ->
-        Rc<Vec<step_order::StepOrderHiddenHook<E::VirtualAddress>>>
+        Rc<Vec<step_order::StepOrderHiddenHook<'e, E::VirtualAddress>>>
     {
         if let Some(cached) = self.step_order_hidden.cached() {
             return cached;
@@ -951,7 +936,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
     }
 
     pub fn step_secondary_order(&mut self) ->
-        Rc<Vec<step_order::SecondaryOrderHook<E::VirtualAddress>>>
+        Rc<Vec<step_order::SecondaryOrderHook<'e, E::VirtualAddress>>>
     {
         if let Some(cached) = self.step_secondary_order.cached() {
             return cached;
@@ -962,7 +947,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn step_iscript(&mut self) -> Rc<StepIscript<E::VirtualAddress>> {
+    pub fn step_iscript(&mut self) -> Rc<StepIscript<'e, E::VirtualAddress>> {
         if let Some(cached) = self.step_iscript.cached() {
             return cached;
         }
@@ -981,7 +966,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn draw_cursor_marker(&mut self) -> Option<Rc<Operand>> {
+    pub fn draw_cursor_marker(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.draw_cursor_marker.cached() {
             return cached;
         }
@@ -999,7 +984,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn game_init(&mut self) -> Rc<GameInit<E::VirtualAddress>> {
+    pub fn game_init(&mut self) -> Rc<GameInit<'e, E::VirtualAddress>> {
         if let Some(cached) = self.game_init.cached() {
             return cached;
         }
@@ -1009,7 +994,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn misc_clientside(&mut self) -> Rc<MiscClientSide> {
+    pub fn misc_clientside(&mut self) -> Rc<MiscClientSide<'e>> {
         if let Some(cached) = self.misc_clientside.cached() {
             return cached;
         }
@@ -1028,7 +1013,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn units(&mut self) -> Option<Rc<Operand>> {
+    pub fn units(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.units.cached() {
             return cached;
         }
@@ -1038,7 +1023,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn first_ai_script(&mut self) -> Option<Rc<Operand>> {
+    pub fn first_ai_script(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.first_ai_script.cached() {
             return cached;
         }
@@ -1048,7 +1033,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn first_guard_ai(&mut self) -> Option<Rc<Operand>> {
+    pub fn first_guard_ai(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.first_guard_ai.cached() {
             return cached;
         }
@@ -1058,7 +1043,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn player_ai_towns(&mut self) -> Option<Rc<Operand>> {
+    pub fn player_ai_towns(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.player_ai_towns.cached() {
             return cached;
         }
@@ -1068,7 +1053,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn player_ai(&mut self) -> Option<Rc<Operand>> {
+    pub fn player_ai(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.player_ai.cached() {
             return cached;
         }
@@ -1077,7 +1062,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn init_game(&mut self) -> Rc<InitGame<E::VirtualAddress>> {
+    pub fn init_game(&mut self) -> Rc<InitGame<'e, E::VirtualAddress>> {
         if let Some(cached) = self.init_game.cached() {
             return cached;
         }
@@ -1086,7 +1071,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn sprites(&mut self) -> Rc<Sprites<E::VirtualAddress>> {
+    pub fn sprites(&mut self) -> Rc<Sprites<'e, E::VirtualAddress>> {
         if let Some(cached) = self.sprites.cached() {
             return cached;
         }
@@ -1096,7 +1081,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn eud_table(&mut self) -> Rc<EudTable> {
+    pub fn eud_table(&mut self) -> Rc<EudTable<'e>> {
         if let Some(cached) = self.eud.cached() {
             return cached;
         }
@@ -1106,7 +1091,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn map_tile_flags(&mut self) -> Rc<MapTileFlags<E::VirtualAddress>> {
+    pub fn map_tile_flags(&mut self) -> Rc<MapTileFlags<'e, E::VirtualAddress>> {
         if let Some(cached) = self.map_tile_flags.cached() {
             return cached;
         }
@@ -1115,7 +1100,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn players(&mut self) -> Option<Rc<Operand>> {
+    pub fn players(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.players.cached() {
             return cached;
         }
@@ -1133,7 +1118,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn bullet_creation(&mut self) -> Rc<BulletCreation<E::VirtualAddress>> {
+    pub fn bullet_creation(&mut self) -> Rc<BulletCreation<'e, E::VirtualAddress>> {
         if let Some(cached) = self.bullet_creation.cached() {
             return cached;
         }
@@ -1143,7 +1128,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn net_players(&mut self) -> Rc<NetPlayers<E::VirtualAddress>> {
+    pub fn net_players(&mut self) -> Rc<NetPlayers<'e, E::VirtualAddress>> {
         if let Some(cached) = self.net_players.cached() {
             return cached;
         }
@@ -1153,7 +1138,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn campaigns(&mut self) -> Option<Rc<Operand>> {
+    pub fn campaigns(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.campaigns.cached() {
             return cached;
         }
@@ -1189,7 +1174,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn game_coord_conversion(&mut self) -> Rc<GameCoordConversion> {
+    pub fn game_coord_conversion(&mut self) -> Rc<GameCoordConversion<'e>> {
         if let Some(cached) = self.game_coord_conversion.cached() {
             return cached;
         }
@@ -1199,7 +1184,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
         result
     }
 
-    pub fn fow_sprites(&mut self) -> Rc<FowSprites> {
+    pub fn fow_sprites(&mut self) -> Rc<FowSprites<'e>> {
         if let Some(cached) = self.fow_sprites.cached() {
             return cached;
         }
@@ -1269,9 +1254,9 @@ pub struct GlobalRefs<Va: VirtualAddressTrait> {
     pub func_entry: Va,
 }
 
-pub fn string_refs<'a, E: ExecutionStateTrait<'a>>(
+pub fn string_refs<'e, E: ExecutionStateTrait<'e>>(
     binary: &BinaryFile<E::VirtualAddress>,
-    cache: &mut Analysis<'a, E>,
+    cache: &mut Analysis<'e, E>,
     string: &[u8],
 ) -> Vec<StringRefs<E::VirtualAddress>> {
     let text = binary.section(b".text\0\0\0").unwrap();
@@ -1482,7 +1467,7 @@ fn find_bytes(mut data: &[u8], needle: &[u8]) -> Vec<Rva> {
 
 fn if_callable_const<'e, A: analysis::Analyzer<'e>>(
     binary: &BinaryFile<<A::Exec as ExecutionStateTrait<'e>>::VirtualAddress>,
-    dest: &Rc<Operand>,
+    dest: Operand<'e>,
     ctrl: &mut Control<'e, '_, '_, A>
 ) -> Option<<A::Exec as ExecutionStateTrait<'e>>::VirtualAddress> {
     ctrl.resolve(dest).if_constant()
@@ -1498,27 +1483,27 @@ fn if_callable_const<'e, A: analysis::Analyzer<'e>>(
         })
 }
 
-/// Helper extension functions for Option<(&Rc<Operand>, &Rc<Operand>)>.
-trait OptionExt<'a> {
+/// Helper extension functions for Option<(Operand<'e>, Operand<'e>)>.
+trait OptionExt<'e> {
     /// `opt.and_either(x)` is equivalent to
     /// `opt.and_then(|(l, r)| Operand::either(l, r, x))`
-    fn and_either<F, T>(self, cb: F) -> Option<(T, &'a Rc<Operand>)>
-    where F: FnMut(&'a Rc<Operand>) -> Option<T>;
+    fn and_either<F, T>(self, cb: F) -> Option<(T, Operand<'e>)>
+    where F: FnMut(Operand<'e>) -> Option<T>;
     /// `opt.and_either_other(x)` is equivalent to
     /// `opt.and_then(|(l, r)| Operand::either(l, r, x)).map(|(_, other)| other)`
-    fn and_either_other<F, T>(self, cb: F) -> Option<&'a Rc<Operand>>
-    where F: FnMut(&'a Rc<Operand>) -> Option<T>;
+    fn and_either_other<F, T>(self, cb: F) -> Option<Operand<'e>>
+    where F: FnMut(Operand<'e>) -> Option<T>;
 }
 
-impl<'a> OptionExt<'a> for Option<(&'a Rc<Operand>, &'a Rc<Operand>)> {
-    fn and_either<F, T>(self, cb: F) -> Option<(T, &'a Rc<Operand>)>
-    where F: FnMut(&'a Rc<Operand>) -> Option<T>
+impl<'e> OptionExt<'e> for Option<(Operand<'e>, Operand<'e>)> {
+    fn and_either<F, T>(self, cb: F) -> Option<(T, Operand<'e>)>
+    where F: FnMut(Operand<'e>) -> Option<T>
     {
         self.and_then(|(l, r)| Operand::either(l, r, cb))
     }
 
-    fn and_either_other<F, T>(self, cb: F) -> Option<&'a Rc<Operand>>
-    where F: FnMut(&'a Rc<Operand>) -> Option<T>
+    fn and_either_other<F, T>(self, cb: F) -> Option<Operand<'e>>
+    where F: FnMut(Operand<'e>) -> Option<T>
     {
         self.and_either(cb).map(|(_, other)| other)
     }
@@ -1530,21 +1515,21 @@ fn seems_assertion_call<'exec, A: analysis::Analyzer<'exec>, Va: VirtualAddressT
     ctrl: &mut Control<'exec, '_, '_, A>,
     binary: &BinaryFile<Va>,
 ) -> bool {
-    use scarf::operand_helpers::*;
-    let esp = operand_register(4);
-    let arg1 = match ctrl.resolve(&mem32(esp.clone())).if_constant() {
+    let ctx = ctrl.ctx();
+    let esp = ctx.register(4);
+    let arg1 = match ctrl.resolve(ctx.mem32(esp)).if_constant() {
         Some(s) => s,
         None => return false,
     };
-    let arg2 = match ctrl.resolve(&mem32(operand_add(esp.clone(), constval(4)))).if_constant() {
+    let arg2 = match ctrl.resolve(ctx.mem32(ctx.add(esp, ctx.constant(4)))).if_constant() {
         Some(s) => s,
         None => return false,
     };
-    let arg3 = match ctrl.resolve(&mem32(operand_add(esp.clone(), constval(8)))).if_constant() {
+    let arg3 = match ctrl.resolve(ctx.mem32(ctx.add(esp, ctx.constant(8)))).if_constant() {
         Some(s) => s,
         None => return false,
     };
-    let arg4 = match ctrl.resolve(&mem32(operand_add(esp, constval(0xc)))).if_constant() {
+    let arg4 = match ctrl.resolve(ctx.mem32(ctx.add(esp, ctx.constant(0xc)))).if_constant() {
         Some(s) => s,
         None => return false,
     };
@@ -1565,7 +1550,7 @@ fn seems_assertion_call<'exec, A: analysis::Analyzer<'exec>, Va: VirtualAddressT
 }
 
 // bool true => eq, bool false => not eq
-fn if_arithmetic_eq_neq(op: &Rc<Operand>) -> Option<(&Rc<Operand>, &Rc<Operand>, bool)> {
+fn if_arithmetic_eq_neq<'e>(op: Operand<'e>) -> Option<(Operand<'e>, Operand<'e>, bool)> {
     op.if_arithmetic_eq()
         .map(|(l, r)| {
             Operand::either(l, r, |x| x.if_constant().filter(|&c| c == 0))

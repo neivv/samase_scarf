@@ -1,11 +1,9 @@
-use std::rc::Rc;
-
 use fxhash::FxHashMap;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, Operand, Operation, Rva};
-use scarf::operand::{OperandContext, Register};
+use scarf::operand::{OperandCtx, Register};
 
 use crate::{
     Analysis, ArgCache, EntryOf, EntryOfResult, find_callers, entry_of_until,
@@ -20,35 +18,35 @@ pub enum ResultOrEntries<T, Va: VirtualAddress> {
 }
 
 #[derive(Default)]
-pub struct GameCoordConversion {
-    pub screen_x: Option<Rc<Operand>>,
-    pub screen_y: Option<Rc<Operand>>,
-    pub scale: Option<Rc<Operand>>,
+pub struct GameCoordConversion<'e> {
+    pub screen_x: Option<Operand<'e>>,
+    pub screen_y: Option<Operand<'e>>,
+    pub scale: Option<Operand<'e>>,
 }
 
 #[derive(Clone, Debug)]
-pub struct GameScreenRClick<Va: VirtualAddress> {
+pub struct GameScreenRClick<'e, Va: VirtualAddress> {
     pub game_screen_rclick: Option<Va>,
-    pub client_selection: Option<Rc<Operand>>,
+    pub client_selection: Option<Operand<'e>>,
 }
 
 #[derive(Default)]
-pub struct MiscClientSide {
-    pub is_paused: Option<Rc<Operand>>,
-    pub is_targeting: Option<Rc<Operand>>,
-    pub is_placing_building: Option<Rc<Operand>>,
+pub struct MiscClientSide<'e> {
+    pub is_paused: Option<Operand<'e>>,
+    pub is_targeting: Option<Operand<'e>>,
+    pub is_placing_building: Option<Operand<'e>>,
 }
 
 // Candidates are either a global ref with Some(global), or a call with None
 fn game_screen_rclick_inner<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
     candidates: &[(E::VirtualAddress, Option<E::VirtualAddress>)],
-) -> ResultOrEntries<(E::VirtualAddress, Rc<Operand>), E::VirtualAddress> {
+) -> ResultOrEntries<(E::VirtualAddress, Operand<'e>), E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let funcs = &analysis.functions();
 
-    let mut result: Option<(E::VirtualAddress, Rc<Operand>)> = None;
+    let mut result: Option<(E::VirtualAddress, Operand<'e>)> = None;
     let mut entries = Vec::new();
     for &(middle_of_func, global_addr) in candidates {
         let res = entry_of_until(binary, funcs, middle_of_func, |entry| {
@@ -123,7 +121,7 @@ struct WasInstructionRan<'e, E: ExecutionState<'e>> {
 impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WasInstructionRan<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, _op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, _op: &Operation<'e>) {
         if ctrl.address() == self.ins {
             self.result = true;
             ctrl.end_analysis();
@@ -135,16 +133,16 @@ struct GameScreenRClickAnalyzer<'e, E: ExecutionState<'e>> {
     call_found: bool,
     first_branch: bool,
     mov_u32_max_seen: bool,
-    result: Option<Rc<Operand>>,
+    result: Option<Operand<'e>>,
     middle_of_func: E::VirtualAddress,
-    ctx: &'e OperandContext,
+    ctx: OperandCtx<'e>,
     global_addr: Option<E::VirtualAddress>,
 }
 
 impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let address = ctrl.address();
         if !self.call_found {
             let in_possible_range =
@@ -168,7 +166,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
             ctrl.end_analysis();
             return;
         }
-        match op {
+        match *op {
             Operation::Move(_, val, _) => {
                 if !self.mov_u32_max_seen && self.first_branch {
                     let val = ctrl.resolve(val);
@@ -188,8 +186,8 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
                         })
                         .map(|mem| {
                             self.ctx.sub(
-                                &mem.address,
-                                &self.ctx.constant(11 * 4),
+                                mem.address,
+                                self.ctx.constant(11 * 4),
                             )
                         });
                     if let Some(csl) = client_selection {
@@ -219,17 +217,17 @@ pub fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
     impl<'a, 'b, E: ExecutionState<'a>> scarf::Analyzer<'a> for Analyzer<'a, 'b, E> {
         type State = analysis::DefaultState;
         type Exec = E;
-        fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
-            match op {
+        fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation<'a>) {
+            match *op {
                 Operation::Jump { .. } => {
                     ctrl.end_analysis();
                 }
                 Operation::Call(to) => {
                     let to = ctrl.resolve(to);
-                    let arg1 = ctrl.resolve(&self.args.on_call(0));
-                    let arg1 = unwrap_sext(&arg1);
-                    let arg2 = ctrl.resolve(&self.args.on_call(1));
-                    let arg2 = unwrap_sext(&arg2);
+                    let arg1 = ctrl.resolve(self.args.on_call(0));
+                    let arg1 = unwrap_sext(arg1);
+                    let arg2 = ctrl.resolve(self.args.on_call(1));
+                    let arg2 = unwrap_sext(arg2);
                     if let Some(dest) = to.if_constant() {
                         if arg1.if_mem16().is_some() && arg2.if_mem16().is_some() {
                             self.result = Some(E::VirtualAddress::from_u64(dest));
@@ -253,40 +251,40 @@ pub fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
     analyzer.result
 }
 
-fn unwrap_sext(operand: &Rc<Operand>) -> &Rc<Operand> {
-    match operand.ty {
-        scarf::operand::OperandType::SignExtend(ref val, ..) => val,
+fn unwrap_sext<'e>(operand: Operand<'e>) -> Operand<'e> {
+    match *operand.ty() {
+        scarf::operand::OperandType::SignExtend(val, ..) => val,
         _ => operand,
     }
 }
 
-fn if_float_to_int(operand: &Rc<Operand>) -> Option<&Rc<Operand>> {
-    match operand.ty {
+fn if_float_to_int<'e>(operand: Operand<'e>) -> Option<Operand<'e>> {
+    match *operand.ty() {
         scarf::operand::OperandType::Arithmetic(ref arith)
-            if arith.ty == scarf::operand::ArithOpType::FloatToInt => Some(&arith.left),
+            if arith.ty == scarf::operand::ArithOpType::FloatToInt => Some(arith.left),
         _ => None,
     }
 }
 
-fn if_int_to_float(operand: &Rc<Operand>) -> Option<&Rc<Operand>> {
-    match operand.ty {
+fn if_int_to_float<'e>(operand: Operand<'e>) -> Option<Operand<'e>> {
+    match *operand.ty() {
         scarf::operand::OperandType::Arithmetic(ref arith)
-            if arith.ty == scarf::operand::ArithOpType::IntToFloat => Some(&arith.left),
+            if arith.ty == scarf::operand::ArithOpType::IntToFloat => Some(arith.left),
         _ => None,
     }
 }
 
-fn if_f32_div(operand: &Rc<Operand>) -> Option<(&Rc<Operand>, &Rc<Operand>)> {
-    match operand.ty {
+fn if_f32_div<'e>(operand: Operand<'e>) -> Option<(Operand<'e>, Operand<'e>)> {
+    match *operand.ty() {
         scarf::operand::OperandType::ArithmeticF32(ref arith)
-            if arith.ty == scarf::operand::ArithOpType::Div => Some((&arith.left, &arith.right)),
+            if arith.ty == scarf::operand::ArithOpType::Div => Some((arith.left, arith.right)),
         _ => None,
     }
 }
 
 pub fn game_coord_conversion<'a, E: ExecutionState<'a>>(
     analysis: &mut Analysis<'a, E>,
-) -> GameCoordConversion {
+) -> GameCoordConversion<'a> {
     let mut result = GameCoordConversion::default();
     let game_screen_rclick = match analysis.game_screen_rclick().game_screen_rclick {
         Some(s) => s,
@@ -307,25 +305,25 @@ pub fn game_coord_conversion<'a, E: ExecutionState<'a>>(
 
     struct Analyzer<'a, 'b, E: ExecutionState<'a>> {
         depth: u32,
-        result: &'b mut GameCoordConversion,
+        result: &'b mut GameCoordConversion<'a>,
         set_eax_to_zero: bool,
         is_outside_game_screen: E::VirtualAddress,
         is_outside_game_screen_seen: bool,
-        ctx: &'a OperandContext,
+        ctx: OperandCtx<'a>,
         args: &'b ArgCache<'a, E>,
     }
 
     impl<'a, 'b, E: ExecutionState<'a>> Analyzer<'a, 'b, E> {
-        fn is_event_pos_in_game_coords_call<'e, A: scarf::Analyzer<'e>>(
+        fn is_event_pos_in_game_coords_call<A: scarf::Analyzer<'a>>(
             &self,
-            ctrl: &mut Control<'e, '_, '_, A>,
+            ctrl: &mut Control<'a, '_, '_, A>,
         ) -> bool {
-            let arg2 = ctrl.resolve(&self.args.on_call(1));
+            let arg2 = ctrl.resolve(self.args.on_call(1));
             arg2 == self.args.on_entry(0)
         }
 
         // Check for screen_x + mem16[&event.x] / scale
-        fn check_move(val: &Rc<Operand>) -> Option<(&Rc<Operand>, &Rc<Operand>, u32)> {
+        fn check_move<'e>(val: Operand<'e>) -> Option<(Operand<'e>, Operand<'e>, u32)> {
             val.if_arithmetic_add()
                 .and_either(|x| x.if_mem32().map(|_| x))
                 .and_then(|(screen_coord, other)| {
@@ -345,14 +343,14 @@ pub fn game_coord_conversion<'a, E: ExecutionState<'a>>(
     impl<'a, 'b, E: ExecutionState<'a>> scarf::Analyzer<'a> for Analyzer<'a, 'b, E> {
         type State = analysis::DefaultState;
         type Exec = E;
-        fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
+        fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation<'a>) {
             if self.set_eax_to_zero {
                 self.set_eax_to_zero = false;
-                let (exec_state, i) = ctrl.exec_state();
-                exec_state.move_to(&DestOperand::Register64(Register(0)), self.ctx.const_0(), i);
+                let exec_state = ctrl.exec_state();
+                exec_state.move_to(&DestOperand::Register64(Register(0)), self.ctx.const_0());
                 return;
             }
-            match op {
+            match *op {
                 Operation::Call(to) => {
                     let to = ctrl.resolve(to);
                     if let Some(dest) = to.if_constant() {
@@ -388,7 +386,7 @@ pub fn game_coord_conversion<'a, E: ExecutionState<'a>>(
                 Operation::Move(_, val, None) => {
                     if self.depth != 0 {
                         let val = ctrl.resolve(val);
-                        let result = Self::check_move(&val);
+                        let result = Self::check_move(val);
                         if let Some((screen_coord, scale, struct_offset)) = result {
                             if struct_offset == 0x12 {
                                 self.result.screen_x = Some(screen_coord.clone());
@@ -426,7 +424,7 @@ pub fn game_coord_conversion<'a, E: ExecutionState<'a>>(
 
 pub fn game_screen_rclick<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> GameScreenRClick<E::VirtualAddress> {
+) -> GameScreenRClick<'e, E::VirtualAddress> {
     let binary = analysis.binary;
 
     // units_dat_rlick_order is accessed by get_rclick_order,
@@ -470,7 +468,7 @@ pub fn game_screen_rclick<'e, E: ExecutionState<'e>>(
 
 pub fn misc_clientside<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> MiscClientSide {
+) -> MiscClientSide<'e> {
     let mut result = MiscClientSide {
         is_paused: None,
         is_placing_building: None,
@@ -497,14 +495,14 @@ pub fn misc_clientside<'e, E: ExecutionState<'e>>(
     let vtables = crate::vtables::vtables(analysis, b".?AVOptionsMenuPopup@glues@@\0");
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let vtable_fn_result_op = &ctx.custom(0);
+    let vtable_fn_result_op = ctx.custom(0);
     let sel = analysis.select_map_entry();
     let game_init = analysis.game_init();
-    let is_multiplayer = match sel.is_multiplayer.as_ref() {
+    let is_multiplayer = match sel.is_multiplayer {
         Some(s) => s,
         None => return result,
     };
-    let scmain_state = match game_init.scmain_state.as_ref() {
+    let scmain_state = match game_init.scmain_state {
         Some(s) => s,
         None => return result,
     };
@@ -524,9 +522,8 @@ pub fn misc_clientside<'e, E: ExecutionState<'e>>(
             branch_start_states: Default::default(),
             binary,
         };
-        let mut i = scarf::exec_state::InternMap::new();
-        let exec = E::initial_state(ctx, binary, &mut i);
-        let mut analysis = FuncAnalysis::custom_state(binary, ctx, init_func, exec, state, i);
+        let exec = E::initial_state(ctx, binary);
+        let mut analysis = FuncAnalysis::custom_state(binary, ctx, init_func, exec, state);
         analysis.analyze(&mut analyzer);
         // Not taking half-complete results for this, I don't have the confidence
         // that they would be right.
@@ -592,12 +589,12 @@ impl analysis::AnalysisState for MiscClientSideAnalyzerState {
 }
 
 struct MiscClientSideAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    result: &'a mut MiscClientSide,
+    result: &'a mut MiscClientSide<'e>,
     done: bool,
     inline_depth: u8,
-    vtable_fn_result_op: &'a Rc<Operand>,
-    is_multiplayer: &'a Rc<Operand>,
-    scmain_state: &'a Rc<Operand>,
+    vtable_fn_result_op: Operand<'e>,
+    is_multiplayer: Operand<'e>,
+    scmain_state: Operand<'e>,
     branch_start_states: FxHashMap<Rva, MiscClientSideAnalyzerState>,
     binary: &'a BinaryFile<E::VirtualAddress>,
 }
@@ -616,7 +613,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MiscClientSideAnalyz
         }
     }
 
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         use MiscClientSideAnalyzerState as State;
         match *ctrl.user_state() {
             State::End => {
@@ -633,34 +630,33 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MiscClientSideAnalyz
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
-    fn state_begin(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn state_begin(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         use MiscClientSideAnalyzerState as State;
         // Check for the this.vtable_fn() call and
-        match op {
+        match *op {
             Operation::Call(dest) => {
                 let dest = ctrl.resolve(dest);
                 // call [[ecx] + offset]
-                let is_vtable_fn = ctrl.if_mem_word(&dest)
+                let is_vtable_fn = ctrl.if_mem_word(dest)
                     .and_then(|x| x.if_arithmetic_add())
                     .and_either_other(|x| x.if_constant())
-                    .and_then(|x| ctrl.if_mem_word(&x))
+                    .and_then(|x| ctrl.if_mem_word(x))
                     .and_then(|x| x.if_register())
                     .filter(|r| r.0 == 1)
                     .is_some();
                 if is_vtable_fn {
                     ctrl.skip_operation();
-                    let (exec_state, i) = ctrl.exec_state();
+                    let exec_state = ctrl.exec_state();
                     exec_state.move_to(
                         &DestOperand::Register64(Register(0)),
                         self.vtable_fn_result_op.clone(),
-                        i,
                     );
                 }
 
             }
             Operation::Jump { condition, to } => {
                 let cond = ctrl.resolve(condition);
-                let cond_ok = if_arithmetic_eq_neq(&cond)
+                let cond_ok = if_arithmetic_eq_neq(cond)
                     .and_then(|(l, r, is_eq)| {
                         Some((l, r))
                             .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
@@ -689,10 +685,10 @@ impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
     fn state_vtable_fn_zero_branch(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
-        op: &Operation,
+        op: &Operation<'e>,
     ) {
         use MiscClientSideAnalyzerState as State;
-        match op {
+        match *op {
             Operation::Call(dest) => {
                 if self.inline_depth < 2 {
                     // Inline once fully to ui_switching_to_dialog,
@@ -716,7 +712,7 @@ impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
                     ctrl.end_analysis();
                 }
                 let cond = ctrl.resolve(condition);
-                let cond_ok = if_arithmetic_eq_neq(&cond)
+                let cond_ok = if_arithmetic_eq_neq(cond)
                     .and_then(|(l, r, is_eq)| {
                         Some((l, r))
                             .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
@@ -742,10 +738,10 @@ impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
     fn state_multiplayer_zero_branch(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
-        op: &Operation,
+        op: &Operation<'e>,
     ) {
         use MiscClientSideAnalyzerState as State;
-        match op {
+        match *op {
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
@@ -762,7 +758,7 @@ impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
                 // Check for if_paused if inlining,
                 // otherwise for scmain_state == 3
                 if self.inline_depth == 0 {
-                    let cond_ok = if_arithmetic_eq_neq(&cond)
+                    let cond_ok = if_arithmetic_eq_neq(cond)
                         .and_then(|(l, r, is_eq)| {
                             Some((l, r))
                                 .and_either_other(|x| x.if_constant().filter(|&c| c == 3))
@@ -783,7 +779,7 @@ impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
                     }
                 } else {
                     if self.result.is_paused.is_none() {
-                        let is_paused = if_arithmetic_eq_neq(&cond)
+                        let is_paused = if_arithmetic_eq_neq(cond)
                             .map(|(l, r, _)| (l, r))
                             .and_either_other(|x| x.if_constant().filter(|&c| c == 0));
                         if let Some(is_paused) = is_paused {
@@ -800,11 +796,11 @@ impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
     fn state_check_placing_building_or_targeting(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
-        op: &Operation,
+        op: &Operation<'e>,
     ) {
         use MiscClientSideAnalyzerState as State;
         // These two are similar checks.
-        match op {
+        match *op {
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
@@ -819,7 +815,7 @@ impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
             Operation::Jump { condition, .. } => {
                 let cond = ctrl.resolve(condition);
                 if self.inline_depth == 0 {
-                    let cond_ok = if_arithmetic_eq_neq(&cond)
+                    let cond_ok = if_arithmetic_eq_neq(cond)
                         .and_then(|(l, r, _)| {
                             let op = Some((l, r))
                                 .and_either_other(|x| x.if_constant().filter(|&c| c == 0))

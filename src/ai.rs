@@ -1,11 +1,9 @@
-use std::rc::Rc;
-
 use arrayvec::ArrayVec;
 use scarf::{
-    DestOperand, Operand, Operation, MemAccessSize, OperandContext, OperandType, BinaryFile,
+    DestOperand, Operand, Operation, MemAccessSize, OperandCtx, OperandType, BinaryFile,
 };
 use scarf::analysis::{self, Control, FuncAnalysis};
-use scarf::exec_state::{InternMap, ExecutionState};
+use scarf::exec_state::{ExecutionState};
 
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
@@ -17,9 +15,9 @@ use crate::{
 fn check_step_ai_scripts<'e, E: ExecutionState<'e>>(
     binary: &'e BinaryFile<E::VirtualAddress>,
     funcs: &[E::VirtualAddress],
-    ctx: &'e OperandContext,
+    ctx: OperandCtx<'e>,
     call_pos: E::VirtualAddress,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     entry_of_until(binary, funcs, call_pos, |entry| {
         let mut analyzer = StepAiScriptsAnalyzer::<E> {
             first_ai_script: None,
@@ -35,15 +33,15 @@ fn check_step_ai_scripts<'e, E: ExecutionState<'e>>(
 }
 
 struct StepAiScriptsAnalyzer<'e, E: ExecutionState<'e>> {
-    first_ai_script: Option<Rc<Operand>>,
+    first_ai_script: Option<Operand<'e>>,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepAiScriptsAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Jump { condition, .. } => {
                 let cond = ctrl.resolve(condition);
                 self.first_ai_script = cond.if_arithmetic_eq()
@@ -84,13 +82,13 @@ pub fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
     impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for Analyzer<'exec, 'b, E> {
         type State = analysis::DefaultState;
         type Exec = E;
-        fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation) {
-            match op {
+        fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation<'exec>) {
+            match *op {
                 Operation::Call(dest) => {
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let arg1 = ctrl.resolve(&self.args.on_call(0));
-                        let arg2 = ctrl.resolve(&self.args.on_call(1));
-                        let arg3 = ctrl.resolve(&self.args.on_call(2));
+                        let arg1 = ctrl.resolve(self.args.on_call(0));
+                        let arg2 = ctrl.resolve(self.args.on_call(1));
+                        let arg3 = ctrl.resolve(self.args.on_call(2));
                         let args_ok = arg1.if_constant() == Some(0) &&
                             arg2.if_constant() == Some(1) &&
                             arg3.if_constant() == Some(0);
@@ -115,14 +113,14 @@ pub fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct AiScriptHook<Va: VirtualAddressTrait> {
+pub struct AiScriptHook<'e, Va: VirtualAddressTrait> {
     pub op_limit_hook_begin: Va,
     pub op_limit_hook_end: Va,
     pub op_limit_ok: Va,
     pub op_limit_fail: Va,
     // Operand that the comparision should be done against.
-    pub opcode_operand: Rc<Operand>,
-    pub script_operand_at_switch: Rc<Operand>,
+    pub opcode_operand: Operand<'e>,
+    pub script_operand_at_switch: Operand<'e>,
     pub switch_table: Va,
     pub switch_loop_address: Va,
     pub return_address: Va,
@@ -130,7 +128,7 @@ pub struct AiScriptHook<Va: VirtualAddressTrait> {
 
 pub fn aiscript_hook<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<AiScriptHook<E::VirtualAddress>> {
+) -> Option<AiScriptHook<'e, E::VirtualAddress>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
@@ -149,7 +147,7 @@ pub fn aiscript_hook<'e, E: ExecutionState<'e>>(
         find_functions_using_global(analysis, switch_table.address)
             .into_iter().map(move |f| (f.func_entry, switch_table.address))
     }).filter_map(|(entry, switch_table)| {
-        let mut analysis = FuncAnalysis::new(binary, &ctx, entry);
+        let mut analysis = FuncAnalysis::new(binary, ctx, entry);
         let mut analyzer: AiscriptHookAnalyzer<E> = AiscriptHookAnalyzer {
             aiscript_operand: None,
             switch_state: None,
@@ -165,8 +163,7 @@ pub fn aiscript_hook<'e, E: ExecutionState<'e>>(
                 true => (default_jump.branch_end, default_jump.to),
                 false => (default_jump.to, default_jump.branch_end),
             };
-            let i = &mut analysis.interner;
-            switch_state.unresolve(&script_operand_orig, i)
+            switch_state.unresolve(script_operand_orig)
                 .and_then(|at_switch| {
                     aiscript_find_switch_loop_and_end::<E>(binary, ctx, switch_table)
                         .map(move |(switch_loop_address, return_address)| {
@@ -195,18 +192,18 @@ pub fn aiscript_hook<'e, E: ExecutionState<'e>>(
 }
 
 struct AiscriptHookAnalyzer<'e, E: ExecutionState<'e>> {
-    aiscript_operand: Option<Rc<Operand>>,
+    aiscript_operand: Option<Operand<'e>>,
     switch_state: Option<E>,
     branch_start: E::VirtualAddress,
-    best_def_jump: Option<BestDefaultJump<E::VirtualAddress>>,
-    op_default_jump: Option<OpDefaultJump<E::VirtualAddress>>,
+    best_def_jump: Option<BestDefaultJump<'e, E::VirtualAddress>>,
+    op_default_jump: Option<OpDefaultJump<'e, E::VirtualAddress>>,
 }
 
-struct OpDefaultJump<Va: VirtualAddressTrait> {
+struct OpDefaultJump<'e, Va: VirtualAddressTrait> {
     address: Va,
     to: Va,
     jumps_to_default: bool,
-    opcode: Rc<Operand>,
+    opcode: Operand<'e>,
 }
 
 /// Since scarf doesn't have any kind of CFG representation, this'll take care of
@@ -219,33 +216,33 @@ struct OpDefaultJump<Va: VirtualAddressTrait> {
 ///      cmp esi, 70
 ///      ja invalid
 /// could hook from `x` instead of `y`
-struct BestDefaultJump<Va: VirtualAddressTrait> {
+struct BestDefaultJump<'e, Va: VirtualAddressTrait> {
     address: Va,
     to: Va,
     branch_start: Va,
     branch_end: Va,
     jumps_to_default: bool,
-    opcode: Rc<Operand>,
+    opcode: Operand<'e>,
 }
 
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Jump { condition, to } => {
                 let condition = match condition.if_constant() {
                     Some(_) => None,
                     None => Some(condition),
                 };
                 let to = ctrl.resolve(to);
-                match (condition, &to.ty) {
+                match (condition, to.ty()) {
                     // Check for switch jump
                     (None, &OperandType::Memory(ref mem)) => {
                         // Checking for arith since it could tecnically be a
                         // tail call to fnptr.
-                        if let OperandType::Arithmetic(_) = mem.address.ty {
-                            let (state, _) = ctrl.exec_state();
+                        if let OperandType::Arithmetic(_) = mem.address.ty() {
+                            let state = ctrl.exec_state();
                             self.switch_state = Some(state.clone());
                         }
                     }
@@ -253,8 +250,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
                     (Some(cond), &OperandType::Constant(to)) => {
                         let resolved = ctrl.resolve(cond);
                         let ctx = ctrl.ctx();
-                        let (state, interner) = ctrl.exec_state();
-                        let jumps = is_aiscript_switch_jump(ctx, &resolved, state, interner);
+                        let state = ctrl.exec_state();
+                        let jumps = is_aiscript_switch_jump(ctx, resolved, state);
                         if let Some((jumps_to_default, opcode)) = jumps {
                             trace!("Ais default jump {}", resolved);
                             self.op_default_jump = Some(OpDefaultJump {
@@ -268,11 +265,11 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
                     _ => (),
                 }
             }
-            Operation::Move(dest, val, _cond) => {
+            Operation::Move(ref dest, val, _cond) => {
                 // Try to find script->pos += 1
                 if self.aiscript_operand.is_none() {
                     if let DestOperand::Memory(ref mem) = dest {
-                        let addr = ctrl.resolve(&mem.address);
+                        let addr = ctrl.resolve(mem.address);
                         if mem.size == MemAccessSize::Mem32 {
                             let val = ctrl.resolve(val);
                             let val_refers_to_dest = val.iter_no_mem_addr().any(|x| {
@@ -327,37 +324,24 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
 ///
 /// The second value is opcode operand (unresolved)
 fn is_aiscript_switch_jump<'e, E: ExecutionState<'e>>(
-    ctx: &'e OperandContext,
-    condition: &Rc<Operand>,
+    ctx: OperandCtx<'e>,
+    condition: Operand<'e>,
     state: &mut E,
-    interner: &mut InternMap,
-) -> Option<(bool, Rc<Operand>)> {
+) -> Option<(bool, Operand<'e>)> {
     // The chances of there being another jump with different constresults when Mem8[x]
     // is replaced by 0x70 and 0x71 is low, so use that instead of trying to match all
     // gt/lt/ge/le variations
-    let simplified_70 = ctx.transform(condition, |x| match x.ty {
-        OperandType::Memory(ref mem) => {
-            if mem.size == MemAccessSize::Mem8 {
-                Some(ctx.constant(0x70))
-            } else {
-                None
-            }
-        }
-        _ => None,
+    let simplified_70 = ctx.transform(condition, |x| match x.if_mem8().is_some() {
+        true => Some(ctx.constant(0x70)),
+        false => None,
     });
     let const_70 = match simplified_70.if_constant() {
         Some(x) => x,
         _ => return None,
     };
-    let simplified_71 = ctx.transform(condition, |x| match x.ty {
-        OperandType::Memory(ref mem) => {
-            if mem.size == MemAccessSize::Mem8 {
-                Some(ctx.constant(0x71))
-            } else {
-                None
-            }
-        }
-        _ => None,
+    let simplified_71 = ctx.transform(condition, |x| match x.if_mem8().is_some() {
+        true => Some(ctx.constant(0x71)),
+        false => None,
     });
     let const_71 = match simplified_71.if_constant() {
         Some(x) => x,
@@ -371,14 +355,13 @@ fn is_aiscript_switch_jump<'e, E: ExecutionState<'e>>(
     condition.iter().find(|x| {
         x.if_mem8().is_some()
     }).and_then(|opcode_mem| {
-        // Eww bad api
-        state.unresolve(&Rc::new(opcode_mem.clone()), interner)
+        state.unresolve(opcode_mem)
     }).map(|x| (gt_jump, x))
 }
 
 fn aiscript_find_switch_loop_and_end<'e, E: ExecutionState<'e>>(
     binary: &'e BinaryFile<E::VirtualAddress>,
-    ctx: &'e OperandContext,
+    ctx: OperandCtx<'e>,
     switch_table: E::VirtualAddress,
 ) -> Option<(E::VirtualAddress, E::VirtualAddress)> {
     let opcode_case = binary.read_u32(switch_table + 0xb * 4).ok()?;
@@ -393,12 +376,12 @@ fn aiscript_find_switch_loop_and_end<'e, E: ExecutionState<'e>>(
     };
     analysis.analyze(&mut analyzer);
     let second_opcode_case = E::VirtualAddress::from_u64(second_opcode_case as u64);
-    let mut analysis = FuncAnalysis::new(binary, &ctx, second_opcode_case);
+    let mut analysis = FuncAnalysis::new(binary, ctx, second_opcode_case);
     analyzer.first_op = false;
     analysis.analyze(&mut analyzer);
 
     let wait_case = E::VirtualAddress::from_u64(wait_case as u64);
-    let other = aiscript_find_switch_loop_end::<E>(binary, &ctx, wait_case);
+    let other = aiscript_find_switch_loop_end::<E>(binary, ctx, wait_case);
     analyzer.result.and_then(|x| other.map(|y| (x, y)))
 }
 
@@ -411,8 +394,8 @@ struct AiscriptFindSwitchLoop<'e, E: ExecutionState<'e>> {
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchLoop<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Jump { condition, to } => {
                 let condition = ctrl.resolve(condition);
                 if condition.if_constant().filter(|&c| c != 0).is_some() {
@@ -439,10 +422,10 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchLoo
 
 fn aiscript_find_switch_loop_end<'e, E: ExecutionState<'e>>(
     binary: &'e BinaryFile<E::VirtualAddress>,
-    ctx: &'e OperandContext,
+    ctx: OperandCtx<'e>,
     wait_case: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
-    let mut analysis = FuncAnalysis::new(binary, &ctx, wait_case);
+    let mut analysis = FuncAnalysis::new(binary, ctx, wait_case);
     let mut analyzer: AiscriptFindSwitchEnd<E> = AiscriptFindSwitchEnd {
         result: None,
         first_branch: true,
@@ -460,35 +443,34 @@ struct AiscriptFindSwitchEnd<'e, E: ExecutionState<'e>> {
     not_inlined_op_read: bool,
     wait_written: bool,
     pos_written: bool,
-    old_base: Option<Rc<Operand>>,
+    old_base: Option<Operand<'e>>,
     result: Option<E::VirtualAddress>,
 }
 
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchEnd<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let ok = (self.pos_written && self.wait_written) ||
             (self.wait_written && self.not_inlined_op_read);
         if ok {
             self.result = Some(ctrl.address());
             ctrl.end_analysis();
         }
-        match op {
+        match *op {
             Operation::Call(..) => {
                 if self.first_branch {
                     self.not_inlined_op_read = true;
                 }
             }
-            Operation::Move(dest, val, _) => {
+            Operation::Move(ref dest, val, _) => {
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem32 {
-                        let addr = ctrl.resolve(&mem.address);
+                        let addr = ctrl.resolve(mem.address);
                         let c_write = addr.if_arithmetic_add()
                             .and_either(|x| x.if_constant());
                         if let Some((offset, base)) = c_write {
-                            let old_ok =
-                                self.old_base.as_ref().map(|x| x == base).unwrap_or(true);
+                            let old_ok = self.old_base.map(|x| x == base).unwrap_or(true);
                             if old_ok {
                                 if offset == 0x8 {
                                     let val = ctrl.resolve(val);
@@ -535,7 +517,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchEnd
 
 pub fn first_ai_script<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
@@ -564,7 +546,7 @@ pub fn first_ai_script<'e, E: ExecutionState<'e>>(
 
 pub fn first_guard_ai<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
@@ -608,7 +590,7 @@ pub fn first_guard_ai<'e, E: ExecutionState<'e>>(
 }
 
 struct GuardAiAnalyzer<'e, E: ExecutionState<'e>> {
-    result: EntryOf<Rc<Operand>>,
+    result: EntryOf<Operand<'e>>,
     jump_limit: u8,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
     use_address: E::VirtualAddress,
@@ -617,19 +599,19 @@ struct GuardAiAnalyzer<'e, E: ExecutionState<'e>> {
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GuardAiAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let use_address = self.use_address;
         if ctrl.address() >= use_address && ctrl.current_instruction_end() < use_address {
             self.result = EntryOf::Stop;
         }
-        match op {
+        match *op {
             Operation::Call(..) | Operation::Jump { .. } => {
                 self.jump_limit -= 1;
                 if self.jump_limit == 0 {
                     ctrl.end_analysis();
                 }
             }
-            Operation::Move(_, ref val, _) => {
+            Operation::Move(_, val, _) => {
                 let val = ctrl.resolve(val);
                 let ctx = ctrl.ctx();
                 let result = val.if_mem32()
@@ -640,7 +622,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GuardAiAnalyzer<'e, E
                             .and_either(|x| x.if_constant().filter(|&c| c == 8))
                             .map(|_| base)
                     })
-                    .map(|val| ctx.sub(val, &ctx.constant(4)));
+                    .map(|val| ctx.sub(val, ctx.constant(4)));
                 if let Some(result) = result {
                     self.result = EntryOf::Ok(result);
                     ctrl.end_analysis();
@@ -653,7 +635,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GuardAiAnalyzer<'e, E
 
 pub fn player_ai_towns<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
@@ -666,10 +648,8 @@ pub fn player_ai_towns<'e, E: ExecutionState<'e>>(
     let state = AiTownState {
         jump_count: 0,
     };
-    let mut i = InternMap::new();
-    let exec_state = E::initial_state(ctx, binary, &mut i);
-    let mut analysis =
-        FuncAnalysis::custom_state(binary, ctx, start_town, exec_state, state, i);
+    let exec_state = E::initial_state(ctx, binary);
+    let mut analysis = FuncAnalysis::custom_state(binary, ctx, start_town, exec_state, state);
     let mut analyzer = AiTownAnalyzer {
         result: None,
         inlining: false,
@@ -691,7 +671,7 @@ impl analysis::AnalysisState for AiTownState {
 }
 
 struct AiTownAnalyzer<'e, E: ExecutionState<'e>> {
-    result: Option<Rc<Operand>>,
+    result: Option<Operand<'e>>,
     inlining: bool,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
@@ -699,9 +679,9 @@ struct AiTownAnalyzer<'e, E: ExecutionState<'e>> {
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiTownAnalyzer<'e, E> {
     type State = AiTownState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let mut jump_check = false;
-        match op {
+        match *op {
             Operation::Call(dest) => {
                 if !self.inlining {
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
@@ -720,7 +700,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiTownAnalyzer<'e, E>
                     jump_check = true;
                 }
             }
-            Operation::Move(_dest, val, _cond) => {
+            Operation::Move(_, val, _cond) => {
                 let res = self.ai_towns_check(val, ctrl);
                 if single_result_assign(res, &mut self.result) {
                     ctrl.end_analysis();
@@ -750,11 +730,11 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiTownAnalyzer<'e, E>
 impl<'e, E: ExecutionState<'e>> AiTownAnalyzer<'e, E> {
     fn ai_towns_check(
         &self,
-        val: &Rc<Operand>,
+        val: Operand<'e>,
         ctrl: &mut Control<'e, '_, '_, Self>,
-    ) -> Option<Rc<Operand>> {
+    ) -> Option<Operand<'e>> {
         let ctx = ctrl.ctx();
-        let val = ctrl.resolve(&val);
+        let val = ctrl.resolve(val);
         // aiscript_start_town accesses player's first ai town
         if let Some(mem) = val.if_memory() {
             mem.address.if_arithmetic_add()
@@ -762,7 +742,7 @@ impl<'e, E: ExecutionState<'e>> AiTownAnalyzer<'e, E> {
                 .and_then(|((l, r), other)| {
                     Operand::either(l, r, |x| x.if_constant())
                         .filter(|&(c, _)| c == 8)
-                        .map(|_| ctx.sub(other, &ctx.const_4()))
+                        .map(|_| ctx.sub(other, ctx.const_4()))
                 })
         } else {
             None
@@ -772,7 +752,7 @@ impl<'e, E: ExecutionState<'e>> AiTownAnalyzer<'e, E> {
 
 pub fn player_ai<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
@@ -783,20 +763,18 @@ pub fn player_ai<'e, E: ExecutionState<'e>>(
     let farms_notiming = binary.read_address(aiscript_hook.switch_table + 0x32 * addr_size).ok()?;
 
     // Set script->player to 0
-    let mut interner = InternMap::new();
-    let mut state = E::initial_state(ctx, binary, &mut interner);
+    let mut state = E::initial_state(ctx, binary);
     let player_offset = if addr_size == 4 { 0x10 } else { 0x18 };
-    let player = ctx.mem32(&ctx.add(
-        &aiscript_hook.script_operand_at_switch,
-        &ctx.constant(player_offset),
+    let player = ctx.mem32(ctx.add(
+        aiscript_hook.script_operand_at_switch,
+        ctx.constant(player_offset),
     ));
-    state.move_to(&DestOperand::from_oper(&player), ctx.const_0(), &mut interner);
+    state.move_to(&DestOperand::from_oper(player), ctx.const_0());
     let mut analysis = FuncAnalysis::with_state(
         binary,
-        &ctx,
+        ctx,
         farms_notiming,
         state,
-        interner,
     );
     let mut analyzer = PlayerAiAnalyzer {
         result: None,
@@ -808,7 +786,7 @@ pub fn player_ai<'e, E: ExecutionState<'e>>(
 }
 
 struct PlayerAiAnalyzer<'e, E: ExecutionState<'e>> {
-    result: Option<Rc<Operand>>,
+    result: Option<Operand<'e>>,
     inlining: bool,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
@@ -816,8 +794,8 @@ struct PlayerAiAnalyzer<'e, E: ExecutionState<'e>> {
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlayerAiAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(dest) => {
                 if !self.inlining {
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
@@ -831,16 +809,16 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlayerAiAnalyzer<'e, 
                     }
                 }
             }
-            Operation::Move(dest, val, _cond) => {
+            Operation::Move(ref dest, val, _cond) => {
                 if let DestOperand::Memory(mem) = dest {
-                    let dest = ctrl.resolve(&mem.address);
+                    let dest = ctrl.resolve(mem.address);
                     let val = ctrl.resolve(val);
                     let ctx = ctrl.ctx();
                     let result = val.if_arithmetic_or()
                         .and_either_other(|x| x.if_memory().filter(|mem| mem.address == dest))
                         .and_then(|y| y.if_constant())
                         .filter(|&c| c == 0x10)
-                        .map(|_| ctx.sub(&dest, &ctx.constant(0x218)));
+                        .map(|_| ctx.sub(dest, ctx.constant(0x218)));
                     if single_result_assign(result, &mut self.result) {
                         ctrl.end_analysis();
                     }

@@ -99,7 +99,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FullSwitchInfo<'a, 'e, E> {
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FullSwitchInfo<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if {
             self.use_address < ctrl.address() ||
                 self.use_address >= ctrl.current_instruction_end()
@@ -108,10 +108,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FullSwitchInfo<'a
         }
         // Stop unless the match below finds result
         self.result = EntryOf::Stop;
-        match op {
+        match *op {
             Operation::Jump { to, .. } => {
                 let to = ctrl.resolve(to);
-                let result = ctrl.if_mem_word(&to)
+                let result = ctrl.if_mem_word(to)
                     .and_then(|addr| addr.if_arithmetic_add())
                     .and_then(|(l, r)| {
                         let binary = self.binary;

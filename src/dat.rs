@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, Operand, Operation};
@@ -10,15 +8,15 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct DatTablePtr {
-    pub address: Rc<Operand>,
+pub struct DatTablePtr<'e> {
+    pub address: Operand<'e>,
     pub entry_size: u32,
 }
 
 pub fn dat_table<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
     filename: &'static str,
-) -> Option<DatTablePtr> {
+) -> Option<DatTablePtr<'e>> {
     let binary = analysis.binary;
     let functions = analysis.functions();
     let str_refs = string_refs(binary, analysis, filename.as_bytes());
@@ -92,14 +90,14 @@ struct FindDatRoot<'a, 'e, E: ExecutionState<'e>> {
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindDatRoot<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if ctrl.address() == self.str_ref.use_address {
             self.addr_found = true;
         }
-        if let Operation::Call(dest) = op {
+        if let Operation::Call(dest) = *op {
             let dest = if_callable_const(self.binary, dest, ctrl);
-            let arg1 = ctrl.resolve(&self.arg_cache.on_call(0)).if_constant();
-            let arg2 = ctrl.resolve(&self.arg_cache.on_call(1)).if_constant();
+            let arg1 = ctrl.resolve(self.arg_cache.on_call(0)).if_constant();
+            let arg2 = ctrl.resolve(self.arg_cache.on_call(1)).if_constant();
             if let (Some(_dest), Some(arg1), Some(arg2)) = (dest, arg1, arg2) {
                 if arg1 == self.str_ref.string_address.as_u64() {
                     self.result = Some(E::VirtualAddress::from_u64(arg2));

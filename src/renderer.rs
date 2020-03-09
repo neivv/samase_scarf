@@ -13,13 +13,13 @@ struct DrawImageEntryCheck<'e, E: ExecutionState<'e>> {
 impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DrawImageEntryCheck<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(..) => {
                 ctrl.end_analysis();
             }
-            Operation::Jump { ref condition, .. } => {
-                let condition = ctrl.resolve(&condition);
+            Operation::Jump { condition, .. } => {
+                let condition = ctrl.resolve(condition);
                 self.result = condition.iter_no_mem_addr().any(|x| {
                     x.if_arithmetic_and()
                         .and_either_other(|x| x.if_constant().filter(|&c| c == 0x40))

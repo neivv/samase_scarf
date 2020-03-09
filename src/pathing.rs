@@ -1,19 +1,17 @@
-use std::rc::Rc;
-
 use scarf::analysis::{self, Control, FuncAnalysis};
-use scarf::exec_state::{ExecutionState, VirtualAddress, InternMap};
-use scarf::{Operand, OperandType, Operation, DestOperand};
+use scarf::exec_state::{ExecutionState, VirtualAddress};
+use scarf::{Operand, Operation, DestOperand};
 
 use crate::{Analysis, ArgCache, OptionExt, single_result_assign};
 
 #[derive(Clone, Debug)]
-pub struct RegionRelated<Va: VirtualAddress> {
+pub struct RegionRelated<'e, Va: VirtualAddress> {
     pub get_region: Option<Va>,
-    pub ai_regions: Option<Rc<Operand>>,
+    pub ai_regions: Option<Operand<'e>>,
     pub change_ai_region_state: Option<Va>,
 }
 
-impl<Va: VirtualAddress> RegionRelated<Va> {
+impl<'e, Va: VirtualAddress> RegionRelated<'e, Va> {
     fn any_empty(&self) -> bool {
         self.get_region.is_none() ||
             self.ai_regions.is_none() ||
@@ -23,9 +21,7 @@ impl<Va: VirtualAddress> RegionRelated<Va> {
 
 pub fn regions<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> RegionRelated<E::VirtualAddress> {
-    use scarf::operand_helpers::*;
-
+) -> RegionRelated<'e, E::VirtualAddress> {
     let mut result = RegionRelated {
         get_region: None,
         ai_regions: None,
@@ -47,29 +43,27 @@ pub fn regions<'e, E: ExecutionState<'e>>(
         Err(_) => return result,
     };
     // Set script->player to 0, x to 999 and y to 998
-    let mut interner = InternMap::new();
-    let mut state = E::initial_state(ctx, binary, &mut interner);
-    let player = mem32(operand_add(
-        aiscript_hook.script_operand_at_switch.clone(),
+    let mut state = E::initial_state(ctx, binary);
+    let player = ctx.mem32(ctx.add(
+        aiscript_hook.script_operand_at_switch,
         ctx.constant(0x10),
     ));
-    let x = mem32(operand_add(
-        aiscript_hook.script_operand_at_switch.clone(),
+    let x = ctx.mem32(ctx.add(
+        aiscript_hook.script_operand_at_switch,
         ctx.constant(0x24),
     ));
-    let y = mem32(operand_add(
-        aiscript_hook.script_operand_at_switch.clone(),
+    let y = ctx.mem32(ctx.add(
+        aiscript_hook.script_operand_at_switch,
         ctx.constant(0x28),
     ));
-    state.move_to(&DestOperand::from_oper(&player), ctx.const_0(), &mut interner);
-    state.move_to(&DestOperand::from_oper(&x), ctx.constant(999), &mut interner);
-    state.move_to(&DestOperand::from_oper(&y), ctx.constant(998), &mut interner);
+    state.move_to(&DestOperand::from_oper(player), ctx.const_0());
+    state.move_to(&DestOperand::from_oper(x), ctx.constant(999));
+    state.move_to(&DestOperand::from_oper(y), ctx.constant(998));
     let mut analysis = FuncAnalysis::with_state(
         binary,
         ctx,
         value_area,
         state,
-        interner,
     );
     let mut analyzer = RegionsAnalyzer {
         result: &mut result,
@@ -81,7 +75,7 @@ pub fn regions<'e, E: ExecutionState<'e>>(
 }
 
 struct RegionsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    result: &'a mut RegionRelated<E::VirtualAddress>,
+    result: &'a mut RegionRelated<'e, E::VirtualAddress>,
     inlining: bool,
     arg_cache: &'a ArgCache<'e, E>,
 }
@@ -89,8 +83,8 @@ struct RegionsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RegionsAnalyzer<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(dest) => {
                 let dest = ctrl.resolve(dest);
                 if let Some(dest) = dest.if_constant() {
@@ -103,7 +97,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RegionsAnalyzer<'
                     }
                 }
             }
-            Operation::Jump { ref condition, ref to } => {
+            Operation::Jump { condition, to } => {
                 if !self.inlining {
                     let cond = ctrl.resolve(condition);
                     let to = ctrl.resolve(to);
@@ -134,29 +128,26 @@ impl<'a, 'e, E: ExecutionState<'e>> RegionsAnalyzer<'a, 'e, E> {
         dest: E::VirtualAddress,
         ctrl: &mut Control<'e, '_, '_, Self>,
     ) -> bool {
-        fn is_undef_mul_34(op: &Operand) -> bool {
+        fn is_undef_mul_34(op: Operand<'_>) -> bool {
             op.if_arithmetic_mul()
                 .and_either_other(|x| x.if_constant().filter(|&c| c == 0x34))
                 .filter(|y| {
-                    y.iter().any(|y| match y.ty {
-                        OperandType::Undefined(_) => true,
-                        _ => false,
-                    })
+                    y.iter().any(|y| y.is_undefined())
                 })
                 .is_some()
         }
 
-        match ctrl.resolve(&self.arg_cache.on_call(1)).if_constant() {
+        match ctrl.resolve(self.arg_cache.on_call(1)).if_constant() {
             // GetRegion(x, y) call?
             Some(998) => {
-                if ctrl.resolve(&self.arg_cache.on_call(0)).if_constant() == Some(999) {
+                if ctrl.resolve(self.arg_cache.on_call(0)).if_constant() == Some(999) {
                     self.result.get_region = Some(dest);
                     return true;
                 }
             }
             // SetAiRegionState call?
             Some(5) => {
-                let arg1 =  ctrl.resolve(&self.arg_cache.on_call(0));
+                let arg1 =  ctrl.resolve(self.arg_cache.on_call(0));
                 let ai_regions = arg1.if_arithmetic_add()
                     .and_then(|(l, r)| {
                         if is_undef_mul_34(l) {
@@ -180,7 +171,7 @@ impl<'a, 'e, E: ExecutionState<'e>> RegionsAnalyzer<'a, 'e, E> {
 
 pub fn pathing<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let get_region = analysis.regions().get_region?;
@@ -195,23 +186,23 @@ pub fn pathing<'e, E: ExecutionState<'e>>(
 }
 
 struct FindPathing<'e, E: ExecutionState<'e>> {
-    result: Option<Rc<Operand>>,
+    result: Option<Operand<'e>>,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindPathing<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         // Finds `x` in `x + 0xc + 0x2 * y`
-        fn find_base(addr: &Rc<Operand>) -> Option<&Rc<Operand>> {
+        fn find_base<'e>(addr: Operand<'e>) -> Option<Operand<'e>> {
             struct State {
                 const_c_seen: bool,
                 mul_2_seen: bool,
             }
 
-            fn recurse<'a>(state: &mut State, addr: &'a Rc<Operand>) -> Option<&'a Rc<Operand>> {
-                fn check_offset_oper(state: &mut State, op: &Rc<Operand>) -> Option<()> {
+            fn recurse<'e>(state: &mut State, addr: Operand<'e>) -> Option<Operand<'e>> {
+                fn check_offset_oper<'e>(state: &mut State, op: Operand<'e>) -> Option<()> {
                     let offset = op.if_constant().filter(|&x| x == 0xc).is_some();
                     let index = op.if_arithmetic_mul()
                         .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
@@ -256,14 +247,14 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindPathing<'e, E> {
                 .filter(|_| state.const_c_seen && state.mul_2_seen)
         }
 
-        match op {
+        match *op {
             Operation::Jump { condition, .. } => {
                 let condition = ctrl.resolve(condition);
                 let addr = condition.iter_no_mem_addr()
                     .flat_map(|x| x.if_mem16())
                     .next();
                 if let Some(addr) = addr {
-                    let val = find_base(addr).cloned();
+                    let val = find_base(addr);
                     if single_result_assign(val, &mut self.result) {
                         ctrl.end_analysis();
                     }

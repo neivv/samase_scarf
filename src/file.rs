@@ -1,7 +1,5 @@
-use std::rc::Rc;
-
 use scarf::analysis::{self, Control, FuncAnalysis};
-use scarf::exec_state::{ExecutionState, InternMap, VirtualAddress as VirtualAddressTrait};
+use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
 use scarf::operand::{Operand};
 use scarf::{BinaryFile, BinarySection, DestOperand, Operation};
 
@@ -17,11 +15,11 @@ struct FindLoadDat<'a, 'e, E: ExecutionState<'e>> {
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLoadDat<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        if let Operation::Call(ref dest) = *op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
             let dest = if_callable_const(self.binary, dest, ctrl);
-            let arg1 = ctrl.resolve(&self.arg_cache.on_call(0)).if_constant();
-            let arg2 = ctrl.resolve(&self.arg_cache.on_call(1)).if_constant();
+            let arg1 = ctrl.resolve(self.arg_cache.on_call(0)).if_constant();
+            let arg2 = ctrl.resolve(self.arg_cache.on_call(1)).if_constant();
             if let (Some(dest), Some(arg1), Some(_)) = (dest, arg1, arg2) {
                 if arg1 == self.string_address.as_u64() {
                     self.result.push((ctrl.address(), dest));
@@ -86,18 +84,16 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
         }
         checked_functions.push(func.address);
 
-        let mut interner = InternMap::new();
-        let mut state = E::initial_state(ctx, binary, &mut interner);
-        let arg1_store = ctx.mem64(&ctx.custom(0));
+        let mut state = E::initial_state(ctx, binary);
+        let arg1_store = ctx.mem64(ctx.custom(0));
         let arg1_addr = arg_cache.on_entry(0);
-        let arg1 = state.resolve(&arg1_addr, &mut interner);
-        state.move_to(&DestOperand::from_oper(&arg1_store), arg1, &mut interner);
+        let arg1 = state.resolve(arg1_addr);
+        state.move_to(&DestOperand::from_oper(arg1_store), arg1);
         let mut analysis = FuncAnalysis::with_state(
             binary,
             ctx,
             func.address,
             state,
-            interner,
         );
         let mut analyzer = Analyzer {
             functions: &mut functions,
@@ -115,7 +111,7 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
             functions: &'a mut Vec<OpenFileFnIntermediate<E::VirtualAddress>>,
             filename_arg: Arg,
             ok: bool,
-            arg1_store: Rc<Operand>,
+            arg1_store: Operand<'e>,
             binary: &'e BinaryFile<E::VirtualAddress>,
             rdata: &'e BinarySection<E::VirtualAddress>,
             arg_cache: &'a ArgCache<'e, E>,
@@ -124,8 +120,8 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
         impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for Analyzer<'a, 'e, E> {
             type State = analysis::DefaultState;
             type Exec = E;
-            fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-                if let Operation::Call(ref dest) = op {
+            fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+                if let Operation::Call(dest) = *op {
                     let dest = if_callable_const(self.binary, dest, ctrl);
                     let new_arg_pos = find_name_arg(self.arg_cache, self.filename_arg, ctrl);
                     if let (Some(dest), Some(new_arg)) = (dest, new_arg_pos) {
@@ -154,17 +150,15 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
                 if self.filename_arg == Arg::Stack(1) && !self.ok {
                     // Don't immediately end analysis even if ok, can still find other functions.
                     self.ok |= (0..3).all(|i| {
-                        let arg1_out = Operand::simplified(
-                            ctrl.mem_word(ctrl.const_word_offset(self.arg1_store.clone(), i)),
-                        );
-                        let resolved = ctrl.resolve(&arg1_out);
+                        let arg1_out = ctrl.mem_word(ctrl.const_word_offset(self.arg1_store, i));
+                        let resolved = ctrl.resolve(arg1_out);
                         let rdata = self.rdata;
-                        match resolved.ty {
-                            scarf::OperandType::Constant(c) => {
+                        match resolved.if_constant() {
+                            Some(c) => {
                                 let rdata_end = rdata.virtual_address + rdata.data.len() as u32;
                                 c >= rdata.virtual_address.as_u64() && c < rdata_end.as_u64()
                             }
-                            _ => false,
+                            None => false,
                         }
                     });
                 }
@@ -184,7 +178,7 @@ fn find_name_arg<'e, A: analysis::Analyzer<'e>>(
     ctrl: &mut Control<'e, '_, '_, A>
 ) -> Option<Arg> {
     (0..10).filter_map(|i| {
-        let resolved = ctrl.resolve(&arg_cache.on_call(i));
+        let resolved = ctrl.resolve(arg_cache.on_call(i));
         match arg {
             Arg::Stack(s) => {
                 let equiv = arg_cache.on_entry(s);

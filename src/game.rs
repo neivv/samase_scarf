@@ -1,8 +1,6 @@
-use std::rc::Rc;
-
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, OperandContext, Operand, DestOperand, Operation, MemAccessSize};
+use scarf::{BinaryFile, OperandCtx, Operand, DestOperand, Operation, MemAccessSize};
 
 use crate::{
     Analysis, OptionExt, find_functions_using_global, find_callers, EntryOf,
@@ -78,7 +76,7 @@ struct IsStepObjects<'a, 'e, E: ExecutionState<'e>> {
     vision_state: VisionStepState,
     checked_vision_funcs: &'a mut Vec<(E::VirtualAddress, bool)>,
     binary: &'e BinaryFile<E::VirtualAddress>,
-    ctx: &'e OperandContext,
+    ctx: OperandCtx<'e>,
     result: EntryOf<()>,
     // Can either be mem access or call
     rng_ref_address: E::VirtualAddress,
@@ -90,8 +88,8 @@ struct IsStepObjects<'a, 'e, E: ExecutionState<'e>> {
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepObjects<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(dest) => {
                 self.check_rng_ref(ctrl);
                 if !self.rng_ref_seen {
@@ -116,9 +114,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepObjects<'a,
                     }
                 }
             }
-            Operation::Move(dest, val, _cond) => {
+            Operation::Move(ref dest, val, _cond) => {
                 self.check_rng_ref(ctrl);
-                self.vision_state.update(dest, &ctrl.resolve(val));
+                self.vision_state.update(dest, ctrl.resolve(val));
                 if self.vision_state.is_ok() {
                     self.result = EntryOf::Ok(());
                     ctrl.end_analysis();
@@ -152,7 +150,7 @@ fn is_branchless_leaf<'e, E: ExecutionState<'e>>(
     impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for Analyzer<'e, E> {
         type State = analysis::DefaultState;
         type Exec = E;
-        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             match op {
                 Operation::Call(..) | Operation::Jump { .. } => {
                     self.result = false;
@@ -175,7 +173,7 @@ fn is_branchless_leaf<'e, E: ExecutionState<'e>>(
 
 fn is_vision_step_func<'e, E: ExecutionState<'e>>(
     binary: &'e BinaryFile<E::VirtualAddress>,
-    ctx: &'e OperandContext,
+    ctx: OperandCtx<'e>,
     addr: E::VirtualAddress,
 ) -> bool {
     let mut analysis = FuncAnalysis::new(binary, ctx, addr);
@@ -197,8 +195,8 @@ struct IsVisionStepFunc<'e, E: ExecutionState<'e>> {
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsVisionStepFunc<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(..) => {
                 ctrl.end_analysis();
             }
@@ -208,8 +206,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsVisionStepFunc<'e, 
                     ctrl.end_analysis();
                 }
             }
-            Operation::Move(ref dest, ref val, ref _cond) => {
-                self.vision_state.update(dest, &ctrl.resolve(val));
+            Operation::Move(ref dest, val, _cond) => {
+                self.vision_state.update(dest, ctrl.resolve(val));
                 if self.vision_state.is_ok() {
                     ctrl.end_analysis();
                 }
@@ -239,7 +237,7 @@ impl VisionStepState {
     }
 
     /// `val` must be resolved
-    fn update(&mut self, dest: &DestOperand, val: &Rc<Operand>) {
+    fn update<'e>(&mut self, dest: &DestOperand<'e>, val: Operand<'e>) {
         if let DestOperand::Memory(ref mem) = *dest {
             if mem.size == MemAccessSize::Mem32 {
                 if let Some(_addr) = mem.address.if_constant() {
@@ -273,7 +271,7 @@ impl VisionStepState {
 
 pub fn game<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     let step_objects = analysis.step_objects()?;
     let binary = analysis.binary;
 
@@ -292,15 +290,15 @@ pub fn game<'e, E: ExecutionState<'e>>(
 struct FindGame<'e, E: ExecutionState<'e>> {
     call_depth: u8,
     jump_limit: u8,
-    result: Option<Rc<Operand>>,
+    result: Option<Operand<'e>>,
     binary: &'e BinaryFile<E::VirtualAddress>,
 }
 
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGame<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(dest) => {
                 if self.call_depth < 3 {
                     if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
@@ -324,9 +322,9 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGame<'e, E> {
                     }
                 }
             }
-            Operation::Move(_dest, val, _cond) => {
+            Operation::Move(_, val, _cond) => {
                 let val = ctrl.resolve(val);
-                let val = game_detect_check(ctrl.ctx(), &val);
+                let val = game_detect_check(ctrl.ctx(), val);
                 if single_result_assign(val, &mut self.result) {
                     ctrl.end_analysis();
                 }
@@ -336,7 +334,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGame<'e, E> {
     }
 }
 
-fn game_detect_check(ctx: &OperandContext, val: &Rc<Operand>) -> Option<Rc<Operand>> {
+fn game_detect_check<'e>(ctx: OperandCtx<'e>, val: Operand<'e>) -> Option<Operand<'e>> {
     // Check for map_width_tiles * map_height_tiles, at UpdateFog or ProgressCreepDisappearance
     // (They're at game + 0xe4 and game + 0xe6)
     val.iter_no_mem_addr().filter_map(|x| x.if_arithmetic_mul())
@@ -345,13 +343,13 @@ fn game_detect_check(ctx: &OperandContext, val: &Rc<Operand>) -> Option<Rc<Opera
         }).filter(|&(l, r)| {
             l.size == MemAccessSize::Mem16 && r.size == MemAccessSize::Mem16
         }).filter_map(|(l, r)| {
-            let l_minus_2 = ctx.sub_const(&l.address, 2);
+            let l_minus_2 = ctx.sub_const(l.address, 2);
             if l_minus_2 == r.address {
-                Some(ctx.sub_const(&r.address, 0xe4))
+                Some(ctx.sub_const(r.address, 0xe4))
             } else {
-                let r_minus_2 = ctx.sub_const(&r.address, 2);
+                let r_minus_2 = ctx.sub_const(r.address, 2);
                 if r_minus_2 == l.address {
-                    Some(ctx.sub_const(&l.address, 0xe4))
+                    Some(ctx.sub_const(l.address, 0xe4))
                 } else {
                     None
                 }

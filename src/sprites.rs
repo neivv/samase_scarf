@@ -1,31 +1,29 @@
-use std::rc::Rc;
-
 use fxhash::FxHashMap;
 
-use scarf::{MemAccessSize, Operand, OperandType, Operation, DestOperand};
+use scarf::{MemAccessSize, Operand, Operation, DestOperand};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::{Analysis, OptionExt};
 
-pub struct Sprites<Va: VirtualAddress> {
-    pub sprite_hlines: Option<Rc<Operand>>,
-    pub sprite_hlines_end: Option<Rc<Operand>>,
-    pub first_free_sprite: Option<Rc<Operand>>,
-    pub last_free_sprite: Option<Rc<Operand>>,
-    pub first_lone: Option<Rc<Operand>>,
-    pub last_lone: Option<Rc<Operand>>,
-    pub first_free_lone: Option<Rc<Operand>>,
-    pub last_free_lone: Option<Rc<Operand>>,
+pub struct Sprites<'e, Va: VirtualAddress> {
+    pub sprite_hlines: Option<Operand<'e>>,
+    pub sprite_hlines_end: Option<Operand<'e>>,
+    pub first_free_sprite: Option<Operand<'e>>,
+    pub last_free_sprite: Option<Operand<'e>>,
+    pub first_lone: Option<Operand<'e>>,
+    pub last_lone: Option<Operand<'e>>,
+    pub first_free_lone: Option<Operand<'e>>,
+    pub last_free_lone: Option<Operand<'e>>,
     pub create_lone_sprite: Option<Va>,
 }
 
 #[derive(Default)]
-pub struct FowSprites {
-    pub first_active: Option<Rc<Operand>>,
-    pub last_active: Option<Rc<Operand>>,
-    pub first_free: Option<Rc<Operand>>,
-    pub last_free: Option<Rc<Operand>>,
+pub struct FowSprites<'e> {
+    pub first_active: Option<Operand<'e>>,
+    pub last_active: Option<Operand<'e>>,
+    pub first_free: Option<Operand<'e>>,
+    pub last_free: Option<Operand<'e>>,
 }
 
 // The functions can be inlined, so first lone can be found during either NukeTrack or
@@ -41,9 +39,7 @@ enum FindSpritesState {
 
 pub fn sprites<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Sprites<E::VirtualAddress> {
-    use scarf::operand_helpers::*;
-
+) -> Sprites<'e, E::VirtualAddress> {
     let mut result = Sprites {
         sprite_hlines: None,
         sprite_hlines_end: None,
@@ -72,7 +68,7 @@ pub fn sprites<'e, E: ExecutionState<'e>>(
         is_checking_active_list_candidate: None,
         active_list_candidate_head: None,
         active_list_candidate_tail: None,
-        arg1: mem32(ctx.register(4)),
+        arg1: ctx.mem32(ctx.register(4)),
         ecx: ctx.register(1),
         create_lone_sprite: None,
     };
@@ -99,13 +95,13 @@ pub fn sprites<'e, E: ExecutionState<'e>>(
 }
 
 #[derive(Default)]
-struct IncompleteList {
-    head: Option<Rc<Operand>>,
-    tail: Option<Rc<Operand>>,
+struct IncompleteList<'e> {
+    head: Option<Operand<'e>>,
+    tail: Option<Operand<'e>>,
 }
 
-impl IncompleteList {
-    fn get(self) -> Option<(Rc<Operand>, Rc<Operand>)> {
+impl<'e> IncompleteList<'e> {
+    fn get(self) -> Option<(Operand<'e>, Operand<'e>)> {
         match (self.head, self.tail) {
             (Some(h), Some(t)) => Some((h, t)),
             _ => None,
@@ -115,39 +111,39 @@ impl IncompleteList {
 
 struct SpriteAnalyzer<'e, E: ExecutionState<'e>> {
     state: FindSpritesState,
-    lone_free: IncompleteList,
-    lone_active: IncompleteList,
-    sprites_free: IncompleteList,
-    hlines: IncompleteList,
+    lone_free: IncompleteList<'e>,
+    lone_active: IncompleteList<'e>,
+    sprites_free: IncompleteList<'e>,
+    hlines: IncompleteList<'e>,
     // Since last ptr for free lists (removing) is detected as
     // *last = (*first).prev
     // If this pattern is seen before first is confirmed, store (first, last) here.
-    last_ptr_candidates: Vec<(Rc<Operand>, Rc<Operand>)>,
+    last_ptr_candidates: Vec<(Operand<'e>, Operand<'e>)>,
     // Adding to active sprites is detected as
     // if (*first_active == null) {
     //     *first_active = *first_free;
     //     *last_active = *first_free;
     // }
     // If detecting such branch, store its address and first_active
-    active_list_candidate_branches: FxHashMap<E::VirtualAddress, Rc<Operand>>,
-    is_checking_active_list_candidate: Option<Rc<Operand>>,
-    active_list_candidate_head: Option<Rc<Operand>>,
-    active_list_candidate_tail: Option<Rc<Operand>>,
+    active_list_candidate_branches: FxHashMap<E::VirtualAddress, Operand<'e>>,
+    is_checking_active_list_candidate: Option<Operand<'e>>,
+    active_list_candidate_head: Option<Operand<'e>>,
+    active_list_candidate_tail: Option<Operand<'e>>,
     // These are from looking at caller side, so arg1 == [esp]
-    arg1: Rc<Operand>,
-    ecx: Rc<Operand>,
+    arg1: Operand<'e>,
+    ecx: Operand<'e>,
     create_lone_sprite: Option<E::VirtualAddress>,
 }
 
-impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for SpriteAnalyzer<'a, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
-            Operation::Call(ref to) => {
-                if let Some(dest) = ctrl.resolve(&to).if_constant() {
+            Operation::Call(to) => {
+                if let Some(dest) = ctrl.resolve(to).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
-                    let arg1 = ctrl.resolve(&self.arg1);
+                    let arg1 = ctrl.resolve(self.arg1);
                     if let Some(c) = arg1.if_constant() {
                         // Nuke dot sprite, either calling create lone or create sprite
                         // Their args are the same though, so cannot verify much here.
@@ -183,27 +179,27 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for SpriteAnalyzer<'a, E> {
                             return;
                         }
                     }
-                    let ecx = ctrl.resolve(&self.ecx);
-                    if self.is_list_call(&arg1, &ecx) {
+                    let ecx = ctrl.resolve(self.ecx);
+                    if self.is_list_call(arg1, ecx) {
                         ctrl.analyze_with_current_state(self, dest);
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), ref value, _) => {
+            Operation::Move(DestOperand::Memory(ref mem), value, _) => {
                 if mem.size != MemAccessSize::Mem32 {
                     return;
                 }
                 let ctx = ctrl.ctx();
-                let dest_addr = ctrl.resolve(&mem.address);
-                let value = ctrl.resolve(&value);
+                let dest_addr = ctrl.resolve(mem.address);
+                let value = ctrl.resolve(value);
                 // first_free_sprite = (*first_free_sprite).next, e.g.
                 // mov [first_free_sprite], [[first_free_sprite] + 4]
                 let first_sprite_next = ctx.mem32(
-                    &ctx.add(&ctx.mem32(&dest_addr), &ctx.const_4()),
+                    ctx.add(ctx.mem32(dest_addr), ctx.const_4()),
                 );
                 if value == first_sprite_next {
                     self.set_first_ptr(dest_addr.clone());
-                    if let Some(last) = self.last_ptr_first_known(&dest_addr) {
+                    if let Some(last) = self.last_ptr_first_known(dest_addr) {
                         self.set_last_ptr(last);
                     }
                     return;
@@ -211,8 +207,8 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for SpriteAnalyzer<'a, E> {
                 // last_free_sprite = (*first_free_sprite).prev
                 // But not (*(*first_free_sprite).next).prev = (*first_free_sprite).prev
                 if let Some(inner) = value.if_mem32().and_then(|x| x.if_mem32()) {
-                    if dest_addr.iter().all(|x| *x != **inner) {
-                        if self.is_unpaired_first_ptr(&inner) {
+                    if dest_addr.iter().all(|x| x != inner) {
+                        if self.is_unpaired_first_ptr(inner) {
                             self.set_last_ptr(dest_addr.clone());
                             return;
                         } else {
@@ -220,7 +216,7 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for SpriteAnalyzer<'a, E> {
                         }
                     }
                 }
-                if let Some(ref head_candidate) = self.is_checking_active_list_candidate {
+                if let Some(head_candidate) = self.is_checking_active_list_candidate {
                     // Adding to active sprites is detected as
                     // if (*first_active == null) {
                     //     *first_active = *first_free;
@@ -235,9 +231,9 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for SpriteAnalyzer<'a, E> {
                         }
                         _ => None
                     };
-                    if let Some(first_free) = free_list.and_then(|x| x.head.as_ref()) {
-                        if let Some(_) = value.if_mem32().filter(|x| *x == first_free) {
-                            if dest_addr == *head_candidate {
+                    if let Some(first_free) = free_list.and_then(|x| x.head) {
+                        if let Some(_) = value.if_mem32().filter(|&x| x == first_free) {
+                            if dest_addr == head_candidate {
                                 self.active_list_candidate_head = Some(dest_addr.clone());
                             } else {
                                 self.active_list_candidate_tail = Some(dest_addr.clone());
@@ -246,23 +242,23 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for SpriteAnalyzer<'a, E> {
                     }
                 }
             }
-            Operation::Jump { ref condition, ref to } => {
+            Operation::Jump { condition, to } => {
                 match self.state {
                     FindSpritesState::CreateLone_Post | FindSpritesState::CreateSprite => (),
                     FindSpritesState::CreateLone | FindSpritesState::NukeTrack => return,
                 }
-                let condition = ctrl.resolve(&condition);
-                let dest_addr = match ctrl.resolve(&to).if_constant() {
+                let condition = ctrl.resolve(condition);
+                let dest_addr = match ctrl.resolve(to).if_constant() {
                     Some(s) => VirtualAddress::from_u64(s),
                     None => return,
                 };
-                fn if_arithmetic_eq_zero(op: &Rc<Operand>) -> Option<&Rc<Operand>> {
+                fn if_arithmetic_eq_zero<'e>(op: Operand<'e>) -> Option<Operand<'e>> {
                     op.if_arithmetic_eq()
                         .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
                 };
                 // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
-                let (val, jump_if_null) = match if_arithmetic_eq_zero(&condition) {
-                    Some(other) => match if_arithmetic_eq_zero(&other) {
+                let (val, jump_if_null) = match if_arithmetic_eq_zero(condition) {
+                    Some(other) => match if_arithmetic_eq_zero(other) {
                         Some(other) => (other, false),
                         None => (other, true),
                     }
@@ -276,8 +272,8 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for SpriteAnalyzer<'a, E> {
                     // There's also code that reads back to free lists, so ignore cases where
                     // we're looking at free list head.
                     let is_free_list_head =
-                        self.lone_free.head.as_ref().filter(|x| *x == val).is_some() ||
-                        self.sprites_free.head.as_ref().filter(|x| *x == val).is_some();
+                        self.lone_free.head.filter(|&x| x == val).is_some() ||
+                        self.sprites_free.head.filter(|&x| x == val).is_some();
                     if !is_free_list_head {
                         self.active_list_candidate_branches.insert(addr, val.clone());
                     }
@@ -287,23 +283,20 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for SpriteAnalyzer<'a, E> {
         }
     }
 
-    fn branch_start(&mut self, ctrl: &mut Control<'a, '_, '_, Self>) {
+    fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         let head_candidate = self.active_list_candidate_branches.get(&ctrl.address());
         self.is_checking_active_list_candidate = head_candidate.cloned();
     }
 
-    fn branch_end(&mut self, ctrl: &mut Control<'a, '_, '_, Self>) {
+    fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         // Since hlines should be [hlines + 4 * x]
         // Prefer 4 * undefined as an 4 * (x - 1) offset will change base
-        fn hlines_base(val: &Rc<Operand>) -> Option<&Rc<Operand>> {
+        fn hlines_base<'e>(val: Operand<'e>) -> Option<Operand<'e>> {
             val.if_arithmetic_add()
                 .and_either(|x| x.if_arithmetic_mul())
-                .filter(|((l, r), _)| {
+                .filter(|&((l, r), _)| {
                     Operand::either(l, r, |x| x.if_constant().filter(|&x| x == 4))
-                        .filter(|(_, other)| match other.ty {
-                            OperandType::Undefined(_) => true,
-                            _ => false,
-                        })
+                        .filter(|(_, other)| other.is_undefined())
                         .is_some()
                 })
                 .map(|(_, base)| base)
@@ -315,11 +308,11 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for SpriteAnalyzer<'a, E> {
             if let (Some(head), Some(tail)) = (head, tail) {
                 match self.state {
                     FindSpritesState::CreateSprite => {
-                        let head = hlines_base(&head);
-                        let tail = hlines_base(&tail);
+                        let head = hlines_base(head);
+                        let tail = hlines_base(tail);
                         if let (Some(head), Some(tail)) = (head, tail) {
-                            self.hlines.head = Some(head.clone());
-                            self.hlines.tail = Some(tail.clone());
+                            self.hlines.head = Some(head);
+                            self.hlines.tail = Some(tail);
                             self.state = FindSpritesState::CreateLone_Post;
                         }
                     }
@@ -335,8 +328,8 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for SpriteAnalyzer<'a, E> {
     }
 }
 
-impl<'a, E: ExecutionState<'a>> SpriteAnalyzer<'a, E> {
-    fn is_list_call(&self, arg1: &Rc<Operand>, ecx: &Rc<Operand>) -> bool {
+impl<'e, E: ExecutionState<'e>> SpriteAnalyzer<'e, E> {
+    fn is_list_call(&self, arg1: Operand<'e>, ecx: Operand<'e>) -> bool {
         if let Some(addr) = ecx.if_mem32() {
             // It's remove call if ecx == [arg1], (item == [head])
             if addr == arg1 {
@@ -346,12 +339,12 @@ impl<'a, E: ExecutionState<'a>> SpriteAnalyzer<'a, E> {
             // Check to not go into AddOverlay, as ecx == sprite == [free_head]
             // AddOverlay's first argument is Mem16, and a pointer can obviously never be Mem16
             if arg1.if_memory().filter(|x| x.size != MemAccessSize::Mem32).is_none() {
-                if let Some(ref head) = self.lone_free.head {
+                if let Some(head) = self.lone_free.head {
                     if addr == head {
                         return true;
                     }
                 }
-                if let Some(ref head) = self.sprites_free.head {
+                if let Some(head) = self.sprites_free.head {
                     if addr == head {
                         return true;
                     }
@@ -361,19 +354,19 @@ impl<'a, E: ExecutionState<'a>> SpriteAnalyzer<'a, E> {
         false
     }
 
-    fn last_ptr_first_known(&self, first: &Rc<Operand>) -> Option<Rc<Operand>> {
-        self.last_ptr_candidates.iter().find(|x| x.0 == *first).map(|x| x.1.clone())
+    fn last_ptr_first_known(&self, first: Operand<'e>) -> Option<Operand<'e>> {
+        self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1.clone())
     }
 
-    fn is_unpaired_first_ptr(&self, first: &Rc<Operand>) -> bool {
+    fn is_unpaired_first_ptr(&self, first: Operand<'e>) -> bool {
         match self.state {
             FindSpritesState::CreateLone => {
-                if let Some(_) = self.lone_free.head.as_ref().filter(|x| *x == first) {
+                if let Some(_) = self.lone_free.head.filter(|&x| x == first) {
                     return self.lone_free.tail.is_none();
                 }
             }
             FindSpritesState::CreateSprite => {
-                if let Some(_) = self.sprites_free.head.as_ref().filter(|x| *x == first) {
+                if let Some(_) = self.sprites_free.head.filter(|&x| x == first) {
                     return self.sprites_free.tail.is_none();
                 }
             }
@@ -382,20 +375,20 @@ impl<'a, E: ExecutionState<'a>> SpriteAnalyzer<'a, E> {
         false
     }
 
-    fn set_first_ptr(&mut self, value: Rc<Operand>) {
+    fn set_first_ptr(&mut self, value: Operand<'e>) {
         if self.lone_free.head.is_none() {
             self.state = FindSpritesState::CreateLone;
             self.lone_free.head = Some(value);
         } else if self.sprites_free.head.is_none() {
             // Check for duplicate lone set
-            if self.lone_free.head.as_ref().filter(|x| **x == value).is_none() {
+            if self.lone_free.head.filter(|&x| x == value).is_none() {
                 self.state = FindSpritesState::CreateSprite;
                 self.sprites_free.head = Some(value);
             }
         }
     }
 
-    fn set_last_ptr(&mut self, value: Rc<Operand>) {
+    fn set_last_ptr(&mut self, value: Operand<'e>) {
         let out = match self.state {
             FindSpritesState::CreateLone => &mut self.lone_free.tail,
             FindSpritesState::CreateSprite => &mut self.sprites_free.tail,
@@ -416,7 +409,7 @@ impl<'a, E: ExecutionState<'a>> SpriteAnalyzer<'a, E> {
 
 pub fn fow_sprites<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> FowSprites {
+) -> FowSprites<'e> {
     // step_orders calls a function that loops through
     // lone sprites, followed by a loop through fow sprites.
     // That fow stepping code can also move from active -> free list,
@@ -429,7 +422,7 @@ pub fn fow_sprites<'e, E: ExecutionState<'e>>(
         None => return result,
     };
     let first_lone = match analysis.sprites().first_lone {
-        Some(ref s) => s.clone(),
+        Some(s) => s,
         None => return result,
     };
 
@@ -469,51 +462,51 @@ enum FowSpritesState {
     StepLoneSpritesFound,
 }
 
-struct FowSpriteAnalyzer<'a, E: ExecutionState<'a>> {
+struct FowSpriteAnalyzer<'e, E: ExecutionState<'e>> {
     state: FowSpritesState,
     inline_depth: u8,
-    free: IncompleteList,
-    active: IncompleteList,
+    free: IncompleteList<'e>,
+    active: IncompleteList<'e>,
     // Explanation for these is at SpriteAnalyzer
-    last_ptr_candidates: Vec<(Rc<Operand>, Rc<Operand>)>,
-    free_list_candidate_branches: FxHashMap<E::VirtualAddress, Rc<Operand>>,
-    is_checking_free_list_candidate: Option<Rc<Operand>>,
-    free_list_candidate_head: Option<Rc<Operand>>,
-    free_list_candidate_tail: Option<Rc<Operand>>,
-    ecx: Rc<Operand>,
-    first_lone: Rc<Operand>,
+    last_ptr_candidates: Vec<(Operand<'e>, Operand<'e>)>,
+    free_list_candidate_branches: FxHashMap<E::VirtualAddress, Operand<'e>>,
+    is_checking_free_list_candidate: Option<Operand<'e>>,
+    free_list_candidate_head: Option<Operand<'e>>,
+    free_list_candidate_tail: Option<Operand<'e>>,
+    ecx: Operand<'e>,
+    first_lone: Operand<'e>,
 }
 
-impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for FowSpriteAnalyzer<'a, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if self.state == FowSpritesState::InStepOrders {
             // Check for x <= [first_lone_sprite],
             // if found write 0 to [first_lone_sprite]
             // (Skipping lone sprite loop) and switch to StepLoneSpritesFound
             // Ideally the next thing being handled should be fow sprites.
-            if let Operation::Move(_, ref value, None) = op {
+            if let Operation::Move(_, value, None) = *op {
                 let value = ctrl.resolve(value);
                 let is_first_lone = value.if_mem32()
-                    .filter(|x| **x == self.first_lone)
+                    .filter(|&x| x == self.first_lone)
                     .is_some();
                 if is_first_lone {
                     self.state = FowSpritesState::StepLoneSpritesFound;
                     self.inline_depth = 0;
                     let ctx = ctrl.ctx();
-                    let (state, i) = ctrl.exec_state();
-                    state.move_to(&DestOperand::from_oper(&value), ctx.const_0(), i);
+                    let state = ctrl.exec_state();
+                    state.move_to(&DestOperand::from_oper(value), ctx.const_0());
                 }
                 return;
             }
         }
         match *op {
-            Operation::Call(ref to) => {
+            Operation::Call(to) => {
                 if self.inline_depth >= 2 {
                     return;
                 }
-                if let Some(dest) = ctrl.resolve(&to).if_constant() {
+                if let Some(dest) = ctrl.resolve(to).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
                     match self.state {
                         FowSpritesState::InStepOrders => {
@@ -526,7 +519,7 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for FowSpriteAnalyzer<'a, E>
                             }
                         }
                         FowSpritesState::StepLoneSpritesFound => {
-                            let ecx = ctrl.resolve(&self.ecx);
+                            let ecx = ctrl.resolve(self.ecx);
                             if ecx.if_mem32().is_none() {
                                 return;
                             }
@@ -540,7 +533,7 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for FowSpriteAnalyzer<'a, E>
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), ref value, _) => {
+            Operation::Move(DestOperand::Memory(ref mem), value, _) => {
                 if mem.size != MemAccessSize::Mem32 {
                     return;
                 }
@@ -550,16 +543,16 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for FowSpriteAnalyzer<'a, E>
                 // The free/active logic is opposite from SpriteAnalyzer, as this function
                 // frees fow sprites while the function SpriteAnalyzer checks allocates sprites
                 let ctx = ctrl.ctx();
-                let dest_addr = ctrl.resolve(&mem.address);
-                let value = ctrl.resolve(&value);
+                let dest_addr = ctrl.resolve(mem.address);
+                let value = ctrl.resolve(value);
                 // first_active_sprite = (*first_active_sprite).next, e.g.
                 // mov [first_active_sprite], [[first_active_sprite] + 4]
                 let first_sprite_next = ctx.mem32(
-                    &ctx.add(&ctx.mem32(&dest_addr), &ctx.const_4())
+                    ctx.add(ctx.mem32(dest_addr), ctx.const_4())
                 );
                 if value == first_sprite_next {
-                    self.active.head = Some(dest_addr.clone());
-                    if let Some(last) = self.last_ptr_first_known(&dest_addr) {
+                    self.active.head = Some(dest_addr);
+                    if let Some(last) = self.last_ptr_first_known(dest_addr) {
                         self.active.tail = Some(last);
                     }
                     return;
@@ -567,49 +560,49 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for FowSpriteAnalyzer<'a, E>
                 // last_active_sprite = (*first_active_sprite).prev
                 // But not (*(*first_active_sprite).next).prev = (*first_active_sprite).prev
                 if let Some(inner) = value.if_mem32().and_then(|x| x.if_mem32()) {
-                    if dest_addr.iter().all(|x| *x != **inner) {
-                        if self.is_unpaired_first_ptr(&inner) {
-                            self.active.tail = Some(dest_addr.clone());
+                    if dest_addr.iter().all(|x| x != inner) {
+                        if self.is_unpaired_first_ptr(inner) {
+                            self.active.tail = Some(dest_addr);
                             return;
                         } else {
-                            self.last_ptr_candidates.push((inner.clone(), dest_addr.clone()));
+                            self.last_ptr_candidates.push((inner.clone(), dest_addr));
                         }
                     }
                 }
-                if let Some(ref head_candidate) = self.is_checking_free_list_candidate {
+                if let Some(head_candidate) = self.is_checking_free_list_candidate {
                     // Adding to free sprites is detected as
                     // if (*first_free == null) {
                     //     *first_free = *first_active;
                     //     *last_free = *first_active;
                     // }
                     let active_list = &self.active;
-                    if let Some(first_active) = active_list.head.as_ref() {
-                        if let Some(_) = value.if_mem32().filter(|x| *x == first_active) {
-                            if dest_addr == *head_candidate {
-                                self.free_list_candidate_head = Some(dest_addr.clone());
+                    if let Some(first_active) = active_list.head {
+                        if let Some(_) = value.if_mem32().filter(|&x| x == first_active) {
+                            if dest_addr == head_candidate {
+                                self.free_list_candidate_head = Some(dest_addr);
                             } else {
-                                self.free_list_candidate_tail = Some(dest_addr.clone());
+                                self.free_list_candidate_tail = Some(dest_addr);
                             }
                         }
                     }
                 }
             }
-            Operation::Jump { ref condition, ref to } => {
+            Operation::Jump { condition, to } => {
                 if self.state != FowSpritesState::StepLoneSpritesFound {
                     return;
                 }
-                let condition = ctrl.resolve(&condition);
-                let dest_addr = match ctrl.resolve(&to).if_constant() {
+                let condition = ctrl.resolve(condition);
+                let dest_addr = match ctrl.resolve(to).if_constant() {
                     Some(s) => VirtualAddress::from_u64(s),
                     None => return,
                 };
-                fn if_arithmetic_eq_zero(op: &Rc<Operand>) -> Option<&Rc<Operand>> {
+                fn if_arithmetic_eq_zero<'e>(op: Operand<'e>) -> Option<Operand<'e>> {
                     op.if_arithmetic_eq()
                         .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
                 };
                 // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
-                let (val, jump_if_null) = match if_arithmetic_eq_zero(&condition) {
-                    Some(other) => match if_arithmetic_eq_zero(&other) {
+                let (val, jump_if_null) = match if_arithmetic_eq_zero(condition) {
+                    Some(other) => match if_arithmetic_eq_zero(other) {
                         Some(other) => (other, false),
                         None => (other, true),
                     }
@@ -627,12 +620,12 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for FowSpriteAnalyzer<'a, E>
         }
     }
 
-    fn branch_start(&mut self, ctrl: &mut Control<'a, '_, '_, Self>) {
+    fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         let head_candidate = self.free_list_candidate_branches.get(&ctrl.address());
         self.is_checking_free_list_candidate = head_candidate.cloned();
     }
 
-    fn branch_end(&mut self, ctrl: &mut Control<'a, '_, '_, Self>) {
+    fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         if let Some(_) = self.is_checking_free_list_candidate.take() {
             let head = self.free_list_candidate_head.take();
             let tail = self.free_list_candidate_tail.take();
@@ -645,13 +638,13 @@ impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for FowSpriteAnalyzer<'a, E>
     }
 }
 
-impl<'a, E: ExecutionState<'a>> FowSpriteAnalyzer<'a, E> {
-    fn last_ptr_first_known(&self, first: &Rc<Operand>) -> Option<Rc<Operand>> {
-        self.last_ptr_candidates.iter().find(|x| x.0 == *first).map(|x| x.1.clone())
+impl<'e, E: ExecutionState<'e>> FowSpriteAnalyzer<'e, E> {
+    fn last_ptr_first_known(&self, first: Operand<'e>) -> Option<Operand<'e>> {
+        self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1.clone())
     }
 
-    fn is_unpaired_first_ptr(&self, first: &Rc<Operand>) -> bool {
-        if let Some(_) = self.active.head.as_ref().filter(|x| *x == first) {
+    fn is_unpaired_first_ptr(&self, first: Operand<'e>) -> bool {
+        if let Some(_) = self.active.head.filter(|&x| x == first) {
             return self.active.tail.is_none();
         }
         false

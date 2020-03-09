@@ -74,7 +74,7 @@ fn find_unit_status_func_uses<'e, E: ExecutionState<'e>>(
         result: Vec::new(),
         parts: Vec::new(),
     };
-    let mut analysis = FuncAnalysis::new(binary, &ctx, func);
+    let mut analysis = FuncAnalysis::new(binary, ctx, func);
     analysis.analyze(&mut analyzer);
     analyzer.result.sort();
     analyzer.result.dedup();
@@ -89,8 +89,8 @@ struct UnitStatusFuncUses<'e, E: ExecutionState<'e>> {
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitStatusFuncUses<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(dest) => {
                 let dest = ctrl.resolve(dest);
                 let val = dest.if_memory()

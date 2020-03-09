@@ -1,8 +1,6 @@
-use std::rc::Rc;
-
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
-use scarf::exec_state::{InternMap, ExecutionState, VirtualAddress};
-use scarf::{DestOperand, Operation, Operand, OperandContext};
+use scarf::exec_state::{ExecutionState, VirtualAddress};
+use scarf::{DestOperand, Operation, Operand, OperandCtx};
 
 use crate::{Analysis, ArgCache, EntryOf, single_result_assign, StringRefs};
 
@@ -28,8 +26,7 @@ pub fn run_dialog<'a, E: ExecutionState<'a>>(
                 ctx,
             };
 
-            let mut interner = InternMap::new();
-            let exec_state = E::initial_state(ctx, binary, &mut interner);
+            let exec_state = E::initial_state(ctx, binary);
             let mut analysis = FuncAnalysis::custom_state(
                 binary,
                 ctx,
@@ -41,7 +38,6 @@ pub fn run_dialog<'a, E: ExecutionState<'a>>(
                     load_dialog_result: None,
                     path_string: None,
                 },
-                interner,
             );
             analysis.analyze(&mut analyzer);
             if let Some(result) = analyzer.result {
@@ -61,18 +57,18 @@ struct RunDialogAnalyzer<'exec, 'b, E: ExecutionState<'exec>> {
     string_address: E::VirtualAddress,
     result: Option<E::VirtualAddress>,
     args: &'b ArgCache<'exec, E>,
-    ctx: &'exec OperandContext,
+    ctx: OperandCtx<'exec>,
 }
 
 #[derive(Clone)]
-struct RunDialogState {
+struct RunDialogState<'e> {
     calling_load_dialog: bool,
     calling_create_string: bool,
-    load_dialog_result: Option<Rc<Operand>>,
-    path_string: Option<Rc<Operand>>,
+    load_dialog_result: Option<Operand<'e>>,
+    path_string: Option<Operand<'e>>,
 }
 
-impl AnalysisState for RunDialogState {
+impl<'e> AnalysisState for RunDialogState<'e> {
     fn merge(&mut self, newer: Self) {
         self.calling_load_dialog = newer.calling_load_dialog && self.calling_load_dialog;
         self.calling_create_string = newer.calling_create_string && self.calling_create_string;
@@ -88,34 +84,34 @@ impl AnalysisState for RunDialogState {
 impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
     RunDialogAnalyzer<'exec, 'b, E>
 {
-    type State = RunDialogState;
+    type State = RunDialogState<'exec>;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation<'exec>) {
         if ctrl.user_state().calling_load_dialog {
-            let rax = ctrl.resolve(&self.ctx.register(0));
+            let rax = ctrl.resolve(self.ctx.register(0));
             let user_state = ctrl.user_state();
             user_state.calling_load_dialog = false;
             user_state.load_dialog_result = Some(rax);
         }
         if ctrl.user_state().calling_create_string {
-            let path_string = ctrl.user_state().path_string.clone();
+            let path_string = ctrl.user_state().path_string;
             ctrl.user_state().calling_create_string = false;
             if let Some(path_string) = path_string {
-                let dest = DestOperand::from_oper(&self.ctx.register(0));
-                let dest2 = DestOperand::from_oper(&ctrl.mem_word(path_string.clone()));
-                let (state, i) = ctrl.exec_state();
+                let dest = DestOperand::from_oper(self.ctx.register(0));
+                let dest2 = DestOperand::from_oper(ctrl.mem_word(path_string));
+                let state = ctrl.exec_state();
                 // String creation function returns eax = arg1
-                state.move_resolved(&dest, path_string, i);
+                state.move_resolved(&dest, path_string);
                 // Mem[string + 0] is character data
-                state.move_resolved(&dest2, self.ctx.constant(self.string_address.as_u64()), i);
+                state.move_resolved(&dest2, self.ctx.constant(self.string_address.as_u64()));
             }
         }
-        match op {
-            Operation::Call(ref to) => {
-                let arg1 = ctrl.resolve(&self.args.on_call(0));
-                let arg2 = ctrl.resolve(&self.args.on_call(1));
-                let arg3 = ctrl.resolve(&self.args.on_call(2));
-                let arg4 = ctrl.resolve(&self.args.on_call(3));
+        match *op {
+            Operation::Call(to) => {
+                let arg1 = ctrl.resolve(self.args.on_call(0));
+                let arg2 = ctrl.resolve(self.args.on_call(1));
+                let arg3 = ctrl.resolve(self.args.on_call(2));
+                let arg4 = ctrl.resolve(self.args.on_call(3));
                 let arg1_is_dialog_ptr = {
                     let user_state = ctrl.user_state();
                     if let Some(ref val) = user_state.load_dialog_result {
@@ -171,9 +167,9 @@ pub fn find_dialog_global<'exec, E: ExecutionState<'exec>>(
     str_ref: &StringRefs<E::VirtualAddress>,
 ) -> EntryOf<E::VirtualAddress> {
     let ctx = analysis.ctx;
-    let return_marker = ctx.truncate(&ctx.custom(0), E::VirtualAddress::SIZE as u8 * 8);
+    let return_marker = ctx.truncate(ctx.custom(0), E::VirtualAddress::SIZE as u8 * 8);
     let args = &analysis.arg_cache;
-    let mut analysis = FuncAnalysis::new(analysis.binary, &ctx, func);
+    let mut analysis = FuncAnalysis::new(analysis.binary, ctx, func);
     let mut analyzer = DialogGlobalAnalyzer {
         result: EntryOf::Retry,
         after_call: false,
@@ -190,17 +186,17 @@ pub fn find_dialog_global<'exec, E: ExecutionState<'exec>>(
 struct DialogGlobalAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: EntryOf<E::VirtualAddress>,
     after_call: bool,
-    path_string: Option<Rc<Operand>>,
+    path_string: Option<Operand<'e>>,
     str_ref: &'a StringRefs<E::VirtualAddress>,
-    ctx: &'e OperandContext,
+    ctx: OperandCtx<'e>,
     args: &'a ArgCache<'e, E>,
-    return_marker: Rc<Operand>,
+    return_marker: Operand<'e>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if ctrl.address() == self.str_ref.use_address {
             self.result = EntryOf::Stop;
         }
@@ -208,29 +204,28 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
             // Has to be done like this since just writing to eax before call would
             // just get overwritten later
             let eax = DestOperand::Register64(scarf::operand::Register(0));
-            let (state, interner) = ctrl.exec_state();
-            state.move_to(&eax, self.return_marker.clone(), interner);
+            let state = ctrl.exec_state();
+            state.move_to(&eax, self.return_marker);
             self.after_call = false;
         }
         if let Some(path_string) = self.path_string.take() {
             let dest = DestOperand::Register64(scarf::operand::Register(0));
-            let dest2 = DestOperand::from_oper(&ctrl.mem_word(path_string.clone()));
-            let (state, interner) = ctrl.exec_state();
+            let dest2 = DestOperand::from_oper(ctrl.mem_word(path_string));
+            let state = ctrl.exec_state();
             // String creation function returns eax = arg1
-            state.move_resolved(&dest, path_string, interner);
+            state.move_resolved(&dest, path_string);
             // Mem[string + 0] is character data
             state.move_resolved(
                 &dest2,
                 self.ctx.constant(self.str_ref.string_address.as_u64()),
-                interner,
             );
         }
-        match op {
+        match *op {
             Operation::Call(_dest) => {
                 let addr_const = self.ctx.constant(self.str_ref.string_address.as_u64());
                 if value_in_call_args(ctrl, addr_const) {
-                    let arg2 = ctrl.resolve(&self.args.on_call(1));
-                    let arg4 = ctrl.resolve(&self.args.on_call(3));
+                    let arg2 = ctrl.resolve(self.args.on_call(1));
+                    let arg4 = ctrl.resolve(self.args.on_call(3));
                     let arg4_is_string_ptr = arg4.if_constant()
                         .filter(|&c| c == self.str_ref.string_address.as_u64())
                         .is_some();
@@ -239,18 +234,18 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
                         .is_some();
                     // Check for either creating a string (1.23.2+) or const char ptr
                     if arg2_is_string_ptr || arg4_is_string_ptr {
-                        let arg1 = ctrl.resolve(&self.args.on_call(0));
+                        let arg1 = ctrl.resolve(self.args.on_call(0));
                         self.path_string = Some(arg1);
                     } else {
                         self.after_call = true;
                     }
                 }
             }
-            Operation::Move(dest, val, _condition) => {
+            Operation::Move(ref dest, val, _condition) => {
                 let resolved = ctrl.resolve(val);
                 if resolved == self.return_marker {
                     if let DestOperand::Memory(ref mem) = *dest {
-                        if let Some(c) = ctrl.resolve(&mem.address).if_constant() {
+                        if let Some(c) = ctrl.resolve(mem.address).if_constant() {
                             self.result = EntryOf::Ok(E::VirtualAddress::from_u64(c));
                             ctrl.end_analysis();
                         }
@@ -264,18 +259,17 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
 
 fn value_in_call_args<'exec, A: analysis::Analyzer<'exec>>(
     ctrl: &mut Control<'exec, '_, '_, A>,
-    value: Rc<Operand>,
+    value: Operand<'exec>,
 ) -> bool {
-    use scarf::operand_helpers::*;
-    let esp = || operand_register(4);
-    let val = Operand::simplified(value);
+    let ctx = ctrl.ctx();
+    let esp = ctx.register(4);
 
     (0..8).map(|i| {
-        mem32(operand_add(esp(), constval(i * 4)))
+        ctx.mem32(ctx.add(esp, ctx.constant(i * 4)))
     }).chain({
-        [1].iter().cloned().map(|reg| operand_register(reg))
-    }).filter(|oper| {
-        let oper = ctrl.resolve(&oper);
-        oper == val
+        [1].iter().cloned().map(|reg| ctx.register(reg))
+    }).filter(|&oper| {
+        let oper = ctrl.resolve(oper);
+        oper == value
     }).next().is_some()
 }

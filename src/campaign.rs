@@ -1,7 +1,5 @@
-use std::rc::Rc;
-
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{Operand, OperandContext};
+use scarf::{Operand};
 
 use crate::Analysis;
 
@@ -19,10 +17,9 @@ static TERRAN_CAMPAIGN_SIGNATURE: &[u8] = &[
     0x0c, 0x00, 0x04, 0x00, 0x06, 0x00, 0x01, 0x00,
 ];
 
-pub fn campaigns<'a, E: ExecutionState<'a>>(
-    analysis: &mut Analysis<'a, E>,
-) -> Option<Rc<Operand>> {
-    let ctx = &OperandContext::new();
+pub fn campaigns<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Operand<'e>> {
     // The campaign array is ordered by race, so zerg maps are in first pointer.
     // Check that second pointer is terran maps to avoid false positives.
     let rdata = analysis.binary.section(b".rdata\0\0").unwrap();
@@ -55,7 +52,7 @@ pub fn campaigns<'a, E: ExecutionState<'a>>(
             let offset = (index_1_ptr.as_u64() - rdata.virtual_address.as_u64()) as usize;
             (&rdata.data[offset..]).starts_with(TERRAN_CAMPAIGN_SIGNATURE)
         }).map(|campaigns| {
-            ctx.constant(campaigns.as_u64())
+            analysis.ctx.constant(campaigns.as_u64())
         }).next();
     result
 }

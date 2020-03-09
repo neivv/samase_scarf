@@ -1,20 +1,17 @@
-use std::rc::Rc;
-
 use smallvec::SmallVec;
 
-use scarf::{BinaryFile, DestOperand, Operand, OperandContext, Operation};
+use scarf::{BinaryFile, DestOperand, Operand, OperandCtx, Operation};
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
 use scarf::operand::{MemAccess, MemAccessSize, OperandType, Register, ArithOpType};
-use scarf::operand_helpers::*;
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::{Analysis, ArgCache};
 use crate::OptionExt;
 
-pub struct NetPlayers<Va: VirtualAddress> {
+pub struct NetPlayers<'e, Va: VirtualAddress> {
     // Array, struct size
-    pub net_players: Option<(Rc<Operand>, usize)>,
+    pub net_players: Option<(Operand<'e>, usize)>,
     pub init_net_player: Option<Va>,
 }
 
@@ -34,7 +31,7 @@ impl AnalysisState for PlayersState {
 }
 
 struct PlayersAnalyzer<'e, E: ExecutionState<'e>> {
-    result: Option<Rc<Operand>>,
+    result: Option<Operand<'e>>,
     in_child_func: bool,
     child_func_state: Option<PlayersState>,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
@@ -43,8 +40,8 @@ struct PlayersAnalyzer<'e, E: ExecutionState<'e>> {
 impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayersAnalyzer<'e, E> {
     type State = PlayersState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Jump { to, condition } => {
                 let condition = ctrl.resolve(condition);
                 if condition.if_constant().unwrap_or(0) != 0 {
@@ -95,7 +92,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayersAnalyzer<'e, E> {
             }
             Operation::Call(dest) => {
                 if !self.in_child_func {
-                    if let Some(dest) = ctrl.resolve(&dest).if_constant() {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
                         self.in_child_func = true;
                         let dest = E::VirtualAddress::from_u64(dest);
                         ctrl.analyze_with_current_state(self, dest);
@@ -109,17 +106,17 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayersAnalyzer<'e, E> {
                     }
                 }
             }
-            Operation::Move(to, val, None) => {
+            Operation::Move(ref to, val, None) => {
                 match ctrl.user_state() {
                     PlayersState::Start => if let DestOperand::Memory(mem) = to {
                         let val = ctrl.resolve(val);
                         let is_or_const_2 = val.if_arithmetic_or()
                             .and_either_other(|x| x.if_constant().filter(|&c| c == 2))
                             .and_then(|other| other.if_memory())
-                            .map(|mem| &mem.address);
+                            .map(|mem| mem.address);
                         if let Some(other_addr) = is_or_const_2 {
-                            let addr = ctrl.resolve(&mem.address);
-                            if addr == *other_addr {
+                            let addr = ctrl.resolve(mem.address);
+                            if addr == other_addr {
                                 *ctrl.user_state() = PlayersState::PlayerAiFlagsUpdated;
                                 self.child_func_state = Some(PlayersState::PlayerAiFlagsUpdated);
                             }
@@ -135,7 +132,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayersAnalyzer<'e, E> {
 
 pub fn players<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     let aiscript = analysis.aiscript_hook();
@@ -150,36 +147,34 @@ pub fn players<'e, E: ExecutionState<'e>>(
         phantom: Default::default(),
     };
 
-    let mut interner = scarf::exec_state::InternMap::new();
-    let exec_state = E::initial_state(ctx, binary, &mut interner);
+    let exec_state = E::initial_state(ctx, binary);
     let mut analysis = FuncAnalysis::custom_state(
         binary,
         ctx,
         start_town_case,
         exec_state,
         PlayersState::Start,
-        interner,
     );
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
 
-struct AddTerms<'a> {
-    terms: SmallVec<[(&'a Rc<Operand>, bool); 8]>,
+struct AddTerms<'e> {
+    terms: SmallVec<[(Operand<'e>, bool); 8]>,
     constant: u64,
 }
 
-impl<'a> AddTerms<'a> {
-    fn collect(&mut self, operand: &'a Rc<Operand>, negate: bool) {
-        match operand.ty {
+impl<'e> AddTerms<'e> {
+    fn collect(&mut self, operand: Operand<'e>, negate: bool) {
+        match *operand.ty() {
             OperandType::Arithmetic(ref arith) if arith.ty == ArithOpType::Add => {
-                self.collect(&arith.left, negate);
-                self.collect(&arith.right, negate);
+                self.collect(arith.left, negate);
+                self.collect(arith.right, negate);
             }
             OperandType::Arithmetic(ref arith) if arith.ty == ArithOpType::Sub => {
-                self.collect(&arith.left, negate);
-                self.collect(&arith.right, !negate);
+                self.collect(arith.left, negate);
+                self.collect(arith.right, !negate);
             }
             OperandType::Constant(c) => {
                 if negate {
@@ -193,7 +188,7 @@ impl<'a> AddTerms<'a> {
     }
 
     pub fn remove_one<F>(&mut self, mut func: F) -> bool
-    where F: FnMut(&'a Rc<Operand>, bool) -> bool
+    where F: FnMut(Operand<'e>, bool) -> bool
     {
         let remove_index = match self.terms.iter().position(|x| func(x.0, x.1)) {
             Some(s) => s,
@@ -206,43 +201,43 @@ impl<'a> AddTerms<'a> {
         true
     }
 
-    pub fn join(&self, ctx: &OperandContext) -> Rc<Operand> {
+    pub fn join(&self, ctx: OperandCtx<'e>) -> Operand<'e> {
         let mut tree = match self.terms.get(0) {
             Some(&(op, negate)) => if negate {
-                ctx.sub(&ctx.constant(self.constant), &op)
+                ctx.sub(ctx.constant(self.constant), op)
             } else {
                 if self.constant == 0 {
                     op.clone()
                 } else {
-                    ctx.add(&ctx.constant(self.constant), &op)
+                    ctx.add(ctx.constant(self.constant), op)
                 }
             },
             None => return ctx.constant(self.constant),
         };
         for &(op, neg) in self.terms.iter().skip(1) {
             tree = match neg {
-                false => operand_add(tree, op.clone()),
-                true => operand_sub(tree, op.clone()),
+                false => ctx.add(tree, op),
+                true => ctx.sub(tree, op),
             };
         }
-        Operand::simplified(tree)
+        tree
     }
 }
 
-fn collect_arith_add_terms<'a>(operand: &'a Rc<Operand>) -> Option<AddTerms<'a>> {
+fn collect_arith_add_terms<'e>(operand: Operand<'e>) -> Option<AddTerms<'e>> {
     let mut terms = AddTerms {
         terms: Default::default(),
         constant: 0,
     };
-    match operand.ty {
+    match *operand.ty() {
         OperandType::Arithmetic(ref arith) if arith.ty == ArithOpType::Add => {
-            terms.collect(&arith.left, false);
-            terms.collect(&arith.right, false);
+            terms.collect(arith.left, false);
+            terms.collect(arith.right, false);
             Some(terms)
         }
         OperandType::Arithmetic(ref arith) if arith.ty == ArithOpType::Sub => {
-            terms.collect(&arith.left, false);
-            terms.collect(&arith.right, true);
+            terms.collect(arith.left, false);
+            terms.collect(arith.right, true);
             Some(terms)
         }
         _ => None,
@@ -251,7 +246,7 @@ fn collect_arith_add_terms<'a>(operand: &'a Rc<Operand>) -> Option<AddTerms<'a>>
 
 pub fn local_player_id<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     #[derive(Copy, Clone)]
     enum State {
         Start,
@@ -267,7 +262,7 @@ pub fn local_player_id<'e, E: ExecutionState<'e>>(
     }
 
     struct Analyzer<'e, E: ExecutionState<'e>> {
-        result: Option<Rc<Operand>>,
+        result: Option<Operand<'e>>,
         in_child_func: bool,
         child_func_state: Option<State>,
         phantom: std::marker::PhantomData<(*const E, &'e ())>,
@@ -279,10 +274,10 @@ pub fn local_player_id<'e, E: ExecutionState<'e>>(
     // [local_player_id] == player comparision can't be relied to have actual
     // field memaccess for `player`, it can be undefined or 0xff as well.
     // Hopefully local_player_id doesn't become ever encrypted..
-    impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for Analyzer<'a, E> {
+    impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
         type State = State;
         type Exec = E;
-        fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation) {
+        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             fn is_maybe_player_op(mem: &MemAccess) -> bool {
                 let has_add = mem.address.if_arithmetic_add()
                     .and_either(|x| x.if_constant().filter(|&c| c == 0x4c))
@@ -290,11 +285,11 @@ pub fn local_player_id<'e, E: ExecutionState<'e>>(
                 mem.size == MemAccessSize::Mem8 && has_add
             }
 
-            match op {
+            match *op {
                 Operation::Jump { condition, .. } => {
                     if let State::PlayerFieldAccessSeen = ctrl.user_state() {
                         let condition = ctrl.resolve(condition);
-                        let local_player_id = crate::if_arithmetic_eq_neq(&condition)
+                        let local_player_id = crate::if_arithmetic_eq_neq(condition)
                             .and_then(|(l, r, _eq)| {
                                 // if the comparision ends up being
                                 // [local_player_id] == [unit + 0x4c], check for
@@ -318,7 +313,7 @@ pub fn local_player_id<'e, E: ExecutionState<'e>>(
                 }
                 Operation::Call(dest) => {
                     if !self.in_child_func {
-                        if let Some(dest) = ctrl.resolve(&dest).if_constant() {
+                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
                             self.in_child_func = true;
                             let dest = E::VirtualAddress::from_u64(dest);
                             ctrl.analyze_with_current_state(self, dest);
@@ -366,15 +361,13 @@ pub fn local_player_id<'e, E: ExecutionState<'e>>(
         phantom: Default::default(),
     };
 
-    let mut interner = scarf::exec_state::InternMap::new();
-    let exec_state = E::initial_state(ctx, binary, &mut interner);
+    let exec_state = E::initial_state(ctx, binary);
     let mut analysis = FuncAnalysis::custom_state(
         binary,
         ctx,
         rclick,
         exec_state,
         State::Start,
-        interner,
     );
     analysis.analyze(&mut analyzer);
     analyzer.result
@@ -389,8 +382,8 @@ struct FindInitNetPlayer<'a, 'e, E: ExecutionState<'e>> {
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindInitNetPlayer<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Jump { to, .. } => {
                 if to.if_memory().is_some() {
                     // Don't go through switch
@@ -398,13 +391,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindInitNetPlayer<'a
                 }
             }
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(&dest).if_constant() {
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
                     // Check that
                     // arg3 == mem16[data + 4],
                     // arg4 == mem16[data + 6],
-                    let arg3 = ctrl.resolve(&self.arg_cache.on_call(2));
-                    let arg4 = ctrl.resolve(&self.arg_cache.on_call(3));
+                    let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                    let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
                     let arg3_base = arg3.if_mem16()
                         .and_then(|x| x.if_arithmetic_add())
                         .and_either_other(|x| x.if_constant().filter(|&c| c == 4));
@@ -432,16 +425,16 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindInitNetPlayer<'a
 }
 
 struct FindNetPlayerArr<'e, E: ExecutionState<'e>> {
-    result: Option<(Rc<Operand>, usize)>,
+    result: Option<(Operand<'e>, usize)>,
     binary: &'e BinaryFile<E::VirtualAddress>,
-    delay_eax_move: Option<Rc<Operand>>,
+    delay_eax_move: Option<Operand<'e>>,
 }
 
 impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        fn is_arg1(operand: &Rc<Operand>) -> bool {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        fn is_arg1(operand: Operand<'_>) -> bool {
             operand.if_memory()
                 .and_then(|x| x.address.if_arithmetic_add())
                 .and_either_other(|x| x.if_constant().filter(|&c| c == 4))
@@ -449,7 +442,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'e, E> 
                 .filter(|x| x.0 == 4)
                 .is_some()
         }
-        fn base_mul(operand: &Rc<Operand>) -> Option<(&Rc<Operand>, u64, &Rc<Operand>)> {
+        fn base_mul<'e>(operand: Operand<'e>) -> Option<(Operand<'e>, u64, Operand<'e>)> {
             operand
                 .if_arithmetic_add()
                 .and_either(|x| {
@@ -463,26 +456,26 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'e, E> 
         if let Some(value) = self.delay_eax_move.take() {
             let exec_state = ctrl.exec_state();
             let eax = DestOperand::Register64(Register(0));
-            exec_state.0.move_resolved(&eax, value, exec_state.1);
+            exec_state.move_resolved(&eax, value);
         }
-        match op {
+        match *op {
             Operation::Call(dest) => {
                 if crate::seems_assertion_call(ctrl, self.binary) {
                     return;
                 }
-                if let Some(dest) = ctrl.resolve(&dest).if_constant() {
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
                     let ctx = ctrl.ctx();
                     let mut analyzer = CollectReturnValues::<'e, E>::new();
                     ctrl.analyze_with_current_state(&mut analyzer, dest);
                     if !analyzer.return_values.is_empty() {
-                        if let Some((base, mul, other)) = base_mul(&analyzer.return_values[0]) {
+                        if let Some((base, mul, other)) = base_mul(analyzer.return_values[0]) {
                             let mut arg1_seen = is_arg1(other);
                             let mut base = base;
-                            let all_match = (&analyzer.return_values[1..]).iter().all(|other| {
+                            let all_match = (&analyzer.return_values[1..]).iter().all(|&other| {
                                 match base_mul(other) {
                                     Some(o) => {
-                                        if is_arg1(&o.2) {
+                                        if is_arg1(o.2) {
                                             arg1_seen = true;
                                             base = o.0;
                                         }
@@ -493,12 +486,12 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'e, E> 
                             });
                             if all_match && arg1_seen {
                                 self.delay_eax_move = Some(ctx.add(
-                                    &base,
-                                    &ctx.mul(
-                                        &ctx.constant(mul),
-                                        &ctx.mem32(&ctx.add(
-                                            ctx.register_ref(4),
-                                            &ctx.const_4(),
+                                    base,
+                                    ctx.mul(
+                                        ctx.constant(mul),
+                                        ctx.mem32(ctx.add(
+                                            ctx.register(4),
+                                            ctx.const_4(),
                                         )),
                                     ),
                                 ));
@@ -507,12 +500,12 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'e, E> 
                     }
                 }
             }
-            Operation::Move(dest, val, None) => {
+            Operation::Move(ref dest, val, None) => {
                 // Check for Mem16[base + arg1 * mul + 6] = arg4
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem16 {
-                        let addr = ctrl.resolve(&mem.address);
-                        let val = ctrl.resolve(&val);
+                        let addr = ctrl.resolve(mem.address);
+                        let val = ctrl.resolve(val);
                         let is_arg4 = val.if_memory()
                             .and_then(|x| x.address.if_arithmetic_add())
                             .and_either_other(|x| x.if_constant().filter(|&c| c == 0x10))
@@ -520,12 +513,12 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'e, E> 
                             .filter(|x| x.0 == 4)
                             .is_some();
                         if is_arg4 {
-                            if let Some((base, size, rest)) = base_mul(&addr) {
-                                if is_arg1(&rest) {
+                            if let Some((base, size, rest)) = base_mul(addr) {
+                                if is_arg1(rest) {
                                     let ctx = ctrl.ctx();
                                     let base = ctx.sub(
                                         base,
-                                        &ctx.constant(6),
+                                        ctx.constant(6),
                                     );
                                     self.result = Some((base, size as usize));
                                 }
@@ -540,7 +533,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'e, E> 
 }
 
 struct CollectReturnValues<'e, E: ExecutionState<'e>> {
-    return_values: Vec<Rc<Operand>>,
+    return_values: Vec<Operand<'e>>,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
@@ -556,7 +549,7 @@ impl<'e, E: ExecutionState<'e>> CollectReturnValues<'e, E> {
 impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CollectReturnValues<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if let Operation::Return(..) = op {
             let eax = ctrl.ctx().register_ref(0);
             let eax = ctrl.resolve(eax);
@@ -567,7 +560,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CollectReturnValues<'e, 
 
 pub fn net_players<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> NetPlayers<E::VirtualAddress> {
+) -> NetPlayers<'e, E::VirtualAddress> {
     let mut result = NetPlayers {
         net_players: None,
         init_net_player: None,

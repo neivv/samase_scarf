@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operand, Operation, BinarySection, BinaryFile};
@@ -7,8 +5,8 @@ use scarf::{Operand, Operation, BinarySection, BinaryFile};
 use crate::{Analysis, ArgCache, single_result_assign, find_bytes};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SnpDefinitions {
-    pub snp_definitions: Rc<Operand>,
+pub struct SnpDefinitions<'e> {
+    pub snp_definitions: Operand<'e>,
     pub entry_size: u32,
 }
 
@@ -20,7 +18,7 @@ pub struct InitStormNetworking<Va: VirtualAddress> {
 
 pub fn snp_definitions<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<SnpDefinitions> {
+) -> Option<SnpDefinitions<'e>> {
     // Search for BNAU code.
     // The data is expected to be
     // SnpDefinition { u32 code, char *string_key, char *string_key, Caps *caps, Functions funcs }
@@ -100,8 +98,8 @@ struct FindInitStormNetworking<'a, 'e, E: ExecutionState<'e>> {
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetworking<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(dest) => {
                 if !self.inlining {
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
@@ -115,25 +113,25 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetw
                         self.inlining = false;
                     }
                 } else {
-                    let arg1 = &self.arg_cache.on_call(0);
-                    let arg2 = ctrl.resolve(&self.arg_cache.on_call(1)).if_constant();
+                    let arg1 = self.arg_cache.on_call(0);
+                    let arg2 = ctrl.resolve(self.arg_cache.on_call(1)).if_constant();
                     let text_start = self.text.virtual_address;
                     let text_end = self.text.virtual_address + self.text.virtual_size;
                     let binary = self.binary;
                     let arg1_1;
                     let arg1_2;
                     if arg2 == Some(1) {
-                        arg1_1 = ctrl.resolve(&ctrl.mem_word(arg1.clone()));
+                        arg1_1 = ctrl.resolve(ctrl.mem_word(arg1));
                         arg1_2 = ctrl.resolve(
-                            &ctrl.mem_word(ctrl.const_word_offset(arg1.clone(), 1))
+                            ctrl.mem_word(ctrl.const_word_offset(arg1, 1))
                         );
                     } else if arg2 == Some(2) {
                         // Older versions have array size 2 and a second fnptr pair
                         arg1_1 = ctrl.resolve(
-                            &ctrl.mem_word(ctrl.const_word_offset(arg1.clone(), 2))
+                            ctrl.mem_word(ctrl.const_word_offset(arg1, 2))
                         );
                         arg1_2 = ctrl.resolve(
-                            &ctrl.mem_word(ctrl.const_word_offset(arg1.clone(), 3))
+                            ctrl.mem_word(ctrl.const_word_offset(arg1, 3))
                         );
                     } else {
                         return;

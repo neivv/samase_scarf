@@ -1,7 +1,5 @@
-use std::rc::Rc;
-
 use scarf::{
-    ArithOpType, MemAccessSize, Operand, OperandType, OperandContext, Operation, BinaryFile,
+    ArithOpType, MemAccessSize, Operand, OperandType, OperandCtx, Operation, BinaryFile,
     DestOperand,
 };
 use scarf::analysis::{self, Control, FuncAnalysis};
@@ -13,11 +11,11 @@ use crate::{
     OptionExt, single_result_assign,
 };
 
-pub struct StepIscript<Va: VirtualAddress> {
+pub struct StepIscript<'e, Va: VirtualAddress> {
     pub step_fn: Option<Va>,
-    pub script_operand_at_switch: Option<Rc<Operand>>,
+    pub script_operand_at_switch: Option<Operand<'e>>,
     pub switch_table: Option<Va>,
-    pub iscript_bin: Option<Rc<Operand>>,
+    pub iscript_bin: Option<Operand<'e>>,
     pub opcode_check: Option<(Va, u32)>,
 }
 
@@ -25,22 +23,22 @@ pub struct StepIscript<Va: VirtualAddress> {
 // what the iscript structure has, as it may only be written on return
 fn get_iscript_operand_from_goto<'e, E: ExecutionState<'e>>(
     binary: &'e BinaryFile<E::VirtualAddress>,
-    ctx: &'e OperandContext,
+    ctx: OperandCtx<'e>,
     address: E::VirtualAddress,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     // Goto should just read mem16[x], or possibly do a single x + 2 < y compare first
-    struct Analyzer<'f, F: ExecutionState<'f>> {
+    struct Analyzer<'e, F: ExecutionState<'e>> {
         is_first_branch: bool,
         is_inlining: bool,
-        result: Option<Rc<Operand>>,
-        phantom: std::marker::PhantomData<(*const F, &'f ())>,
+        result: Option<Operand<'e>>,
+        phantom: std::marker::PhantomData<*const F>,
     }
-    impl<'f, F: ExecutionState<'f>> scarf::Analyzer<'f> for Analyzer<'f, F> {
+    impl<'e, F: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, F> {
         type State = analysis::DefaultState;
         type Exec = F;
-        fn operation(&mut self, ctrl: &mut Control<'f, '_, '_, Self>, op: &Operation) {
+        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             match *op {
-                Operation::Move(_, ref from, None) => {
+                Operation::Move(_, from, None) => {
                     if let Some(mem) = from.if_memory() {
                         if mem.size == MemAccessSize::Mem16 {
                             self.result = Some(mem.address.clone());
@@ -52,7 +50,7 @@ fn get_iscript_operand_from_goto<'e, E: ExecutionState<'e>>(
                         }
                     }
                 }
-                Operation::Call(ref dest) => {
+                Operation::Call(dest) => {
                     if self.is_inlining {
                         ctrl.end_analysis();
                         return;
@@ -67,17 +65,17 @@ fn get_iscript_operand_from_goto<'e, E: ExecutionState<'e>>(
                         self.is_inlining = false;
                     }
                 }
-                Operation::Jump { ref condition, .. } => {
+                Operation::Jump { condition, .. } => {
                     if !self.is_first_branch {
                         // Didn't find anything quickly, give up
                         ctrl.end_analysis();
                         return;
                     }
-                    let condition = ctrl.resolve(&condition);
+                    let condition = ctrl.resolve(condition);
                     let compare = condition.iter_no_mem_addr()
                         .filter_map(|x| x.if_arithmetic(ArithOpType::GreaterThan))
-                        .filter_map(|(l, r)| Operand::either(l, r, |x| match x.ty {
-                            OperandType::Arithmetic(ref arith) => match arith.ty {
+                        .filter_map(|(l, r)| Operand::either(l, r, |x| match x.ty() {
+                            OperandType::Arithmetic(arith) => match arith.ty {
                                 ArithOpType::Add | ArithOpType::Sub => Some(x),
                                 _ => None,
                             },
@@ -111,7 +109,7 @@ fn get_iscript_operand_from_goto<'e, E: ExecutionState<'e>>(
 
 pub fn step_iscript<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> StepIscript<E::VirtualAddress> {
+) -> StepIscript<'e, E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     let funcs = analysis.functions();
@@ -183,8 +181,8 @@ pub fn step_iscript<'e, E: ExecutionState<'e>>(
 
 struct IscriptFromSwitchAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     switch_addr: E::VirtualAddress,
-    iscript_bin: Option<Rc<Operand>>,
-    result: EntryOf<(Option<Rc<Operand>>, Option<(E::VirtualAddress, u32)>)>,
+    iscript_bin: Option<Operand<'e>>,
+    result: EntryOf<(Option<Operand<'e>>, Option<(E::VirtualAddress, u32)>)>,
     wait_check_seen: bool,
     arg_cache: &'a ArgCache<'e, E>,
     opcode_check: Option<(E::VirtualAddress, u32)>,
@@ -193,24 +191,23 @@ struct IscriptFromSwitchAnalyzer<'a, 'e, E: ExecutionState<'e>> {
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IscriptFromSwitchAnalyzer<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Move(_, val, None) => {
                 if self.iscript_bin.is_none() {
-                    let val = ctrl.resolve(&val);
+                    let val = ctrl.resolve(val);
                     let iscript_bin = val.if_mem8()
                         .and_then(|addr| addr.if_arithmetic_add())
                         .and_either_other(|x| {
                             x.if_mem16().filter(|x| x.if_arithmetic_add().is_some())
-                        })
-                        .cloned();
+                        });
                     if let Some(iscript_bin) = iscript_bin {
                         self.iscript_bin = Some(iscript_bin);
                     }
                 }
             }
             Operation::Jump { condition, to } => {
-                let to = ctrl.resolve(&to);
+                let to = ctrl.resolve(to);
                 let is_switch_jump = to.iter().any(|x| match x.if_constant() {
                     Some(s) => s == self.switch_addr.as_u64(),
                     None => false,
@@ -223,12 +220,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IscriptFromSwitchAna
                     ctrl.end_analysis();
                     return;
                 }
-                let condition = ctrl.resolve(&condition);
+                let condition = ctrl.resolve(condition);
                 let has_wait_check = condition.iter_no_mem_addr()
                     .filter_map(|x| x.if_mem8())
                     .filter_map(|x| x.if_arithmetic_add())
                     .filter_map(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                    .filter(|&(c, other)| c == 7 && *other == self.arg_cache.on_entry(0))
+                    .filter(|&(c, other)| c == 7 && other == self.arg_cache.on_entry(0))
                     .next().is_some();
                 if has_wait_check {
                     self.wait_check_seen = true;
@@ -281,9 +278,9 @@ struct AddOverlayAnalyzer<'exec, 'b, Exec: ExecutionState<'exec>> {
 impl<'e, 'b, Exec: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyzer<'e, 'b, Exec> {
     type State = analysis::DefaultState;
     type Exec = Exec;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let word_size = <Exec::VirtualAddress as VirtualAddress>::SIZE;
-        match op {
+        match *op {
             Operation::Jump { to, .. } => {
                 let to = ctrl.resolve(to);
                 let is_switch_jump = to.if_memory().is_some();
@@ -295,7 +292,7 @@ impl<'e, 'b, Exec: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyze
             Operation::Call(to) => {
                 let to = ctrl.resolve(to);
                 if let Some(dest) = to.if_constant() {
-                    let arg5 = ctrl.resolve(&self.args.on_call(4));
+                    let arg5 = ctrl.resolve(self.args.on_call(4));
                     let arg5_ok = arg5
                         .if_constant()
                         .filter(|&c| c == 1)
@@ -303,7 +300,7 @@ impl<'e, 'b, Exec: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyze
                     if !arg5_ok {
                         return;
                     }
-                    let arg2 = ctrl.resolve(&self.args.on_call(1));
+                    let arg2 = ctrl.resolve(self.args.on_call(1));
                     // TODO not 64-bit since not sure about image->parent pointer
                     let arg2_ok = if word_size == 4 {
                         arg2
@@ -331,7 +328,7 @@ impl<'e, 'b, Exec: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyze
 
 pub fn draw_cursor_marker<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Rc<Operand>> {
+) -> Option<Operand<'e>> {
     let iscript = analysis.step_iscript();
     let ctx = analysis.ctx;
     let binary = analysis.binary;
@@ -351,7 +348,7 @@ pub fn draw_cursor_marker<'e, E: ExecutionState<'e>>(
 }
 
 struct FindDrawCursorMarker<'e, E: ExecutionState<'e>> {
-    result: Option<Rc<Operand>>,
+    result: Option<Operand<'e>>,
     inlining: bool,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
@@ -359,8 +356,8 @@ struct FindDrawCursorMarker<'e, E: ExecutionState<'e>> {
 impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDrawCursorMarker<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Jump { to, .. } => {
                 if to.if_constant().is_none() {
                     // Skip switch branch
@@ -381,13 +378,13 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDrawCursorMarker<'e,
                     ctrl.end_analysis();
                 }
             }
-            Operation::Move(dest, val, None) => {
+            Operation::Move(ref dest, val, None) => {
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem8 {
                         let val = ctrl.resolve(val);
                         if val.if_constant() == Some(0) {
                             let ctx = ctrl.ctx();
-                            self.result = Some(ctx.mem_variable_rc(mem.size, &mem.address));
+                            self.result = Some(ctx.mem_variable_rc(mem.size, mem.address));
                             ctrl.end_analysis();
                         }
                     }

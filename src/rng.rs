@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use scarf::analysis::{self, FuncAnalysis, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, Operation, Operand, OperandType, MemAccessSize, DestOperand};
+use scarf::{BinaryFile, Operation, Operand, MemAccessSize, DestOperand};
 
 use crate::{
     Analysis, ArgCache, DatType, OptionExt, find_functions_using_global, single_result_assign,
@@ -11,14 +11,14 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct Rng {
-    pub enable: Option<Rc<Operand>>,
-    pub seed: Option<Rc<Operand>>,
+pub struct Rng<'e> {
+    pub enable: Option<Operand<'e>>,
+    pub seed: Option<Operand<'e>>,
 }
 
 pub fn rng<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Rc<Rng> {
+) -> Rc<Rng<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     // Find the rng from searching the code that checks if unit spawn direction == 0x20 and
@@ -38,7 +38,7 @@ pub fn rng<'e, E: ExecutionState<'e>>(
 
     let mut result = None;
     for global_ref in spawn_direction_refs.iter() {
-        let mut analysis = FuncAnalysis::new(binary, &ctx, global_ref.func_entry);
+        let mut analysis = FuncAnalysis::new(binary, ctx, global_ref.func_entry);
         let mut analyzer = FindRng {
             jump_conds: Vec::new(),
             result: None,
@@ -67,9 +67,9 @@ pub fn rng<'e, E: ExecutionState<'e>>(
 
 struct FindRng<'a, 'e, E: ExecutionState<'e>> {
     arg_cache: &'a ArgCache<'e, E>,
-    result: Option<(Rc<Operand>, Rc<Operand>)>,
-    no_jump_cond: Option<Rc<Operand>>,
-    jump_conds: Vec<(E::VirtualAddress, Rc<Operand>)>,
+    result: Option<(Operand<'e>, Operand<'e>)>,
+    no_jump_cond: Option<Operand<'e>>,
+    jump_conds: Vec<(E::VirtualAddress, Operand<'e>)>,
     is_inlining: bool,
     binary: &'e BinaryFile<E::VirtualAddress>,
     branch_start: E::VirtualAddress,
@@ -78,12 +78,11 @@ struct FindRng<'a, 'e, E: ExecutionState<'e>> {
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        use scarf::operand_helpers::*;
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(dest) => {
                 if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
-                    let arg1 = ctrl.resolve(&self.arg_cache.on_call(0));
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                     if arg1.if_constant() == Some(0x24) {
                         if !self.is_inlining {
                             let jump_conds = mem::replace(&mut self.jump_conds, Vec::new());
@@ -101,24 +100,25 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
             Operation::Jump { condition, to } => {
                 let condition = ctrl.resolve(condition);
                 if let Some(to) = ctrl.resolve_apply_constraints(to).if_constant() {
-                    if let Some(enable) = is_rng_enable_condition(&condition) {
-                        self.jump_conds.push((E::VirtualAddress::from_u64(to), enable.clone()));
+                    if let Some(enable) = is_rng_enable_condition(condition) {
+                        self.jump_conds.push((E::VirtualAddress::from_u64(to), enable));
                         self.no_jump_cond = Some(enable);
                     }
                 }
             }
-            Operation::Move(dest, val, _cond) => {
-                if let DestOperand::Memory(ref mem) = dest {
+            Operation::Move(ref dest, val, _cond) => {
+                if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem32 {
-                        let val = ctrl.resolve(&val);
+                        let val = ctrl.resolve(val);
                         if val.iter().any(|x| x.if_constant() == Some(0x015A_4E35)) {
                             let jump_cond = self.jump_conds.iter()
                                 .filter(|x| x.0 == self.branch_start)
                                 .map(|x| &x.1)
                                 .next();
                             if let Some(rng_enable) = jump_cond {
-                                let dest = ctrl.resolve(&mem.address);
-                                let val = (mem32(dest), rng_enable.clone());
+                                let dest = ctrl.resolve(mem.address);
+                                let ctx = ctrl.ctx();
+                                let val = (ctx.mem32(dest), rng_enable.clone());
                                 if single_result_assign(Some(val), &mut self.result) {
                                     ctrl.end_analysis();
                                 }
@@ -143,19 +143,15 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
     }
 }
 
-fn is_rng_enable_condition(cond: &Rc<Operand>) -> Option<Rc<Operand>> {
+fn is_rng_enable_condition<'e>(cond: Operand<'e>) -> Option<Operand<'e>> {
     crate::if_arithmetic_eq_neq(cond)
         .map(|(l, r, _)| (l, r))
         .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
         .filter(|x| {
             x.if_mem32()
                 .filter(|x| {
-                    x.iter().all(|part| match part.ty {
-                        OperandType::Undefined(_) => false,
-                        _ => true,
-                    })
+                    x.iter().all(|part| !part.is_undefined())
                 })
                 .is_some()
         })
-        .cloned()
 }

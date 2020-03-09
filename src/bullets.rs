@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use fxhash::FxHashMap;
 
 use scarf::{MemAccessSize, Operand, Operation, DestOperand};
@@ -8,19 +6,19 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::{Analysis, ArgCache, OptionExt};
 
-pub struct BulletCreation<Va: VirtualAddress> {
-    pub first_active_bullet: Option<Rc<Operand>>,
-    pub last_active_bullet: Option<Rc<Operand>>,
-    pub first_free_bullet: Option<Rc<Operand>>,
-    pub last_free_bullet: Option<Rc<Operand>>,
+pub struct BulletCreation<'e, Va: VirtualAddress> {
+    pub first_active_bullet: Option<Operand<'e>>,
+    pub last_active_bullet: Option<Operand<'e>>,
+    pub first_free_bullet: Option<Operand<'e>>,
+    pub last_free_bullet: Option<Operand<'e>>,
     pub create_bullet: Option<Va>,
-    pub active_iscript_unit: Option<Rc<Operand>>,
+    pub active_iscript_unit: Option<Operand<'e>>,
 }
 
 struct FindCreateBullet<'a, 'e, E: ExecutionState<'e>> {
     is_inlining: bool,
     result: Option<E::VirtualAddress>,
-    active_iscript_unit: Option<Rc<Operand>>,
+    active_iscript_unit: Option<Operand<'e>>,
     arg_cache: &'a ArgCache<'e, E>,
     calls_seen: u32,
 }
@@ -38,13 +36,13 @@ impl AnalysisState for FindCreateBulletState {
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a, 'e, E> {
     type State = FindCreateBulletState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
-            Operation::Call(ref to) => {
+            Operation::Call(to) => {
                 if !self.is_inlining {
-                    if let Some(dest) = ctrl.resolve(&to).if_constant() {
+                    if let Some(dest) = ctrl.resolve(to).if_constant() {
                         let dest = E::VirtualAddress::from_u64(dest);
-                        let arg1 = ctrl.resolve(&self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                         if arg1.if_mem8().is_some() {
                             self.is_inlining = true;
                             let ecx = ctrl.resolve(ctrl.ctx().register_ref(1));
@@ -64,22 +62,22 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a,
                     }
                 }
 
-                let unit = ctrl.resolve(&self.arg_cache.on_call(5));
-                if let Some(ref active_unit) = self.active_iscript_unit {
-                    if unit != *active_unit {
+                let unit = ctrl.resolve(self.arg_cache.on_call(5));
+                if let Some(active_unit) = self.active_iscript_unit {
+                    if unit != active_unit {
                         return;
                     }
                 }
-                let arg4 = ctrl.resolve(&self.arg_cache.on_call(3));
+                let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
                 let is_player = arg4.if_mem8()
                     .and_then(|x| x.if_arithmetic_add())
                     .and_either_other(|x| x.if_constant().filter(|&c| c == 0x4c))
-                    .map(|x| *x == unit)
+                    .map(|x| x == unit)
                     .unwrap_or(false);
                 if !is_player {
                     return;
                 }
-                if let Some(dest) = ctrl.resolve(&to).if_constant() {
+                if let Some(dest) = ctrl.resolve(to).if_constant() {
                     if let Some(s) = self.result {
                         if s.as_u64() != dest {
                             return;
@@ -94,7 +92,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a,
                     ctrl.user_state().calls_seen = new_calls_seen;
                 }
             }
-            Operation::Jump { ref condition, ref to } => {
+            Operation::Jump { condition, to } => {
                 let condition = ctrl.resolve(condition);
                 if condition.if_constant().unwrap_or(0) != 0 {
                     if to.if_memory().is_some() {
@@ -111,27 +109,27 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a,
 struct FindBulletLists<'e, E: ExecutionState<'e>> {
     is_inlining: bool,
     // first active, first_free
-    active_bullets: Option<(Rc<Operand>, Rc<Operand>)>,
-    active_list_candidate_branches: FxHashMap<E::VirtualAddress, Rc<Operand>>,
-    is_checking_active_list_candidate: Option<Rc<Operand>>,
-    active_list_candidate_head: Option<Rc<Operand>>,
-    active_list_candidate_tail: Option<Rc<Operand>>,
-    first_free: Option<Rc<Operand>>,
-    last_free: Option<Rc<Operand>>,
+    active_bullets: Option<(Operand<'e>, Operand<'e>)>,
+    active_list_candidate_branches: FxHashMap<E::VirtualAddress, Operand<'e>>,
+    is_checking_active_list_candidate: Option<Operand<'e>>,
+    active_list_candidate_head: Option<Operand<'e>>,
+    active_list_candidate_tail: Option<Operand<'e>>,
+    first_free: Option<Operand<'e>>,
+    last_free: Option<Operand<'e>>,
     // Since last ptr for free lists (removing) is detected as
     // *last = (*first).prev
     // If this pattern is seen before first is confirmed, store (first, last) here.
-    last_ptr_candidates: Vec<(Rc<Operand>, Rc<Operand>)>,
+    last_ptr_candidates: Vec<(Operand<'e>, Operand<'e>)>,
 }
 
 impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation) {
-        match op {
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
             Operation::Call(to) => {
                 if !self.is_inlining {
-                    if let Some(dest) = ctrl.resolve(&to).if_constant() {
+                    if let Some(dest) = ctrl.resolve(to).if_constant() {
                         self.is_inlining = true;
                         ctrl.analyze_with_current_state(self, E::VirtualAddress::from_u64(dest));
                         self.is_inlining = false;
@@ -141,21 +139,21 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'e, E> {
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), ref value, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), value, None) => {
                 if mem.size != MemAccessSize::Mem32 {
                     return;
                 }
-                let dest_addr = ctrl.resolve(&mem.address);
-                let value = ctrl.resolve(&value);
+                let dest_addr = ctrl.resolve(mem.address);
+                let value = ctrl.resolve(value);
                 let ctx = ctrl.ctx();
                 // first_free_bullet = (*first_free_bullet).next, e.g.
                 // mov [first_free_bullet], [[first_free_bullet] + 4]
                 let first_free_next = ctx.mem32(
-                    &ctx.add(&ctx.mem32(&dest_addr), &ctx.const_4())
+                    ctx.add(ctx.mem32(dest_addr), ctx.const_4())
                 );
                 if value == first_free_next {
-                    self.first_free = Some(dest_addr.clone());
-                    if let Some(last) = self.last_ptr_first_known(&dest_addr) {
+                    self.first_free = Some(dest_addr);
+                    if let Some(last) = self.last_ptr_first_known(dest_addr) {
                         self.last_free = Some(last);
                     }
                     return;
@@ -163,8 +161,8 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'e, E> {
                 // last_free_bullet = (*first_free_bullet).prev
                 // But not (*(*first_free_bullet).next).prev = (*first_free_bullet).prev
                 if let Some(inner) = value.if_mem32().and_then(|x| x.if_mem32()) {
-                    if dest_addr.iter().all(|x| *x != **inner) {
-                        if self.is_unpaired_first_ptr(&inner) {
+                    if dest_addr.iter().all(|x| x != inner) {
+                        if self.is_unpaired_first_ptr(inner) {
                             self.last_free = Some(dest_addr.clone());
                             return;
                         } else {
@@ -172,36 +170,36 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'e, E> {
                         }
                     }
                 }
-                if let Some(ref head_candidate) = self.is_checking_active_list_candidate {
+                if let Some(head_candidate) = self.is_checking_active_list_candidate {
                     // Adding to active bullets is detected as
                     // if (*first_active == null) {
                     //     *first_active = *first_free;
                     //     *last_active = *first_free;
                     // }
-                    if let Some(ref first_free) = self.first_free {
-                        if let Some(_) = value.if_mem32().filter(|x| *x == first_free) {
-                            if dest_addr == *head_candidate {
-                                self.active_list_candidate_head = Some(dest_addr.clone());
+                    if let Some(first_free) = self.first_free {
+                        if let Some(_) = value.if_mem32().filter(|&x| x == first_free) {
+                            if dest_addr == head_candidate {
+                                self.active_list_candidate_head = Some(dest_addr);
                             } else {
-                                self.active_list_candidate_tail = Some(dest_addr.clone());
+                                self.active_list_candidate_tail = Some(dest_addr);
                             }
                         }
                     }
                 }
             }
-            Operation::Jump { ref condition, ref to } => {
-                let condition = ctrl.resolve(&condition);
-                let dest_addr = match ctrl.resolve(&to).if_constant() {
+            Operation::Jump { condition, to } => {
+                let condition = ctrl.resolve(condition);
+                let dest_addr = match ctrl.resolve(to).if_constant() {
                     Some(s) => E::VirtualAddress::from_u64(s),
                     None => return,
                 };
-                fn if_arithmetic_eq_zero(op: &Rc<Operand>) -> Option<&Rc<Operand>> {
+                fn if_arithmetic_eq_zero<'e>(op: Operand<'e>) -> Option<Operand<'e>> {
                     op.if_arithmetic_eq()
                         .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
                 };
                 // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
-                let (val, jump_if_null) = match if_arithmetic_eq_zero(&condition) {
-                    Some(other) => match if_arithmetic_eq_zero(&other) {
+                let (val, jump_if_null) = match if_arithmetic_eq_zero(condition) {
+                    Some(other) => match if_arithmetic_eq_zero(other) {
                         Some(other) => (other, false),
                         None => (other, true),
                     }
@@ -236,12 +234,12 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'e, E> {
 }
 
 impl<'e, E: ExecutionState<'e>> FindBulletLists<'e, E> {
-    fn last_ptr_first_known(&self, first: &Rc<Operand>) -> Option<Rc<Operand>> {
-        self.last_ptr_candidates.iter().find(|x| x.0 == *first).map(|x| x.1.clone())
+    fn last_ptr_first_known(&self, first: Operand<'e>) -> Option<Operand<'e>> {
+        self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1.clone())
     }
 
-    fn is_unpaired_first_ptr(&self, first: &Rc<Operand>) -> bool {
-        if let Some(_) = self.first_free.as_ref().filter(|x| *x == first) {
+    fn is_unpaired_first_ptr(&self, first: Operand<'e>) -> bool {
+        if let Some(_) = self.first_free.filter(|&x| x == first) {
             return self.last_free.is_none();
         }
         false
@@ -250,7 +248,7 @@ impl<'e, E: ExecutionState<'e>> FindBulletLists<'e, E> {
 
 pub fn bullet_creation<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> BulletCreation<E::VirtualAddress> {
+) -> BulletCreation<'e, E::VirtualAddress> {
     let mut result = BulletCreation {
         first_active_bullet: None,
         last_active_bullet: None,
@@ -277,8 +275,7 @@ pub fn bullet_creation<'e, E: ExecutionState<'e>>(
         calls_seen: 0,
         arg_cache: &analysis.arg_cache,
     };
-    let mut interner = scarf::exec_state::InternMap::new();
-    let exec_state = E::initial_state(ctx, binary, &mut interner);
+    let exec_state = E::initial_state(ctx, binary);
     let mut analysis = FuncAnalysis::custom_state(
         binary,
         ctx,
@@ -287,7 +284,6 @@ pub fn bullet_creation<'e, E: ExecutionState<'e>>(
         FindCreateBulletState {
             calls_seen: 0,
         },
-        interner,
     );
     analysis.analyze(&mut analyzer);
     result.create_bullet = analyzer.result;
