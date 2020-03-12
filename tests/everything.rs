@@ -770,7 +770,9 @@ fn everything_1233a() {
 
 #[test]
 fn everything_1233b() {
-    test_with_extra_checks(Path::new("1233b.exe"), |_ctx ,_analysis| {
+    test_with_extra_checks(Path::new("1233b.exe"), |_ctx ,analysis| {
+        let spawn_dialog = analysis.spawn_dialog();
+        assert_eq!(spawn_dialog.unwrap().0, 0x0097BB60);
     })
 }
 
@@ -1056,6 +1058,9 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     check_global_struct_opt(campaigns, &binary, "campaigns");
     let run_dialog = analysis.run_dialog();
     assert!(run_dialog.is_some());
+    let spawn_dialog = analysis.spawn_dialog();
+    assert!(spawn_dialog.is_some());
+    assert_ne!(run_dialog, spawn_dialog);
     let ai_update_attack_target = analysis.ai_update_attack_target();
     assert!(ai_update_attack_target.is_some());
     let is_outside_game_screen = analysis.is_outside_game_screen();

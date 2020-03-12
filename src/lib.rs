@@ -192,6 +192,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     init_storm_networking: Cached<Rc<InitStormNetworking<E::VirtualAddress>>>,
     draw_cursor_marker: Cached<Option<Operand<'e>>>,
     misc_clientside: Cached<Rc<MiscClientSide<'e>>>,
+    spawn_dialog: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -430,6 +431,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
             init_storm_networking: Default::default(),
             draw_cursor_marker: Default::default(),
             misc_clientside: Default::default(),
+            spawn_dialog: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1191,6 +1193,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         let result = sprites::fow_sprites(self);
         let result = Rc::new(result);
         self.fow_sprites.cache(&result);
+        result
+    }
+
+    pub fn spawn_dialog(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.spawn_dialog.cached() {
+            return cached;
+        }
+        let result = dialog::spawn_dialog(self);
+        self.spawn_dialog.cache(&result);
         result
     }
 }

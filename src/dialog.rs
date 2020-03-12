@@ -273,3 +273,55 @@ fn value_in_call_args<'exec, A: analysis::Analyzer<'exec>>(
         oper == value
     }).next().is_some()
 }
+
+pub fn spawn_dialog<'a, E: ExecutionState<'a>>(
+    analysis: &mut Analysis<'a, E>,
+) -> Option<E::VirtualAddress> {
+    // This is currently just copypasted from run_dialog, it ends up working fine as the
+    // signature and dialog init patterns are same between run (blocking) and spawn (nonblocking).
+    // If it won't in future then this should be refactored to have its own Analyzer
+    let ctx = analysis.ctx;
+
+    let binary = analysis.binary;
+    let funcs = analysis.functions();
+    let mut str_refs = crate::string_refs(binary, analysis, b"rez\\statlb");
+    if str_refs.is_empty() {
+        str_refs = crate::string_refs(binary, analysis, b"statlb.ui");
+    }
+    let args = &analysis.arg_cache;
+    let mut result = None;
+    for str_ref in &str_refs {
+        let val = crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+            let mut analyzer = RunDialogAnalyzer {
+                string_address: str_ref.string_address,
+                result: None,
+                args,
+                ctx,
+            };
+
+            let exec_state = E::initial_state(ctx, binary);
+            let mut analysis = FuncAnalysis::custom_state(
+                binary,
+                ctx,
+                entry,
+                exec_state,
+                RunDialogState {
+                    calling_load_dialog: false,
+                    calling_create_string: false,
+                    load_dialog_result: None,
+                    path_string: None,
+                },
+            );
+            analysis.analyze(&mut analyzer);
+            if let Some(result) = analyzer.result {
+                EntryOf::Ok(result)
+            } else {
+                EntryOf::Retry
+            }
+        }).into_option();
+        if single_result_assign(val, &mut result) {
+            break;
+        }
+    }
+    result
+}

@@ -195,6 +195,8 @@ fn main() {
     println!("campaigns: {}", format_op_operand(campaigns));
     let run_dialog = analysis.run_dialog();
     println!("run_dialog: {:?}", run_dialog);
+    let spawn_dialog = analysis.spawn_dialog();
+    println!("spawn_dialog: {:?}", spawn_dialog);
     let ai_update_attack_target = analysis.ai_update_attack_target();
     println!("ai_update_attack_target: {:?}", ai_update_attack_target);
     let is_outside_game_screen = analysis.is_outside_game_screen();
