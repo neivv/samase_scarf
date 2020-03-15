@@ -132,6 +132,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     functions_with_callers: Cached<Rc<Vec<FuncCallPair<E::VirtualAddress>>>>,
     switch_tables: Cached<Rc<Vec<SwitchTable<E::VirtualAddress>>>>,
     open_file: Cached<Rc<Vec<E::VirtualAddress>>>,
+    firegraft_addresses: Cached<Rc<FiregraftAddresses<E::VirtualAddress>>>,
     aiscript_hook: Cached<Rc<Option<AiScriptHook<'e, E::VirtualAddress>>>>,
     game: Cached<Option<Operand<'e>>>,
     rng: Cached<Rc<Rng<'e>>>,
@@ -371,6 +372,7 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
             functions_with_callers: Default::default(),
             switch_tables: Default::default(),
             open_file: Default::default(),
+            firegraft_addresses: Default::default(),
             aiscript_hook: Default::default(),
             game: Default::default(),
             rng: Default::default(),
@@ -500,15 +502,20 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         }).clone()
     }
 
-    pub fn firegraft_addresses(&mut self) -> FiregraftAddresses<E::VirtualAddress> {
+    pub fn firegraft_addresses(&mut self) -> Rc<FiregraftAddresses<E::VirtualAddress>> {
+        if let Some(cached) = self.firegraft_addresses.cached() {
+            return cached;
+        }
         let buttonsets = firegraft::find_buttonsets(&self.binary);
         let status_funcs = firegraft::find_unit_status_funcs(&self.binary, self);
         let reqs = firegraft::find_requirement_tables(self);
-        FiregraftAddresses {
+        let result = Rc::new(FiregraftAddresses {
             buttonsets,
             requirement_table_refs: reqs,
             unit_status_funcs: status_funcs,
-        }
+        });
+        self.firegraft_addresses.cache(&result);
+        result
     }
 
     // Sorted by switch address
