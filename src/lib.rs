@@ -1277,32 +1277,20 @@ pub fn string_refs<'e, E: ExecutionStateTrait<'e>>(
     cache: &mut Analysis<'e, E>,
     string: &[u8],
 ) -> Vec<StringRefs<E::VirtualAddress>> {
-    let text = binary.section(b".text\0\0\0").unwrap();
     let rdata = binary.section(b".rdata\0\0").unwrap();
     let str_ref_addrs = find_strings_casei(&rdata.data, string);
     // (Use rva, string rva)
     let code_addresses = str_ref_addrs.into_iter().flat_map(|str_rva| {
-        let ptr_refs = if <E::VirtualAddress as VirtualAddressTrait>::SIZE == 4 {
-            let bytes = ((rdata.virtual_address + str_rva.0).as_u64() as u32).to_le_bytes();
-            find_bytes(&text.data, &bytes[..])
-        } else {
-            let bytes = ((rdata.virtual_address + str_rva.0).as_u64()).to_le_bytes();
-            find_bytes(&text.data, &bytes[..])
-        };
-        ptr_refs.into_iter().map(move |x| (x, str_rva))
+        let addr = rdata.virtual_address + str_rva.0;
+        let ptr_refs = find_functions_using_global(cache, addr);
+        ptr_refs.into_iter().map(move |x| (x.use_address, x.func_entry, str_rva))
     }).collect::<Vec<_>>();
-    let functions = cache.functions();
     // (Func addr, string address)
     // Takes just the first func above the string use rva
-    code_addresses.iter().map(|&(code_rva, str_rva)| {
-        let code_va = text.virtual_address + code_rva.0;
-        let index = match functions.binary_search(&code_va) {
-            Ok(x) => x,
-            Err(x) => x,
-        };
+    code_addresses.iter().map(|&(code_va, func_entry, str_rva)| {
         StringRefs {
             use_address: code_va,
-            func_entry: functions[index.saturating_sub(1)],
+            func_entry,
             string_address: rdata.virtual_address + str_rva.0,
         }
     }).collect()
