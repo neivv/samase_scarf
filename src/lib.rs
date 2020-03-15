@@ -1461,24 +1461,16 @@ fn find_address_refs<Va: VirtualAddressTrait>(data: &[u8], addr: Va) -> Vec<Rva>
 }
 
 fn find_bytes(mut data: &[u8], needle: &[u8]) -> Vec<Rva> {
+    use memmem::{TwoWaySearcher, Searcher};
+
     let mut ret = vec![];
-    let mut offset = 0;
-    let first = needle[0];
-    while data.len() >= needle.len() {
-        let result = memchr::memchr(first, data);
-        match result {
-            Some(pos) => {
-                if pos + needle.len() > data.len() {
-                    break;
-                }
-                if needle == &data[pos..pos + needle.len()] {
-                    ret.push(Rva((offset + pos) as u32));
-                }
-                offset += pos + 1;
-                data = &data[pos + 1..];
-            }
-            None => break,
-        }
+    let mut pos = 0;
+    let searcher = TwoWaySearcher::new(needle);
+    while let Some(index) = searcher.search_in(data) {
+        pos += index as u32;
+        ret.push(Rva(pos));
+        pos += needle.len() as u32;
+        data = &data[index + needle.len()..];
     }
     ret
 }
