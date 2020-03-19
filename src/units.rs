@@ -1,10 +1,10 @@
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{Operand, Operation};
+use scarf::{DestOperand, Operand, Operation};
 
 use crate::{
     Analysis, DatType, OptionExt, EntryOf, ArgCache, StringRefs, single_result_assign,
-    find_functions_using_global, entry_of_until, string_refs,
+    find_functions_using_global, entry_of_until, string_refs, unwrap_sext,
 };
 
 #[derive(Clone, Debug)]
@@ -400,4 +400,158 @@ pub fn init_units<'e, E: ExecutionState<'e>>(
     }
 
     common
+}
+
+#[derive(Debug, Clone)]
+pub struct UnitCreation<Va: VirtualAddress> {
+    pub create_unit: Option<Va>,
+    pub finish_unit_pre: Option<Va>,
+    pub finish_unit_post: Option<Va>,
+}
+
+pub fn unit_creation<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> UnitCreation<E::VirtualAddress> {
+    let mut result = UnitCreation {
+        create_unit: None,
+        finish_unit_pre: None,
+        finish_unit_post: None,
+    };
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+    // create_unit(id, x, y, player, skin)
+    // Search for create_unit(0x21, Mem16[..], Mem16[..], Mem8[..], ..)
+    let order_scan = match crate::step_order::find_order_function(analysis, 0x8b) {
+        Some(s) => s,
+        None => return result,
+    };
+
+    let arg_cache = &analysis.arg_cache;
+    let mut analyzer = UnitCreationAnalyzer::<E> {
+        result: &mut result,
+        arg_cache,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, order_scan);
+    analysis.analyze(&mut analyzer);
+    if let Some(pre) = result.finish_unit_pre {
+        if result.finish_unit_post.is_none() {
+            // finish_unit_pre is actually finish_unit, analyze that,
+            // hopefully it's just 2 function calls
+            result.finish_unit_pre = None;
+            let mut analyzer = FinishUnitAnalyzer::<E> {
+                result: &mut result,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, pre);
+            analysis.analyze(&mut analyzer);
+        }
+    }
+    result
+}
+
+struct FinishUnitAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut UnitCreation<E::VirtualAddress>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FinishUnitAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                let ctx = ctrl.ctx();
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    let this = ctx.register(1);
+                    if ctrl.resolve(this) == this {
+                        if self.result.finish_unit_pre.is_none() {
+                            self.result.finish_unit_pre = Some(dest);
+                        } else if self.result.finish_unit_post.is_none() {
+                            self.result.finish_unit_post = Some(dest);
+                        } else {
+                            self.result.finish_unit_pre = None;
+                            self.result.finish_unit_post = None;
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Jump { condition, to } => {
+                if ctrl.resolve(condition).if_constant().filter(|&c| c != 0).is_some() {
+                    // Tail call finish_unit_post
+                    if {
+                        self.result.finish_unit_pre.is_some() &&
+                            self.result.finish_unit_post.is_none()
+                    } {
+                        if let Some(to) = ctrl.resolve(to).if_constant() {
+                            let to = E::VirtualAddress::from_u64(to);
+                            self.result.finish_unit_post = Some(to);
+                            ctrl.end_analysis();
+                            return;
+                        }
+                    }
+                }
+                self.result.finish_unit_pre = None;
+                self.result.finish_unit_post = None;
+                ctrl.end_analysis();
+            }
+            _ => (),
+        }
+    }
+}
+
+struct UnitCreationAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut UnitCreation<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                let ctx = ctrl.ctx();
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if self.result.create_unit.is_none() {
+                        let ok = Some(ctrl.resolve(self.arg_cache.on_call(0)))
+                            .filter(|&x| x.if_constant() == Some(0x21))
+                            .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                            .filter(|&x| unwrap_sext(x).if_mem16().is_some())
+                            .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
+                            .filter(|&x| unwrap_sext(x).if_mem16().is_some())
+                            .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
+                            .filter(|&x| x.if_mem8().is_some())
+                            .is_some();
+                        if ok {
+                            self.result.create_unit = Some(dest);
+                            ctrl.skip_operation();
+                            let exec_state = ctrl.exec_state();
+                            exec_state.move_to(
+                                &DestOperand::Register64(scarf::operand::Register(0)),
+                                ctx.custom(0),
+                            );
+                        }
+                    } else {
+                        if ctrl.resolve(ctx.register(1)) == ctx.custom(0) {
+                            if self.result.finish_unit_pre.is_none() {
+                                self.result.finish_unit_pre = Some(dest);
+                            } else if self.result.finish_unit_post.is_none() {
+                                self.result.finish_unit_post = Some(dest);
+                                if crate::test_assertions() == false {
+                                    ctrl.end_analysis();
+                                }
+                            } else if crate::test_assertions() {
+                                panic!(
+                                    "Calling a third function with ecx == unit @ {:x}",
+                                    ctrl.address(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
 }

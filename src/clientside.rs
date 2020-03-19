@@ -6,7 +6,7 @@ use scarf::{BinaryFile, DestOperand, Operand, Operation, Rva};
 use scarf::operand::{OperandCtx, Register};
 
 use crate::{
-    Analysis, ArgCache, EntryOf, EntryOfResult, find_callers, entry_of_until,
+    Analysis, ArgCache, EntryOf, EntryOfResult, find_callers, entry_of_until, unwrap_sext,
     single_result_assign, OptionExt, DatType, find_functions_using_global,
     if_arithmetic_eq_neq,
 };
@@ -249,13 +249,6 @@ pub fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
     let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_rclick);
     analysis.analyze(&mut analyzer);
     analyzer.result
-}
-
-fn unwrap_sext<'e>(operand: Operand<'e>) -> Operand<'e> {
-    match *operand.ty() {
-        scarf::operand::OperandType::SignExtend(val, ..) => val,
-        _ => operand,
-    }
 }
 
 fn if_float_to_int<'e>(operand: Operand<'e>) -> Option<Operand<'e>> {

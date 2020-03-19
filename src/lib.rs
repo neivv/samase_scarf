@@ -67,7 +67,7 @@ pub use crate::players::NetPlayers;
 pub use crate::rng::Rng;
 pub use crate::step_order::{SecondaryOrderHook, StepOrderHiddenHook};
 pub use crate::sprites::{FowSprites, Sprites};
-pub use crate::units::{ActiveHiddenUnits, OrderIssuing};
+pub use crate::units::{ActiveHiddenUnits, OrderIssuing, UnitCreation};
 
 use crate::switch::{CompleteSwitch, full_switch_info};
 
@@ -194,6 +194,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     draw_cursor_marker: Cached<Option<Operand<'e>>>,
     misc_clientside: Cached<Rc<MiscClientSide<'e>>>,
     spawn_dialog: Cached<Option<E::VirtualAddress>>,
+    unit_creation: Cached<Rc<UnitCreation<E::VirtualAddress>>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -360,11 +361,11 @@ where T: std::fmt::Debug + PartialEq,
     false
 }
 
-impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
+impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn new(
-        binary: &'a BinaryFile<E::VirtualAddress>,
-        ctx: scarf::OperandCtx<'a>,
-    ) -> Analysis<'a, E> {
+        binary: &'e BinaryFile<E::VirtualAddress>,
+        ctx: scarf::OperandCtx<'e>,
+    ) -> Analysis<'e, E> {
         Analysis {
             relocs: Default::default(),
             relocs_with_values: Default::default(),
@@ -434,15 +435,14 @@ impl<'a, E: ExecutionStateTrait<'a>> Analysis<'a, E> {
             draw_cursor_marker: Default::default(),
             misc_clientside: Default::default(),
             spawn_dialog: Default::default(),
+            unit_creation: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
             arg_cache: ArgCache::new(ctx),
         }
     }
-}
 
-impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     fn is_valid_function(address: E::VirtualAddress) -> bool {
         address.as_u64() & 0xf == 0
     }
@@ -1211,6 +1211,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.spawn_dialog.cache(&result);
         result
     }
+
+    pub fn unit_creation(&mut self) -> Rc<UnitCreation<E::VirtualAddress>> {
+        if let Some(cached) = self.unit_creation.cached() {
+            return cached;
+        }
+        let result = Rc::new(units::unit_creation(self));
+        self.unit_creation.cache(&result);
+        result
+    }
 }
 
 // Tries to return a func index to the address less or equal to `entry` that is definitely a
@@ -1556,4 +1565,11 @@ fn if_arithmetic_eq_neq<'e>(op: Operand<'e>) -> Option<(Operand<'e>, Operand<'e>
                 .map(|(l, r)| (l, r, false))
                 .unwrap_or_else(|| (l, r, true))
         })
+}
+
+fn unwrap_sext<'e>(operand: Operand<'e>) -> Operand<'e> {
+    match *operand.ty() {
+        scarf::operand::OperandType::SignExtend(val, ..) => val,
+        _ => operand,
+    }
 }

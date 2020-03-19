@@ -773,6 +773,11 @@ fn everything_1233b() {
     test_with_extra_checks(Path::new("1233b.exe"), |_ctx ,analysis| {
         let spawn_dialog = analysis.spawn_dialog();
         assert_eq!(spawn_dialog.unwrap().0, 0x0097BB60);
+
+        let unit_creation = analysis.unit_creation();
+        assert_eq!(unit_creation.create_unit.unwrap().0, 0x005A0720);
+        assert_eq!(unit_creation.finish_unit_pre.unwrap().0, 0x005A1110);
+        assert_eq!(unit_creation.finish_unit_post.unwrap().0, 0x005A0E20);
     })
 }
 
@@ -1138,6 +1143,11 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     check_global(misc.is_paused.unwrap(), &binary, "is_paused");
     check_global(misc.is_placing_building.unwrap(), &binary, "is_placing_building");
     check_global(misc.is_targeting.unwrap(), &binary, "is_targeting");
+
+    let unit_creation = analysis.unit_creation();
+    assert!(unit_creation.create_unit.is_some());
+    assert!(unit_creation.finish_unit_pre.is_some());
+    assert!(unit_creation.finish_unit_post.is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

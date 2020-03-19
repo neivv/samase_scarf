@@ -272,6 +272,11 @@ fn main() {
     println!("is_placing_building: {}", format_op_operand(misc_clientside.is_placing_building));
     println!("is_targeting: {}", format_op_operand(misc_clientside.is_targeting));
 
+    let unit_creation = analysis.unit_creation();
+    println!("create_unit: {:?}", unit_creation.create_unit);
+    println!("finish_unit_pre: {:?}", unit_creation.finish_unit_pre);
+    println!("finish_unit_post: {:?}", unit_creation.finish_unit_post);
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {
