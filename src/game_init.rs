@@ -4,7 +4,7 @@ use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 
 use crate::{
     Analysis, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, find_callers,
-    string_refs, if_arithmetic_eq_neq,
+    string_refs, if_arithmetic_eq_neq, single_result_assign,
 };
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -38,6 +38,12 @@ pub struct SinglePlayerStart<'e, Va: VirtualAddress> {
 pub struct SelectMapEntry<'e, Va: VirtualAddress> {
     pub select_map_entry: Option<Va>,
     pub is_multiplayer: Option<Operand<'e>>,
+}
+
+#[derive(Clone)]
+pub struct ImagesLoaded<'e, Va: VirtualAddress> {
+    pub images_loaded: Option<Operand<'e>>,
+    pub init_real_time_lighting: Option<Va>,
 }
 
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
@@ -97,7 +103,7 @@ pub fn play_smk<'e, E: ExecutionState<'e>>(
             analyzer.result
         });
         if let EntryOfResult::Ok(entry, ()) = new {
-            if crate::single_result_assign(Some(entry), &mut result) {
+            if single_result_assign(Some(entry), &mut result) {
                 break;
             }
         }
@@ -183,7 +189,7 @@ pub fn game_init<'e, E: ExecutionState<'e>>(
             analyzer.result
         }).into_option_with_entry().map(|x| x.0);
 
-        if crate::single_result_assign(new, &mut result.sc_main) {
+        if single_result_assign(new, &mut result.sc_main) {
             break;
         }
     }
@@ -420,7 +426,7 @@ pub fn init_map_from_path<'e, E: ExecutionState<'e>>(
             analyzer.result
         });
         if let EntryOfResult::Ok(entry, ()) = new {
-            if crate::single_result_assign(Some(entry), &mut result) {
+            if single_result_assign(Some(entry), &mut result) {
                 break;
             }
         }
@@ -536,7 +542,7 @@ pub fn choose_snp<'e, E: ExecutionState<'e>>(
         );
         let mut analysis = FuncAnalysis::custom_state(binary, ctx, func, exec, state);
         analysis.analyze(&mut analyzer);
-        if crate::single_result_assign(analyzer.result, &mut result) {
+        if single_result_assign(analyzer.result, &mut result) {
             break;
         }
     }
@@ -868,11 +874,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                     if index.0 == storm_id {
                                         let addr = ctx.sub_const(addr, 0x14);
                                         if size > 16 {
-                                            crate::single_result_assign(
+                                            single_result_assign(
                                                 Some(addr),
                                                 &mut result.skins,
                                             );
-                                            crate::single_result_assign(
+                                            single_result_assign(
                                                 Some(base),
                                                 &mut result.player_skins,
                                             );
@@ -1031,7 +1037,7 @@ pub fn load_images<'e, E: ExecutionState<'e>>(
             analyzer.result
         });
         if let EntryOfResult::Ok(entry, ()) = new {
-            if crate::single_result_assign(Some(entry), &mut result) {
+            if single_result_assign(Some(entry), &mut result) {
                 break;
             }
         }
@@ -1078,16 +1084,22 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsLoadImages<'a, 
 
 pub fn images_loaded<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Operand<'e>> {
-    let load_images = analysis.load_images()?;
+) -> ImagesLoaded<'e, E::VirtualAddress> {
+    let mut result = ImagesLoaded {
+        images_loaded: None,
+        init_real_time_lighting: None,
+    };
+    let load_images = match analysis.load_images() {
+        Some(s) => s,
+        None => return result,
+    };
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
     let callers = crate::find_callers(analysis, load_images);
-    let mut result = None;
     for caller in callers {
-        let new = entry_of_until(binary, funcs, caller, |entry| {
+        let res = entry_of_until(binary, funcs, caller, |entry| {
             let mut analyzer = FindImagesLoaded::<E> {
                 result: EntryOf::Retry,
                 load_images,
@@ -1097,8 +1109,19 @@ pub fn images_loaded<'e, E: ExecutionState<'e>>(
             analysis.analyze(&mut analyzer);
             analyzer.result
         });
-        if let EntryOfResult::Ok(_, res) = new {
-            if crate::single_result_assign(Some(res), &mut result) {
+        if let EntryOfResult::Ok(_, (images_loaded, else_branch)) = res {
+            single_result_assign(Some(images_loaded), &mut result.images_loaded);
+            let mut analyzer = FindBeginLoadingRtl::<E> {
+                result: None,
+                checking_func: false,
+                call_limit: 5,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, else_branch);
+            analysis.analyze(&mut analyzer);
+            if single_result_assign(
+                analyzer.result,
+                &mut result.init_real_time_lighting,
+            ) {
                 break;
             }
         }
@@ -1106,10 +1129,72 @@ pub fn images_loaded<'e, E: ExecutionState<'e>>(
     result
 }
 
+struct FindBeginLoadingRtl<'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    checking_func: bool,
+    call_limit: u8,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingRtl<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            // init_rtl should be called immediately at the branch
+            // if images_loaded == 1
+            Operation::Call(dest) => {
+                if !self.checking_func {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        self.checking_func = true;
+                        ctrl.analyze_with_current_state(self, dest);
+                        if self.result.is_some() {
+                            self.result = Some(dest);
+                        }
+                        self.checking_func = false;
+                    }
+                    ctrl.end_analysis();
+                } else {
+                    if self.call_limit == 0 {
+                        ctrl.end_analysis();
+                        return;
+                    }
+                    self.call_limit -= 1;
+                    // Guess that a function returns Mem32[asset_scale]
+                    let ctx = ctrl.ctx();
+                    let exec = ctrl.exec_state();
+                    exec.move_to(
+                        &DestOperand::Register64(scarf::operand::Register(0)),
+                        ctx.mem32(ctx.custom(0)),
+                    );
+                    ctrl.skip_operation();
+                }
+            }
+            Operation::Jump { condition, .. } => {
+                if !self.checking_func {
+                    ctrl.end_analysis();
+                } else {
+                    let condition = ctrl.resolve(condition);
+                    let ok = if_arithmetic_eq_neq(condition)
+                        .map(|(l, r, _)| (l, r))
+                        .and_either_other(|x| x.if_constant().filter(|&c| c == 4))
+                        .and_then(|x| x.if_mem32())
+                        .is_some();
+                    if ok {
+                        self.result = Some(E::VirtualAddress::from_u64(0));
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
 struct FindImagesLoaded<'e, E: ExecutionState<'e>> {
-    result: EntryOf<Operand<'e>>,
+    result: EntryOf<(Operand<'e>, E::VirtualAddress)>,
     load_images: E::VirtualAddress,
-    conditions: Vec<(E::VirtualAddress, Operand<'e>)>,
+    conditions: Vec<(E::VirtualAddress, Operand<'e>, E::VirtualAddress)>,
 }
 
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindImagesLoaded<'e, E> {
@@ -1124,14 +1209,14 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindImagesLoaded<'e, 
                         let cond = self.conditions.iter()
                             .filter(|x| x.0 < ctrl.address())
                             .max_by_key(|x| x.0)
-                            .map(|x| x.1);
-                        if let Some(cond) = cond {
+                            .map(|x| (x.1, x.2));
+                        if let Some((cond, to)) = cond {
                             let cond = if_arithmetic_eq_neq(cond)
                                 .map(|(l, r, _)| (l, r))
                                 .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
                                 .filter(|x| x.if_mem8().is_some());
                             if let Some(cond) = cond {
-                                self.result = EntryOf::Ok(cond.clone());
+                                self.result = EntryOf::Ok((cond, to));
                                 ctrl.end_analysis();
                                 return;
                             }
@@ -1141,8 +1226,11 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindImagesLoaded<'e, 
                     }
                 }
             }
-            Operation::Jump { condition, .. } => {
-                self.conditions.push((ctrl.address(), ctrl.resolve(condition)));
+            Operation::Jump { condition, to } => {
+                let to = ctrl.resolve(to);
+                if let Some(to) = to.if_constant().map(E::VirtualAddress::from_u64) {
+                    self.conditions.push((ctrl.address(), ctrl.resolve(condition), to));
+                }
             }
             _ => (),
         }
@@ -1229,7 +1317,7 @@ pub fn local_player_name<'e, E: ExecutionState<'e>>(
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, entry);
         analysis.analyze(&mut analyzer);
-        if crate::single_result_assign(analyzer.result, &mut result) {
+        if single_result_assign(analyzer.result, &mut result) {
             break;
         }
     }
@@ -1291,7 +1379,7 @@ pub fn init_game_network<'e, E: ExecutionState<'e>>(
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, addr);
         analysis.analyze(&mut analyzer);
-        if crate::single_result_assign(analyzer.result, &mut result) {
+        if single_result_assign(analyzer.result, &mut result) {
             break;
         }
     }

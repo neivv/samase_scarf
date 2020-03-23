@@ -58,7 +58,7 @@ pub use crate::commands::{ProcessCommands, Selections, StepNetwork};
 pub use crate::dat::{DatTablePtr};
 pub use crate::eud::EudTable;
 pub use crate::firegraft::RequirementTables;
-pub use crate::game_init::{GameInit, InitGame, SinglePlayerStart, SelectMapEntry};
+pub use crate::game_init::{GameInit, InitGame, ImagesLoaded, SinglePlayerStart, SelectMapEntry};
 pub use crate::iscript::StepIscript;
 pub use crate::map::MapTileFlags;
 pub use crate::network::{InitStormNetworking, SnpDefinitions};
@@ -184,7 +184,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     single_player_start: Cached<Rc<SinglePlayerStart<'e, E::VirtualAddress>>>,
     select_map_entry: Cached<Rc<SelectMapEntry<'e, E::VirtualAddress>>>,
     load_images: Cached<Option<E::VirtualAddress>>,
-    images_loaded: Cached<Option<Operand<'e>>>,
+    images_loaded: Cached<ImagesLoaded<'e, E::VirtualAddress>>,
     local_player_name: Cached<Option<Operand<'e>>>,
     step_network: Cached<Rc<StepNetwork<'e, E::VirtualAddress>>>,
     init_game_network: Cached<Option<E::VirtualAddress>>,
@@ -862,11 +862,20 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn images_loaded(&mut self) -> Option<Operand<'e>> {
         if let Some(cached) = self.images_loaded.cached() {
-            return cached;
+            return cached.images_loaded;
         }
         let result = game_init::images_loaded(self);
         self.images_loaded.cache(&result);
-        result
+        result.images_loaded
+    }
+
+    pub fn init_real_time_lighting(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.images_loaded.cached() {
+            return cached.init_real_time_lighting;
+        }
+        let result = game_init::images_loaded(self);
+        self.images_loaded.cache(&result);
+        result.init_real_time_lighting
     }
 
     pub fn local_player_name(&mut self) -> Option<Operand<'e>> {

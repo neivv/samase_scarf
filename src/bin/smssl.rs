@@ -236,6 +236,8 @@ fn main() {
     println!("load_images: {:?}", load_images);
     let images_loaded = analysis.images_loaded();
     println!("images_loaded: {}", format_op_operand(images_loaded));
+    let init_rtl = analysis.init_real_time_lighting();
+    println!("init_real_time_lighting: {:?}", init_rtl);
     let local_player_name = analysis.local_player_name();
     println!("local_player_name: {}", format_op_operand(local_player_name));
 

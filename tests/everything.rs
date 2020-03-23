@@ -778,6 +778,9 @@ fn everything_1233b() {
         assert_eq!(unit_creation.create_unit.unwrap().0, 0x005A0720);
         assert_eq!(unit_creation.finish_unit_pre.unwrap().0, 0x005A1110);
         assert_eq!(unit_creation.finish_unit_post.unwrap().0, 0x005A0E20);
+
+        let init_rtl = analysis.init_real_time_lighting().unwrap();
+        assert_eq!(init_rtl.0, 0x0056ACD0);
     })
 }
 
@@ -1106,6 +1109,8 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     assert!(load_images.is_some());
     let images_loaded = analysis.images_loaded();
     check_global(images_loaded.unwrap(), &binary, "images loaded");
+    let init_rtl = analysis.init_real_time_lighting();
+    assert!(init_rtl.is_some());
     let local_player_name = analysis.local_player_name();
     check_global_struct_opt(local_player_name, &binary, "local player name");
 
