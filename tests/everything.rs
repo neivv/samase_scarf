@@ -784,6 +784,12 @@ fn everything_1233b() {
     })
 }
 
+#[test]
+fn everything_1233c() {
+    test_with_extra_checks(Path::new("1233c.exe"), |_ctx ,_analysis| {
+    })
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
 }
