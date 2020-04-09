@@ -150,6 +150,12 @@ fn main() {
     println!("first_free_lone: {}", format_op_operand(sprites.first_free_lone));
     println!("last_free_lone: {}", format_op_operand(sprites.last_free_lone));
     println!("create_lone: {:?}", sprites.create_lone_sprite);
+    println!("sprite_x: {}", format_op_operand(sprites.sprite_x_position.map(|x| x.0)));
+    println!("sprite_x_offset: {:x?}", sprites.sprite_x_position.map(|x| x.1));
+    println!("sprite_x_size: {:x?}", sprites.sprite_x_position.map(|x| x.2));
+    println!("sprite_y: {}", format_op_operand(sprites.sprite_y_position.map(|x| x.0)));
+    println!("sprite_y_offset: {:x?}", sprites.sprite_y_position.map(|x| x.1));
+    println!("sprite_y_size: {:x?}", sprites.sprite_x_position.map(|x| x.2));
 
     let euds = analysis.eud_table();
     println!("{} euds", euds.euds.len());

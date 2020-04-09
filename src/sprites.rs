@@ -1,10 +1,13 @@
+use std::convert::TryInto;
+
 use fxhash::FxHashMap;
 
-use scarf::{MemAccessSize, Operand, Operation, DestOperand};
+use scarf::{MemAccessSize, Operand, Operation, DestOperand, Rva, BinaryFile, OperandCtx};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
+use scarf::operand::{MemAccess, Register};
 
-use crate::{Analysis, OptionExt};
+use crate::{ArgCache, Analysis, OptionExt, single_result_assign};
 
 pub struct Sprites<'e, Va: VirtualAddress> {
     pub sprite_hlines: Option<Operand<'e>>,
@@ -15,6 +18,8 @@ pub struct Sprites<'e, Va: VirtualAddress> {
     pub last_lone: Option<Operand<'e>>,
     pub first_free_lone: Option<Operand<'e>>,
     pub last_free_lone: Option<Operand<'e>>,
+    pub sprite_x_position: Option<(Operand<'e>, u32, MemAccessSize)>,
+    pub sprite_y_position: Option<(Operand<'e>, u32, MemAccessSize)>,
     pub create_lone_sprite: Option<Va>,
 }
 
@@ -49,6 +54,8 @@ pub fn sprites<'e, E: ExecutionState<'e>>(
         last_lone: None,
         first_free_lone: None,
         last_free_lone: None,
+        sprite_x_position: None,
+        sprite_y_position: None,
         create_lone_sprite: None,
     };
     let order_nuke_track = match crate::step_order::find_order_nuke_track(analysis) {
@@ -57,6 +64,7 @@ pub fn sprites<'e, E: ExecutionState<'e>>(
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let arg_cache = &analysis.arg_cache;
     let mut analyzer = SpriteAnalyzer::<E> {
         state: FindSpritesState::NukeTrack,
         lone_free: Default::default(),
@@ -68,9 +76,15 @@ pub fn sprites<'e, E: ExecutionState<'e>>(
         is_checking_active_list_candidate: None,
         active_list_candidate_head: None,
         active_list_candidate_tail: None,
-        arg1: ctx.mem32(ctx.register(4)),
         ecx: ctx.register(1),
         create_lone_sprite: None,
+        function_to_custom_map: FxHashMap::with_capacity_and_hasher(16, Default::default()),
+        custom_to_function_map: Vec::with_capacity(16),
+        sprite_x_position: None,
+        sprite_y_position: None,
+        binary,
+        arg_cache,
+        ctx,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, order_nuke_track);
     analysis.analyze(&mut analyzer);
@@ -91,6 +105,8 @@ pub fn sprites<'e, E: ExecutionState<'e>>(
         result.last_free_sprite = Some(tail);
     }
     result.create_lone_sprite = analyzer.create_lone_sprite;
+    result.sprite_x_position = analyzer.sprite_x_position;
+    result.sprite_y_position = analyzer.sprite_y_position;
     result
 }
 
@@ -109,7 +125,7 @@ impl<'e> IncompleteList<'e> {
     }
 }
 
-struct SpriteAnalyzer<'e, E: ExecutionState<'e>> {
+struct SpriteAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     state: FindSpritesState,
     lone_free: IncompleteList<'e>,
     lone_active: IncompleteList<'e>,
@@ -129,13 +145,24 @@ struct SpriteAnalyzer<'e, E: ExecutionState<'e>> {
     is_checking_active_list_candidate: Option<Operand<'e>>,
     active_list_candidate_head: Option<Operand<'e>>,
     active_list_candidate_tail: Option<Operand<'e>>,
-    // These are from looking at caller side, so arg1 == [esp]
-    arg1: Operand<'e>,
     ecx: Operand<'e>,
     create_lone_sprite: Option<E::VirtualAddress>,
+    // Dest, arg1, arg2 if Mem32[x] where the resolved value is a constant
+    function_to_custom_map: FxHashMap<(Rva, Option<u64>, Option<u64>), u32>,
+    custom_to_function_map: Vec<ChildFunctionFormula<'e>>,
+    sprite_x_position: Option<(Operand<'e>, u32, MemAccessSize)>,
+    sprite_y_position: Option<(Operand<'e>, u32, MemAccessSize)>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    ctx: OperandCtx<'e>,
 }
 
-impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'e, E> {
+enum ChildFunctionFormula<'e> {
+    NotDone(Rva, Option<u64>, Option<u64>),
+    Done(Option<Operand<'e>>, Option<Operand<'e>>, Option<Operand<'e>>),
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -143,7 +170,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'e, E> {
             Operation::Call(to) => {
                 if let Some(dest) = ctrl.resolve(to).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
-                    let arg1 = ctrl.resolve(self.arg1);
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                     if let Some(c) = arg1.if_constant() {
                         // Nuke dot sprite, either calling create lone or create sprite
                         // Their args are the same though, so cannot verify much here.
@@ -153,7 +180,8 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'e, E> {
                                 FindSpritesState::NukeTrack => FindSpritesState::CreateLone,
                                 FindSpritesState::CreateLone => FindSpritesState::CreateSprite,
                                 FindSpritesState::CreateSprite => {
-                                    // Going to inline this just in case
+                                    // Going to inline this, likely initialize_sprite
+                                    // which will contain x/y pos
                                     FindSpritesState::CreateSprite
                                 }
                                 FindSpritesState::CreateLone_Post => {
@@ -182,16 +210,61 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'e, E> {
                     let ecx = ctrl.resolve(self.ecx);
                     if self.is_list_call(arg1, ecx) {
                         ctrl.analyze_with_current_state(self, dest);
+                    } else {
+                        if self.state == FindSpritesState::CreateSprite {
+                            let ctx = ctrl.ctx();
+                            // Check for fn(&mut val1, &mut val2) where
+                            // val1 and val2 were inited with constants
+                            let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                            let arg1_c = ctrl.resolve(ctx.mem32(arg1)).if_constant();
+                            let arg2_c = ctrl.resolve(ctx.mem32(arg2)).if_constant();
+                            // Use custom(x) to keep track of called child functions
+                            let rva = Rva((dest.as_u64() - self.binary.base.as_u64()) as u32);
+                            let new_id = (self.function_to_custom_map.len() as u32 + 1) * 0x10;
+                            let custom_id = *self.function_to_custom_map
+                                .entry((rva, arg1_c, arg2_c))
+                                .or_insert_with(|| new_id);
+                            if custom_id == new_id {
+                                self.custom_to_function_map.push(
+                                    ChildFunctionFormula::NotDone(rva, arg1_c, arg2_c)
+                                );
+                            }
+                            let state = ctrl.exec_state();
+                            state.move_to(
+                                &DestOperand::Register64(Register(0)),
+                                ctx.custom(custom_id),
+                            );
+                            state.move_to(&DestOperand::Register64(Register(1)), ctx.new_undef());
+                            state.move_to(&DestOperand::Register64(Register(2)), ctx.new_undef());
+                            if arg1_c.is_some() {
+                                let dest = DestOperand::Memory(MemAccess {
+                                    address: arg1,
+                                    size: MemAccessSize::Mem32,
+                                });
+                                state.move_to(&dest, ctx.custom(custom_id + 1));
+                            }
+                            if arg2_c.is_some() {
+                                let dest = DestOperand::Memory(MemAccess {
+                                    address: arg2,
+                                    size: MemAccessSize::Mem32,
+                                });
+                                state.move_to(&dest, ctx.custom(custom_id + 2));
+                            }
+                            ctrl.skip_operation();
+                        }
                     }
                 }
             }
             Operation::Move(DestOperand::Memory(ref mem), value, _) => {
+                let dest_addr = ctrl.resolve(mem.address);
+                let value = ctrl.resolve(value);
+                if self.state == FindSpritesState::CreateSprite {
+                    self.check_position_store(ctrl, dest_addr, mem.size, value);
+                }
                 if mem.size != MemAccessSize::Mem32 {
                     return;
                 }
                 let ctx = ctrl.ctx();
-                let dest_addr = ctrl.resolve(mem.address);
-                let value = ctrl.resolve(value);
                 // first_free_sprite = (*first_free_sprite).next, e.g.
                 // mov [first_free_sprite], [[first_free_sprite] + 4]
                 let first_sprite_next = ctx.mem32(
@@ -296,7 +369,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'e, E> {
                 .and_either(|x| x.if_arithmetic_mul())
                 .filter(|&((l, r), _)| {
                     Operand::either(l, r, |x| x.if_constant().filter(|&x| x == 4))
-                        .filter(|(_, other)| other.is_undefined())
+                        .filter(|(_, other)| other.is_undefined() || other.if_custom().is_some())
                         .is_some()
                 })
                 .map(|(_, base)| base)
@@ -328,8 +401,166 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'e, E> {
     }
 }
 
-impl<'e, E: ExecutionState<'e>> SpriteAnalyzer<'e, E> {
+impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
+    fn check_position_store(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        dest_addr: Operand<'e>,
+        dest_size: MemAccessSize,
+        value: Operand<'e>,
+    ) {
+        fn mem16_related_offset(op: Operand<'_>) -> Option<u32> {
+            // Check for Mem16[Mem32[rcx + 80] + offset]
+            // (unit.related.order_target.x)
+            let (l, r) = op.if_mem16()?.if_arithmetic_add()?;
+            let offset: u32 = r.if_constant().and_then(|x| x.try_into().ok())?;
+            let (rcx, rcx_add) = l.if_mem32()?.if_arithmetic_add()?;
+            rcx.if_register().filter(|r| r.0 == 1)?;
+            rcx_add.if_constant().filter(|&c| c == 0x80)?;
+            Some(offset)
+        }
+
+        let ctx = ctrl.ctx();
+        let first_free = match self.sprites_free.head {
+            Some(s) => s,
+            None => return,
+        };
+        let (base, offset) = match dest_addr.if_arithmetic_add() {
+            Some((l, r)) => match r.if_constant() {
+                Some(c) => (l, c.try_into().unwrap_or(0)),
+                None => (dest_addr, 0),
+            },
+            None => (dest_addr, 0),
+        };
+        let storing_to_sprite = match base.if_memory() {
+            Some(mem) => mem.address == first_free,
+            None => false,
+        };
+        if !storing_to_sprite || offset < 0x10 {
+            return;
+        }
+        let related_unit_offset = value.iter()
+            .find_map(|op| mem16_related_offset(op));
+        let mut ok = true;
+        if let Some(off) = related_unit_offset {
+            let value = ctx.transform(value, |op| {
+                if let Some(id) = op.if_custom() {
+                    let val = self.resolve_custom(id);
+                    if val.is_none() {
+                        ok = false;
+                    }
+                    val
+                } else if mem16_related_offset(op) == Some(off) {
+                    Some(ctx.custom(0))
+                } else {
+                    None
+                }
+            });
+            if ok {
+                let result = (value, offset, dest_size);
+                match off {
+                    // order_target_pos.x
+                    0x58 => {
+                        single_result_assign(Some(result), &mut self.sprite_x_position);
+                    }
+                    0x5a => {
+                        single_result_assign(Some(result), &mut self.sprite_y_position);
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
+
+    fn resolve_custom(&mut self, id: u32) -> Option<Operand<'e>> {
+        if id < 0x10 {
+            return None;
+        }
+        let index = (id / 0x10) - 1;
+        let (func_addr, arg1, arg2) = match *(self.custom_to_function_map.get(index as usize)?) {
+            ChildFunctionFormula::NotDone(a, b, c) => (a, b, c),
+            ChildFunctionFormula::Done(a, b, c) => return match id & 0xf {
+                0 => a,
+                1 => b,
+                _ => c,
+            },
+        };
+        let binary = self.binary;
+        let addr = binary.base + func_addr.0;
+        let ctx = self.ctx;
+        let return_addr = required_return_addr::<E>(ctx, binary, addr);
+
+        let mut exec_state = E::initial_state(ctx, binary);
+        let state = Default::default();
+        let word_size = match E::VirtualAddress::SIZE == 4 {
+            true => MemAccessSize::Mem32,
+            false => MemAccessSize::Mem64,
+        };
+        if let Some(ret) = return_addr {
+            exec_state.move_to(
+                &DestOperand::Memory(MemAccess {
+                    address: ctx.register(4),
+                    size: word_size,
+                }),
+                ctx.constant(ret.as_u64()),
+            );
+            exec_state.move_to(
+                &DestOperand::Memory(MemAccess {
+                    address: ctx.constant(ret.as_u64() - 2),
+                    size: MemAccessSize::Mem16,
+                }),
+                ctx.constant(0xd0ff),
+            );
+        }
+        if let Some(arg1) = arg1 {
+            exec_state.move_to(
+                &DestOperand::Memory(MemAccess {
+                    address: ctx.custom(0),
+                    size: word_size,
+                }),
+                ctx.constant(arg1),
+            );
+            exec_state.move_to(
+                &DestOperand::from_oper(self.arg_cache.on_entry(0)),
+                ctx.custom(0),
+            );
+        }
+        if let Some(arg2) = arg2 {
+            exec_state.move_to(
+                &DestOperand::Memory(MemAccess {
+                    address: ctx.custom(1),
+                    size: word_size,
+                }),
+                ctx.constant(arg2),
+            );
+            exec_state.move_to(
+                &DestOperand::from_oper(self.arg_cache.on_entry(1)),
+                ctx.custom(1),
+            );
+        }
+        let mut analyzer = ResolveCustom::<E> {
+            ret: ResolveCustomResult::None,
+            arg1: ResolveCustomResult::None,
+            arg2: ResolveCustomResult::None,
+            arg1_loc: E::operand_mem_word(ctx, ctx.custom(0)),
+            arg2_loc: E::operand_mem_word(ctx, ctx.custom(1)),
+            phantom: Default::default(),
+        };
+        let mut analysis = FuncAnalysis::custom_state(binary, ctx, addr, exec_state, state);
+        analysis.analyze(&mut analyzer);
+        let a = analyzer.ret.to_option();
+        let b = analyzer.arg1.to_option();
+        let c = analyzer.arg2.to_option();
+        self.custom_to_function_map[index as usize] = ChildFunctionFormula::Done(a, b, c);
+        match id & 0xf {
+            0 => a,
+            1 => b,
+            _ => c,
+        }
+    }
+
     fn is_list_call(&self, arg1: Operand<'e>, ecx: Operand<'e>) -> bool {
+        let word_size = E::VirtualAddress::SIZE as u64;
         if let Some(addr) = ecx.if_mem32() {
             // It's remove call if ecx == [arg1], (item == [head])
             if addr == arg1 {
@@ -338,7 +569,13 @@ impl<'e, E: ExecutionState<'e>> SpriteAnalyzer<'e, E> {
             // Add call if ecx == [free_head]
             // Check to not go into AddOverlay, as ecx == sprite == [free_head]
             // AddOverlay's first argument is Mem16, and a pointer can obviously never be Mem16
-            if arg1.if_memory().filter(|x| x.size != MemAccessSize::Mem32).is_none() {
+            let arg1_ok = arg1.if_constant().is_some() ||
+                arg1.if_arithmetic_add()
+                    .and_either_other(|x| x.if_constant())
+                    .and_then(|x| x.if_arithmetic_mul())
+                    .filter(|(_, r)| r.if_constant() == Some(word_size))
+                    .is_some();
+            if arg1_ok {
                 if let Some(head) = self.lone_free.head {
                     if addr == head {
                         return true;
@@ -404,6 +641,139 @@ impl<'e, E: ExecutionState<'e>> SpriteAnalyzer<'e, E> {
             return;
         }
         *out = Some(value);
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+enum ResolveCustomResult<'e> {
+    None,
+    One(Operand<'e>),
+    Many,
+}
+
+impl<'e> ResolveCustomResult<'e> {
+    fn update(&mut self, new: Operand<'e>) {
+        match *self {
+            ResolveCustomResult::None => *self = ResolveCustomResult::One(new),
+            ResolveCustomResult::One(old) => if old != new {
+                *self = ResolveCustomResult::Many;
+            }
+            ResolveCustomResult::Many => (),
+        }
+    }
+
+    fn to_option(self) -> Option<Operand<'e>> {
+        match self {
+            ResolveCustomResult::One(op) => {
+                if op.iter().any(|x| {
+                    x.is_undefined() || x.if_custom().is_some() || x.if_register().is_some()
+                }) {
+                    None
+                } else {
+                    Some(op)
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+struct ResolveCustom<'e, E: ExecutionState<'e>> {
+    ret: ResolveCustomResult<'e>,
+    arg1: ResolveCustomResult<'e>,
+    arg2: ResolveCustomResult<'e>,
+    arg1_loc: Operand<'e>,
+    arg2_loc: Operand<'e>,
+    phantom: std::marker::PhantomData<(&'e (), *const E)>,
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ResolveCustom<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Return(..) => {
+                let ctx = ctrl.ctx();
+                let ret = ctrl.resolve(ctx.register(0));
+                self.ret.update(ret);
+                let arg1 = ctrl.resolve(self.arg1_loc);
+                self.arg1.update(arg1);
+                let arg2 = ctrl.resolve(self.arg2_loc);
+                self.arg2.update(arg2);
+            }
+            _ => (),
+        }
+    }
+}
+
+fn required_return_addr<'e, E: ExecutionState<'e>>(
+    ctx: OperandCtx<'e>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    func: E::VirtualAddress,
+) -> Option<E::VirtualAddress> {
+    let mut analyzer = RequiredReturnAddress::<E> {
+        first: None,
+        result: None,
+        min_addr: func,
+        max_addr: func,
+    };
+    let mut exec_state = E::initial_state(ctx, binary);
+    let state = Default::default();
+    exec_state.move_to(
+        &DestOperand::Memory(MemAccess {
+            address: ctx.register(4),
+            size: match E::VirtualAddress::SIZE == 4 {
+                true => MemAccessSize::Mem32,
+                false => MemAccessSize::Mem64,
+            },
+        }),
+        ctx.custom(0),
+    );
+    let mut analysis = FuncAnalysis::custom_state(binary, ctx, func, exec_state, state);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct RequiredReturnAddress<'e, E: ExecutionState<'e>> {
+    first: Option<E::VirtualAddress>,
+    result: Option<E::VirtualAddress>,
+    min_addr: E::VirtualAddress,
+    max_addr: E::VirtualAddress,
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RequiredReturnAddress<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        self.min_addr = ctrl.address().min(self.min_addr);
+        self.max_addr = ctrl.address().max(self.max_addr);
+        match *op {
+            Operation::Jump { condition, .. } => {
+                let condition = ctrl.resolve(condition);
+                let addr = condition.if_arithmetic_gt()
+                    .and_either_other(|x| x.if_custom())
+                    .and_then(|x| x.if_constant());
+                if let Some(addr) = addr {
+                    match self.first {
+                        None => self.first = Some(E::VirtualAddress::from_u64(addr)),
+                        Some(first) => {
+                            let second = E::VirtualAddress::from_u64(addr);
+                            let mut result = if first < second {
+                                first + 0x80
+                            } else {
+                                second + 0x80
+                            };
+                            if result >= self.min_addr && result < self.max_addr {
+                                result = self.max_addr + 0x40;
+                            }
+                            self.result = Some(result);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
     }
 }
 

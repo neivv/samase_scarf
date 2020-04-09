@@ -792,7 +792,62 @@ fn everything_1233c() {
 
 #[test]
 fn everything_1233d() {
-    test_with_extra_checks(Path::new("1233d.exe"), |_ctx ,_analysis| {
+    test_with_extra_checks(Path::new("1233d.exe"), |ctx, analysis| {
+        let sprites = analysis.sprites();
+        let (x, _, _) = sprites.sprite_x_position.unwrap();
+        let (y, _, _) = sprites.sprite_y_position.unwrap();
+        let x_low = ctx.and_const(x, 0xffff);
+        let y_low = ctx.and_const(y, 0xffff);
+        let low = ctx.and_const(
+            ctx.xor(
+                ctx.xor(
+                    ctx.custom(0),
+                    ctx.mem16(ctx.add_const(ctx.mem32(ctx.constant(0x30)), 0x10)),
+                ),
+                ctx.constant(0xb653),
+            ),
+            0xffff,
+        );
+        assert_eq!(x_low, low);
+        assert_eq!(y_low, low);
+        let x_high = ctx.and_const(ctx.rsh_const(x, 0x10), 0xffff);
+        let y_high = ctx.and_const(ctx.rsh_const(y, 0x10), 0xffff);
+        let high = ctx.xor(
+            ctx.xor(
+                ctx.and_const(
+                    ctx.xor(
+                        ctx.custom(0),
+                        ctx.mem16(ctx.add_const(ctx.mem32(ctx.constant(0x30)), 0x10)),
+                    ),
+                    0xffff,
+                ),
+                ctx.and_const(
+                    ctx.xor(
+                        ctx.xor(
+                            ctx.xor(
+                                ctx.add_const(
+                                    ctx.mul_const(
+                                        ctx.custom(0),
+                                        0x2,
+                                    ),
+                                    0x8800,
+                                ),
+                                ctx.mem16(ctx.add_const(ctx.mem32(ctx.constant(0x30)), 0x12)),
+                            ),
+                            ctx.mem16(ctx.add_const(ctx.mem32(ctx.constant(0x30)), 0x10)),
+                        ),
+                        ctx.xor(
+                            ctx.mem16(ctx.constant(0xead6ab)),
+                            ctx.mem16(ctx.constant(0xeada1d)),
+                        ),
+                    ),
+                    0xffff,
+                ),
+            ),
+            ctx.constant(0xf2a1),
+        );
+        assert_eq!(x_high, high);
+        assert_eq!(y_high, high);
     })
 }
 
@@ -1011,6 +1066,29 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     check_global_struct_opt(sprites.first_free_lone, &binary, "first free lone sprite");
     check_global_struct_opt(sprites.last_free_lone, &binary, "first free lone sprite");
     assert!(sprites.create_lone_sprite.is_some());
+    let (x, x_off, x_size) = sprites.sprite_x_position.unwrap();
+    let (y, y_off, y_size) = sprites.sprite_y_position.unwrap();
+    let old_sprite_pos = minor_version < 23 ||
+        (minor_version == 23 && patch_version < 3) ||
+        filename_str == "1233a" ||
+        filename_str == "1233b";
+    if old_sprite_pos {
+        assert_eq!(x_off, 0x14);
+        assert_eq!(y_off, 0x16);
+        assert_eq!(x, ctx.custom(0));
+        assert_eq!(y, ctx.custom(0));
+        assert_eq!(x_size, scarf::MemAccessSize::Mem16);
+        assert_eq!(y_size, scarf::MemAccessSize::Mem16);
+    } else {
+        assert_eq!(x_off, 0x14);
+        assert_eq!(y_off, 0x18);
+        assert_ne!(x, ctx.custom(0));
+        assert_ne!(y, ctx.custom(0));
+        assert_eq!(x_size, scarf::MemAccessSize::Mem32);
+        assert_eq!(y_size, scarf::MemAccessSize::Mem32);
+        // These seem to use same key always
+        assert_eq!(x, y);
+    }
 
     let euds = analysis.eud_table();
     if minor_version < 21 {
