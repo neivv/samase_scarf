@@ -1336,6 +1336,15 @@ pub enum EntryOf<R> {
     Stop,
 }
 
+impl<R> EntryOf<R> {
+    pub fn is_ok(&self) -> bool {
+        match self {
+            EntryOf::Ok(..) => true,
+            EntryOf::Retry | EntryOf::Stop => false,
+        }
+    }
+}
+
 #[derive(Debug)]
 enum EntryOfResult<R, Va: VirtualAddressTrait> {
     /// Found the result which was looked for, as well as the entry

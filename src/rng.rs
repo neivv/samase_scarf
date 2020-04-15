@@ -7,7 +7,7 @@ use scarf::{BinaryFile, Operation, Operand, MemAccessSize, DestOperand};
 
 use crate::{
     Analysis, ArgCache, DatType, OptionExt, find_functions_using_global, single_result_assign,
-    if_callable_const,
+    if_callable_const, EntryOf, entry_of_until,
 };
 
 #[derive(Clone, Debug)]
@@ -34,22 +34,27 @@ pub fn rng<'e, E: ExecutionState<'e>>(
     };
     spawn_direction_refs.sort_by_key(|x| x.func_entry);
     spawn_direction_refs.dedup_by_key(|x| x.func_entry);
+    let functions = analysis.functions();
     let arg_cache = &analysis.arg_cache;
 
     let mut result = None;
     for global_ref in spawn_direction_refs.iter() {
-        let mut analysis = FuncAnalysis::new(binary, ctx, global_ref.func_entry);
-        let mut analyzer = FindRng {
-            jump_conds: Vec::new(),
-            result: None,
-            no_jump_cond: None,
-            arg_cache,
-            is_inlining: false,
-            binary,
-            branch_start: E::VirtualAddress::from_u64(0),
-        };
-        analysis.analyze(&mut analyzer);
-        if single_result_assign(analyzer.result, &mut result) {
+        let val = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            let mut analyzer = FindRng {
+                jump_conds: Vec::new(),
+                result: EntryOf::Retry,
+                no_jump_cond: None,
+                arg_cache,
+                is_inlining: false,
+                binary,
+                use_address: global_ref.use_address,
+                branch_start: E::VirtualAddress::from_u64(0),
+            };
+            analysis.analyze(&mut analyzer);
+            analyzer.result
+        }).into_option();
+        if single_result_assign(val, &mut result) {
             break;
         }
     }
@@ -67,11 +72,12 @@ pub fn rng<'e, E: ExecutionState<'e>>(
 
 struct FindRng<'a, 'e, E: ExecutionState<'e>> {
     arg_cache: &'a ArgCache<'e, E>,
-    result: Option<(Operand<'e>, Operand<'e>)>,
+    result: EntryOf<(Operand<'e>, Operand<'e>)>,
     no_jump_cond: Option<Operand<'e>>,
     jump_conds: Vec<(E::VirtualAddress, Operand<'e>)>,
     is_inlining: bool,
     binary: &'e BinaryFile<E::VirtualAddress>,
+    use_address: E::VirtualAddress,
     branch_start: E::VirtualAddress,
 }
 
@@ -79,6 +85,13 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if ctrl.address() <= self.use_address &&
+            ctrl.current_instruction_end() > self.use_address
+        {
+            if !self.result.is_ok() {
+                self.result = EntryOf::Stop;
+            }
+        }
         match *op {
             Operation::Call(dest) => {
                 if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
@@ -90,7 +103,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
                             ctrl.analyze_with_current_state(self, dest);
                             self.is_inlining = false;
                             self.jump_conds = jump_conds;
-                            if self.result.is_some() && !crate::test_assertions() {
+                            if let EntryOf::Ok(..) = self.result {
                                 ctrl.end_analysis();
                             }
                         }
@@ -119,9 +132,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
                                 let dest = ctrl.resolve(mem.address);
                                 let ctx = ctrl.ctx();
                                 let val = (ctx.mem32(dest), rng_enable.clone());
-                                if single_result_assign(Some(val), &mut self.result) {
-                                    ctrl.end_analysis();
-                                }
+                                self.result = EntryOf::Ok(val);
+                                ctrl.end_analysis();
                             }
                         }
                     }

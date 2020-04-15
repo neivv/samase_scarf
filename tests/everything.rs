@@ -851,6 +851,15 @@ fn everything_1233d() {
     })
 }
 
+#[test]
+fn everything_1233e() {
+    test_with_extra_checks(Path::new("1233e.exe"), |ctx ,analysis| {
+        let rng = analysis.rng();
+        assert_eq!(rng.seed.unwrap(), ctx.mem32(ctx.constant(0x10A11C0)));
+        assert_eq!(rng.enable.unwrap(), ctx.mem32(ctx.constant(0x10A15D0)));
+    })
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
 }
