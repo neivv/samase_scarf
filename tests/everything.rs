@@ -857,6 +857,9 @@ fn everything_1233e() {
         let rng = analysis.rng();
         assert_eq!(rng.seed.unwrap(), ctx.mem32(ctx.constant(0x10A11C0)));
         assert_eq!(rng.enable.unwrap(), ctx.mem32(ctx.constant(0x10A15D0)));
+
+        let fonts = analysis.fonts();
+        assert_eq!(fonts.unwrap(), ctx.constant(0x10D1A5C));
     })
 }
 
@@ -1252,6 +1255,9 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     assert!(unit_creation.create_unit.is_some());
     assert!(unit_creation.finish_unit_pre.is_some());
     assert!(unit_creation.finish_unit_post.is_some());
+
+    let fonts = analysis.fonts();
+    check_global_struct_opt(fonts, &binary, "fonts");
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

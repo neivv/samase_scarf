@@ -37,6 +37,7 @@ mod rng;
 mod step_order;
 mod sprites;
 mod switch;
+mod text;
 mod units;
 mod vtables;
 
@@ -195,6 +196,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     misc_clientside: Cached<Rc<MiscClientSide<'e>>>,
     spawn_dialog: Cached<Option<E::VirtualAddress>>,
     unit_creation: Cached<Rc<UnitCreation<E::VirtualAddress>>>,
+    fonts: Cached<Option<Operand<'e>>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -436,6 +438,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             misc_clientside: Default::default(),
             spawn_dialog: Default::default(),
             unit_creation: Default::default(),
+            fonts: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1227,6 +1230,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         }
         let result = Rc::new(units::unit_creation(self));
         self.unit_creation.cache(&result);
+        result
+    }
+
+    pub fn fonts(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.fonts.cached() {
+            return cached;
+        }
+        let result = text::fonts(self);
+        self.fonts.cache(&result);
         result
     }
 }

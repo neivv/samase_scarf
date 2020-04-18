@@ -28,13 +28,7 @@ pub fn campaigns<'e, E: ExecutionState<'e>>(
     let va_size = <E::VirtualAddress as VirtualAddress>::SIZE;
     let candidates = zerg_campaign_refs.iter().flat_map(|&zref| {
         let address = rdata.virtual_address + zref.0;
-        if va_size == 4 {
-            let bytes = (address.as_u64() as u32).to_le_bytes();
-            crate::find_bytes(&data.data, &bytes[..])
-        } else {
-            let bytes = address.as_u64().to_le_bytes();
-            crate::find_bytes(&data.data, &bytes[..])
-        }
+        crate::find_address_refs(&data.data, address)
     }).collect::<Vec<_>>();
     let result = candidates.iter()
         .map(|&rva| data.virtual_address + rva.0)

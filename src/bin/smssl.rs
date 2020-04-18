@@ -285,6 +285,9 @@ fn main() {
     println!("finish_unit_pre: {:?}", unit_creation.finish_unit_pre);
     println!("finish_unit_post: {:?}", unit_creation.finish_unit_post);
 
+    let fonts = analysis.fonts();
+    println!("fonts: {}", format_op_operand(fonts));
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {
