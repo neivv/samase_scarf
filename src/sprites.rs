@@ -7,7 +7,9 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{MemAccess, Register};
 
-use crate::{ArgCache, Analysis, OptionExt, single_result_assign};
+use crate::{
+    ArgCache, Analysis, OptionExt, single_result_assign, entry_of_until, EntryOf, string_refs,
+};
 
 pub struct Sprites<'e, Va: VirtualAddress> {
     pub sprite_hlines: Option<Operand<'e>>,
@@ -29,6 +31,13 @@ pub struct FowSprites<'e> {
     pub last_active: Option<Operand<'e>>,
     pub first_free: Option<Operand<'e>>,
     pub last_free: Option<Operand<'e>>,
+}
+
+#[derive(Clone)]
+pub struct InitSprites<'e, Va: VirtualAddress> {
+    pub init_sprites: Option<Va>,
+    // U32 is sprite struct size
+    pub sprites: Option<(Operand<'e>, u32)>,
 }
 
 // The functions can be inlined, so first lone can be found during either NukeTrack or
@@ -1018,5 +1027,146 @@ impl<'e, E: ExecutionState<'e>> FowSpriteAnalyzer<'e, E> {
             return self.active.tail.is_none();
         }
         false
+    }
+}
+
+pub fn init_sprites<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> InitSprites<'e, E::VirtualAddress> {
+    let mut result = InitSprites {
+        init_sprites: None,
+        sprites: None,
+    };
+    let sprites = analysis.sprites();
+    let first_free_sprite = match sprites.first_free_sprite {
+        Some(s) => s,
+        None => return result,
+    };
+    let last_free_sprite = match sprites.last_free_sprite {
+        Some(s) => s,
+        None => return result,
+    };
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let functions = analysis.functions();
+    let str_refs = string_refs(binary, analysis, b"arr\\sprites.dat\0");
+    let arg_cache = &analysis.arg_cache;
+    for str_ref in str_refs {
+        let val = entry_of_until(binary, &functions, str_ref.use_address, |entry| {
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            let mut analyzer = InitSpritesAnalyzer::<E> {
+                result: &mut result,
+                inlining: false,
+                use_address: str_ref.use_address,
+                str_ref_found: false,
+                first_free_sprite,
+                last_free_sprite,
+                arg_cache,
+                array_candidates: Vec::new(),
+            };
+            analysis.analyze(&mut analyzer);
+            if analyzer.str_ref_found {
+                if analyzer.result.sprites.is_some() {
+                    EntryOf::Ok(())
+                } else {
+                    EntryOf::Stop
+                }
+            } else {
+                EntryOf::Retry
+            }
+        }).into_option_with_entry();
+        if result.sprites.is_some() {
+            if let Some((addr, ())) = val {
+                result.init_sprites = Some(addr);
+                break;
+            }
+        }
+    }
+    result
+}
+
+struct InitSpritesAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut InitSprites<'e, E::VirtualAddress>,
+    inlining: bool,
+    use_address: E::VirtualAddress,
+    str_ref_found: bool,
+    first_free_sprite: Operand<'e>,
+    last_free_sprite: Operand<'e>,
+    arg_cache: &'a ArgCache<'e, E>,
+    array_candidates: Vec<(Operand<'e>, Operand<'e>)>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for InitSpritesAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.use_address >= ctrl.address() &&
+            self.use_address < ctrl.current_instruction_end()
+        {
+            self.str_ref_found = true;
+        }
+        match *op {
+            Operation::Call(to) => {
+                if !self.inlining {
+                    if let Some(dest) = ctrl.resolve(to).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let should_inline = arg2 == self.last_free_sprite;
+                        if should_inline {
+                            ctrl.analyze_with_current_state(self, dest);
+                            if self.result.sprites.is_some() {
+                                ctrl.end_analysis();
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            Operation::Move(DestOperand::Memory(mem), value, None) => {
+                let value = ctrl.resolve(value);
+                let dest = ctrl.resolve(mem.address);
+                // Check for [first_free_sprite].prev = sprite_array + 1 * sprite_size
+                let dest_ok = self.array_candidates.iter().any(|&(_, next)| dest == next);
+                if !dest_ok {
+                    // Skip over initial [first_free_sprite] = &sprite_array[0]
+                    if dest == self.first_free_sprite {
+                        let ctx = ctrl.ctx();
+                        let next_value = ctx.add_const(value, E::VirtualAddress::SIZE as u64);
+                        self.array_candidates.push((value, next_value));
+                    }
+                    return;
+                }
+                let base_offset = value.if_arithmetic_add()
+                    .and_then(|(l, r)| {
+                        let offset = r.if_constant().filter(|&c| c > 0x20 && c < 0x80)?;
+                        if self.array_candidates.iter().any(|&cand| cand.0 == l) {
+                            Some((l, offset as u32))
+                        } else {
+                            None
+                        }
+                    })
+                    .or_else(|| {
+                        let val = value.if_constant()?;
+                        self.array_candidates.iter()
+                            .filter_map(|&(op, _)| {
+                                let base = op.if_constant()?;
+                                if val > base {
+                                    let offset = val - base;
+                                    if offset > 0x20 && offset < 0x80 {
+                                        return Some((op, offset as u32));
+                                    }
+                                }
+                                None
+                            })
+                            .next()
+                    });
+                if let Some((base, offset)) = base_offset {
+                    self.result.sprites = Some((base, offset));
+                    ctrl.end_analysis();
+                    return;
+                }
+            }
+            _ => (),
+        }
     }
 }

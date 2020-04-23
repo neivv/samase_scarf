@@ -288,6 +288,11 @@ fn main() {
     let fonts = analysis.fonts();
     println!("fonts: {}", format_op_operand(fonts));
 
+    println!("init_sprites: {:?}", analysis.init_sprites());
+    let sprite_array = analysis.sprite_array();
+    println!("sprite_array: {}", format_op_operand(sprite_array.map(|x| x.0)));
+    println!("sprite_struct_size: {:?}", sprite_array.map(|x| format!("0x{:x}", x.1)));
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {

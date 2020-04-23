@@ -17,7 +17,12 @@ fn everything_1207() {
 
 #[test]
 fn everything_1208() {
-    test(Path::new("1208.exe"));
+    test_with_extra_checks(Path::new("1208.exe"), |ctx, analysis| {
+        let sprite_array = analysis.sprite_array().unwrap().0;
+        assert_eq!(sprite_array, ctx.constant(0x00E7E820));
+        let init_sprites = analysis.init_sprites().unwrap();
+        assert_eq!(init_sprites.0, 0x00666040);
+    });
 }
 
 #[test]
@@ -865,7 +870,11 @@ fn everything_1233e() {
 
 #[test]
 fn everything_1233f() {
-    test_with_extra_checks(Path::new("1233f.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1233f.exe"), |ctx, analysis| {
+        let sprite_array = analysis.sprite_array().unwrap().0;
+        assert_eq!(sprite_array, ctx.mem32(ctx.constant(0xeb6098)));
+        let init_sprites = analysis.init_sprites().unwrap();
+        assert_eq!(init_sprites.0, 0x0056C360);
     })
 }
 
@@ -886,7 +895,15 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     let mut analysis = samase_scarf::Analysis::new(&binary, ctx);
 
     f(ctx, &mut analysis);
+    test_nongeneric(filename, ctx, &binary, &mut analysis);
+}
 
+fn test_nongeneric<'e>(
+    filename: &Path,
+    ctx: OperandCtx<'e>,
+    binary: &'e scarf::BinaryFile<VirtualAddress>,
+    analysis: &mut samase_scarf::Analysis<'e, ExecutionStateX86<'e>>,
+) {
     let results = analysis.file_hook();
     assert_eq!(results.len(), 1);
     let results = analysis.firegraft_addresses();
@@ -962,36 +979,36 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     let rng = analysis.rng();
     assert!(rng.seed.is_some());
     assert!(rng.enable.is_some());
-    check_global(rng.seed.unwrap(), &binary, "rng seed");
-    check_global(rng.enable.unwrap(), &binary, "rng enable");
+    check_global(rng.seed.unwrap(), binary, "rng seed");
+    check_global(rng.enable.unwrap(), binary, "rng enable");
     assert_ne!(rng.seed.unwrap(), rng.enable.unwrap());
     let step_objects = analysis.step_objects();
     assert!(step_objects.is_some());
     let game = analysis.game();
     assert!(game.is_some());
-    check_game(game.unwrap(), &binary, "game");
+    check_game(game.unwrap(), binary, "game");
     let player_ai = analysis.player_ai();
     assert!(player_ai.is_some());
-    check_global_struct(player_ai.unwrap(), &binary, "player ai");
+    check_global_struct(player_ai.unwrap(), binary, "player ai");
     let regions = analysis.regions();
     assert!(regions.get_region.is_some());
     assert!(regions.ai_regions.is_some());
     assert!(regions.change_ai_region_state.is_some());
-    check_global_struct(regions.ai_regions.unwrap(), &binary, "ai regions");
+    check_global_struct(regions.ai_regions.unwrap(), binary, "ai regions");
     let pathing = analysis.pathing().unwrap();
-    check_global(pathing, &binary, "pathing");
+    check_global(pathing, binary, "pathing");
 
     let active_hidden_units = analysis.active_hidden_units();
     assert!(active_hidden_units.first_active_unit.is_some());
     assert!(active_hidden_units.first_hidden_unit.is_some());
     check_global(
         active_hidden_units.first_active_unit.unwrap(),
-        &binary,
+        binary,
         "first active unit",
     );
     check_global(
         active_hidden_units.first_hidden_unit.unwrap(),
-        &binary,
+        binary,
         "first hidden unit",
     );
     let order_issuing = analysis.order_issuing();
@@ -1002,16 +1019,16 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     let commands = analysis.process_commands();
     assert!(commands.process_commands.is_some());
     assert!(commands.storm_command_user.is_some());
-    check_global(commands.storm_command_user.unwrap(), &binary, "storm_command_user");
+    check_global(commands.storm_command_user.unwrap(), binary, "storm_command_user");
     let command_user = analysis.command_user().unwrap();
-    check_global(command_user, &binary, "command_user");
+    check_global(command_user, binary, "command_user");
     let selections = analysis.selections();
     let unique_command_user = selections.unique_command_user.unwrap();
-    check_global(unique_command_user, &binary, "unique_command_user");
-    check_global_struct(selections.selections.unwrap(), &binary, "selections");
+    check_global(unique_command_user, binary, "unique_command_user");
+    check_global_struct(selections.selections.unwrap(), binary, "selections");
 
     let is_replay = analysis.is_replay().unwrap();
-    check_global(is_replay, &binary, "is_replay");
+    check_global(is_replay, binary, "is_replay");
 
     let lobby_commands = analysis.process_lobby_commands();
     assert!(lobby_commands.is_some());
@@ -1043,49 +1060,60 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     let init_game = analysis.init_game();
     assert!(init_game.init_game.is_some());
     assert!(init_game.loaded_save.is_some());
-    check_global(init_game.loaded_save.unwrap(), &binary, "loaded save");
+    check_global(init_game.loaded_save.unwrap(), binary, "loaded save");
 
     let command_lengths = analysis.command_lengths();
     assert!(command_lengths.len() >= 0x59);
 
     let units = analysis.units().unwrap();
     if extended_limits {
-        check_global(units, &binary, "units");
+        check_global(units, binary, "units");
     } else {
-        check_global_struct(units, &binary, "units");
+        check_global_struct(units, binary, "units");
     }
 
     let rclick = analysis.game_screen_rclick();
     assert!(rclick.game_screen_rclick.is_some());
-    check_global_struct(rclick.client_selection.unwrap(), &binary, "client selection");
+    check_global_struct(rclick.client_selection.unwrap(), binary, "client selection");
 
     let first_ai_script = analysis.first_ai_script();
-    check_global(first_ai_script.unwrap(), &binary, "first ai script");
+    check_global(first_ai_script.unwrap(), binary, "first ai script");
 
     let guard_ai = analysis.first_guard_ai();
-    check_global_struct(guard_ai.unwrap(), &binary, "first guard ai");
+    check_global_struct(guard_ai.unwrap(), binary, "first guard ai");
 
     let towns = analysis.player_ai_towns();
-    check_global_struct(towns.unwrap(), &binary, "towns");
+    check_global_struct(towns.unwrap(), binary, "towns");
 
     let iscript = analysis.step_iscript();
     assert!(iscript.step_fn.is_some());
     assert!(iscript.script_operand_at_switch.is_some());
     assert!(iscript.opcode_check.is_some());
-    check_global(iscript.iscript_bin.unwrap(), &binary, "iscript_bin");
+    check_global(iscript.iscript_bin.unwrap(), binary, "iscript_bin");
 
     let sprites = analysis.sprites();
-    check_global_struct_opt(sprites.sprite_hlines, &binary, "sprite hlines");
-    check_global_struct_opt(sprites.sprite_hlines_end, &binary, "sprite hlines end");
-    check_global_struct_opt(sprites.first_free_sprite, &binary, "first free sprite");
-    check_global_struct_opt(sprites.last_free_sprite, &binary, "last free sprite");
-    check_global_struct_opt(sprites.first_lone, &binary, "first lone sprite");
-    check_global_struct_opt(sprites.last_lone, &binary, "last lone sprite");
-    check_global_struct_opt(sprites.first_free_lone, &binary, "first free lone sprite");
-    check_global_struct_opt(sprites.last_free_lone, &binary, "first free lone sprite");
+    check_global_struct_opt(sprites.sprite_hlines, binary, "sprite hlines");
+    check_global_struct_opt(sprites.sprite_hlines_end, binary, "sprite hlines end");
+    check_global_struct_opt(sprites.first_free_sprite, binary, "first free sprite");
+    check_global_struct_opt(sprites.last_free_sprite, binary, "last free sprite");
+    check_global_struct_opt(sprites.first_lone, binary, "first lone sprite");
+    check_global_struct_opt(sprites.last_lone, binary, "last lone sprite");
+    check_global_struct_opt(sprites.first_free_lone, binary, "first free lone sprite");
+    check_global_struct_opt(sprites.last_free_lone, binary, "first free lone sprite");
     assert!(sprites.create_lone_sprite.is_some());
     let (x, x_off, x_size) = sprites.sprite_x_position.unwrap();
     let (y, y_off, y_size) = sprites.sprite_y_position.unwrap();
+    let init_sprites = analysis.init_sprites();
+    assert!(init_sprites.is_some());
+    let (sprite_array, sprite_size) = analysis.sprite_array().unwrap();
+    if extended_limits {
+        // Allocated behind a pointer
+        check_global(sprite_array, binary, "sprite_array");
+    } else {
+        // Static array
+        check_global_struct(sprite_array, binary, "sprite_array");
+    }
+
     let old_sprite_pos = minor_version < 23 ||
         (minor_version == 23 && patch_version < 3) ||
         filename_str == "1233a" ||
@@ -1097,6 +1125,7 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
         assert_eq!(y, ctx.custom(0));
         assert_eq!(x_size, scarf::MemAccessSize::Mem16);
         assert_eq!(y_size, scarf::MemAccessSize::Mem16);
+        assert_eq!(sprite_size, 0x24);
     } else {
         assert_eq!(x_off, 0x14);
         assert_eq!(y_off, 0x18);
@@ -1106,6 +1135,7 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
         assert_eq!(y_size, scarf::MemAccessSize::Mem32);
         // These seem to use same key always
         assert_eq!(x, y);
+        assert_eq!(sprite_size, 0x28);
     }
 
     let euds = analysis.eud_table();
@@ -1129,11 +1159,11 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     }
 
     let map_tile_flags = analysis.map_tile_flags();
-    check_global(map_tile_flags.map_tile_flags.unwrap(), &binary, "map_tile_flags");
+    check_global(map_tile_flags.map_tile_flags.unwrap(), binary, "map_tile_flags");
     assert!(map_tile_flags.update_visibility_point.is_some());
 
     let players = analysis.players();
-    check_game(players.unwrap(), &binary, "players");
+    check_game(players.unwrap(), binary, "players");
 
     let draw = analysis.draw_image();
     assert!(draw.is_some());
@@ -1146,18 +1176,18 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     }
 
     let local_player_id = analysis.local_player_id();
-    check_global(local_player_id.unwrap(), &binary, "local_player_id");
+    check_global(local_player_id.unwrap(), binary, "local_player_id");
     let bullets = analysis.bullet_creation();
-    check_global_struct_opt(bullets.first_free_bullet, &binary, "first free bullet");
-    check_global_struct_opt(bullets.last_free_bullet, &binary, "last free bullet");
-    check_global_struct_opt(bullets.first_active_bullet, &binary, "first active bullet");
-    check_global_struct_opt(bullets.last_active_bullet, &binary, "last active bullet");
-    check_global(bullets.active_iscript_unit.unwrap(), &binary, "active iscript unit");
+    check_global_struct_opt(bullets.first_free_bullet, binary, "first free bullet");
+    check_global_struct_opt(bullets.last_free_bullet, binary, "last free bullet");
+    check_global_struct_opt(bullets.first_active_bullet, binary, "first active bullet");
+    check_global_struct_opt(bullets.last_active_bullet, binary, "last active bullet");
+    check_global(bullets.active_iscript_unit.unwrap(), binary, "active iscript unit");
     assert!(bullets.create_bullet.is_some());
 
     let net_players = analysis.net_players();
     let (players, size) = net_players.net_players.clone().unwrap();
-    check_global_struct(players, &binary, "net players");
+    check_global_struct(players, binary, "net players");
     assert_eq!(size, 0x68, "sizeof NetPlayer");
     assert!(net_players.init_net_player.is_some());
     let play_smk = analysis.play_smk();
@@ -1166,12 +1196,12 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     assert!(game_init.sc_main.is_some());
     assert!(game_init.mainmenu_entry_hook.is_some());
     assert!(game_init.game_loop.is_some());
-    check_global(game_init.scmain_state.unwrap(), &binary, "scmain_state");
+    check_global(game_init.scmain_state.unwrap(), binary, "scmain_state");
 
     let add_overlay_iscript = analysis.add_overlay_iscript();
     assert!(add_overlay_iscript.is_some());
     let campaigns = analysis.campaigns();
-    check_global_struct_opt(campaigns, &binary, "campaigns");
+    check_global_struct_opt(campaigns, binary, "campaigns");
     let run_dialog = analysis.run_dialog();
     assert!(run_dialog.is_some());
     let spawn_dialog = analysis.spawn_dialog();
@@ -1183,15 +1213,15 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     assert!(is_outside_game_screen.is_some());
 
     let coords = analysis.game_coord_conversion();
-    check_global(coords.screen_x.unwrap(), &binary, "screen_x");
-    check_global(coords.screen_y.unwrap(), &binary, "screen_y");
-    check_global(coords.scale.unwrap(), &binary, "ui_scale");
+    check_global(coords.screen_x.unwrap(), binary, "screen_x");
+    check_global(coords.screen_y.unwrap(), binary, "screen_y");
+    check_global(coords.scale.unwrap(), binary, "ui_scale");
 
     let fow = analysis.fow_sprites();
-    check_global_struct_opt(fow.first_active, &binary, "first fow sprite");
-    check_global_struct_opt(fow.last_active, &binary, "last fow sprite");
-    check_global_struct_opt(fow.first_free, &binary, "first free fow sprite");
-    check_global_struct_opt(fow.last_free, &binary, "first free fow sprite");
+    check_global_struct_opt(fow.first_active, binary, "first fow sprite");
+    check_global_struct_opt(fow.last_active, binary, "last fow sprite");
+    check_global_struct_opt(fow.first_free, binary, "first free fow sprite");
+    check_global_struct_opt(fow.last_free, binary, "first free fow sprite");
 
     let init_map_from_path = analysis.init_map_from_path();
     assert!(init_map_from_path.is_some());
@@ -1200,48 +1230,48 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
 
     let start = analysis.single_player_start();
     assert!(start.single_player_start.is_some());
-    check_global(start.local_storm_player_id.unwrap(), &binary, "local storm player id");
-    check_global(start.local_unique_player_id.unwrap(), &binary, "local uniq player id");
-    check_global_struct_opt(start.net_player_to_game, &binary, "net player to game");
-    check_global_struct_opt(start.net_player_to_unique, &binary, "net player to uniq");
-    check_global_struct_opt(start.game_data, &binary, "game data");
-    check_global_struct_opt(start.skins, &binary, "skins");
-    check_global_struct_opt(start.player_skins, &binary, "player skins");
+    check_global(start.local_storm_player_id.unwrap(), binary, "local storm player id");
+    check_global(start.local_unique_player_id.unwrap(), binary, "local uniq player id");
+    check_global_struct_opt(start.net_player_to_game, binary, "net player to game");
+    check_global_struct_opt(start.net_player_to_unique, binary, "net player to uniq");
+    check_global_struct_opt(start.game_data, binary, "game data");
+    check_global_struct_opt(start.skins, binary, "skins");
+    check_global_struct_opt(start.player_skins, binary, "player skins");
     assert_eq!(start.skins_size, 0x15e);
 
     let sel = analysis.select_map_entry();
     assert!(sel.select_map_entry.is_some());
-    check_global(sel.is_multiplayer.unwrap(), &binary, "is_multiplayer");
+    check_global(sel.is_multiplayer.unwrap(), binary, "is_multiplayer");
 
     let load_images = analysis.load_images();
     assert!(load_images.is_some());
     let images_loaded = analysis.images_loaded();
-    check_global(images_loaded.unwrap(), &binary, "images loaded");
+    check_global(images_loaded.unwrap(), binary, "images loaded");
     let init_rtl = analysis.init_real_time_lighting();
     assert!(init_rtl.is_some());
     let local_player_name = analysis.local_player_name();
-    check_global_struct_opt(local_player_name, &binary, "local player name");
+    check_global_struct_opt(local_player_name, binary, "local player name");
 
     let step = analysis.step_network();
     assert!(step.step_network.is_some());
     assert!(step.receive_storm_turns.is_some());
-    check_game(step.menu_screen_id.unwrap(), &binary, "menu_screen_id");
-    check_global(step.network_ready.unwrap(), &binary, "network ready");
-    check_global_struct_opt(step.net_player_flags, &binary, "net player flags");
-    check_global_struct_opt(step.player_turns, &binary, "net player turns");
-    check_global_struct_opt(step.player_turns_size, &binary, "net player turns size");
+    check_game(step.menu_screen_id.unwrap(), binary, "menu_screen_id");
+    check_global(step.network_ready.unwrap(), binary, "network ready");
+    check_global_struct_opt(step.net_player_flags, binary, "net player flags");
+    check_global_struct_opt(step.player_turns, binary, "net player turns");
+    check_global_struct_opt(step.player_turns_size, binary, "net player turns size");
 
     let snp_definitions = analysis.snp_definitions();
     if minor_version < 23 || (minor_version == 23 && patch_version < 3) {
         let snp_definitions = snp_definitions.unwrap();
-        check_global_struct(snp_definitions.snp_definitions, &binary, "snp definitions");
+        check_global_struct(snp_definitions.snp_definitions, binary, "snp definitions");
         assert_eq!(snp_definitions.entry_size, 0x90);
     } else {
         assert!(snp_definitions.is_none());
     }
 
     let lobby_state = analysis.lobby_state();
-    check_global(lobby_state.unwrap(), &binary, "lobby state");
+    check_global(lobby_state.unwrap(), binary, "lobby state");
 
     let init_network = analysis.init_game_network();
     assert!(init_network.is_some());
@@ -1250,12 +1280,12 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     assert!(init_storm_networking.load_snp_list.is_some());
 
     let draw_cursor_marker = analysis.draw_cursor_marker();
-    check_global(draw_cursor_marker.unwrap(), &binary, "draw cursor marker");
+    check_global(draw_cursor_marker.unwrap(), binary, "draw cursor marker");
 
     let misc = analysis.misc_clientside();
-    check_global(misc.is_paused.unwrap(), &binary, "is_paused");
-    check_global(misc.is_placing_building.unwrap(), &binary, "is_placing_building");
-    check_global(misc.is_targeting.unwrap(), &binary, "is_targeting");
+    check_global(misc.is_paused.unwrap(), binary, "is_paused");
+    check_global(misc.is_placing_building.unwrap(), binary, "is_placing_building");
+    check_global(misc.is_targeting.unwrap(), binary, "is_targeting");
 
     let unit_creation = analysis.unit_creation();
     assert!(unit_creation.create_unit.is_some());
@@ -1263,7 +1293,7 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     assert!(unit_creation.finish_unit_post.is_some());
 
     let fonts = analysis.fonts();
-    check_global_struct_opt(fonts, &binary, "fonts");
+    check_global_struct_opt(fonts, binary, "fonts");
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

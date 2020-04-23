@@ -67,7 +67,7 @@ pub use crate::pathing::RegionRelated;
 pub use crate::players::NetPlayers;
 pub use crate::rng::Rng;
 pub use crate::step_order::{SecondaryOrderHook, StepOrderHiddenHook};
-pub use crate::sprites::{FowSprites, Sprites};
+pub use crate::sprites::{FowSprites, InitSprites, Sprites};
 pub use crate::units::{ActiveHiddenUnits, OrderIssuing, UnitCreation};
 
 use crate::switch::{CompleteSwitch, full_switch_info};
@@ -197,6 +197,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     spawn_dialog: Cached<Option<E::VirtualAddress>>,
     unit_creation: Cached<Rc<UnitCreation<E::VirtualAddress>>>,
     fonts: Cached<Option<Operand<'e>>>,
+    init_sprites: Cached<InitSprites<'e, E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -439,6 +440,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             spawn_dialog: Default::default(),
             unit_creation: Default::default(),
             fonts: Default::default(),
+            init_sprites: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1240,6 +1242,23 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         let result = text::fonts(self);
         self.fonts.cache(&result);
         result
+    }
+
+    fn init_sprites_etc(&mut self) -> InitSprites<'e, E::VirtualAddress> {
+        if let Some(cached) = self.init_sprites.cached() {
+            return cached;
+        }
+        let result = sprites::init_sprites(self);
+        self.init_sprites.cache(&result);
+        result
+    }
+
+    pub fn init_sprites(&mut self) -> Option<E::VirtualAddress> {
+        self.init_sprites_etc().init_sprites
+    }
+
+    pub fn sprite_array(&mut self) -> Option<(Operand<'e>, u32)> {
+        self.init_sprites_etc().sprites
     }
 }
 
