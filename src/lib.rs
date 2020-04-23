@@ -15,6 +15,7 @@ macro_rules! test_assert_eq {
     }
 }
 
+mod add_terms;
 mod ai;
 mod bullets;
 mod campaign;
@@ -34,6 +35,7 @@ mod pathing;
 mod players;
 mod renderer;
 mod rng;
+mod save;
 mod step_order;
 mod sprites;
 mod switch;
@@ -66,6 +68,7 @@ pub use crate::network::{InitStormNetworking, SnpDefinitions};
 pub use crate::pathing::RegionRelated;
 pub use crate::players::NetPlayers;
 pub use crate::rng::Rng;
+pub use crate::save::{SpriteSerialization};
 pub use crate::step_order::{SecondaryOrderHook, StepOrderHiddenHook};
 pub use crate::sprites::{FowSprites, InitSprites, Sprites};
 pub use crate::units::{ActiveHiddenUnits, OrderIssuing, UnitCreation};
@@ -198,6 +201,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     unit_creation: Cached<Rc<UnitCreation<E::VirtualAddress>>>,
     fonts: Cached<Option<Operand<'e>>>,
     init_sprites: Cached<InitSprites<'e, E::VirtualAddress>>,
+    sprite_serialization: Cached<SpriteSerialization<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -441,6 +445,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             unit_creation: Default::default(),
             fonts: Default::default(),
             init_sprites: Default::default(),
+            sprite_serialization: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1259,6 +1264,23 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn sprite_array(&mut self) -> Option<(Operand<'e>, u32)> {
         self.init_sprites_etc().sprites
+    }
+
+    fn sprite_serialization(&mut self) -> SpriteSerialization<E::VirtualAddress> {
+        if let Some(cached) = self.sprite_serialization.cached() {
+            return cached;
+        }
+        let result = save::sprite_serialization(self);
+        self.sprite_serialization.cache(&result);
+        result
+    }
+
+    pub fn serialize_sprites(&mut self) -> Option<E::VirtualAddress> {
+        self.sprite_serialization().serialize_sprites
+    }
+
+    pub fn deserialize_sprites(&mut self) -> Option<E::VirtualAddress> {
+        self.sprite_serialization().deserialize_sprites
     }
 }
 

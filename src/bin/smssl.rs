@@ -292,6 +292,8 @@ fn main() {
     let sprite_array = analysis.sprite_array();
     println!("sprite_array: {}", format_op_operand(sprite_array.map(|x| x.0)));
     println!("sprite_struct_size: {:?}", sprite_array.map(|x| format!("0x{:x}", x.1)));
+    println!("serialize_sprites: {:?}", analysis.serialize_sprites());
+    println!("deserialize_sprites: {:?}", analysis.deserialize_sprites());
 
     let undef = ctx.new_undef();
     println!();

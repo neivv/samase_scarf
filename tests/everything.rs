@@ -875,6 +875,10 @@ fn everything_1233f() {
         assert_eq!(sprite_array, ctx.mem32(ctx.constant(0xeb6098)));
         let init_sprites = analysis.init_sprites().unwrap();
         assert_eq!(init_sprites.0, 0x0056C360);
+        let serialize = analysis.serialize_sprites().unwrap();
+        assert_eq!(serialize.0, 0x0056CE40);
+        let deserialize = analysis.deserialize_sprites().unwrap();
+        assert_eq!(deserialize.0, 0x0056C5B0);
     })
 }
 
@@ -1291,6 +1295,9 @@ fn test_nongeneric<'e>(
     assert!(unit_creation.create_unit.is_some());
     assert!(unit_creation.finish_unit_pre.is_some());
     assert!(unit_creation.finish_unit_post.is_some());
+
+    assert!(analysis.serialize_sprites().is_some());
+    assert!(analysis.deserialize_sprites().is_some());
 
     let fonts = analysis.fonts();
     check_global_struct_opt(fonts, binary, "fonts");
