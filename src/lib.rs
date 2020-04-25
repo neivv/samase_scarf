@@ -61,6 +61,7 @@ pub use crate::commands::{ProcessCommands, Selections, StepNetwork};
 pub use crate::dat::{DatTablePtr};
 pub use crate::eud::EudTable;
 pub use crate::firegraft::RequirementTables;
+pub use crate::game::{Limits};
 pub use crate::game_init::{GameInit, InitGame, ImagesLoaded, SinglePlayerStart, SelectMapEntry};
 pub use crate::iscript::StepIscript;
 pub use crate::map::MapTileFlags;
@@ -202,6 +203,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     fonts: Cached<Option<Operand<'e>>>,
     init_sprites: Cached<InitSprites<'e, E::VirtualAddress>>,
     sprite_serialization: Cached<SpriteSerialization<E::VirtualAddress>>,
+    limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -446,6 +448,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             fonts: Default::default(),
             init_sprites: Default::default(),
             sprite_serialization: Default::default(),
+            limits: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1281,6 +1284,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn deserialize_sprites(&mut self) -> Option<E::VirtualAddress> {
         self.sprite_serialization().deserialize_sprites
+    }
+
+    pub fn limits(&mut self) -> Rc<Limits<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.limits.cached() {
+            return cached;
+        }
+        let result = Rc::new(game::limits(self));
+        self.limits.cache(&result);
+        result
     }
 }
 

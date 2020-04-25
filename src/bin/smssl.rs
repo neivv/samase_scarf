@@ -295,6 +295,22 @@ fn main() {
     println!("serialize_sprites: {:?}", analysis.serialize_sprites());
     println!("deserialize_sprites: {:?}", analysis.deserialize_sprites());
 
+    let limits = analysis.limits();
+    println!("set_limits: {:?}", limits.set_limits);
+    for (i, arr) in limits.arrays.iter().enumerate() {
+        let name = match i {
+            0 => "images".into(),
+            1 => "sprites".into(),
+            2 => "lone_sprites".into(),
+            3 => "units".into(),
+            4 => "bullets".into(),
+            5 => "orders".into(),
+            6 => "fow_sprites".into(),
+            i => format!("unk_{}", i * 4),
+        };
+        println!("limits.{}: {:?}", name, arr);
+    }
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {

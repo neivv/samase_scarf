@@ -4,8 +4,25 @@ use scarf::{BinaryFile, OperandCtx, Operand, DestOperand, Operation, MemAccessSi
 
 use crate::{
     Analysis, OptionExt, find_functions_using_global, find_callers, EntryOf,
-    single_result_assign, if_callable_const, entry_of_until,
+    single_result_assign, if_callable_const, entry_of_until, ArgCache,
 };
+
+#[derive(Clone)]
+pub struct Limits<'e, Va: VirtualAddress> {
+    pub set_limits: Option<Va>,
+    // These are vector<Object>, unlike sprites/units elsewhere which
+    // are Object pointer (These are `x` where sprites/units would be `Mem32[x]`)
+    // Also multiple arrays, no guarantees about which one is primary and which are auxillary
+    //
+    // First set of arrays is for limit struct offset 0 (images)
+    // second for offset 4 (sprites)
+    // and so on
+    //
+    // First u32 is addition, second multiplier
+    // (Some sprite arrays are resized to sprite_count + 1,
+    // unit arrays to unit_count * 2)
+    pub arrays: Vec<Vec<(Operand<'e>, u32, u32)>>,
+}
 
 pub fn step_objects<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
@@ -355,4 +372,312 @@ fn game_detect_check<'e>(ctx: OperandCtx<'e>, val: Operand<'e>) -> Option<Operan
                 }
             }
         }).next()
+}
+
+pub fn limits<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Limits<'e, E::VirtualAddress> {
+    let mut result = Limits {
+        set_limits: None,
+        arrays: Vec::with_capacity(7),
+    };
+    let game_loop = match analysis.game_init().game_loop {
+        Some(s) => s,
+        None => return result,
+    };
+
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let arg_cache = &analysis.arg_cache;
+
+    let mut analysis = FuncAnalysis::new(binary, ctx, game_loop);
+    let mut analyzer = FindSetLimits::<E> {
+        result: &mut result,
+        arg_cache,
+        game_loop_set_local_u32s: Vec::with_capacity(0x20),
+        binary,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct FindSetLimits<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut Limits<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    // Bits describing if a stack local has been written
+    // [0] & 0x1 == esp - 0
+    // [0] & 0x2 == esp - 4
+    // [0] & 0x4 == esp - 8
+    // [0] & 0x80 == esp - 1c
+    // [1] & 0x1 == esp - 20
+    // ...
+    // So index = offset / 0x20
+    // bit = (offset & 0x1f) / 4
+    // Used to check that set_limits should contain stack local with
+    // 7 u32s written
+    game_loop_set_local_u32s: Vec<u8>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+}
+
+struct SetLimitsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut Limits<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+    inlining_object_subfunc: bool,
+    func_initial_esp: Operand<'e>,
+    // The code does both `global_limits = arg1` and `global_limits = default_limits()`
+    // at set_limits (inline_depth == 0)
+    // We want to behave as if global_limits was only assigned arg1, so keep any
+    // global arg1 stores saved and force-reapply them on function calls
+    depth_0_arg1_global_stores: Vec<(Operand<'e>, Operand<'e>)>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetLimits<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        fn esp_offset<'e>(val: Operand<'e>) -> Option<u32> {
+            val.if_arithmetic_sub()
+                .filter(|&(l, _)| {
+                    // Allow esp - x and
+                    // ((esp - y) & 0xffff_fff0) - x
+                    l.if_register().filter(|r| r.0 == 4).is_some() ||
+                        l.if_arithmetic_and()
+                            .filter(|&(_, r)| r.if_constant().is_some())
+                            .and_then(|(l, _)| {
+                                l.if_arithmetic_sub()
+                                    .filter(|&(_, r)| r.if_constant().is_some())
+                                    .and_then(|(l, _)| l.if_register())
+                                    .or_else(|| l.if_register())
+                                    .filter(|r| r.0 == 4)
+                            })
+                            .is_some()
+                })
+                .and_then(|(_, r)| r.if_constant())
+                .map(|c| c as u32)
+        }
+
+        match *op {
+            Operation::Call(dest) => {
+                let dest = match ctrl.resolve(dest).if_constant() {
+                    Some(s) => E::VirtualAddress::from_u64(s),
+                    None => return,
+                };
+                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                if let Some(offset) = esp_offset(arg1).filter(|&x| x >= 6 * 4) {
+                    let u32_offset = offset / 4;
+                    if (0..7).all(|i| self.is_local_u32_set(u32_offset - i)) {
+                        let ctx = ctrl.ctx();
+                        let mut analysis = FuncAnalysis::new(self.binary, ctx, dest);
+                        let mut analyzer = SetLimitsAnalyzer::<E> {
+                            result: self.result,
+                            arg_cache: self.arg_cache,
+                            inline_depth: 0,
+                            func_initial_esp: ctx.register(4),
+                            inlining_object_subfunc: false,
+                            depth_0_arg1_global_stores: Vec::with_capacity(0x10),
+                        };
+                        analysis.analyze(&mut analyzer);
+                        let ok = self.result.arrays.iter().take(4).all(|x| !x.is_empty()) &&
+                            self.result.arrays.len() >= 4;
+                        if ok {
+                            self.result.set_limits = Some(dest);
+                            for arr in &mut self.result.arrays {
+                                arr.sort();
+                                arr.dedup();
+                            }
+                            ctrl.end_analysis();
+                        } else {
+                            self.result.arrays.clear();
+                        }
+                    } else {
+                        // Maybe a func which writes to arg1?
+                        for i in 0..7 {
+                            self.set_local_u32(u32_offset - i);
+                        }
+                    }
+                }
+            }
+            Operation::Move(DestOperand::Memory(mem), _, _) => {
+                let dest = ctrl.resolve(mem.address);
+                if let Some(offset) = esp_offset(dest) {
+                    let u32_offset = offset / 4;
+                    self.set_local_u32(u32_offset);
+                    if mem.size == MemAccessSize::Mem64 {
+                        self.set_local_u32(u32_offset + 1);
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> FindSetLimits<'a, 'e, E> {
+    fn is_local_u32_set(&self, offset: u32) -> bool {
+        let index = offset / 8;
+        let bit = offset & 7;
+        self.game_loop_set_local_u32s
+            .get(index as usize)
+            .cloned()
+            .map(|bits| bits & (1 << bit) != 0)
+            .unwrap_or(false)
+    }
+
+    fn set_local_u32(&mut self, offset: u32) {
+        let index = (offset / 8) as usize;
+        let bit = offset & 7;
+        if self.game_loop_set_local_u32s.len() <= index {
+            self.game_loop_set_local_u32s.resize(index + 1, 0u8);
+        }
+        self.game_loop_set_local_u32s[index] |= 1 << bit;
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetLimitsAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                let dest = match ctrl.resolve(dest).if_constant() {
+                    Some(s) => E::VirtualAddress::from_u64(s),
+                    None => return,
+                };
+                let ctx = ctrl.ctx();
+                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                let ecx = ctrl.resolve(ctx.register(1));
+                let mut inline = false;
+                if let Some((off, add, mul)) = self.arg1_off(arg1) {
+                    if ecx.if_constant().is_some() {
+                        if off & 3 != 0 {
+                            self.result.arrays.clear();
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        self.add_result(off, add, mul, ecx);
+                    } else {
+                        inline = true;
+                    }
+                }
+                if inline || self.inline_depth == 0 {
+                    if self.inline_depth < 3 {
+                        let exec_state = ctrl.exec_state();
+                        if self.inline_depth == 0 {
+                            for &(dest, value) in &self.depth_0_arg1_global_stores {
+                                exec_state.move_resolved(
+                                    &DestOperand::Memory(scarf::operand::MemAccess {
+                                        size: MemAccessSize::Mem32,
+                                        address: dest,
+                                    }),
+                                    value,
+                                );
+                            }
+                        }
+
+                        self.inline_depth += 1;
+                        let was_inlining_object_subfunc = self.inlining_object_subfunc;
+                        self.inlining_object_subfunc = inline;
+                        let esp = self.func_initial_esp;
+                        let ctx = ctrl.ctx();
+                        self.func_initial_esp = ctx.sub_const(
+                            ctrl.resolve(ctx.register(4)),
+                            E::VirtualAddress::SIZE as u64,
+                        );
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inlining_object_subfunc = was_inlining_object_subfunc;
+                        self.func_initial_esp = esp;
+                        self.inline_depth -= 1;
+                    }
+                }
+            }
+            Operation::Move(ref dest, value, None) => {
+                match dest {
+                    DestOperand::Register64(reg) => {
+                        if reg.0 == 5 && value.if_memory().is_some() {
+                            // Make pop ebp always be mov esp, orig_esp
+                            // even if current esp is considered unknown
+                            let ctx = ctrl.ctx();
+                            let exec_state = ctrl.exec_state();
+                            exec_state.move_resolved(
+                                &DestOperand::Register64(scarf::operand::Register(4)),
+                                ctx.sub_const(
+                                    self.func_initial_esp,
+                                    E::VirtualAddress::SIZE as u64,
+                                ),
+                            );
+                        }
+                    }
+                    DestOperand::Memory(mem) => {
+                        let value = ctrl.resolve(value);
+                        // Generally vector.resize(limits.x) is caught at call
+                        // but check also for inlined vector.size = limits.x
+                        if let Some((off, add, mul)) = self.arg1_off(value) {
+                            if off & 3 != 0 {
+                                return;
+                            }
+                            let dest = ctrl.resolve(mem.address);
+                            if dest.if_constant().is_some() {
+                                if self.inlining_object_subfunc {
+                                    let ctx = ctrl.ctx();
+                                    let vector =
+                                        ctx.sub_const(dest, E::VirtualAddress::SIZE as u64);
+                                    self.add_result(off, add, mul, vector);
+                                } else if self.inline_depth == 0 {
+                                    self.depth_0_arg1_global_stores.push((dest, value));
+                                }
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> SetLimitsAnalyzer<'a, 'e, E> {
+    fn arg1_off(&self, val: Operand<'e>) -> Option<(u32, u32, u32)> {
+        Some(val)
+            .map(|val| {
+                val.if_arithmetic_add()
+                    .and_then(|(l, r)| {
+                        r.if_constant().map(|c| (l, c as u32, 0))
+                    })
+                    .or_else(|| {
+                        val.if_arithmetic_mul()
+                            .and_then(|(l, r)| {
+                                r.if_constant().map(|c| (l, 0, c as u32))
+                            })
+                    })
+                    .unwrap_or_else(|| (val, 0, 0))
+            })
+            .and_then(|(x, add, mul)| {
+                x.if_mem32()
+                    .and_then(|x| {
+                        let self_arg1 = self.arg_cache.on_entry(0);
+                        x.if_arithmetic_add()
+                            .filter(|&(l, _)| l == self_arg1)
+                            .and_then(|(_, r)| r.if_constant())
+                            .or_else(|| {
+                                if x == self_arg1 {
+                                    Some(0)
+                                } else {
+                                    None
+                                }
+                            })
+                            .map(|x| (x as u32, add, mul))
+                    })
+            })
+    }
+
+    fn add_result(&mut self, off: u32, add: u32, mul: u32, value: Operand<'e>) {
+        let index = off as usize / 4;
+        let arrays = &mut self.result.arrays;
+        while arrays.len() <= index {
+            arrays.push(Vec::new());
+        }
+        arrays[index].push((value, add, mul));
+    }
 }

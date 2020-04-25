@@ -69,7 +69,23 @@ fn everything_12011b() {
 
 #[test]
 fn everything_1210() {
-    test(Path::new("1210.exe"));
+    test_with_extra_checks(Path::new("1210.exe"), |ctx, analysis| {
+        let limits = analysis.limits();
+        assert_eq!(limits.set_limits.unwrap().0, 0x005d85a0);
+        assert!(limits.arrays[0].iter().any(|x| *x == (ctx.constant(0xd522ec), 0, 0)));
+        assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xd62e38), 0, 0)));
+        assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xd653ac), 1, 0)));
+        assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xd653bc), 0, 0)));
+        assert!(limits.arrays[2].iter().any(|x| *x == (ctx.constant(0xd6375c), 0, 0)));
+        assert!(limits.arrays[3].iter().any(|x| *x == (ctx.constant(0xd637d4), 1, 0)));
+        assert!(limits.arrays[3].iter().any(|x| *x == (ctx.constant(0xd637e0), 1, 0)));
+        assert!(limits.arrays[3].iter().any(|x| *x == (ctx.constant(0xd4b020), 0, 0)));
+        assert!(limits.arrays[3].iter().any(|x| *x == (ctx.constant(0xd637a8), 0, 2)));
+        assert!(limits.arrays[3].iter().any(|x| *x == (ctx.constant(0xd637b4), 0, 2)));
+        assert!(limits.arrays[3].iter().any(|x| *x == (ctx.constant(0xd63830), 0, 0)));
+        assert!(limits.arrays[4].iter().any(|x| *x == (ctx.constant(0xd4b02c), 0, 0)));
+        assert!(limits.arrays[6].iter().any(|x| *x == (ctx.constant(0xd6376c), 0, 0)));
+    });
 }
 
 #[test]
@@ -791,7 +807,13 @@ fn everything_1233b() {
 
 #[test]
 fn everything_1233c() {
-    test_with_extra_checks(Path::new("1233c.exe"), |_ctx ,_analysis| {
+    test_with_extra_checks(Path::new("1233c.exe"), |ctx, analysis| {
+        let limits = analysis.limits();
+        assert_eq!(limits.set_limits.unwrap().0, 0x00600c60);
+        // Sprite array resizing got inlined so it may be a bit weird
+        assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xeaa090), 0, 0)));
+        assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xeb1750), 1, 0)));
+        assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xeb1760), 0, 0)));
     })
 }
 
@@ -879,6 +901,22 @@ fn everything_1233f() {
         assert_eq!(serialize.0, 0x0056CE40);
         let deserialize = analysis.deserialize_sprites().unwrap();
         assert_eq!(deserialize.0, 0x0056C5B0);
+        let limits = analysis.limits();
+        assert_eq!(limits.set_limits.unwrap().0, 0x00601c20);
+        assert!(limits.arrays[0].iter().any(|x| *x == (ctx.constant(0xea93d8), 0, 0)));
+        assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xeb6098), 0, 0)));
+        assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xebd758), 1, 0)));
+        assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xebd768), 0, 0)));
+        assert!(limits.arrays[2].iter().any(|x| *x == (ctx.constant(0xeb69d4), 0, 0)));
+        assert!(limits.arrays[3].iter().any(|x| *x == (ctx.constant(0xeb6b1c), 1, 0)));
+        assert!(limits.arrays[3].iter().any(|x| *x == (ctx.constant(0xeb6b28), 1, 0)));
+        assert!(limits.arrays[3].iter().any(|x| *x == (ctx.constant(0xeb6bc0), 0, 0)));
+        assert!(limits.arrays[3].iter().any(|x| *x == (ctx.constant(0xeb6a1c), 0, 2)));
+        assert!(limits.arrays[3].iter().any(|x| *x == (ctx.constant(0xeb6a28), 0, 2)));
+        assert!(limits.arrays[3].iter().any(|x| *x == (ctx.constant(0xea7ef8), 0, 0)));
+        assert!(limits.arrays[4].iter().any(|x| *x == (ctx.constant(0xea7f04), 0, 0)));
+        assert!(limits.arrays[5].iter().any(|x| *x == (ctx.constant(0xeb5d74), 0, 0)));
+        assert!(limits.arrays[6].iter().any(|x| *x == (ctx.constant(0xeb69e4), 0, 0)));
     })
 }
 
@@ -1301,6 +1339,33 @@ fn test_nongeneric<'e>(
 
     let fonts = analysis.fonts();
     check_global_struct_opt(fonts, binary, "fonts");
+
+    let limits = analysis.limits();
+    if extended_limits {
+        assert!(limits.set_limits.is_some());
+        if minor_version < 21 || (minor_version == 21 && patch_version < 1) {
+            assert_eq!(limits.arrays.len(), 7);
+            assert_eq!(limits.arrays[0].len(), 1);
+            assert_eq!(limits.arrays[1].len(), 3);
+            assert_eq!(limits.arrays[2].len(), 1);
+            assert_eq!(limits.arrays[3].len(), 6);
+            assert_eq!(limits.arrays[4].len(), 1);
+            assert_eq!(limits.arrays[5].len(), 0); // Orders weren't extended
+            assert_eq!(limits.arrays[6].len(), 1);
+        } else {
+            assert_eq!(limits.arrays.len(), 7);
+            assert_eq!(limits.arrays[0].len(), 1);
+            assert_eq!(limits.arrays[1].len(), 3);
+            assert_eq!(limits.arrays[2].len(), 1);
+            assert_eq!(limits.arrays[3].len(), 6);
+            assert_eq!(limits.arrays[4].len(), 1);
+            assert_eq!(limits.arrays[5].len(), 1);
+            assert_eq!(limits.arrays[6].len(), 1);
+        }
+    } else {
+        assert!(limits.set_limits.is_none());
+        assert_eq!(limits.arrays.len(), 0);
+    }
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {
