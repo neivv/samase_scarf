@@ -585,7 +585,7 @@ struct IsReplayAnalyzer<'e, E: ExecutionState<'e>> {
     inline_depth: u8,
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 struct IsReplayState<'e> {
     possible_result: Option<Operand<'e>>,
 }

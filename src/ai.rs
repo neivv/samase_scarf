@@ -659,7 +659,7 @@ pub fn player_ai_towns<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct AiTownState {
     jump_count: u32,
 }

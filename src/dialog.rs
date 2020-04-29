@@ -60,7 +60,7 @@ struct RunDialogAnalyzer<'exec, 'b, E: ExecutionState<'exec>> {
     ctx: OperandCtx<'exec>,
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 struct RunDialogState<'e> {
     calling_load_dialog: bool,
     calling_create_string: bool,

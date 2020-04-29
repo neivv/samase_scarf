@@ -317,6 +317,7 @@ fn main() {
         scarf::operand::OperandType::Undefined(x) => x.0,
         _ => 0,
     });
+    println!("Interned count: {}", ctx.interned_count());
 
     let elapsed = start_time.elapsed();
     println!("Time taken: {}.{:09} s", elapsed.as_secs(), elapsed.subsec_nanos());

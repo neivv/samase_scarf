@@ -439,7 +439,7 @@ struct IsInitMapFromPath<'a, 'e, E: ExecutionState<'e>> {
     arg_cache: &'a ArgCache<'e, E>,
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 struct IsInitMapFromPathState {
     jump_count: u8,
     is_after_arg3_check: bool,
@@ -609,7 +609,7 @@ struct FindChooseSnp<'a, 'e, E: ExecutionState<'e>> {
     inlining: bool,
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 struct FindChooseSnpState<'e> {
     provider_id_offset: Option<Operand<'e>>,
 }
