@@ -2,7 +2,7 @@ use fxhash::FxHashMap;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, DestOperand, Operand, Operation, Rva};
+use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation, Rva};
 use scarf::operand::{OperandCtx, Register};
 
 use crate::{
@@ -253,8 +253,8 @@ pub fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
 
 fn if_float_to_int<'e>(operand: Operand<'e>) -> Option<Operand<'e>> {
     match *operand.ty() {
-        scarf::operand::OperandType::Arithmetic(ref arith)
-            if arith.ty == scarf::operand::ArithOpType::FloatToInt => Some(arith.left),
+        scarf::operand::OperandType::ArithmeticFloat(ref arith, _)
+            if arith.ty == scarf::operand::ArithOpType::ToInt => Some(arith.left),
         _ => None,
     }
 }
@@ -262,14 +262,14 @@ fn if_float_to_int<'e>(operand: Operand<'e>) -> Option<Operand<'e>> {
 fn if_int_to_float<'e>(operand: Operand<'e>) -> Option<Operand<'e>> {
     match *operand.ty() {
         scarf::operand::OperandType::Arithmetic(ref arith)
-            if arith.ty == scarf::operand::ArithOpType::IntToFloat => Some(arith.left),
+            if arith.ty == scarf::operand::ArithOpType::ToFloat => Some(arith.left),
         _ => None,
     }
 }
 
 fn if_f32_div<'e>(operand: Operand<'e>) -> Option<(Operand<'e>, Operand<'e>)> {
     match *operand.ty() {
-        scarf::operand::OperandType::ArithmeticF32(ref arith)
+        scarf::operand::OperandType::ArithmeticFloat(ref arith, MemAccessSize::Mem32)
             if arith.ty == scarf::operand::ArithOpType::Div => Some((arith.left, arith.right)),
         _ => None,
     }

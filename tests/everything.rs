@@ -738,12 +738,15 @@ fn everything_1232e() {
         let step = analysis.step_network();
         assert_eq!(step.step_network.unwrap().0, 0x00722ce0);
         assert_eq!(step.receive_storm_turns.unwrap().0, 0x00713370);
-        let val = ctx.xor(
-            ctx.sub(
-                ctx.constant(0x1d3fbab2),
-                ctx.mem32(ctx.constant(0xe5164a)),
+        let val = ctx.and_const(
+            ctx.xor(
+                ctx.sub(
+                    ctx.constant(0x1d3fbab2),
+                    ctx.mem32(ctx.constant(0xe5164a)),
+                ),
+                ctx.mem32(ctx.constant(0x1049cf4)),
             ),
-            ctx.mem32(ctx.constant(0x1049cf4)),
+            0xffff_ffff,
         );
         assert_eq!(step.menu_screen_id.clone().unwrap(), val);
         assert_eq!(step.net_player_flags.unwrap(), ctx.constant(0x0106F588));

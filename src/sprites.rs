@@ -760,7 +760,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RequiredReturnAddress<'e
             Operation::Jump { condition, .. } => {
                 let condition = ctrl.resolve(condition);
                 let addr = condition.if_arithmetic_gt()
-                    .and_either_other(|x| x.if_custom())
+                    .and_either_other(|x| Operand::and_masked(x).0.if_custom())
                     .and_then(|x| x.if_constant());
                 if let Some(addr) = addr {
                     match self.first {
