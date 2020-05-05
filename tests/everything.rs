@@ -556,6 +556,10 @@ fn everything_1224c() {
         assert_eq!(game_init.mainmenu_entry_hook.unwrap().0, 0x006e51ae);
         assert_eq!(game_init.game_loop.unwrap().0, 0x0006e5450);
         assert_eq!(game_init.scmain_state.unwrap(), ctx.mem32(ctx.constant(0x00FC7FE8)));
+
+        assert_eq!(analysis.font_cache_render_ascii().unwrap().0, 0x008FCFF0);
+        assert_eq!(analysis.ttf_cache_character().unwrap().0, 0x009036B0);
+        assert_eq!(analysis.ttf_render_sdf().unwrap().0, 0x00907980);
     })
 }
 
@@ -920,6 +924,10 @@ fn everything_1233f() {
         assert!(limits.arrays[4].iter().any(|x| *x == (ctx.constant(0xea7f04), 0, 0)));
         assert!(limits.arrays[5].iter().any(|x| *x == (ctx.constant(0xeb5d74), 0, 0)));
         assert!(limits.arrays[6].iter().any(|x| *x == (ctx.constant(0xeb69e4), 0, 0)));
+
+        assert_eq!(analysis.font_cache_render_ascii().unwrap().0, 0x0095d430);
+        assert_eq!(analysis.ttf_cache_character().unwrap().0, 0x00963c40);
+        assert_eq!(analysis.ttf_render_sdf().unwrap().0, 0x00968010);
     })
 }
 
@@ -1369,6 +1377,10 @@ fn test_nongeneric<'e>(
         assert!(limits.set_limits.is_none());
         assert_eq!(limits.arrays.len(), 0);
     }
+
+    assert!(analysis.font_cache_render_ascii().is_some());
+    assert!(analysis.ttf_cache_character().is_some());
+    assert!(analysis.ttf_render_sdf().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

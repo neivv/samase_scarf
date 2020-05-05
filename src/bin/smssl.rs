@@ -311,6 +311,10 @@ fn main() {
         println!("limits.{}: {:?}", name, arr);
     }
 
+    println!("font_cache_render_ascii: {:?}", analysis.font_cache_render_ascii());
+    println!("ttf_cache_character: {:?}", analysis.ttf_cache_character());
+    println!("ttf_render_sdf: {:?}", analysis.ttf_render_sdf());
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {

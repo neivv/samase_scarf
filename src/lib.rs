@@ -72,6 +72,7 @@ pub use crate::rng::Rng;
 pub use crate::save::{SpriteSerialization};
 pub use crate::step_order::{SecondaryOrderHook, StepOrderHiddenHook};
 pub use crate::sprites::{FowSprites, InitSprites, Sprites};
+pub use crate::text::{FontRender};
 pub use crate::units::{ActiveHiddenUnits, OrderIssuing, UnitCreation};
 
 use crate::switch::{CompleteSwitch, full_switch_info};
@@ -204,6 +205,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     init_sprites: Cached<InitSprites<'e, E::VirtualAddress>>,
     sprite_serialization: Cached<SpriteSerialization<E::VirtualAddress>>,
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
+    font_render: Cached<FontRender<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -449,6 +451,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             init_sprites: Default::default(),
             sprite_serialization: Default::default(),
             limits: Default::default(),
+            font_render: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1293,6 +1296,27 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         let result = Rc::new(game::limits(self));
         self.limits.cache(&result);
         result
+    }
+
+    fn font_render(&mut self) -> FontRender<E::VirtualAddress> {
+        if let Some(cached) = self.font_render.cached() {
+            return cached;
+        }
+        let result = text::font_render(self);
+        self.font_render.cache(&result);
+        result
+    }
+
+    pub fn font_cache_render_ascii(&mut self) -> Option<E::VirtualAddress> {
+        self.font_render().font_cache_render_ascii
+    }
+
+    pub fn ttf_cache_character(&mut self) -> Option<E::VirtualAddress> {
+        self.font_render().ttf_cache_character
+    }
+
+    pub fn ttf_render_sdf(&mut self) -> Option<E::VirtualAddress> {
+        self.font_render().ttf_render_sdf
     }
 }
 
