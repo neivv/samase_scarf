@@ -390,15 +390,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TtfCacheCharacterAna
                         }
                     }
                 }
-                // Assume esp is left as is (cdecl)
-                ctrl.skip_operation();
-                let exec_state = ctrl.exec_state();
-                for i in 0..2 {
-                    exec_state.move_to(
-                        &DestOperand::Register64(scarf::operand::Register(i)),
-                        ctx.new_undef(),
-                    );
-                }
+                call_cdecl(ctrl);
             }
             _ => (),
         }
@@ -414,5 +406,68 @@ impl<'a, 'e, E: ExecutionState<'e>> TtfCacheCharacterAnalyzer<'a, 'e, E> {
             .filter(|(_, r)| r.if_constant().filter(|&c| c == 0xa0).is_some())
             .filter(|&(l, _)| l == self.arg_cache.on_entry(0))
             .is_some()
+    }
+}
+
+pub fn ttf_malloc<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
+    let ttf_render_sdf = analysis.ttf_render_sdf()?;
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let mut analyzer = FindTtfMalloc::<E> {
+        arg_cache: &analysis.arg_cache,
+        result: None,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, ttf_render_sdf);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct FindTtfMalloc<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindTtfMalloc<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    // Malloc is called with (a4 + right - left) * (a4 + bottom - top)
+                    // (a4 is border width)
+                    let arg4 = self.arg_cache.on_entry(3);
+                    let arg1_ok = arg1.if_arithmetic_mul()
+                        .filter(|(l, r)| {
+                            l.iter_no_mem_addr().any(|op| op == arg4) &&
+                                r.iter_no_mem_addr().any(|op| op == arg4)
+                        })
+                        .is_some();
+                    if arg1_ok {
+                        self.result = Some(dest);
+                        ctrl.end_analysis();
+                    }
+                }
+                call_cdecl(ctrl);
+            }
+            _ => (),
+        }
+    }
+}
+
+fn call_cdecl<'e, A: analysis::Analyzer<'e>>(ctrl: &mut Control<'e, '_, '_, A>) {
+    // Assume esp is left as is (cdecl)
+    ctrl.skip_operation();
+    let ctx = ctrl.ctx();
+    let exec_state = ctrl.exec_state();
+    for i in 0..2 {
+        exec_state.move_to(
+            &DestOperand::Register64(scarf::operand::Register(i)),
+            ctx.new_undef(),
+        );
     }
 }

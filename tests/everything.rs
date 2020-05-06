@@ -928,6 +928,7 @@ fn everything_1233f() {
         assert_eq!(analysis.font_cache_render_ascii().unwrap().0, 0x0095d430);
         assert_eq!(analysis.ttf_cache_character().unwrap().0, 0x00963c40);
         assert_eq!(analysis.ttf_render_sdf().unwrap().0, 0x00968010);
+        assert_eq!(analysis.ttf_malloc().unwrap().0, 0x00C2A08B);
     })
 }
 
@@ -1381,6 +1382,7 @@ fn test_nongeneric<'e>(
     assert!(analysis.font_cache_render_ascii().is_some());
     assert!(analysis.ttf_cache_character().is_some());
     assert!(analysis.ttf_render_sdf().is_some());
+    assert!(analysis.ttf_malloc().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

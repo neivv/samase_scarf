@@ -314,6 +314,7 @@ fn main() {
     println!("font_cache_render_ascii: {:?}", analysis.font_cache_render_ascii());
     println!("ttf_cache_character: {:?}", analysis.ttf_cache_character());
     println!("ttf_render_sdf: {:?}", analysis.ttf_render_sdf());
+    println!("ttf_malloc: {:?}", analysis.ttf_malloc());
 
     let undef = ctx.new_undef();
     println!();

@@ -206,6 +206,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     sprite_serialization: Cached<SpriteSerialization<E::VirtualAddress>>,
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
     font_render: Cached<FontRender<E::VirtualAddress>>,
+    ttf_malloc: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -452,6 +453,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             sprite_serialization: Default::default(),
             limits: Default::default(),
             font_render: Default::default(),
+            ttf_malloc: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1317,6 +1319,18 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn ttf_render_sdf(&mut self) -> Option<E::VirtualAddress> {
         self.font_render().ttf_render_sdf
+    }
+
+    /// Memory allocation function that at least TTF code uses.
+    ///
+    /// (Should be Win32 HeapAlloc with a specific heap)
+    pub fn ttf_malloc(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.ttf_malloc.cached() {
+            return cached;
+        }
+        let result = text::ttf_malloc(self);
+        self.ttf_malloc.cache(&result);
+        result
     }
 }
 
