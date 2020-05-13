@@ -932,6 +932,16 @@ fn everything_1233f() {
     })
 }
 
+#[test]
+fn everything_1233g() {
+    test_with_extra_checks(Path::new("1233g.exe"), |_ctx, analysis| {
+        let serialize = analysis.serialize_sprites().unwrap();
+        assert_eq!(serialize.0, 0x0057F540);
+        let deserialize = analysis.deserialize_sprites().unwrap();
+        assert_eq!(deserialize.0, 0x0057E8C0);
+    })
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
 }

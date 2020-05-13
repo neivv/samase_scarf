@@ -58,12 +58,10 @@ pub fn sprite_serialization<'e, E: ExecutionState<'e>>(
     globals.dedup_by_key(|x| x.func_entry);
     let mut checked = Vec::with_capacity(globals.len());
     checked.push(Rva((init_sprites.as_u64() - binary.base.as_u64()) as u32));
+    let map_height_tiles = ctx.mem16(ctx.add_const(game, 0xe6));
     let last_y_hline = ctx.add(
         ctx.mul_const(
-            ctx.sub_const(
-                ctx.mem16(ctx.add_const(game, 0xe6)),
-                1,
-            ),
+            ctx.sub_const(map_height_tiles, 1),
             E::VirtualAddress::SIZE as u64,
         ),
         sprite_hlines_end,
@@ -81,6 +79,7 @@ pub fn sprite_serialization<'e, E: ExecutionState<'e>>(
                 use_address: global_ref.use_address,
                 result: EntryOf::Retry,
                 last_y_hline,
+                map_height_tiles,
                 sprite_size,
                 arg_cache,
                 first_branch: true,
@@ -119,6 +118,7 @@ struct SpriteSerializationAnalysis<'a, 'e, E: ExecutionState<'e>> {
     use_address: E::VirtualAddress,
     result: EntryOf<SpriteSerializationFunc>,
     last_y_hline: Operand<'e>,
+    map_height_tiles: Operand<'e>,
     sprite_size: u32,
     arg_cache: &'a ArgCache<'e, E>,
     first_branch: bool,
@@ -164,7 +164,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                                         .is_some()
                                 })
                                 .and_then(|(l, _)| ctrl.if_mem_word(l))
-                                .filter(|&addr| addr == self.last_y_hline)
+                                .filter(|&addr| {
+                                    // addr == self.last_y_hline (convert in place)
+                                    // in older patches,
+                                    // [esp - x + game.map_height_tiles] in newer.
+                                    addr == self.last_y_hline || self.is_stack_temp_hlines(addr)
+                                })
                                 .is_some()
                         });
                         if ok {
@@ -176,9 +181,38 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             ctrl.end_analysis();
                         }
                     }
+                } else if !self.had_file_call && self.is_stack_temp_hlines(dest) {
+                    if value.iter().any(|x| x == self.last_y_hline) {
+                        self.result = EntryOf::Ok(SpriteSerializationFunc::Serialize);
+                    }
                 }
             }
             _ => (),
         }
+    }
+}
+impl<'a, 'e, E: ExecutionState<'e>> SpriteSerializationAnalysis<'a, 'e, E>
+{
+    fn is_stack_temp_hlines(&self, addr: Operand<'e>) -> bool {
+        collect_arith_add_terms(addr)
+            .as_mut()
+            .map(|terms| {
+                let ok = terms.remove_one(|op, _neg| {
+                    // rsp
+                    op.if_register()
+                        .filter(|x| x.0 == 4)
+                        .is_some()
+                });
+                if !ok {
+                    return false;
+                }
+                terms.remove_one(|op, _neg| {
+                    op.if_arithmetic_mul()
+                        .filter(|x| x.1.if_constant() == Some(4))
+                        .filter(|x| x.0 == self.map_height_tiles)
+                        .is_some()
+                })
+            })
+            .unwrap_or(false)
     }
 }
