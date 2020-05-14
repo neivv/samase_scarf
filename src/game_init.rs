@@ -1598,3 +1598,53 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for InitGameAnalyzer<
         }
     }
 }
+
+pub fn create_game_dialog_vtbl_on_multiplayer_create<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<usize> {
+    struct Analyzer<'a, 'e, E: ExecutionState<'e>> {
+        arg_cache: &'a ArgCache<'e, E>,
+        result: Option<usize>,
+    }
+
+    impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for Analyzer<'a, 'e, E> {
+        type State = analysis::DefaultState;
+        type Exec = E;
+        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+            match *op {
+                Operation::Call(dest) => {
+                    let dest = ctrl.resolve(dest);
+                    let offset = ctrl.if_mem_word(dest)
+                        .and_then(|addr| addr.if_arithmetic_add())
+                        .and_then(|(l, r)| {
+                            ctrl.if_mem_word(l)
+                                .filter(|&l| {
+                                    l == self.arg_cache.on_entry(1) ||
+                                        l.if_register().filter(|r| r.0 == 1).is_some()
+                                })
+                                .and_then(|_| r.if_constant())
+                                .map(|x| x as usize)
+                                .filter(|&x| x > 0x40)
+                        });
+                    if let Some(offset) = offset {
+                        self.result = Some(offset);
+                        ctrl.end_analysis();
+                    }
+                }
+                _ => (),
+            }
+        }
+    }
+    // select_map_entry arg2 is CreateGameScreen; and it calls this relevant function
+    // For some older versions it also has been arg ecx
+    let select_map_entry = analysis.select_map_entry().select_map_entry?;
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let mut analyzer = Analyzer::<E> {
+        result: None,
+        arg_cache: &analysis.arg_cache,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, select_map_entry);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}

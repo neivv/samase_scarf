@@ -944,7 +944,7 @@ fn everything_1233g() {
 
 #[test]
 fn everything_1233h() {
-    test_with_extra_checks(Path::new("1233h.exe"), |_ctx, analysis| {
+    test_with_extra_checks(Path::new("1233h.exe"), |_ctx, _analysis| {
     })
 }
 
@@ -981,12 +981,15 @@ fn test_nongeneric<'e>(
     assert_eq!(results.unit_status_funcs.len(), 1);
     let filename_str = filename.file_stem().unwrap().to_str().unwrap();
     let minor_version = (&filename_str[1..3]).parse::<u32>().unwrap();
-    let patch_version = if filename_str.contains("ptr") {
-        !(0u32)
+    let (patch_version, revision) = if filename_str.contains("ptr") {
+        (!0u32, b'a')
     } else {
-        (&filename_str[3..]).parse::<u32>()
-            .or_else(|_| { (&filename_str[3..filename_str.len() - 1]).parse::<u32>() })
-            .unwrap()
+        if let Ok(o) = (&filename_str[3..]).parse::<u32>() {
+            (o, b'a')
+        } else {
+            let &revision = filename_str.as_bytes().last().unwrap();
+            ((&filename_str[3..filename_str.len() - 1]).parse::<u32>().unwrap(), revision)
+        }
     };
     let extended_limits = minor_version >= 21;
     let new_codegen = minor_version > 21 || (minor_version == 21 && patch_version >= 2);
@@ -1399,6 +1402,21 @@ fn test_nongeneric<'e>(
     assert!(analysis.ttf_cache_character().is_some());
     assert!(analysis.ttf_render_sdf().is_some());
     assert!(analysis.ttf_malloc().is_some());
+
+    let offset = analysis.create_game_dialog_vtbl_on_multiplayer_create().unwrap();
+    // 1207a .. 1232e 0xa8
+    // 1233a .. 1233f 0xac
+    // 1233g .. 0xb0
+    if minor_version > 23 ||
+        (minor_version == 23 && patch_version > 3) ||
+        (minor_version == 23 && patch_version == 3 && revision >= b'g')
+    {
+        assert_eq!(offset, 0xb0);
+    } else if minor_version == 23 && patch_version == 3 {
+        assert_eq!(offset, 0xac);
+    } else {
+        assert_eq!(offset, 0xa8);
+    }
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

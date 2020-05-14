@@ -316,6 +316,9 @@ fn main() {
     println!("ttf_render_sdf: {:?}", analysis.ttf_render_sdf());
     println!("ttf_malloc: {:?}", analysis.ttf_malloc());
 
+    let offset = analysis.create_game_dialog_vtbl_on_multiplayer_create();
+    println!("CreateGameScreen.on_multiplayer_create offset: {:x?}", offset);
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {

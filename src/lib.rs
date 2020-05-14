@@ -207,6 +207,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
     font_render: Cached<FontRender<E::VirtualAddress>>,
     ttf_malloc: Cached<Option<E::VirtualAddress>>,
+    create_game_dialog_vtbl_on_multiplayer_create: Cached<Option<usize>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -454,6 +455,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             limits: Default::default(),
             font_render: Default::default(),
             ttf_malloc: Default::default(),
+            create_game_dialog_vtbl_on_multiplayer_create: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1330,6 +1332,16 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         }
         let result = text::ttf_malloc(self);
         self.ttf_malloc.cache(&result);
+        result
+    }
+
+    /// Offset to CreateGameScreen.OnMultiplayerGameCreate in the dialog's vtable
+    pub fn create_game_dialog_vtbl_on_multiplayer_create(&mut self) -> Option<usize> {
+        if let Some(cached) = self.create_game_dialog_vtbl_on_multiplayer_create.cached() {
+            return cached;
+        }
+        let result = game_init::create_game_dialog_vtbl_on_multiplayer_create(self);
+        self.create_game_dialog_vtbl_on_multiplayer_create.cache(&result);
         result
     }
 }
