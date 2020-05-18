@@ -59,6 +59,7 @@ pub use crate::bullets::BulletCreation;
 pub use crate::clientside::{GameScreenRClick, GameCoordConversion, MiscClientSide};
 pub use crate::commands::{ProcessCommands, Selections, StepNetwork};
 pub use crate::dat::{DatTablePtr};
+pub use crate::dialog::{TooltipRelated};
 pub use crate::eud::EudTable;
 pub use crate::firegraft::RequirementTables;
 pub use crate::game::{Limits};
@@ -208,6 +209,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     font_render: Cached<FontRender<E::VirtualAddress>>,
     ttf_malloc: Cached<Option<E::VirtualAddress>>,
     create_game_dialog_vtbl_on_multiplayer_create: Cached<Option<usize>>,
+    tooltip_related: Cached<TooltipRelated<'e, E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -456,6 +458,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             font_render: Default::default(),
             ttf_malloc: Default::default(),
             create_game_dialog_vtbl_on_multiplayer_create: Default::default(),
+            tooltip_related: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1343,6 +1346,27 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         let result = game_init::create_game_dialog_vtbl_on_multiplayer_create(self);
         self.create_game_dialog_vtbl_on_multiplayer_create.cache(&result);
         result
+    }
+
+    fn tooltip_related(&mut self) -> TooltipRelated<'e, E::VirtualAddress> {
+        if let Some(cached) = self.tooltip_related.cached() {
+            return cached;
+        }
+        let result = dialog::tooltip_related(self);
+        self.tooltip_related.cache(&result);
+        result
+    }
+
+    pub fn tooltip_draw_func(&mut self) -> Option<Operand<'e>> {
+        self.tooltip_related().tooltip_draw_func
+    }
+
+    pub fn current_tooltip_ctrl(&mut self) -> Option<Operand<'e>> {
+        self.tooltip_related().current_tooltip_ctrl
+    }
+
+    pub fn layout_draw_text(&mut self) -> Option<E::VirtualAddress> {
+        self.tooltip_related().layout_draw_text
     }
 }
 

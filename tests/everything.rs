@@ -94,6 +94,10 @@ fn everything_1210b() {
         let net_players = analysis.net_players();
         assert_eq!(net_players.init_net_player.unwrap().0, 0x006F28E0);
         assert_eq!(net_players.net_players.as_ref().unwrap().0, ctx.constant(0x00F31988));
+
+        assert_eq!(analysis.tooltip_draw_func().unwrap(), ctx.mem32(ctx.constant(0xd49148)));
+        assert_eq!(analysis.current_tooltip_ctrl().unwrap(), ctx.mem32(ctx.constant(0xd4914c)));
+        assert_eq!(analysis.layout_draw_text().unwrap().0, 0x008d5fd0);
     });
 }
 
@@ -950,7 +954,10 @@ fn everything_1233h() {
 
 #[test]
 fn everything_1233i() {
-    test_with_extra_checks(Path::new("1233i.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1233i.exe"), |ctx, analysis| {
+        assert_eq!(analysis.tooltip_draw_func().unwrap(), ctx.mem32(ctx.constant(0xee926c)));
+        assert_eq!(analysis.current_tooltip_ctrl().unwrap(), ctx.mem32(ctx.constant(0xee9270)));
+        assert_eq!(analysis.layout_draw_text().unwrap().0, 0x977380);
     })
 }
 
@@ -1423,6 +1430,10 @@ fn test_nongeneric<'e>(
     } else {
         assert_eq!(offset, 0xa8);
     }
+
+    check_global(analysis.tooltip_draw_func().unwrap(), binary, "tooltip_draw_func");
+    check_global(analysis.current_tooltip_ctrl().unwrap(), binary, "current_tooltip_ctrl");
+    assert!(analysis.layout_draw_text().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

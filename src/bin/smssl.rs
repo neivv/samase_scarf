@@ -319,6 +319,10 @@ fn main() {
     let offset = analysis.create_game_dialog_vtbl_on_multiplayer_create();
     println!("CreateGameScreen.on_multiplayer_create offset: {:x?}", offset);
 
+    println!("tooltip_draw_func: {}", format_op_operand(analysis.tooltip_draw_func()));
+    println!("current_tooltip_ctrl: {}", format_op_operand(analysis.current_tooltip_ctrl()));
+    println!("layout_draw_text: {:?}", analysis.layout_draw_text());
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {
