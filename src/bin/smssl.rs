@@ -322,6 +322,10 @@ fn main() {
     println!("tooltip_draw_func: {}", format_op_operand(analysis.tooltip_draw_func()));
     println!("current_tooltip_ctrl: {}", format_op_operand(analysis.current_tooltip_ctrl()));
     println!("layout_draw_text: {:?}", analysis.layout_draw_text());
+    println!("graphic_layers: {}", format_op_operand(analysis.graphic_layers()));
+    println!("draw_tooltip_layer: {:?}", analysis.draw_tooltip_layer());
+    println!("draw_f10_menu_tooltip: {:?}", analysis.draw_f10_menu_tooltip());
+    println!("draw_graphic_layers: {:?}", analysis.draw_graphic_layers());
 
     let undef = ctx.new_undef();
     println!();

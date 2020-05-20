@@ -210,6 +210,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     ttf_malloc: Cached<Option<E::VirtualAddress>>,
     create_game_dialog_vtbl_on_multiplayer_create: Cached<Option<usize>>,
     tooltip_related: Cached<TooltipRelated<'e, E::VirtualAddress>>,
+    draw_graphic_layers: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -459,6 +460,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ttf_malloc: Default::default(),
             create_game_dialog_vtbl_on_multiplayer_create: Default::default(),
             tooltip_related: Default::default(),
+            draw_graphic_layers: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1367,6 +1369,27 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn layout_draw_text(&mut self) -> Option<E::VirtualAddress> {
         self.tooltip_related().layout_draw_text
+    }
+
+    pub fn graphic_layers(&mut self) -> Option<Operand<'e>> {
+        self.tooltip_related().graphic_layers
+    }
+
+    pub fn draw_f10_menu_tooltip(&mut self) -> Option<E::VirtualAddress> {
+        self.tooltip_related().draw_f10_menu_tooltip
+    }
+
+    pub fn draw_tooltip_layer(&mut self) -> Option<E::VirtualAddress> {
+        self.tooltip_related().draw_tooltip_layer
+    }
+
+    pub fn draw_graphic_layers(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.draw_graphic_layers.cached() {
+            return cached;
+        }
+        let result = dialog::draw_graphic_layers(self);
+        self.draw_graphic_layers.cache(&result);
+        result
     }
 }
 

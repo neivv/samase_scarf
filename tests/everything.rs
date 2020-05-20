@@ -957,7 +957,11 @@ fn everything_1233i() {
     test_with_extra_checks(Path::new("1233i.exe"), |ctx, analysis| {
         assert_eq!(analysis.tooltip_draw_func().unwrap(), ctx.mem32(ctx.constant(0xee926c)));
         assert_eq!(analysis.current_tooltip_ctrl().unwrap(), ctx.mem32(ctx.constant(0xee9270)));
+        assert_eq!(analysis.graphic_layers().unwrap(), ctx.constant(0x1115f50));
         assert_eq!(analysis.layout_draw_text().unwrap().0, 0x977380);
+        assert_eq!(analysis.draw_f10_menu_tooltip().unwrap().0, 0x007a0aa0);
+        assert_eq!(analysis.draw_tooltip_layer().unwrap().0, 0x00607150);
+        assert_eq!(analysis.draw_graphic_layers().unwrap().0, 0x009738B0);
     })
 }
 
@@ -1433,7 +1437,11 @@ fn test_nongeneric<'e>(
 
     check_global(analysis.tooltip_draw_func().unwrap(), binary, "tooltip_draw_func");
     check_global(analysis.current_tooltip_ctrl().unwrap(), binary, "current_tooltip_ctrl");
+    check_global_struct(analysis.graphic_layers().unwrap(), binary, "graphic_layers");
     assert!(analysis.layout_draw_text().is_some());
+    assert!(analysis.draw_f10_menu_tooltip().is_some());
+    assert!(analysis.draw_tooltip_layer().is_some());
+    assert!(analysis.draw_graphic_layers().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {
