@@ -145,6 +145,9 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
                         }
                     }
                 }
+                if ctrl.user_state().load_dialog_result.is_some() {
+                    return;
+                }
                 let arg1_is_string_ptr = {
                     arg1.if_constant()
                         .filter(|&c| c == self.string_address.as_u64())
@@ -160,6 +163,23 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
                     .filter(|&c| c == self.string_address.as_u64())
                     .is_some();
                 if arg2_is_string_ptr || arg4_is_string_ptr {
+                    let state = ctrl.user_state();
+                    state.calling_create_string = true;
+                    state.path_string = Some(arg1);
+                }
+                let size = match E::VirtualAddress::SIZE == 4 {
+                    true => MemAccessSize::Mem32,
+                    false => MemAccessSize::Mem64,
+                };
+                let arg3_value = ctrl.read_memory(arg3, size);
+                let arg3_inner = ctrl.read_memory(arg3_value, size);
+                // Can be join(String *out, String *path1, String *path2)
+                let arg3_is_string_struct_ptr = arg3_inner.if_memory()
+                    .map(|x| x.address)
+                    .and_then(|x| x.if_constant())
+                    .filter(|&x| x == self.string_address.as_u64())
+                    .is_some();
+                if arg3_is_string_struct_ptr {
                     let state = ctrl.user_state();
                     state.calling_create_string = true;
                     state.path_string = Some(arg1);
@@ -249,6 +269,24 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
                         self.path_string = Some(arg1);
                     } else {
                         self.after_call = true;
+                    }
+                } else {
+                    let arg3 = ctrl.resolve(self.args.on_call(2));
+                    let size = match E::VirtualAddress::SIZE == 4 {
+                        true => MemAccessSize::Mem32,
+                        false => MemAccessSize::Mem64,
+                    };
+                    let arg3_value = ctrl.read_memory(arg3, size);
+                    let arg3_inner = ctrl.read_memory(arg3_value, size);
+                    // Can be join(String *out, String *path1, String *path2)
+                    let arg3_is_string_struct_ptr = arg3_inner.if_memory()
+                        .map(|x| x.address)
+                        .and_then(|x| x.if_constant())
+                        .filter(|&x| x == self.str_ref.string_address.as_u64())
+                        .is_some();
+                    if arg3_is_string_struct_ptr {
+                        let arg1 = ctrl.resolve(self.args.on_call(0));
+                        self.path_string = Some(arg1);
                     }
                 }
             }

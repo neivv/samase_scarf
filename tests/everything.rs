@@ -965,6 +965,16 @@ fn everything_1233i() {
     })
 }
 
+#[test]
+fn everything_1234_ptr1() {
+    test_with_extra_checks(Path::new("1234_ptr1.exe"), |_ctx, analysis| {
+        let run_dialog = analysis.run_dialog();
+        assert_eq!(run_dialog.unwrap().0, 0x00979000);
+        let results = analysis.firegraft_addresses();
+        assert_eq!(results.unit_status_funcs[0].0, 0x00f09ca8);
+    })
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
 }
@@ -1258,8 +1268,9 @@ fn test_nongeneric<'e>(
     let draw = analysis.draw_image();
     assert!(draw.is_some());
     let vtables = analysis.renderer_vtables();
-    if minor_version < 22 {
+    if minor_version < 22 || (minor_version == 23 && patch_version >= 4) || minor_version >= 24 {
         // Older versions had a d3d11 renderer??
+        // Newer versions have prism.
         assert_eq!(vtables.len(), 3);
     } else {
         assert_eq!(vtables.len(), 2);
