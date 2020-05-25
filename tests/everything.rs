@@ -1453,6 +1453,15 @@ fn test_nongeneric<'e>(
     assert!(analysis.draw_f10_menu_tooltip().is_some());
     assert!(analysis.draw_tooltip_layer().is_some());
     assert!(analysis.draw_graphic_layers().is_some());
+
+    let has_prism = minor_version == 23 && patch_version >= 4 || minor_version >= 24;
+    if has_prism {
+        assert_eq!(analysis.prism_vertex_shaders().len(), 0x6);
+        assert_eq!(analysis.prism_pixel_shaders().len(), 0x2b);
+    } else {
+        assert_eq!(analysis.prism_vertex_shaders().len(), 0);
+        assert_eq!(analysis.prism_pixel_shaders().len(), 0);
+    }
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

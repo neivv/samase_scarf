@@ -69,6 +69,7 @@ pub use crate::map::MapTileFlags;
 pub use crate::network::{InitStormNetworking, SnpDefinitions};
 pub use crate::pathing::RegionRelated;
 pub use crate::players::NetPlayers;
+pub use crate::renderer::{PrismShaders};
 pub use crate::rng::Rng;
 pub use crate::save::{SpriteSerialization};
 pub use crate::step_order::{SecondaryOrderHook, StepOrderHiddenHook};
@@ -211,6 +212,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     create_game_dialog_vtbl_on_multiplayer_create: Cached<Option<usize>>,
     tooltip_related: Cached<TooltipRelated<'e, E::VirtualAddress>>,
     draw_graphic_layers: Cached<Option<E::VirtualAddress>>,
+    prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -461,6 +463,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             create_game_dialog_vtbl_on_multiplayer_create: Default::default(),
             tooltip_related: Default::default(),
             draw_graphic_layers: Default::default(),
+            prism_shaders: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1390,6 +1393,23 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         let result = dialog::draw_graphic_layers(self);
         self.draw_graphic_layers.cache(&result);
         result
+    }
+
+    fn prism_shaders(&mut self) -> PrismShaders<E::VirtualAddress> {
+        if let Some(cached) = self.prism_shaders.cached() {
+            return cached;
+        }
+        let result = renderer::prism_shaders(self);
+        self.prism_shaders.cache(&result);
+        result
+    }
+
+    pub fn prism_vertex_shaders(&mut self) -> Rc<Vec<E::VirtualAddress>> {
+        self.prism_shaders().vertex_shaders
+    }
+
+    pub fn prism_pixel_shaders(&mut self) -> Rc<Vec<E::VirtualAddress>> {
+        self.prism_shaders().pixel_shaders
     }
 }
 

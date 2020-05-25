@@ -327,6 +327,9 @@ fn main() {
     println!("draw_f10_menu_tooltip: {:?}", analysis.draw_f10_menu_tooltip());
     println!("draw_graphic_layers: {:?}", analysis.draw_graphic_layers());
 
+    println!("Prism vertex shader sets: 0x{:x}", analysis.prism_vertex_shaders().len());
+    println!("Prism pixel shader sets: 0x{:x}", analysis.prism_pixel_shaders().len());
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {
