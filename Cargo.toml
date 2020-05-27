@@ -5,7 +5,7 @@ authors = ["Markus Heikkinen <ittevien@gmail.com>"]
 edition = "2018"
 
 [[bin]]
-name = "smssl"
+name = "dump"
 required-features = ["binaries"]
 
 [profile.dev]
@@ -32,14 +32,15 @@ quick-error = "1.1.0"
 smallvec = "1.0"
 
 fern = { version = "0.5", optional = true }
+anyhow = { version = "1.0", optional = true }
 
 [dependencies.scarf]
 git = "https://github.com/neivv/scarf"
-rev = "715310ea7289bcbc592042a53712092d933075ea"
+rev = "dc56b51e4fea8e6ac2ecaa757fef76104b382158"
 
 [dev-dependencies]
 fern = "0.5"
 
 [features]
 test_assertions = []
-binaries = ['fern']
+binaries = ['fern', 'anyhow']

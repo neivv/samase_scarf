@@ -3,7 +3,16 @@ extern crate log;
 extern crate samase_scarf;
 extern crate scarf;
 
-use samase_scarf::DatType;
+use std::io::Write;
+use std::path::Path;
+
+use anyhow::{anyhow, Context, Result};
+use byteorder::{LittleEndian, ByteOrder};
+
+use scarf::exec_state::{ExecutionState, VirtualAddress};
+use scarf::{BinaryFile};
+
+use samase_scarf::{Analysis, DatType};
 
 fn format_op_operand(op: Option<scarf::Operand>) -> String {
     op.as_ref().map(|x| x.to_string()).unwrap_or_else(|| "None".into())
@@ -12,12 +21,25 @@ fn format_op_operand(op: Option<scarf::Operand>) -> String {
 fn main() {
     init_stdout_log();
     let start_time = ::std::time::Instant::now();
-    let exe = ::std::env::args_os().nth(1).unwrap();
+    let exe = std::env::args_os().nth(1).unwrap();
+    let do_dump_shaders = std::env::args_os().nth(2).and_then(|arg| {
+        let ok = arg.to_str()? == "--dump-shaders";
+        Some(()).filter(|()| ok)
+    }).is_some();
+
     let mut binary = scarf::parse(&exe).unwrap();
     let relocs = scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary).unwrap();
     binary.set_relocs(relocs);
     let ctx = &scarf::OperandContext::new();
-    let mut analysis = samase_scarf::Analysis::<scarf::ExecutionStateX86<'_>>::new(&binary, ctx);
+    let mut analysis = Analysis::<scarf::ExecutionStateX86<'_>>::new(&binary, ctx);
+
+    if do_dump_shaders {
+        let path = std::env::args_os().nth(3).unwrap();
+        if let Err(e) = dump_shaders(&binary, &mut analysis, Path::new(&path)) {
+            eprintln!("Failed to dump shaders: {:?}", e);
+        }
+        return;
+    }
 
     let open_file = analysis.file_hook();
     println!("open_file: {:?}", open_file);
@@ -359,4 +381,155 @@ fn init_stdout_log() {
         //.level_for("samase_scarf", log::LevelFilter::Trace)
         .chain(std::io::stdout())
         .apply();
+}
+
+fn create_dir(path: &Path) -> Result<()> {
+    if !path.exists() {
+        std::fs::create_dir(path)
+            .with_context(|| format!("Couldn't create directory '{}'", path.display()))
+    } else {
+        Ok(())
+    }
+}
+
+fn dump_shaders<'e, E: ExecutionState<'e>>(
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    analysis: &mut Analysis<'e, E>,
+    path: &Path,
+) -> Result<()> {
+    create_dir(path)?;
+    let vertex_shaders = analysis.prism_vertex_shaders();
+    for (i, &set) in vertex_shaders.iter().enumerate() {
+        let name = match i {
+            0 => "vert_uv1".into(),
+            1 => "vert_uv2".into(),
+            2 => "vert_uv3".into(),
+            3 => "flat_color_vert".into(),
+            4 => "colored_vert".into(),
+            5 => "deferred_blit_vert".into(),
+            _ => format!("vertex_{}", i),
+        };
+        dump_shader_set(&path.join(&name), binary, set)
+            .with_context(|| format!("Dumping {}", name))?;
+    }
+    let pixel_shaders = analysis.prism_pixel_shaders();
+    for (i, &set) in pixel_shaders.iter().enumerate() {
+        let name = match i {
+            0x0 => "textured_frag".into(),
+            0x1 => "textured_frag_bicubic".into(),
+            0x2 => "flat_color_frag".into(),
+            0x3 => "fbo_cloak_frag".into(),
+            0x4 => "colored_frag".into(),
+            0x5 => "colored_frag_gradient".into(),
+            0x6 => "colored_frag_font".into(),
+            0x7 => "video_444_frag".into(),
+            0x8 => "video_YCbCR_frag".into(),
+            0x9 => "palette_color_frag".into(),
+            0xa => "bw_frag".into(),
+            0xb => "deferred_blit".into(),
+            0xc => "sprite_frag".into(),
+            0xd => "sprite_forward_lit".into(),
+            0xe => "sprite_tile".into(),
+            0xf => "sprite_tile_draw_effect".into(),
+            0x10 => "sprite_solid_frag".into(),
+            0x11 => "sprite_solid_frag_deferred".into(),
+            0x12 => "sprite_effect_shadow".into(),
+            0x13 => "sprite_effect_cloaked".into(),
+            0x14 => "sprite_effect_warped".into(),
+            0x15 => "sprite_effect_deferred_cloak".into(),
+            0x16 => "sprite_mapped_frag".into(),
+            0x17 => "sprite_part_solid_frag".into(),
+            0x18 => "deferred_sprite_part_solid".into(),
+            0x19 => "deferred_sprite".into(),
+            0x1a => "deferred_sprite_draw_effect".into(),
+            0x1b => "blur".into(),
+            0x1c => "mask".into(),
+            0x1d => "bloom".into(),
+            0x1e => "effect_mask".into(),
+            0x1f => "deferred_effect_mask".into(),
+            0x20 => "water".into(),
+            0x21 => "water_deferred".into(),
+            0x22 => "heat_distortion".into(),
+            0x23 => "heat_distortion_deferred".into(),
+            0x24 => "sprite_brighten_frag".into(),
+            0x25 => "sprite_brighten_frag_deferred".into(),
+            0x26 => "hp_bar".into(),
+            0x27 => "hp_bar_deferred".into(),
+            0x28 => "sprite_tile_draw_effect_color_draw".into(),
+            0x29 => "sprite_tile_draw_effect_alpha_draw".into(),
+            0x2a => "textured_frag_pylon_power".into(),
+            _ => format!("pixel_{}", i),
+        };
+        dump_shader_set(&path.join(&name), binary, set)
+            .with_context(|| format!("Dumping {}", name))?;
+    }
+    Ok(())
+}
+
+fn dump_shader_set<'e, Va: VirtualAddress, P: AsRef<Path>>(
+    path: P,
+    binary: &'e BinaryFile<Va>,
+    addr: Va,
+) -> Result<()> {
+    let path = path.as_ref();
+    create_dir(path)?;
+    let shader_count = binary.read_u32(addr)?;
+    let shader_addr = binary.read_address(addr + 4)?;
+    for i in 0..shader_count {
+        let addr = shader_addr + i * 0x10;
+        let format = binary.read_u8(addr)?;
+        let data = binary.read_address(addr + 0x8)?;
+        let len = binary.read_u32(addr + 0xc)?;
+        let slice = binary.slice_from_address(data, len)?;
+        dump_shader(path, format, slice)
+            .with_context(|| format!("Shader {} (format {:x}) @ addr {:?}", i, format, addr))?;
+    }
+    Ok(())
+}
+
+fn dump_shader(path: &Path, format: u8, data: &[u8]) -> Result<()> {
+    if data.len() > 0x10_0000 {
+        return Err(anyhow!("Unreasonably large shader ({} bytes)", data.len()));
+    }
+    if data.len() < 0x4 {
+        return Err(anyhow!("Header too small"));
+    }
+    let wrap_format = LittleEndian::read_u32(&data[0x0..]);
+    let shader_bin = match wrap_format {
+        1 => {
+            if data.len() < 0x14 {
+                return Err(anyhow!("Header too small, expected {:x} got {:x}", 0x14, data.len()));
+            }
+            let len = LittleEndian::read_u32(&data[0x8..]);
+            if len != data.len() as u32 - 0x14 {
+                return Err(anyhow!("Unexpected shader len {:x}", len));
+            }
+            &data[0x14..]
+        }
+        3 => {
+            if data.len() < 0x38 {
+                return Err(anyhow!("Header too small, expected {:x} got {:x}", 0x38, data.len()));
+            }
+            let len = LittleEndian::read_u32(&data[0x30..]);
+            let offset = LittleEndian::read_u32(&data[0x34..]);
+            if offset != 4 || len != data.len() as u32 - 0x38 {
+                return Err(anyhow!("Unexpected shader offset / len {:x} {:x}", offset, len));
+            }
+            &data[0x38..]
+        }
+        _ => {
+            return Err(anyhow!("Invalid wrap format {:x}", wrap_format));
+        }
+    };
+    let name = match format {
+        0x0 => "dx_sm4.bin".into(),
+        0x4 => "dx_sm5.bin".into(),
+        0x1a => "metal.bin".into(),
+        _ => format!("format_{}.bin", format),
+    };
+    let filename = path.join(&name);
+    let mut file = std::fs::File::create(&filename)
+        .with_context(|| format!("Couldn't create {}", filename.display()))?;
+    file.write_all(shader_bin).context("Writing shader")?;
+    Ok(())
 }
