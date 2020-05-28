@@ -975,6 +975,12 @@ fn everything_1234_ptr1() {
     })
 }
 
+#[test]
+fn everything_1234a() {
+    test_with_extra_checks(Path::new("1234a.exe"), |_ctx, _analysis| {
+    })
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
 }
@@ -1008,7 +1014,8 @@ fn test_nongeneric<'e>(
     assert_eq!(results.unit_status_funcs.len(), 1);
     let filename_str = filename.file_stem().unwrap().to_str().unwrap();
     let minor_version = (&filename_str[1..3]).parse::<u32>().unwrap();
-    let (patch_version, revision) = if filename_str.contains("ptr") {
+    let is_ptr = filename_str.contains("ptr");
+    let (patch_version, revision) = if is_ptr {
         (!0u32, b'a')
     } else {
         if let Ok(o) = (&filename_str[3..]).parse::<u32>() {
@@ -1268,7 +1275,8 @@ fn test_nongeneric<'e>(
     let draw = analysis.draw_image();
     assert!(draw.is_some());
     let vtables = analysis.renderer_vtables();
-    if minor_version < 22 || (minor_version == 23 && patch_version >= 4) || minor_version >= 24 {
+    let has_prism = minor_version == 23 && patch_version >= 4 && is_ptr;
+    if minor_version < 22 || has_prism {
         // Older versions had a d3d11 renderer??
         // Newer versions have prism.
         assert_eq!(vtables.len(), 3);
@@ -1454,7 +1462,6 @@ fn test_nongeneric<'e>(
     assert!(analysis.draw_tooltip_layer().is_some());
     assert!(analysis.draw_graphic_layers().is_some());
 
-    let has_prism = minor_version == 23 && patch_version >= 4 || minor_version >= 24;
     if has_prism {
         assert_eq!(analysis.prism_vertex_shaders().len(), 0x6);
         assert_eq!(analysis.prism_pixel_shaders().len(), 0x2b);
