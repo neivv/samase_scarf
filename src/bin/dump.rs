@@ -3,7 +3,7 @@ extern crate log;
 extern crate samase_scarf;
 extern crate scarf;
 
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
@@ -522,14 +522,48 @@ fn dump_shader(path: &Path, format: u8, data: &[u8]) -> Result<()> {
         }
     };
     let name = match format {
-        0x0 => "dx_sm4.bin".into(),
-        0x4 => "dx_sm5.bin".into(),
-        0x1a => "metal.bin".into(),
-        _ => format!("format_{}.bin", format),
+        0x0 => "dx_sm4".into(),
+        0x4 => "dx_sm5".into(),
+        0x1a => "metal".into(),
+        _ => format!("format_{}", format),
     };
-    let filename = path.join(&name);
+    let filename = path.join(&format!("{}.bin", name));
     let mut file = std::fs::File::create(&filename)
         .with_context(|| format!("Couldn't create {}", filename.display()))?;
     file.write_all(shader_bin).context("Writing shader")?;
+    if matches!(format, 0 | 4) {
+        d3d_disassemble(path, &name, shader_bin)?;
+    }
+    Ok(())
+}
+
+fn d3d_disassemble(path: &Path, name: &str, data: &[u8]) -> Result<()> {
+    use winapi::um::d3dcompiler::D3DDisassemble;
+
+    let filename = path.join(&format!("{}.asm", name));
+    let mut file = std::fs::File::create(&filename)
+        .with_context(|| format!("Couldn't create {}", filename.display()))?;
+
+    unsafe {
+        let mut blob = std::ptr::null_mut();
+        let error = D3DDisassemble(
+            data.as_ptr() as *const _,
+            data.len(),
+            0,
+            b"\0".as_ptr() as *const _,
+            &mut blob,
+        );
+        if error != 0 {
+            return Err(io::Error::from_raw_os_error(error).into());
+        }
+        scopeguard::defer! {
+            (*blob).Release();
+        }
+        let slice = std::slice::from_raw_parts(
+            (*blob).GetBufferPointer() as *const u8,
+            (*blob).GetBufferSize(),
+        );
+        file.write_all(slice)?;
+    }
     Ok(())
 }
