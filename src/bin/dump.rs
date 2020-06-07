@@ -26,6 +26,10 @@ fn main() {
         let ok = arg.to_str()? == "--dump-shaders";
         Some(()).filter(|()| ok)
     }).is_some();
+    let do_dump_vtables = std::env::args_os().nth(2).and_then(|arg| {
+        let ok = arg.to_str()? == "--dump-vtables";
+        Some(()).filter(|()| ok)
+    }).is_some();
 
     let mut binary = scarf::parse(&exe).unwrap();
     let relocs = scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary).unwrap();
@@ -38,6 +42,10 @@ fn main() {
         if let Err(e) = dump_shaders(&binary, &mut analysis, Path::new(&path)) {
             eprintln!("Failed to dump shaders: {:?}", e);
         }
+        return;
+    }
+    if do_dump_vtables {
+        dump_vtables(&binary, &mut analysis);
         return;
     }
 
@@ -566,4 +574,28 @@ fn d3d_disassemble(path: &Path, name: &str, data: &[u8]) -> Result<()> {
         file.write_all(slice)?;
     }
     Ok(())
+}
+
+fn dump_vtables<'e, E: ExecutionState<'e>>(
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    analysis: &mut Analysis<'e, E>,
+) {
+    let vtables = analysis.vtables();
+    println!("{} vtables", vtables.len());
+    for vtable in vtables {
+        let name = binary.read_address(vtable - E::VirtualAddress::SIZE).ok()
+            .and_then(|x| binary.read_address(x + 0xc).ok())
+            .map(|x| x + 8)
+            .and_then(|x| {
+                let section = binary.section_by_addr(x)?;
+                let relative = x.as_u64() - section.virtual_address.as_u64();
+                let slice = section.data.get(relative as usize..)?;
+                let end = slice.iter().position(|&x| x == 0)?;
+                Some(&slice[..end])
+            })
+            .and_then(|name_u8| std::str::from_utf8(name_u8).ok());
+        if let Some(name) = name {
+            println!("{}: {:?}", name, vtable);
+        }
+    }
 }

@@ -842,6 +842,17 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         result
     }
 
+    pub fn vtables(&mut self) -> Vec<E::VirtualAddress> {
+        self.vtables_for_class(b".?AV")
+    }
+
+    pub fn vtables_for_class(&mut self, name: &[u8]) -> Vec<E::VirtualAddress> {
+        let mut vtables = vtables::vtables(self, name);
+        vtables.sort();
+        vtables.dedup();
+        vtables
+    }
+
     pub fn single_player_start(&mut self) -> Rc<SinglePlayerStart<'e, E::VirtualAddress>> {
         if let Some(cached) = self.single_player_start.cached() {
             return cached;
