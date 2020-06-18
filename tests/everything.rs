@@ -995,7 +995,8 @@ fn everything_1234c() {
 
 #[test]
 fn everything_1234d() {
-    test_with_extra_checks(Path::new("1234d.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1234d.exe"), |_ctx, analysis| {
+        assert_eq!(analysis.ai_attack_prepare().unwrap().0, 0x006583A0);
     })
 }
 
@@ -1487,6 +1488,8 @@ fn test_nongeneric<'e>(
         assert_eq!(analysis.prism_vertex_shaders().len(), 0);
         assert_eq!(analysis.prism_pixel_shaders().len(), 0);
     }
+
+    assert!(analysis.ai_attack_prepare().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

@@ -213,6 +213,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     tooltip_related: Cached<TooltipRelated<'e, E::VirtualAddress>>,
     draw_graphic_layers: Cached<Option<E::VirtualAddress>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
+    ai_attack_prepare: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -464,6 +465,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             tooltip_related: Default::default(),
             draw_graphic_layers: Default::default(),
             prism_shaders: Default::default(),
+            ai_attack_prepare: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1422,6 +1424,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn prism_pixel_shaders(&mut self) -> Rc<Vec<E::VirtualAddress>> {
         self.prism_shaders().pixel_shaders
     }
+
+    pub fn ai_attack_prepare(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.ai_attack_prepare.cached() {
+            return cached;
+        }
+        let result = ai::attack_prepare(self);
+        self.ai_attack_prepare.cache(&result);
+        result
+    }
 }
 
 // Tries to return a func index to the address less or equal to `entry` that is definitely a
@@ -1782,5 +1793,21 @@ fn unwrap_sext<'e>(operand: Operand<'e>) -> Operand<'e> {
     match *operand.ty() {
         scarf::operand::OperandType::SignExtend(val, ..) => val,
         _ => operand,
+    }
+}
+
+trait OperandExt<'e> {
+    fn if_mem32_offset(self, offset: u64) -> Option<Operand<'e>>;
+}
+
+impl<'e> OperandExt<'e> for Operand<'e> {
+    fn if_mem32_offset(self, offset: u64) -> Option<Operand<'e>> {
+        let (l, r) = self.if_mem32()?.if_arithmetic_add()?;
+        let r = r.if_constant()?;
+        if r != offset {
+            None
+        } else {
+            Some(l)
+        }
     }
 }

@@ -8,7 +8,7 @@ use scarf::exec_state::{ExecutionState};
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
 use crate::{
-    ArgCache, OptionExt, single_result_assign, Analysis, find_functions_using_global,
+    ArgCache, OptionExt, OperandExt, single_result_assign, Analysis, find_functions_using_global,
     entry_of_until, EntryOf, find_callers, DatType,
 };
 
@@ -828,6 +828,66 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlayerAiAnalyzer<'e, 
                 if !self.inlining {
                     ctrl.end_analysis();
                 }
+            }
+            _ => (),
+        }
+    }
+}
+
+pub fn attack_prepare<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let aiscript = analysis.aiscript_hook();
+    let aiscript_hook = (*aiscript).as_ref()?;
+
+    let addr_size = E::VirtualAddress::SIZE;
+    let attack_prepare = binary.read_address(aiscript_hook.switch_table + 0xd * addr_size).ok()?;
+
+    let arg_cache = &analysis.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, attack_prepare);
+    let mut analyzer = AttackPrepareAnalyzer {
+        result: None,
+        arg_cache,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct AttackPrepareAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                let ok = Some(())
+                    .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                    .and_then(|x| x.if_mem32_offset(0x10))
+                    .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                    .and_then(|x| x.if_mem32_offset(0x24))
+                    .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
+                    .and_then(|x| x.if_mem32_offset(0x28))
+                    .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
+                    .filter(|x| x.if_constant() == Some(1))
+                    .map(|_| ctrl.resolve(self.arg_cache.on_call(4)))
+                    .filter(|x| x.if_constant() == Some(0))
+                    .is_some();
+                if ok {
+                    self.result = ctrl.resolve(dest)
+                        .if_constant()
+                        .map(|x| E::VirtualAddress::from_u64(x));
+                }
+                ctrl.end_analysis();
+            }
+            Operation::Jump { .. } => {
+                ctrl.end_analysis();
             }
             _ => (),
         }
