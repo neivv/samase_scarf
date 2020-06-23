@@ -1,6 +1,7 @@
 use arrayvec::ArrayVec;
+use fxhash::FxHashSet;
 use scarf::{
-    DestOperand, Operand, Operation, MemAccessSize, OperandCtx, OperandType, BinaryFile,
+    DestOperand, Operand, Operation, MemAccessSize, OperandCtx, OperandType, BinaryFile, Rva,
 };
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState};
@@ -888,6 +889,118 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnal
             }
             Operation::Jump { .. } => {
                 ctrl.end_analysis();
+            }
+            _ => (),
+        }
+    }
+}
+
+pub fn step_region<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let step_objects = analysis.step_objects()?;
+    let ai_regions = analysis.regions().ai_regions?;
+
+    let arg_cache = &analysis.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, step_objects);
+    let mut analyzer = StepRegionAnalyzer {
+        result: None,
+        arg_cache,
+        inline_depth: 0,
+        checked_functions: FxHashSet::with_capacity_and_hasher(0x40, Default::default()),
+        binary,
+        ai_regions,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct StepRegionAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+    checked_functions: FxHashSet<Rva>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    ai_regions: Operand<'e>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                if self.inline_depth < 3 {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        let relative = dest.as_u64().checked_sub(self.binary.base.as_u64());
+                        if let Some(relative) = relative {
+                            let rva = Rva(relative as u32);
+                            if self.checked_functions.insert(rva) {
+                                self.inline_depth += 1;
+                                let ctx = ctrl.ctx();
+                                let mut analysis = FuncAnalysis::new(self.binary, ctx, dest);
+                                analysis.analyze(self);
+                                self.inline_depth -= 1;
+                                if let Some(result) = self.result {
+                                    if result.as_u64() == 0 {
+                                        self.result = Some(dest);
+                                    }
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Operation::Move(DestOperand::Memory(mem), val, None) => {
+                // step_objects has `counter = counter - 1`
+                // instruction which is after step_ai, so we can stop
+                // if that is reached.
+                if self.inline_depth == 0 && mem.size == MemAccessSize::Mem32 {
+                    let val = ctrl.resolve(val);
+                    let dest = ctrl.resolve(mem.address);
+                    let stop = val.if_arithmetic_sub_const(1)
+                        .and_then(|x| x.if_mem32())
+                        .filter(|&x| x == dest)
+                        .is_some();
+                    if stop {
+                        ctrl.end_analysis();
+                    }
+                }
+                if self.inline_depth != 0 {
+                    // First branch of ai_step_region always clears flag 0x4
+                    // region = ai_regions[arg1] + arg2 * region_size;
+                    // region.flags &= !0x4;
+                    //Mem8[
+                    //  Mem32[((Mem32[(rsp + 4)] * 4) + ee8c64)] + (Mem32[(rsp + 8)] * 34) + 8
+                    //  ]
+                    let val = ctrl.resolve(val);
+                    let dest = ctrl.resolve(mem.address);
+                    let ok = val.if_arithmetic_and_const(0xfb)
+                        .and_then(|x| x.if_mem8())
+                        .filter(|&x| x == dest)
+                        .and_then(|x| x.if_arithmetic_add_const(8)) // flag offset
+                        .and_then(|x| x.if_arithmetic_add()) // addition for regions base + index
+                        .and_either(|x| {
+                            // One is arg2 * region_size (0x34),
+                            // other is ai_regions[arg1], that is, Mem32[ai_regions + arg1 * 4]
+                            // Check for just ai_regions[arg1]
+                            x.if_memory()
+                                .map(|x| x.address)
+                                .and_then(|x| x.if_arithmetic_add())
+                                .and_either_other(|x| Some(()).filter(|()| x == self.ai_regions))
+                                .and_then(|x| x.if_arithmetic_mul())
+                                .filter(|&(l, _r)| l == self.arg_cache.on_entry(0))
+                        })
+                        .is_some();
+                    if ok {
+                        self.result = Some(E::VirtualAddress::from_u64(0));
+                    }
+                }
             }
             _ => (),
         }

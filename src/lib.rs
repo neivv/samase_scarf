@@ -214,6 +214,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     draw_graphic_layers: Cached<Option<E::VirtualAddress>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
     ai_attack_prepare: Cached<Option<E::VirtualAddress>>,
+    ai_step_region: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -466,6 +467,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             draw_graphic_layers: Default::default(),
             prism_shaders: Default::default(),
             ai_attack_prepare: Default::default(),
+            ai_step_region: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1433,6 +1435,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.ai_attack_prepare.cache(&result);
         result
     }
+
+    pub fn ai_step_region(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.ai_step_region.cached() {
+            return cached;
+        }
+        let result = ai::step_region(self);
+        self.ai_step_region.cache(&result);
+        result
+    }
 }
 
 // Tries to return a func index to the address less or equal to `entry` that is definitely a
@@ -1798,11 +1809,44 @@ fn unwrap_sext<'e>(operand: Operand<'e>) -> Operand<'e> {
 
 trait OperandExt<'e> {
     fn if_mem32_offset(self, offset: u64) -> Option<Operand<'e>>;
+    fn if_arithmetic_add_const(self, offset: u64) -> Option<Operand<'e>>;
+    fn if_arithmetic_sub_const(self, offset: u64) -> Option<Operand<'e>>;
+    fn if_arithmetic_and_const(self, offset: u64) -> Option<Operand<'e>>;
 }
 
 impl<'e> OperandExt<'e> for Operand<'e> {
     fn if_mem32_offset(self, offset: u64) -> Option<Operand<'e>> {
         let (l, r) = self.if_mem32()?.if_arithmetic_add()?;
+        let r = r.if_constant()?;
+        if r != offset {
+            None
+        } else {
+            Some(l)
+        }
+    }
+
+    fn if_arithmetic_add_const(self, offset: u64) -> Option<Operand<'e>> {
+        let (l, r) = self.if_arithmetic_add()?;
+        let r = r.if_constant()?;
+        if r != offset {
+            None
+        } else {
+            Some(l)
+        }
+    }
+
+    fn if_arithmetic_sub_const(self, offset: u64) -> Option<Operand<'e>> {
+        let (l, r) = self.if_arithmetic_sub()?;
+        let r = r.if_constant()?;
+        if r != offset {
+            None
+        } else {
+            Some(l)
+        }
+    }
+
+    fn if_arithmetic_and_const(self, offset: u64) -> Option<Operand<'e>> {
+        let (l, r) = self.if_arithmetic_and()?;
         let r = r.if_constant()?;
         if r != offset {
             None

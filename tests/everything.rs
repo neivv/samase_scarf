@@ -395,6 +395,8 @@ fn everything_1221() {
 
         let load = analysis.load_images().unwrap();
         assert_eq!(load.0, 0x0054D1E0);
+
+        assert_eq!(analysis.ai_step_region().unwrap().0, 0x00619800);
     })
 }
 
@@ -997,6 +999,7 @@ fn everything_1234c() {
 fn everything_1234d() {
     test_with_extra_checks(Path::new("1234d.exe"), |_ctx, analysis| {
         assert_eq!(analysis.ai_attack_prepare().unwrap().0, 0x006583A0);
+        assert_eq!(analysis.ai_step_region().unwrap().0, 0x0065A590);
     })
 }
 
@@ -1490,6 +1493,7 @@ fn test_nongeneric<'e>(
     }
 
     assert!(analysis.ai_attack_prepare().is_some());
+    assert!(analysis.ai_step_region().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

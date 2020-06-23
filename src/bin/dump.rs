@@ -361,6 +361,7 @@ fn main() {
     println!("Prism pixel shader sets: 0x{:x}", analysis.prism_pixel_shaders().len());
 
     println!("ai_attack_prepare: {:?}", analysis.ai_attack_prepare());
+    println!("ai_step_region: {:?}", analysis.ai_step_region());
 
     let undef = ctx.new_undef();
     println!();
