@@ -126,7 +126,7 @@ pub fn command_lengths<'e, E: ExecutionState<'e>>(
     ];
     let results = find_bytes(&rdata.data, &needle[..]);
     test_assert_eq!(results.len(), 1);
-    results.first().map(|&start| {
+    let mut result = results.first().map(|&start| {
         let mut pos = needle.len() as u32;
         loop {
             let len = read_u32_at(&rdata, start + pos).unwrap_or_else(|| !1);
@@ -140,7 +140,15 @@ pub fn command_lengths<'e, E: ExecutionState<'e>>(
             vec.push(read_u32_at(&rdata, start + i * 4).unwrap_or_else(|| !0));
         }
         vec
-    }).unwrap_or_else(|| Vec::new())
+    }).unwrap_or_else(|| Vec::new());
+    // This is not correct in the lookup table for some reason
+    if let Some(cmd_37) = result.get_mut(0x37) {
+        *cmd_37 = 7;
+    }
+    while result.last().cloned() == Some(!0) {
+        result.pop();
+    }
+    result
 }
 
 pub fn send_command<'e, E: ExecutionState<'e>>(

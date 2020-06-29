@@ -1192,6 +1192,7 @@ fn test_nongeneric<'e>(
     check_global(init_game.loaded_save.unwrap(), binary, "loaded save");
 
     let command_lengths = analysis.command_lengths();
+    assert_eq!(command_lengths[0x37], 7);
     assert!(command_lengths.len() >= 0x59);
 
     let units = analysis.units().unwrap();
