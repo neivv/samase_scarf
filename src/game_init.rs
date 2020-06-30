@@ -1648,3 +1648,77 @@ pub fn create_game_dialog_vtbl_on_multiplayer_create<'e, E: ExecutionState<'e>>(
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
+
+pub fn join_game<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
+    let local_storm_id = analysis.single_player_start().local_storm_player_id
+        .and_then(|x| x.if_memory())
+        .and_then(|x| x.address.if_constant())
+        .map(|x| E::VirtualAddress::from_u64(x))?;
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let funcs = analysis.functions();
+    let funcs = &funcs[..];
+    let mut global_refs = crate::find_functions_using_global(analysis, local_storm_id);
+    global_refs.sort_by_key(|x| x.func_entry);
+    global_refs.dedup_by_key(|x| x.func_entry);
+    let mut result = None;
+    let arg_cache = &analysis.arg_cache;
+    for global in global_refs {
+        let new = entry_of_until(binary, funcs, global.use_address, |entry| {
+            let mut analyzer = IsJoinGame::<E> {
+                result: EntryOf::Retry,
+                use_address: global.use_address,
+                local_storm_id,
+                arg_cache,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.result
+        });
+        if let EntryOfResult::Ok(entry, ()) = new {
+            if single_result_assign(Some(entry), &mut result) {
+                break;
+            }
+        }
+    }
+    result
+}
+
+struct IsJoinGame<'a, 'e, E: ExecutionState<'e>> {
+    result: EntryOf<()>,
+    use_address: E::VirtualAddress,
+    local_storm_id: E::VirtualAddress,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsJoinGame<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let address = ctrl.address();
+        if self.use_address >= address && self.use_address < ctrl.current_instruction_end() {
+            self.result = EntryOf::Stop;
+        }
+        match *op {
+            Operation::Call(_) => {
+                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
+                let ok = arg1.if_mem32()
+                    .filter(|&val| val == self.arg_cache.on_entry(1))
+                    .and_then(|_| arg4.if_constant())
+                    .filter(|&c| c == self.local_storm_id.as_u64())
+                    .is_some();
+                if ok {
+                    self.result = EntryOf::Ok(());
+                }
+                if matches!(self.result, EntryOf::Retry) == false {
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
+        }
+    }
+}
+

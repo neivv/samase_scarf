@@ -215,6 +215,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
     ai_attack_prepare: Cached<Option<E::VirtualAddress>>,
     ai_step_region: Cached<Option<E::VirtualAddress>>,
+    join_game: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -468,6 +469,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             prism_shaders: Default::default(),
             ai_attack_prepare: Default::default(),
             ai_step_region: Default::default(),
+            join_game: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1442,6 +1444,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         }
         let result = ai::step_region(self);
         self.ai_step_region.cache(&result);
+        result
+    }
+
+    pub fn join_game(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.join_game.cached() {
+            return cached;
+        }
+        let result = game_init::join_game(self);
+        self.join_game.cache(&result);
         result
     }
 }

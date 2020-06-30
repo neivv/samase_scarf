@@ -945,6 +945,8 @@ fn everything_1233g() {
         assert_eq!(serialize.0, 0x0057F540);
         let deserialize = analysis.deserialize_sprites().unwrap();
         assert_eq!(deserialize.0, 0x0057E8C0);
+        let join_game = analysis.join_game().unwrap();
+        assert_eq!(join_game.0, 0x0089D2B0);
     })
 }
 
@@ -1000,6 +1002,8 @@ fn everything_1234d() {
     test_with_extra_checks(Path::new("1234d.exe"), |_ctx, analysis| {
         assert_eq!(analysis.ai_attack_prepare().unwrap().0, 0x006583A0);
         assert_eq!(analysis.ai_step_region().unwrap().0, 0x0065A590);
+        let join_game = analysis.join_game().unwrap();
+        assert_eq!(join_game.0, 0x0088B6A0);
     })
 }
 
@@ -1495,6 +1499,18 @@ fn test_nongeneric<'e>(
 
     assert!(analysis.ai_attack_prepare().is_some());
     assert!(analysis.ai_step_region().is_some());
+
+    let join_game = analysis.join_game();
+    // 1233g refactored join_game/it's arguments heavily from what used to resemble 1161,
+    // this analysis only finds the new format
+    if minor_version > 23 ||
+        (minor_version == 23 && patch_version > 3) ||
+        (minor_version == 23 && patch_version == 3 && revision >= b'g')
+    {
+        assert!(join_game.is_some());
+    } else {
+        assert!(join_game.is_none());
+    }
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {
