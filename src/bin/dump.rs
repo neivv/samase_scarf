@@ -253,6 +253,7 @@ fn main() {
     println!("init_map_from_path: {:?}", init_map_from_path);
     let choose_snp = analysis.choose_snp();
     println!("choose_snp: {:?}", choose_snp);
+    println!("SNetInitializeProvider: {:?}", analysis.snet_initialize_provider());
 
     let start = analysis.single_player_start();
     println!("single_player_start: {:?}", start.single_player_start);

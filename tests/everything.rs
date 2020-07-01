@@ -1004,6 +1004,8 @@ fn everything_1234d() {
         assert_eq!(analysis.ai_step_region().unwrap().0, 0x0065A590);
         let join_game = analysis.join_game().unwrap();
         assert_eq!(join_game.0, 0x0088B6A0);
+        let snet_initialize_provider = analysis.snet_initialize_provider().unwrap();
+        assert_eq!(snet_initialize_provider.0, 0x0079AE20);
     })
 }
 
@@ -1363,6 +1365,8 @@ fn test_nongeneric<'e>(
     assert!(init_map_from_path.is_some());
     let choose_snp = analysis.choose_snp();
     assert!(choose_snp.is_some());
+    let snet_initialize_provider = analysis.snet_initialize_provider();
+    assert!(snet_initialize_provider.is_some());
 
     let start = analysis.single_player_start();
     assert!(start.single_player_start.is_some());

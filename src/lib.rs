@@ -216,6 +216,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     ai_attack_prepare: Cached<Option<E::VirtualAddress>>,
     ai_step_region: Cached<Option<E::VirtualAddress>>,
     join_game: Cached<Option<E::VirtualAddress>>,
+    snet_initialize_provider: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -470,6 +471,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ai_attack_prepare: Default::default(),
             ai_step_region: Default::default(),
             join_game: Default::default(),
+            snet_initialize_provider: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1453,6 +1455,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         }
         let result = game_init::join_game(self);
         self.join_game.cache(&result);
+        result
+    }
+
+    pub fn snet_initialize_provider(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.snet_initialize_provider.cached() {
+            return cached;
+        }
+        let result = game_init::snet_initialize_provider(self);
+        self.snet_initialize_provider.cache(&result);
         result
     }
 }

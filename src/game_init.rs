@@ -1722,3 +1722,51 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsJoinGame<'a, 'e
     }
 }
 
+
+pub fn snet_initialize_provider<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
+    let choose_snp = analysis.choose_snp()?;
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let arg_cache = &analysis.arg_cache;
+
+    let mut analyzer = FindSnetInitProvider::<E> {
+        result: None,
+        arg_cache,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, choose_snp);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct FindSnetInitProvider<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSnetInitProvider<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg5 = ctrl.resolve(self.arg_cache.on_call(4));
+                    let ok = Some(())
+                        .filter(|()| arg1 == self.arg_cache.on_entry(0))
+                        .and_then(|_| arg5.if_constant())
+                        .is_some();
+                    if ok {
+                        self.result = Some(dest);
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
