@@ -1009,6 +1009,12 @@ fn everything_1234d() {
     })
 }
 
+#[test]
+fn everything_1235a() {
+    test_with_extra_checks(Path::new("1235a.exe"), |_ctx, _analysis| {
+    })
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
 }
@@ -1304,7 +1310,9 @@ fn test_nongeneric<'e>(
     let draw = analysis.draw_image();
     assert!(draw.is_some());
     let vtables = analysis.renderer_vtables();
-    let has_prism = minor_version == 23 && patch_version >= 4 && is_ptr;
+    let has_prism = (minor_version == 23 && patch_version == 4 && is_ptr) ||
+        (minor_version == 23 && patch_version >= 5) ||
+        minor_version > 23;
     if minor_version < 22 || has_prism {
         // Older versions had a d3d11 renderer??
         // Newer versions have prism.
