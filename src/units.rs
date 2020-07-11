@@ -1,10 +1,10 @@
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{DestOperand, Operand, Operation};
+use scarf::{BinaryFile, DestOperand, Operand, Operation};
 
 use crate::{
-    Analysis, DatType, OptionExt, EntryOf, ArgCache, StringRefs, single_result_assign,
-    find_functions_using_global, entry_of_until, string_refs, unwrap_sext,
+    Analysis, DatType, OptionExt, EntryOf, ArgCache, single_result_assign,
+    find_functions_using_global, entry_of_until, unwrap_sext,
 };
 
 #[derive(Clone, Debug)]
@@ -18,6 +18,12 @@ pub struct OrderIssuing<Va: VirtualAddress> {
     pub order_init_arbiter: Option<Va>,
     pub prepare_issue_order: Option<Va>,
     pub do_next_queued_order: Option<Va>,
+}
+
+#[derive(Clone, Debug)]
+pub struct InitUnits<Va: VirtualAddress> {
+    pub init_units: Option<Va>,
+    pub load_dat: Option<Va>,
 }
 
 pub fn active_hidden_units<'e, E: ExecutionState<'e>>(
@@ -325,16 +331,26 @@ impl<'a, 'e, E: ExecutionState<'e>> UnitsAnalyzer<'a, 'e, E> {
 
 pub fn init_units<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<E::VirtualAddress> {
+) -> InitUnits<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let units = analysis.dat(DatType::Units)?;
-    let orders = analysis.dat(DatType::Orders)?;
-    let mut unit_refs = Vec::new();
+    let mut result = InitUnits {
+        init_units: None,
+        load_dat: None,
+    };
+
+    let units = match analysis.dat(DatType::Units) {
+        Some(s) => s,
+        None => return result,
+    };
+    let orders = match analysis.dat(DatType::Orders) {
+        Some(s) => s,
+        None => return result,
+    };
     let mut order_refs = Vec::new();
     {
-        let mut arr = [(&units, &mut unit_refs), (&orders, &mut order_refs)];
+        let mut arr = [(&orders, &mut order_refs)];
         for &mut (ref dat, ref mut out) in &mut arr {
             **out = dat.address.iter()
                 .filter_map(|x| x.if_constant())
@@ -343,63 +359,71 @@ pub fn init_units<'e, E: ExecutionState<'e>>(
                 }).collect::<Vec<_>>()
         }
     }
-    let str_refs = string_refs(binary, analysis, b"arr\\units.dat\0");
 
-    let mut common = unit_refs.iter()
-        .filter(|x| order_refs.iter().any(|y| x.func_entry == y.func_entry))
-        .filter(|x| str_refs.iter().any(|y| x.func_entry == y.func_entry))
-        .map(|x| x.func_entry)
-        .next();
-    if common.is_none() {
-        // Different strategy if a fake call happens to be in between orders and units
-        struct Analyzer<'a, 'e, F: ExecutionState<'e>> {
-            units_dat_seen: bool,
-            units_dat: Operand<'e>,
-            units_dat_str_seen: bool,
-            units_dat_str_refs: &'a [StringRefs<F::VirtualAddress>],
-        }
-        impl<'a, 'f: 'a, F: ExecutionState<'f>> scarf::Analyzer<'f> for Analyzer<'a, 'f, F> {
-            type State = analysis::DefaultState;
-            type Exec = F;
-            fn operation(&mut self, ctrl: &mut Control<'f, '_, '_, Self>, op: &Operation<'f>) {
-                match *op {
-                    Operation::Move(_, from, None) => {
-                        let from = ctrl.resolve(from);
-                        for oper in from.iter() {
-                            if oper == self.units_dat {
-                                self.units_dat_seen = true;
-                            }
+    struct Analyzer<'a, 'e, F: ExecutionState<'e>> {
+        units_dat: Operand<'e>,
+        arg_cache: &'a ArgCache<'e, F>,
+        binary: &'e BinaryFile<F::VirtualAddress>,
+        limit: u8,
+        result: &'a mut InitUnits<F::VirtualAddress>,
+    }
+    impl<'a, 'f: 'a, F: ExecutionState<'f>> scarf::Analyzer<'f> for Analyzer<'a, 'f, F> {
+        type State = analysis::DefaultState;
+        type Exec = F;
+        fn operation(&mut self, ctrl: &mut Control<'f, '_, '_, Self>, op: &Operation<'f>) {
+            match *op {
+                Operation::Call(dest) => {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = F::VirtualAddress::from_u64(dest);
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let compare_str = b"arr\\units.dat\0";
+                        let ok = arg1.if_constant()
+                            .map(|x| F::VirtualAddress::from_u64(x))
+                            .and_then(|addr| {
+                                self.binary.slice_from_address(addr, compare_str.len() as u32)
+                                    .ok()
+                            })
+                            .filter(|slice| slice.eq_ignore_ascii_case(compare_str))
+                            .filter(|_| arg2 == self.units_dat)
+                            .is_some();
+                        if ok {
+                            self.result.load_dat = Some(dest);
+                            ctrl.end_analysis();
                         }
-                        let str_ref_addr = self.units_dat_str_refs.iter().any(|x| {
-                            x.use_address >= ctrl.address() &&
-                                x.use_address < ctrl.current_instruction_end()
-                        });
-                        if str_ref_addr {
-                            self.units_dat_str_seen = true;
-                        }
-                        if self.units_dat_seen && self.units_dat_str_seen {
+                        self.limit -= 1;
+                        if self.limit == 0 {
                             ctrl.end_analysis();
                         }
                     }
-                    _ => (),
                 }
+                _ => (),
             }
         }
-
-        common = order_refs.iter().filter(|order_ref| {
-            let mut analyzer = Analyzer::<E> {
-                units_dat_seen: false,
-                units_dat: units.address,
-                units_dat_str_seen: false,
-                units_dat_str_refs: &str_refs[..],
-            };
-            let mut analysis = FuncAnalysis::new(binary, ctx, order_ref.func_entry);
-            analysis.analyze(&mut analyzer);
-            analyzer.units_dat_seen && analyzer.units_dat_str_seen
-        }).map(|x| x.func_entry).next();
     }
 
-    common
+    let arg_cache = &analysis.arg_cache;
+    let mut checked = Vec::with_capacity(4);
+    for order_ref in &order_refs {
+        if checked.iter().any(|&x| x == order_ref.func_entry) {
+            continue;
+        }
+        let mut analyzer = Analyzer::<E> {
+            units_dat: units.address,
+            arg_cache,
+            binary,
+            result: &mut result,
+            limit: 8,
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, order_ref.func_entry);
+        analysis.analyze(&mut analyzer);
+        if result.load_dat.is_some() {
+            result.init_units = Some(order_ref.func_entry);
+            break;
+        }
+        checked.push(order_ref.func_entry);
+    }
+    result
 }
 
 #[derive(Debug, Clone)]

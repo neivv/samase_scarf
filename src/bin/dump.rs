@@ -137,8 +137,8 @@ fn main() {
     println!("techdata.dat: {}", format_dat(&analysis.dat(DatType::TechData)));
     println!("sfxdata.dat: {}", format_dat(&analysis.dat(DatType::SfxData)));
 
-    let init_units = analysis.init_units();
-    println!("init_units: {:?}", init_units);
+    println!("init_units: {:?}", analysis.init_units());
+    println!("load_dat: {:?}", analysis.load_dat());
     let init_game = analysis.init_game();
     println!("init_game: {:?}", init_game.init_game);
     println!(

@@ -75,7 +75,7 @@ pub use crate::save::{SpriteSerialization};
 pub use crate::step_order::{SecondaryOrderHook, StepOrderHiddenHook};
 pub use crate::sprites::{FowSprites, InitSprites, Sprites};
 pub use crate::text::{FontRender};
-pub use crate::units::{ActiveHiddenUnits, OrderIssuing, UnitCreation};
+pub use crate::units::{ActiveHiddenUnits, InitUnits, OrderIssuing, UnitCreation};
 
 use crate::switch::{CompleteSwitch, full_switch_info};
 
@@ -160,7 +160,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     print_text: Cached<Option<E::VirtualAddress>>,
     step_order: Cached<Option<E::VirtualAddress>>,
     step_order_hidden: Cached<Rc<Vec<StepOrderHiddenHook<'e, E::VirtualAddress>>>>,
-    init_units: Cached<Option<E::VirtualAddress>>,
+    init_units: Cached<InitUnits<E::VirtualAddress>>,
     step_secondary_order: Cached<Rc<Vec<SecondaryOrderHook<'e, E::VirtualAddress>>>>,
     init_game: Cached<Rc<InitGame<'e, E::VirtualAddress>>>,
     units: Cached<Option<Operand<'e>>>,
@@ -1069,13 +1069,21 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         result
     }
 
-    pub fn init_units(&mut self) -> Option<E::VirtualAddress> {
+    fn init_units_related(&mut self) -> InitUnits<E::VirtualAddress> {
         if let Some(cached) = self.init_units.cached() {
             return cached;
         }
         let result = units::init_units(self);
         self.init_units.cache(&result);
         result
+    }
+
+    pub fn init_units(&mut self) -> Option<E::VirtualAddress> {
+        self.init_units_related().init_units
+    }
+
+    pub fn load_dat(&mut self) -> Option<E::VirtualAddress> {
+        self.init_units_related().load_dat
     }
 
     pub fn units(&mut self) -> Option<Operand<'e>> {

@@ -1017,7 +1017,9 @@ fn everything_1235a() {
 
 #[test]
 fn everything_1235b() {
-    test_with_extra_checks(Path::new("1235b.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1235b.exe"), |ctx, analysis| {
+        let load_dat = analysis.load_dat().unwrap();
+        assert_eq!(load_dat.0, 0x006CAD30);
     })
 }
 
@@ -1204,6 +1206,8 @@ fn test_nongeneric<'e>(
 
     let init_units = analysis.init_units();
     assert!(init_units.is_some());
+    let load_dat = analysis.load_dat();
+    assert!(load_dat.is_some());
     let init_game = analysis.init_game();
     assert!(init_game.init_game.is_some());
     assert!(init_game.loaded_save.is_some());
