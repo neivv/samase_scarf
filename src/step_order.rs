@@ -320,12 +320,13 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
                     let condition = ctrl.resolve(condition);
                     let unit_resolved = condition.iter_no_mem_addr()
                         .find_map(|x| {
-                            // b1 > mem8[x + 4d]
+                            // mem8[x + 4d] > b0
                             x.if_arithmetic_gt()
-                                .and_either_other(|x| x.if_constant().filter(|&c| c == 0xb1))
+                                .and_either_other(|x| x.if_constant().filter(|&c| c == 0xb0))
                                 .and_then(|x| x.if_mem8())
                                 .and_then(|x| x.if_arithmetic_add())
-                                .and_either_other(|x| x.if_constant().filter(|&c| c == 0x4d))
+                                .filter(|x| x.1.if_constant().filter(|&c| c == 0x4d).is_some())
+                                .map(|(l, _)| l)
                         });
                     if let Some(unit) = unit_resolved {
                         if let Some(unresolved) = ctrl.unresolve(unit) {

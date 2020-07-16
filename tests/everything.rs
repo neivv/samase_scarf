@@ -1017,7 +1017,7 @@ fn everything_1235a() {
 
 #[test]
 fn everything_1235b() {
-    test_with_extra_checks(Path::new("1235b.exe"), |ctx, analysis| {
+    test_with_extra_checks(Path::new("1235b.exe"), |_ctx, analysis| {
         let load_dat = analysis.load_dat().unwrap();
         assert_eq!(load_dat.0, 0x006CAD30);
     })
