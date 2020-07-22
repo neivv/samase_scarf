@@ -1025,7 +1025,12 @@ fn everything_1235b() {
 
 #[test]
 fn everything_1235c() {
-    test_with_extra_checks(Path::new("1235c.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1235c.exe"), |ctx, analysis| {
+        let do_attack = analysis.do_attack().unwrap();
+        assert_eq!(do_attack.0, 0x00593CB0);
+        let do_attack_main = analysis.do_attack_main().unwrap();
+        assert_eq!(do_attack_main.0, 0x00593A80);
+        assert_eq!(analysis.last_bullet_spawner().unwrap(), ctx.mem32(ctx.constant(0xf823ac)));
     })
 }
 
@@ -1539,6 +1544,10 @@ fn test_nongeneric<'e>(
     } else {
         assert!(join_game.is_none());
     }
+
+    assert!(analysis.do_attack().is_some());
+    assert!(analysis.do_attack_main().is_some());
+    check_global(analysis.last_bullet_spawner().unwrap(), binary, "last_bullet_spawner");
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

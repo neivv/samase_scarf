@@ -1,9 +1,9 @@
-use scarf::{BinaryFile, DestOperand, Operand, Operation};
+use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation};
 use scarf::analysis::{self, FuncAnalysis, AnalysisState,Cfg, Control};
 use scarf::operand::OperandCtx;
 
 use crate::{
-    Analysis, OptionExt, find_callers, entry_of_until, single_result_assign, EntryOf,
+    Analysis, OptionExt, find_callers, entry_of_until, single_result_assign, EntryOf, ArgCache,
 };
 use crate::switch::{full_switch_info};
 
@@ -29,6 +29,13 @@ pub enum SecondaryOrderHook<'e, Va: VirtualAddress> {
         unit: Operand<'e>,
     },
     Separate(Va),
+}
+
+#[derive(Clone, Copy)]
+pub struct DoAttack<'e, Va: VirtualAddress> {
+    pub do_attack: Va,
+    pub do_attack_main: Va,
+    pub last_bullet_spawner: Operand<'e>,
 }
 
 // Checks for comparing secondary_order to 0x95 (Hallucination)
@@ -446,7 +453,6 @@ pub fn step_order<'e, E: ExecutionState<'e>>(
     result
 }
 
-
 struct IsStepOrder<'a, 'e, E: ExecutionState<'e>> {
     ok: bool,
     call_found: bool,
@@ -645,6 +651,123 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
     fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         if self.pre_result.is_some() {
             ctrl.end_analysis();
+        }
+    }
+}
+
+pub fn do_attack<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<DoAttack<'e, E::VirtualAddress>> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let attack_order = find_order_function(analysis, 0xa)?;
+
+    let arg_cache = &analysis.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, attack_order);
+    let mut analyzer = FindDoAttack {
+        do_attack: None,
+        do_attack_main: None,
+        last_bullet_spawner: None,
+        arg_cache,
+        inlining: false,
+    };
+    analysis.analyze(&mut analyzer);
+    Some(DoAttack {
+        do_attack: analyzer.do_attack?,
+        do_attack_main: analyzer.do_attack_main?,
+        last_bullet_spawner: analyzer.last_bullet_spawner?,
+    })
+}
+
+struct FindDoAttack<'a, 'e, E: ExecutionState<'e>> {
+    do_attack: Option<E::VirtualAddress>,
+    do_attack_main: Option<E::VirtualAddress>,
+    last_bullet_spawner: Option<Operand<'e>>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inlining: bool,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let step = match () {
+            () if self.do_attack.is_none() => 0,
+            () if self.last_bullet_spawner.is_none() => 1,
+            () => 2,
+        };
+        match *op {
+            Operation::Call(dest) => {
+                if self.inlining {
+                    ctrl.end_analysis();
+                    return;
+                }
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let ctx = ctrl.ctx();
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if step == 0 {
+                        // Step 0: Check for do_attack(this, 0x5)
+                        let ok = Some(())
+                            .and_then(|_| ctrl.resolve(ctx.register(1)).if_register())
+                            .filter(|r| r.0 == 1)
+                            .and_then(|_| ctrl.resolve(self.arg_cache.on_call(0)).if_constant())
+                            .filter(|&c| c == 5)
+                            .is_some();
+                        if ok {
+                            self.do_attack = Some(dest);
+                            ctrl.analyze_with_current_state(self, dest);
+                            if self.do_attack_main.is_some() {
+                                ctrl.end_analysis();
+                            } else {
+                                self.do_attack = None;
+                            }
+                        }
+                    } else if step == 1 {
+                        self.inlining = true;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inlining = false;
+                    } else if step == 2 {
+                        // Step 2: Check for do_attack_main(this, 2, units_dat_air_weapon[x])
+                        let ok = Some(())
+                            .and_then(|_| ctrl.resolve(ctx.register(1)).if_register())
+                            .filter(|r| r.0 == 1)
+                            .and_then(|_| ctrl.resolve(self.arg_cache.on_call(0)).if_constant())
+                            .filter(|&c| c == 2)
+                            .and_then(|_| ctrl.resolve(self.arg_cache.on_call(1)).if_mem8())
+                            .and_then(|addr| addr.if_arithmetic_add())
+                            .and_then(|(_, r)| r.if_constant())
+                            .is_some();
+                        if ok {
+                            self.do_attack_main = Some(dest);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Move(DestOperand::Memory(mem), val, None) if step == 1 => {
+                // Step 1: Look for assignment of zero to global memory
+                let word_size = match E::VirtualAddress::SIZE {
+                    4 => MemAccessSize::Mem32,
+                    _ => MemAccessSize::Mem64,
+                };
+                if mem.size == word_size {
+                    let dest = ctrl.resolve(mem.address);
+                    let val = ctrl.resolve(val);
+                    if val.if_constant() == Some(0) && dest.if_constant().is_some() {
+                        let ctx = ctrl.ctx();
+                        self.last_bullet_spawner =
+                            Some(ctx.mem_variable_rc(mem.size, mem.address));
+                    }
+                }
+            }
+            Operation::Jump { .. } => {
+                if self.inlining {
+                    ctrl.end_analysis();
+                    return;
+                }
+            }
+            _ => (),
         }
     }
 }

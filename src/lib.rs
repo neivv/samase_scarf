@@ -217,6 +217,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     ai_step_region: Cached<Option<E::VirtualAddress>>,
     join_game: Cached<Option<E::VirtualAddress>>,
     snet_initialize_provider: Cached<Option<E::VirtualAddress>>,
+    do_attack: Cached<Option<step_order::DoAttack<'e, E::VirtualAddress>>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -472,6 +473,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ai_step_region: Default::default(),
             join_game: Default::default(),
             snet_initialize_provider: Default::default(),
+            do_attack: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1473,6 +1475,27 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         let result = game_init::snet_initialize_provider(self);
         self.snet_initialize_provider.cache(&result);
         result
+    }
+
+    fn do_attack_struct(&mut self) -> Option<step_order::DoAttack<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.do_attack.cached() {
+            return cached;
+        }
+        let result = step_order::do_attack(self);
+        self.do_attack.cache(&result);
+        result
+    }
+
+    pub fn do_attack(&mut self) -> Option<E::VirtualAddress> {
+        self.do_attack_struct().map(|x| x.do_attack)
+    }
+
+    pub fn do_attack_main(&mut self) -> Option<E::VirtualAddress> {
+        self.do_attack_struct().map(|x| x.do_attack_main)
+    }
+
+    pub fn last_bullet_spawner(&mut self) -> Option<Operand<'e>> {
+        self.do_attack_struct().map(|x| x.last_bullet_spawner)
     }
 }
 

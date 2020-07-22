@@ -365,6 +365,9 @@ fn main() {
     println!("ai_step_region: {:?}", analysis.ai_step_region());
 
     println!("join_game: {:?}", analysis.join_game());
+    println!("do_attack: {:?}", analysis.do_attack());
+    println!("do_attack_main: {:?}", analysis.do_attack_main());
+    println!("last_bullet_spawner: {}", format_op_operand(analysis.last_bullet_spawner()));
 
     let undef = ctx.new_undef();
     println!();
