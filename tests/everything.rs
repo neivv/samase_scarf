@@ -22,6 +22,8 @@ fn everything_1208() {
         assert_eq!(sprite_array, ctx.constant(0x00E7E820));
         let init_sprites = analysis.init_sprites().unwrap();
         assert_eq!(init_sprites.0, 0x00666040);
+        let serialize = analysis.serialize_sprites().unwrap();
+        assert_eq!(serialize.0, 0x00666900);
     });
 }
 

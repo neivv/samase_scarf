@@ -163,12 +163,17 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                                     r.if_constant().filter(|&c| c == self.sprite_size as u64)
                                         .is_some()
                                 })
-                                .and_then(|(l, _)| ctrl.if_mem_word(l))
-                                .filter(|&addr| {
-                                    // addr == self.last_y_hline (convert in place)
+                                .filter(|&(l, _)| {
+                                    // addr == self.last_y_hline or undefined; convert in place
                                     // in older patches,
                                     // [esp - x + game.map_height_tiles] in newer.
-                                    addr == self.last_y_hline || self.is_stack_temp_hlines(addr)
+                                    l.is_undefined() ||
+                                        ctrl.if_mem_word(l)
+                                            .filter(|&addr| {
+                                                self.is_stack_temp_hlines(addr) ||
+                                                    addr == self.last_y_hline
+                                            })
+                                            .is_some()
                                 })
                                 .is_some()
                         });

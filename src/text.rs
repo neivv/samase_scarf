@@ -235,8 +235,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCacheRenderAscii
                         let ecx = ctrl.resolve(ctx.register(1));
                         let ok = ctrl.if_mem_word(ecx)
                             .filter(|&addr| {
-                                addr == self.fonts &&
-                                    self.checked_functions.iter().any(|&x| x == dest) == false
+                                addr == self.fonts ||
+                                    addr.if_arithmetic_add()
+                                        .filter(|&(_, r)| r == self.fonts)
+                                        .is_some()
+                            })
+                            .filter(|_| {
+                                self.checked_functions.iter().any(|&x| x == dest) == false
                             })
                             .is_some();
                         if ok {
