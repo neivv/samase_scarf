@@ -25,6 +25,7 @@ overflow-checks = true
 arrayvec = "0.5"
 byteorder = "1.1.0"
 fxhash = "0.2.1"
+lde = { git = "https://github.com/CasualX/lde" }
 log = "0.4"
 memchr = "2.0"
 memmem = "0.1.1"
@@ -38,7 +39,7 @@ scopeguard = { version = "1.1", optional = true }
 
 [dependencies.scarf]
 git = "https://github.com/neivv/scarf"
-rev = "94a48743b2187d4215e865b0a68b0dca3337c253"
+rev = "16182c492d1808c55f9f551414cfdaa7591f9f6a"
 
 [dev-dependencies]
 fern = "0.5"

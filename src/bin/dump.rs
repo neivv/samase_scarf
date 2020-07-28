@@ -30,6 +30,10 @@ fn main() {
         let ok = arg.to_str()? == "--dump-vtables";
         Some(()).filter(|()| ok)
     }).is_some();
+    let do_dump_dat_patches = std::env::args_os().nth(2).and_then(|arg| {
+        let ok = arg.to_str()? == "--dat-patches";
+        Some(()).filter(|()| ok)
+    }).is_some();
 
     let mut binary = scarf::parse(&exe).unwrap();
     let relocs = scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary).unwrap();
@@ -46,6 +50,55 @@ fn main() {
     }
     if do_dump_vtables {
         dump_vtables(&binary, &mut analysis);
+        return;
+    }
+    if do_dump_dat_patches {
+        if let Some(dat_patches) = analysis.dat_patches_debug_data() {
+            let mut vec = dat_patches.tables.into_iter().collect::<Vec<_>>();
+            vec.sort_by_key(|x| x.0);
+            for (dat, debug) in vec {
+                // Since Debug for VirtualAddress has the VirtualAddress(0001233) etc,
+                // it's distracting to have that much of it.
+                let mapped = debug.entry_counts.iter().map(|x| x.as_u64()).collect::<Vec<_>>();
+                println!("{:?} entry count patches: {:x?}", dat, mapped);
+                println!("{:?} array patches:", dat);
+                for (i, arr) in debug.array_patches.iter().enumerate() {
+                    let all_offsets_zero = arr.iter().all(|x| x.1 == 0);
+                    if all_offsets_zero {
+                        let mapped = arr.iter().map(|x| x.0.as_u64()).collect::<Vec<_>>();
+                        println!("    {:02x}: {:x?}", i, mapped);
+                    } else {
+                        let mapped = arr.iter()
+                            .map(|x| format!("{:x}:{:x}", x.0.as_u64(), x.1))
+                            .collect::<Vec<_>>();
+                        println!("    {:02x}: {:x?}", i, mapped);
+                    }
+                }
+            }
+            println!("--- Replaces ---");
+            for (addr, val) in dat_patches.replaces {
+                println!("{:08x} = {:02x?}", addr.as_u64(), &val);
+            }
+            println!("--- Hooks ---");
+            for (addr, skip, val) in dat_patches.hooks {
+                println!("{:08x}:{:x} = {:02x?}", addr.as_u64(), skip, val);
+            }
+            println!("--- Two step hooks ---");
+            for (addr, free_space, skip, val) in dat_patches.two_step_hooks {
+                println!(
+                    "{:08x}:{:x} = {:02x?} (Free @ {:08x})",
+                    addr.as_u64(), skip, val, free_space.as_u64(),
+                );
+            }
+            println!("--- Func replaces ---");
+            for (addr, ty) in dat_patches.func_replaces {
+                println!("{:08x} = {:?}", addr.as_u64(), ty);
+            }
+        } else {
+            println!("Dat patches analysis failed");
+        }
+        let elapsed = start_time.elapsed();
+        println!("Time taken: {}.{:09} s", elapsed.as_secs(), elapsed.subsec_nanos());
         return;
     }
 
@@ -365,6 +418,7 @@ fn main() {
     println!("ai_step_region: {:?}", analysis.ai_step_region());
 
     println!("join_game: {:?}", analysis.join_game());
+    println!("set_status_screen_tooltip: {:?}", analysis.set_status_screen_tooltip());
     println!("do_attack: {:?}", analysis.do_attack());
     println!("do_attack_main: {:?}", analysis.do_attack_main());
     println!("last_bullet_spawner: {}", format_op_operand(analysis.last_bullet_spawner()));

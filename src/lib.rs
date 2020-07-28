@@ -21,7 +21,6 @@ mod bullets;
 mod campaign;
 mod clientside;
 mod commands;
-mod dat;
 mod dialog;
 mod eud;
 mod file;
@@ -33,6 +32,7 @@ mod map;
 mod network;
 mod pathing;
 mod players;
+mod range_list;
 mod renderer;
 mod rng;
 mod save;
@@ -42,6 +42,8 @@ mod switch;
 mod text;
 mod units;
 mod vtables;
+
+pub mod dat;
 
 use std::rc::Rc;
 
@@ -58,7 +60,9 @@ pub use crate::ai::AiScriptHook;
 pub use crate::bullets::BulletCreation;
 pub use crate::clientside::{GameScreenRClick, GameCoordConversion, MiscClientSide};
 pub use crate::commands::{ProcessCommands, Selections, StepNetwork};
-pub use crate::dat::{DatTablePtr};
+pub use crate::dat::{
+    DatTablePtr, DatPatch, DatPatches, DatArrayPatch, DatEntryCountPatch, DatReplaceFunc
+};
 pub use crate::dialog::{TooltipRelated};
 pub use crate::eud::EudTable;
 pub use crate::firegraft::RequirementTables;
@@ -218,6 +222,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     join_game: Cached<Option<E::VirtualAddress>>,
     snet_initialize_provider: Cached<Option<E::VirtualAddress>>,
     do_attack: Cached<Option<step_order::DoAttack<'e, E::VirtualAddress>>>,
+    dat_patches: Cached<Option<Rc<DatPatches<E::VirtualAddress>>>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -330,7 +335,7 @@ macro_rules! declare_dat {
             }
         }
 
-        #[derive(Copy, Clone, Debug)]
+        #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
         pub enum DatType {
             $($enum_variant,)*
         }
@@ -472,6 +477,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ai_attack_prepare: Default::default(),
             ai_step_region: Default::default(),
             join_game: Default::default(),
+            dat_patches: Default::default(),
             snet_initialize_provider: Default::default(),
             do_attack: Default::default(),
             dat_tables: DatTables::new(),
@@ -1477,6 +1483,79 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         result
     }
 
+    pub fn set_status_screen_tooltip(&mut self) -> Option<E::VirtualAddress> {
+        self.dat_patches()?.set_status_screen_tooltip
+    }
+
+    pub fn dat_patches(&mut self) -> Option<Rc<DatPatches<E::VirtualAddress>>> {
+        if let Some(cached) = self.dat_patches.cached() {
+            return cached;
+        }
+        let result = dat::dat_patches(self).map(|x| Rc::new(x));
+        self.dat_patches.cache(&result);
+        result
+
+    }
+
+    /// Mainly for tests/dump
+    pub fn dat_patches_debug_data(
+        &mut self,
+    ) -> Option<DatPatchesDebug<E::VirtualAddress>> {
+        let patches = self.dat_patches()?;
+        let mut map = fxhash::FxHashMap::default();
+        let mut replaces = Vec::new();
+        let mut func_replaces = Vec::new();
+        let mut hooks = Vec::new();
+        let mut two_step_hooks = Vec::new();
+        for patch in &patches.patches {
+            match *patch {
+                DatPatch::Array(ref a) => {
+                    let vec = &mut map.entry(a.dat)
+                        .or_insert_with(DatTablePatchesDebug::default)
+                        .array_patches;
+                    while vec.len() <= a.field_id as usize {
+                        vec.push(Vec::new());
+                    }
+                    vec[a.field_id as usize].push((a.address, a.offset));
+                    vec[a.field_id as usize].sort();
+                }
+                DatPatch::EntryCount(ref a) => {
+                    let entry_counts = &mut map.entry(a.dat)
+                        .or_insert_with(DatTablePatchesDebug::default)
+                        .entry_counts;
+                    entry_counts.push(a.address);
+                    entry_counts.sort();
+                }
+                DatPatch::Replace(addr, offset, len) => {
+                    let data = &patches.code_bytes[offset as usize..][..len as usize];
+                    replaces.push((addr, data.into()));
+                }
+                DatPatch::Hook(addr, offset, len, skip) => {
+                    let data = &patches.code_bytes[offset as usize..][..len as usize];
+                    hooks.push((addr, skip, data.into()));
+                }
+                DatPatch::TwoStepHook(addr, free_space, offset, len, skip) => {
+                    let data = &patches.code_bytes[offset as usize..][..len as usize];
+                    two_step_hooks.push((addr, free_space, skip, data.into()));
+                }
+                DatPatch::ReplaceFunc(addr, ty) => {
+                    func_replaces.push((addr, ty));
+                }
+            }
+        }
+        replaces.sort_by_key(|x| x.0);
+        func_replaces.sort_by_key(|x| x.0);
+        hooks.sort_by_key(|x| x.0);
+        two_step_hooks.sort_by_key(|x| x.0);
+        Some(DatPatchesDebug {
+            tables: map,
+            replaces,
+            func_replaces,
+            hooks,
+            two_step_hooks,
+        })
+    }
+
     fn do_attack_struct(&mut self) -> Option<step_order::DoAttack<'e, E::VirtualAddress>> {
         if let Some(cached) = self.do_attack.cached() {
             return cached;
@@ -1496,6 +1575,28 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn last_bullet_spawner(&mut self) -> Option<Operand<'e>> {
         self.do_attack_struct().map(|x| x.last_bullet_spawner)
+    }
+}
+
+pub struct DatPatchesDebug<Va: VirtualAddressTrait> {
+    pub tables: fxhash::FxHashMap<DatType, DatTablePatchesDebug<Va>>,
+    pub replaces: Vec<(Va, Vec<u8>)>,
+    pub func_replaces: Vec<(Va, DatReplaceFunc)>,
+    pub hooks: Vec<(Va, u8, Vec<u8>)>,
+    pub two_step_hooks: Vec<(Va, Va, u8, Vec<u8>)>,
+}
+
+pub struct DatTablePatchesDebug<Va: VirtualAddressTrait> {
+    pub array_patches: Vec<Vec<(Va, i32)>>,
+    pub entry_counts: Vec<Va>,
+}
+
+impl<Va: VirtualAddressTrait> Default for DatTablePatchesDebug<Va> {
+    fn default() -> Self {
+        DatTablePatchesDebug {
+            array_patches: Vec::new(),
+            entry_counts: Vec::new(),
+        }
     }
 }
 
@@ -1864,6 +1965,7 @@ trait OperandExt<'e> {
     fn if_mem32_offset(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_add_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_sub_const(self, offset: u64) -> Option<Operand<'e>>;
+    fn if_arithmetic_mul_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_and_const(self, offset: u64) -> Option<Operand<'e>>;
 }
 
@@ -1890,6 +1992,16 @@ impl<'e> OperandExt<'e> for Operand<'e> {
 
     fn if_arithmetic_sub_const(self, offset: u64) -> Option<Operand<'e>> {
         let (l, r) = self.if_arithmetic_sub()?;
+        let r = r.if_constant()?;
+        if r != offset {
+            None
+        } else {
+            Some(l)
+        }
+    }
+
+    fn if_arithmetic_mul_const(self, offset: u64) -> Option<Operand<'e>> {
+        let (l, r) = self.if_arithmetic_mul()?;
         let r = r.if_constant()?;
         if r != offset {
             None
