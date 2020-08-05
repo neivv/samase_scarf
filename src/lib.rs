@@ -497,6 +497,42 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.functions.get_or_insert_with(|| {
             let mut functions = scarf::analysis::find_functions::<E>(binary, &relocs);
             functions.retain(|&fun| Analysis::<E>::is_valid_function(fun));
+
+            // Add functions which immediately jump to another
+            let text = binary.section(b".text\0\0\0").unwrap();
+            let text_end = text.virtual_address + text.virtual_size;
+            let mut extra_funcs = Vec::with_capacity(64);
+            for &func in &functions {
+                let relative = func.as_u64().wrapping_sub(text.virtual_address.as_u64()) as usize;
+                if let Some(&byte) = text.data.get(relative) {
+                    if byte == 0xe9 {
+                        if let Some(offset) = (&text.data[relative + 1..]).read_u32::<LE>().ok() {
+                            let dest = func.as_u64()
+                                .wrapping_add(5)
+                                .wrapping_add(offset as i32 as i64 as u64);
+                            let dest = E::VirtualAddress::from_u64(dest);
+                            if dest >= text.virtual_address && dest <= text_end {
+                                if let Err(index) = functions.binary_search(&dest) {
+                                    extra_funcs.push((dest, index));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Insert functions without having to memmove every entry more than once
+            extra_funcs.sort_unstable_by_key(|x| x.0);
+            extra_funcs.dedup_by_key(|x| x.0);
+            let mut end_pos = functions.len();
+            functions.resize_with(
+                functions.len() + extra_funcs.len(),
+                || E::VirtualAddress::from_u64(0),
+            );
+            for (i, &(val, index)) in extra_funcs.iter().enumerate().rev() {
+                functions.copy_within(index..end_pos, index + i + 1);
+                functions[index + i] = val;
+                end_pos = index;
+            }
             Rc::new(functions)
         }).clone()
     }
