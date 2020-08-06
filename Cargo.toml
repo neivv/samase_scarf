@@ -12,12 +12,17 @@ required-features = ["binaries"]
 lto = "no"
 codegen-units = 4
 opt-level = 2 # Does not worsen compilation times but halves runtime on scarf
+# Disabled for faster builds
+debug = 0
 
 [profile.test]
+# Disabled for faster builds
+debug = 0
 opt-level = 2
 
 [profile.release]
-debug = 1
+# Disabled for faster builds
+debug = 0
 lto = true
 overflow-checks = true
 
@@ -39,7 +44,7 @@ scopeguard = { version = "1.1", optional = true }
 
 [dependencies.scarf]
 git = "https://github.com/neivv/scarf"
-rev = "16182c492d1808c55f9f551414cfdaa7591f9f6a"
+rev = "16d656698ea310b4c6643406bb6e40c81a7e491a"
 
 [dev-dependencies]
 fern = "0.5"

@@ -12,7 +12,7 @@ use scarf::{BinaryFile, BinarySection, DestOperand, Operand, Operation, Rva};
 
 use crate::{
     ArgCache, Analysis, EntryOf, StringRefs, DatType, entry_of_until, single_result_assign,
-    string_refs, if_callable_const, OperandExt,
+    string_refs, if_callable_const, OperandExt, OptionExt,
 };
 use crate::range_list::RangeList;
 
@@ -32,6 +32,13 @@ pub static FLINGY_ARRAY_WIDTHS: &[u8] = &[
     2, 4, 2, 4, 1, 1, 1,
 ];
 
+pub static UPGRADE_ARRAY_WIDTHS: &[u8] = &[
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1,
+];
+
+pub static TECHDATA_ARRAY_WIDTHS: &[u8] = &[
+    2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1,
+];
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DatTablePtr<'e> {
@@ -84,6 +91,9 @@ pub enum DatReplaceFunc {
     SelfOrSubunitAirWeapon,
     UnitOrderWeapon,
     UpdateStatusScreenTooltip,
+    UnitCloakTech,
+    UnitCurrentUpgrade,
+    UnitCurrentTech,
 }
 
 pub struct DatArrayPatch<Va: VirtualAddress> {
@@ -205,7 +215,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindDatRoot<'a, '
 pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
 ) -> Option<DatPatches<E::VirtualAddress>> {
-    let dats = [DatType::Units, DatType::Weapons, DatType::Flingy];
+    let dats = [
+        DatType::Units, DatType::Weapons, DatType::Flingy, DatType::Upgrades,
+        DatType::TechData,
+    ];
     let mut dat_ctx = DatPatchContext::new(analysis);
     let dat_ctx = dat_ctx.as_mut()?;
     for &dat in &dats {
@@ -242,6 +255,8 @@ struct DatPatchContext<'a, 'e, E: ExecutionState<'e>> {
     units: DatTable<E::VirtualAddress>,
     weapons: DatTable<E::VirtualAddress>,
     flingy: DatTable<E::VirtualAddress>,
+    upgrades: DatTable<E::VirtualAddress>,
+    techdata: DatTable<E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     result: DatPatches<E::VirtualAddress>,
     unchecked_refs: FxHashSet<Rva>,
@@ -273,6 +288,9 @@ struct DatPatchContext<'a, 'e, E: ExecutionState<'e>> {
     unknown_global_u8_mem: FxHashMap<E::VirtualAddress, E::VirtualAddress>,
 
     step_iscript: E::VirtualAddress,
+    /// Set during analysis, contains refs but isn't fully analyzed.
+    /// Maybe dumb to special case this
+    update_status_screen_tooltip: E::VirtualAddress,
 }
 
 struct DatTable<Va: VirtualAddress> {
@@ -314,6 +332,8 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             units: dat_table(0x36),
             weapons: dat_table(0x18),
             flingy: dat_table(0x7),
+            upgrades: dat_table(0xc),
+            techdata: dat_table(0xb),
             binary: analysis.binary,
             analysis,
             result: DatPatches {
@@ -329,6 +349,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                 FxHashSet::with_capacity_and_hasher(128, Default::default()),
             step_iscript,
             unknown_global_u8_mem: FxHashMap::with_capacity_and_hasher(4, Default::default()),
+            update_status_screen_tooltip: E::VirtualAddress::from_u64(0),
         })
     }
 
@@ -387,6 +408,8 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             DatType::Units => (&mut self.units, 0xe4, &UNIT_ARRAY_WIDTHS),
             DatType::Weapons => (&mut self.weapons, 0x82, &WEAPON_ARRAY_WIDTHS),
             DatType::Flingy => (&mut self.flingy, 0xd1, &FLINGY_ARRAY_WIDTHS),
+            DatType::Upgrades => (&mut self.upgrades, 0x3d, &UPGRADE_ARRAY_WIDTHS),
+            DatType::TechData => (&mut self.techdata, 0x2c, &TECHDATA_ARRAY_WIDTHS),
             _ => unimplemented!(),
         };
         entry.table_address = table_address;
@@ -452,9 +475,16 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                 address,
                 offset,
             }));
-            if address >= text.virtual_address && address < text_end {
-                let rva = Rva((address.as_u64() - self.binary.base.as_u64()) as u32);
-                self.unchecked_refs.insert(rva);
+            // Assuming that array ref analysis for hardcoded indices isn't important.
+            // (It isn't as of this writing)
+            // Adding them as well would require better entry_of results as currently
+            // they are checked by looking up the array_lookup hashtable which only contains
+            // offset 0 addresses.
+            if offset_bytes == 0 {
+                if address >= text.virtual_address && address < text_end {
+                    let rva = Rva((address.as_u64() - self.binary.base.as_u64()) as u32);
+                    self.unchecked_refs.insert(rva);
+                }
             }
         }
     }
@@ -471,6 +501,9 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             self.unchecked_refs.remove(&rva);
             let address = binary.base + rva.0;
             entry_of_until(binary, &functions, address, |entry| {
+                if entry == self.update_status_screen_tooltip {
+                    return EntryOf::Ok(());
+                }
                 let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
                 if !self.analyzed_functions.contains_key(&entry_rva) {
                     self.analyze_function(text, entry, address, DatFuncAnalysisMode::ArrayIndex)
@@ -512,6 +545,9 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             let callers = crate::find_callers(self.analysis, func);
             for &address in &callers {
                 entry_of_until(binary, &functions, address, |entry| {
+                    if entry == self.update_status_screen_tooltip {
+                        return EntryOf::Ok(());
+                    }
                     let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
                     if !self.analyzed_functions.contains_key(&entry_rva) {
                         self.analyze_function(
@@ -558,10 +594,13 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                     continue;
                 }
                 entry_of_until(binary, &functions, address, |entry| {
+                    if entry == self.update_status_screen_tooltip {
+                        return EntryOf::Ok(());
+                    }
                     self.analyze_function(
                         text,
                         entry,
-                        E::VirtualAddress::from_u64(0),
+                        address,
                         DatFuncAnalysisMode::FuncArg,
                     );
                     if self.found_func_arg_widen_refs.contains(&address) {
@@ -586,9 +625,11 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             let mut analyzer = RecognizeDatPatchFunc::new(self);
             let mut analysis = FuncAnalysis::new(binary, ctx, address);
             analysis.analyze(&mut analyzer);
-            if let Some(func) = analyzer.result() {
-                self.result.patches.push(DatPatch::ReplaceFunc(address, func));
-                self.u8_funcs.push(rva);
+            if let Ok(result) = analyzer.result() {
+                if let Some(func) = result {
+                    self.result.patches.push(DatPatch::ReplaceFunc(address, func));
+                    self.u8_funcs.push(rva);
+                }
             } else {
                 self.add_warning(format!("Cannot recognize function @ {:?}", address));
             }
@@ -772,18 +813,54 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         }
         match *op {
             Operation::Move(ref dest, val, None) => {
-                let resolved = ctrl.resolve(val);
-                self.check_u8_instruction(ctrl, resolved, val);
                 if self.mode == DatFuncAnalysisMode::ArrayIndex {
-                    let new = self.check_memory_read(ctrl, resolved);
-                    if let Some(new) = new {
-                        ctrl.skip_operation();
-                        let state = ctrl.exec_state();
-                        state.move_resolved(dest, new);
+                    self.check_array_ref(ctrl, val);
+                    if let DestOperand::Memory(mem) = dest {
+                        if let Some(op) = mem.address.if_arithmetic_add().map(|x| x.1) {
+                            self.check_array_ref(ctrl, op);
+                        }
+                    }
+                }
+                // Check l/r separately if the instruction has two operands
+                // Ignore ands since they're likely low registers and not
+                // real 2-operand instructions
+                match *val.ty() {
+                    OperandType::Arithmetic(ref arith) if arith.ty != ArithOpType::And => {
+                        // This shares quite a lot of code with flags below..
+                        let left = ctrl.resolve(arith.left);
+                        let right = ctrl.resolve(arith.right);
+                        self.check_u8_instruction(ctrl, left, arith.left);
+                        self.check_u8_instruction(ctrl, right, arith.right);
+                        if self.mode == DatFuncAnalysisMode::ArrayIndex {
+                            let new_left = self.check_memory_read(ctrl, left);
+                            let new_right = self.check_memory_read(ctrl, right);
+                            if new_left.is_some() || new_right.is_some() {
+                                let left = new_left.unwrap_or(left);
+                                let right = new_right.unwrap_or(right);
+                                ctrl.skip_operation();
+                                let state = ctrl.exec_state();
+                                let new = ctx.arithmetic(arith.ty, left, right);
+                                state.move_resolved(dest, new);
+                            }
+                        }
+                    }
+                    _ => {
+                        let resolved = ctrl.resolve(val);
+                        self.check_u8_instruction(ctrl, resolved, val);
+                        if self.mode == DatFuncAnalysisMode::ArrayIndex {
+                            let new = self.check_memory_read(ctrl, resolved);
+                            if let Some(new) = new {
+                                ctrl.skip_operation();
+                                let state = ctrl.exec_state();
+                                state.move_resolved(dest, new);
+                            }
+                        }
                     }
                 }
             }
-            Operation::SetFlags(arith, arith_size) if arith.ty == ArithOpType::Sub => {
+            Operation::SetFlags(arith, arith_size)
+                if arith.ty == ArithOpType::Sub || arith.ty == ArithOpType::And =>
+            {
                 let left = ctrl.resolve(arith.left);
                 let right = ctrl.resolve(arith.right);
                 self.check_u8_instruction(ctrl, left, arith.left);
@@ -845,9 +922,18 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             let e = (e.0, e.1, *e.2);
                             let input = (to, end, IsJumpDest::Yes);
                             if e != input {
-                                self.add_warning(
-                                    format!("Overlapping stable addresses {:?} {:?}", e, input),
-                                );
+                                // Accept jumps inside a jump dest, as those are sometimes
+                                // generated
+                                let accept =
+                                    e.2 == IsJumpDest::Yes && e.0 <= input.0 && e.1 >= input.1;
+                                if !accept {
+                                    self.add_warning(
+                                        format!(
+                                            "Overlapping stable addresses {:?} {:?}",
+                                            e, input
+                                        ),
+                                    );
+                                }
                             }
                         }
                     }
@@ -1069,9 +1155,6 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
         } else {
             // It's somewhat possible that the dest was meant to be written by
             // a child function.
-            if dest.as_u64() != 0 {
-                self.add_warning(format!("Oob call to {:?}", dest));
-            }
         }
         None
     }
@@ -1100,7 +1183,11 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
                 if size_bytes == 1 {
                     Some((base, l))
                 } else {
-                    let index = l.if_arithmetic_mul_const(size_bytes as u64)?;
+                    let index = if l.is_undefined() {
+                        l
+                    } else {
+                        l.if_arithmetic_mul_const(size_bytes as u64)?
+                    };
                     Some((base, index))
                 }
             });
@@ -1296,6 +1383,12 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             if offset == 0x60 && dat == DatType::Weapons {
                 // Most likely Bullet.weapon_id, todo
                 return Ok(());
+            } else if offset == 0xc8 && dat == DatType::TechData {
+                // Unit.building_union.current_tech, todo
+                return Ok(());
+            } else if offset == 0xc9 && dat == DatType::Upgrades {
+                // Unit.building_union.current_upgrade, todo
+                return Ok(());
             } else if offset == 8 && dat == DatType::Weapons && is_status_screen_data(base) {
                 // This is a bit hacky, especially limiting to only ArrayIndex,
                 // but without it this would quit too eagerly in func
@@ -1305,6 +1398,13 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
                     self.result = EntryOf::Ok(());
                 }
                 return Ok(());
+            }
+            if offset == 1 && (dat == DatType::Upgrades || dat == DatType::TechData) {
+                // Tech/upgrade net commands read at arg1[1]
+                let arg_cache = &self.dat_ctx.analysis.arg_cache;
+                if base == arg_cache.on_entry(0) {
+                    return Ok(());
+                }
             }
             let expected_dat = Some(offset)
                 .filter(|&x| x > 0x1000)
@@ -1317,8 +1417,13 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
                             // Ground/air weapons
                             (DatType::Units, 0x11) => true,
                             (DatType::Units, 0x13) => true,
+                            // Upgrades
+                            (DatType::Units, 0x19) => true,
+                            (DatType::Weapons, 0x06) => true,
                             // Order weapon
                             (DatType::Orders, 0x0d) => true,
+                            // Order tech
+                            (DatType::Orders, 0x0e) => true,
                             _ => false,
                         })
                         .is_some();
@@ -1354,7 +1459,17 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             }
             Err(())
         } else {
-            Err(())
+            Ok(())
+        }
+    }
+
+    /// Checks for array refs that check_memory_read isn't expected to catch.
+    fn check_array_ref(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, val: Operand<'e>) {
+        if let Some(c) = val.if_constant().filter(|&c| c > 0x10000) {
+            let addr = E::VirtualAddress::from_u64(c);
+            if self.dat_ctx.array_lookup.contains_key(&addr) {
+                self.reached_array_ref_32(ctrl, addr);
+            }
         }
     }
 
@@ -1384,6 +1499,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             self.dat_ctx.result.patches.push(
                 DatPatch::ReplaceFunc(self.entry, DatReplaceFunc::UpdateStatusScreenTooltip),
             );
+            self.dat_ctx.update_status_screen_tooltip = self.entry;
             return;
         }
         let needed_cfg_analysis = mem::replace(&mut self.needed_cfg_analysis, Vec::new());
@@ -1419,20 +1535,14 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             .filter_map(|x| Some((x.0, (*x.1)?)))
         {
             self.dat_ctx.add_func_arg_widening_request(self.entry, i as u8, dat);
-            let mut any = false;
             for rva in u8_instruction_lists.iter(U8Operand::Arg(i as u8)) {
                 let address = binary.base + rva.0;
                 self.widen_instruction(address);
-                any = true;
-            }
-            if !any {
-                self.add_warning(
-                    format!("Expected to find instruction to patch for arg {:x}", i),
-                );
             }
         }
         for &custom_id in needed_func_results.iter() {
-            let mut any = false;
+            // Func args may be added for extension unnecessarily
+            let mut any = self.mode == DatFuncAnalysisMode::FuncArg;
             for rva in u8_instruction_lists.iter(U8Operand::Return(custom_id)) {
                 let address = binary.base + rva.0;
                 self.widen_instruction(address);
@@ -2215,6 +2325,7 @@ struct RecognizeDatPatchFunc<'a, 'b, 'e, E: ExecutionState<'e>> {
     flags: u8,
     inlining: bool,
     inline_ok: bool,
+    returns: Vec<Operand<'e>>,
     dat_ctx: &'a mut DatPatchContext<'b, 'e, E>,
 }
 
@@ -2222,6 +2333,7 @@ const SUBUNIT_READ: u8 = 0x1;
 const AIR_WEAPON_READ: u8 = 0x2;
 const GROUND_WEAPON_READ: u8 = 0x4;
 const ORDER_WEAPON_READ: u8 = 0x8;
+const UNIT_ID_IS_INF_KERRIGAN: u8 = 0x10;
 
 impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     RecognizeDatPatchFunc<'a, 'b, 'e, E>
@@ -2278,6 +2390,23 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                     }
                 }
+                Operation::Jump { condition, .. } => {
+                    let condition = ctrl.resolve(condition);
+                    let inf_kerry_cmp = crate::if_arithmetic_eq_neq(condition)
+                        .map(|(l, r, _)| (l, r))
+                        .and_either_other(|x| x.if_constant().filter(|&c| c == 0x33))
+                        .and_then(|x| x.if_mem16())
+                        .and_then(|x| x.if_arithmetic_add_const(0x64))
+                        .is_some();
+                    if inf_kerry_cmp {
+                        self.flags |= UNIT_ID_IS_INF_KERRIGAN;
+                    }
+                }
+                Operation::Return(_) => {
+                    let ctx = ctrl.ctx();
+                    let val = ctrl.resolve(ctx.register(0));
+                    self.returns.push(val);
+                }
                 _ => (),
             }
         }
@@ -2291,6 +2420,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> RecognizeDatPatchFunc<'a, 'b, 'e, E> {
             dat_ctx,
             inlining: false,
             inline_ok: false,
+            returns: Vec::new(),
         }
     }
 
@@ -2299,15 +2429,66 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> RecognizeDatPatchFunc<'a, 'b, 'e, E> {
         ctrl.end_analysis();
     }
 
-    fn result(&self) -> Option<DatReplaceFunc> {
+    fn result(&self) -> Result<Option<DatReplaceFunc>, ()> {
         use self::DatReplaceFunc::*;
-        Some(match self.flags {
+        // No need to patch functions that don't return u8 values
+        // One example is player_ai_first_request_type
+        if !self.returns.is_empty() {
+            if self.returns.iter().all(|x| {
+                if let Some(mem) = x.if_memory() {
+                    return mem.size != MemAccessSize::Mem8;
+                }
+                if x.if_constant().is_some() {
+                    return true;
+                }
+                if x.if_arithmetic_add().and_then(|(_, r)| r.if_constant()).is_some() {
+                    return true;
+                }
+                false
+            })
+            {
+                return Ok(None);
+            }
+        }
+        if self.returns.len() == 1 {
+            let val = self.returns[0];
+            let inner = match val.if_arithmetic_or() {
+                Some((l, r)) => {
+                    if l.relevant_bits().end <= 8 && r.relevant_bits().start >= 8 {
+                        l
+                    } else if l.relevant_bits().end >= 8 && r.relevant_bits().start <= 8 {
+                        r
+                    } else {
+                        val
+                    }
+                }
+                _ => val,
+            };
+            let this_field = inner.if_memory()
+                .and_then(|mem| {
+                    let (l, r) = mem.address.if_arithmetic_add()?;
+                    l.if_register().filter(|r| r.0 == 1)?;
+                    let offset = r.if_constant()?;
+                    Some((offset, mem.size))
+                });
+            if let Some((offset, size)) = this_field {
+                if offset == 0xc8 && size == MemAccessSize::Mem8 {
+                    return Ok(Some(UnitCurrentTech));
+                }
+                if offset == 0xc9 && size == MemAccessSize::Mem8 {
+                    return Ok(Some(UnitCurrentUpgrade));
+                }
+            }
+        }
+
+        Ok(Some(match self.flags {
             x if x == GROUND_WEAPON_READ => UnitGroundWeapon,
             x if x == GROUND_WEAPON_READ | SUBUNIT_READ => SelfOrSubunitGroundWeapon,
             x if x == AIR_WEAPON_READ | SUBUNIT_READ => SelfOrSubunitAirWeapon,
             x if x == ORDER_WEAPON_READ => UnitOrderWeapon,
-            _ => return None,
-        })
+            x if x == UNIT_ID_IS_INF_KERRIGAN => UnitCloakTech,
+            _ => return Err(()),
+        }))
     }
 }
 
