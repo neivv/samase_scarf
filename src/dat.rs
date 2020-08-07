@@ -2,10 +2,11 @@ use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
 use std::mem;
+use std::rc::Rc;
 
 use fxhash::{FxHashMap, FxHashSet};
 
-use scarf::analysis::{self, Cfg, Control, FuncAnalysis};
+use scarf::analysis::{self, Cfg, Control, FuncAnalysis, RelocValues};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, ArithOperand, MemAccessSize, OperandType, OperandHashByAddress};
 use scarf::{BinaryFile, BinarySection, DestOperand, Operand, Operation, Rva};
@@ -98,14 +99,18 @@ pub enum DatReplaceFunc {
 
 pub struct DatArrayPatch<Va: VirtualAddress> {
     pub dat: DatType,
+    /// Also using some of the ids for non-dat fields that are limited by entry count
+    /// Units:
+    ///     0xff: Status screen funcs
     pub field_id: u8,
     /// Unaligned address of a pointer in .text (Or .data/.rdata, whynot)
     /// (e.g. casting it to *const usize and reading it would give pointer to the orig
     /// field array until overwritten)
     pub address: Va,
-    /// Offset from start of the array in entries, not bytes.
-    /// E.g. If the pointer should point to entry 1, this is 1.
-    pub offset: i32,
+    /// Offset from start of the array in entries.
+    pub entry: i32,
+    /// Offset within the specified entry in bytes.
+    pub byte_offset: u32,
 }
 
 pub struct DatEntryCountPatch<Va: VirtualAddress> {
@@ -219,6 +224,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         DatType::Units, DatType::Weapons, DatType::Flingy, DatType::Upgrades,
         DatType::TechData,
     ];
+    let firegraft = analysis.firegraft_addresses();
     let mut dat_ctx = DatPatchContext::new(analysis);
     let dat_ctx = dat_ctx.as_mut()?;
     for &dat in &dats {
@@ -240,6 +246,11 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         dat_ctx.add_u8_func_patches();
         dat_ctx.add_func_arg_patches();
     }
+    // Status screen array (Using unit 0xff)
+    for &status_addr in &firegraft.unit_status_funcs {
+        let end_ptr = status_addr + 0xe4 * 0xc;
+        dat_ctx.add_dat_global_refs(DatType::Units, 0xff, status_addr, end_ptr, 0xc, false);
+    }
     if dat_ctx.unknown_global_u8_mem.len() != 1 {
         let msg = format!(
             "Expected to have 1 unknown global u8 memory, got {:?}",
@@ -251,6 +262,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
 }
 
 struct DatPatchContext<'a, 'e, E: ExecutionState<'e>> {
+    relocs: Rc<Vec<RelocValues<E::VirtualAddress>>>,
     array_lookup: FxHashMap<E::VirtualAddress, (DatType, u8)>,
     units: DatTable<E::VirtualAddress>,
     weapons: DatTable<E::VirtualAddress>,
@@ -258,6 +270,7 @@ struct DatPatchContext<'a, 'e, E: ExecutionState<'e>> {
     upgrades: DatTable<E::VirtualAddress>,
     techdata: DatTable<E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
+    text: &'e BinarySection<E::VirtualAddress>,
     result: DatPatches<E::VirtualAddress>,
     unchecked_refs: FxHashSet<Rva>,
     // Funcs that seem to possibly only return in al need to be patched to widen
@@ -320,6 +333,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             }
         }
 
+        let text = analysis.binary.section(b".text\0\0\0").unwrap();
         let step_iscript = analysis.step_iscript().step_fn?;
         Some(DatPatchContext {
             array_lookup: FxHashMap::with_capacity_and_hasher(128, Default::default()),
@@ -335,6 +349,8 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             upgrades: dat_table(0xc),
             techdata: dat_table(0xb),
             binary: analysis.binary,
+            relocs: analysis.relocs_with_values(),
+            text,
             analysis,
             result: DatPatches {
                 patches: Vec::with_capacity(1024),
@@ -375,14 +391,13 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                 _ => false,
             };
             if add_as_unchecked_ref {
-                let relocs = self.analysis.relocs_with_values();
-                let text = self.binary.section(b".text\0\0\0").unwrap();
+                let text = self.text;
                 let text_end = text.virtual_address + text.virtual_size;
-                let start = relocs.binary_search_by(|x| match x.value >= array_ptr {
+                let start = self.relocs.binary_search_by(|x| match x.value >= array_ptr {
                     true => Ordering::Greater,
                     false => Ordering::Less,
                 }).unwrap_err();
-                let refs = (&relocs[start..]).iter()
+                let refs = (&self.relocs[start..]).iter()
                     .take_while(|x| x.value == array_ptr)
                     .map(|x| x.address);
                 for address in refs {
@@ -402,8 +417,6 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
         table_address: E::VirtualAddress,
         entry_size: u32,
     ) -> Result<(), ()> {
-        let relocs = self.analysis.relocs_with_values();
-
         let (entry, entry_count, field_sizes) = match dat {
             DatType::Units => (&mut self.units, 0xe4, &UNIT_ARRAY_WIDTHS),
             DatType::Weapons => (&mut self.weapons, 0x82, &WEAPON_ARRAY_WIDTHS),
@@ -414,7 +427,6 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
         };
         entry.table_address = table_address;
         entry.entry_size = entry_size;
-        let text = self.binary.section(b".text\0\0\0").unwrap();
         for i in 0..entry.field_count {
             let entry_address = table_address + i * entry_size;
             let array_ptr = self.binary.read_address(entry_address)
@@ -436,51 +448,47 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
 
             // Global refs
             let field_size = field_sizes[i as usize];
-            let end_ptr = array_ptr + entry_count + field_size as u32;
-            self.add_dat_global_refs(&relocs, &text, dat, i as u8, array_ptr, end_ptr, field_size);
+            let end_ptr = array_ptr + entry_count * field_size as u32;
+            self.add_dat_global_refs(dat, i as u8, array_ptr, end_ptr, field_size, true);
         }
         Ok(())
     }
 
     fn add_dat_global_refs(
         &mut self,
-        relocs: &[scarf::analysis::RelocValues<E::VirtualAddress>],
-        text: &BinarySection<E::VirtualAddress>,
         dat: DatType,
         field_id: u8,
         array_ptr: E::VirtualAddress,
         end_ptr: E::VirtualAddress,
         field_size: u8,
+        add_unchecked_ref_analysis: bool,
     ) {
-        let start = relocs.binary_search_by(|x| match x.value >= array_ptr {
+        let start = self.relocs.binary_search_by(|x| match x.value >= array_ptr {
             true => Ordering::Greater,
             false => Ordering::Less,
         }).unwrap_err();
-        let refs = (&relocs[start..]).iter()
+        let refs = (&self.relocs[start..]).iter()
             .take_while(|x| x.value < end_ptr);
+        let text = self.text;
         let text_end = text.virtual_address + text.virtual_size;
         for reloc in refs {
             let address = reloc.address;
             let offset_bytes = (reloc.value.as_u64() - array_ptr.as_u64()) as i32;
             let offset = offset_bytes / field_size as i32;
-            if offset_bytes & (field_size - 1) as i32 != 0 {
-                self.add_warning(format!(
-                    "Misaligned dat table pointer {:?}:{:02x} @ {:?}",
-                    dat, field_id, address,
-                ));
-            }
+            let byte_offset = offset_bytes as u32 % field_size as u32;
             self.result.patches.push(DatPatch::Array(DatArrayPatch {
                 dat,
                 field_id,
                 address,
-                offset,
+                entry: offset,
+                byte_offset,
             }));
             // Assuming that array ref analysis for hardcoded indices isn't important.
             // (It isn't as of this writing)
             // Adding them as well would require better entry_of results as currently
             // they are checked by looking up the array_lookup hashtable which only contains
             // offset 0 addresses.
-            if offset_bytes == 0 {
+            if add_unchecked_ref_analysis && offset_bytes == 0 {
                 if address >= text.virtual_address && address < text_end {
                     let rva = Rva((address.as_u64() - self.binary.base.as_u64()) as u32);
                     self.unchecked_refs.insert(rva);
@@ -492,7 +500,6 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
     fn add_patches_from_code_refs(&mut self) {
         let functions = self.analysis.functions();
         let binary = self.binary;
-        let text = binary.section(b".text\0\0\0").unwrap();
         loop {
             let rva = match self.unchecked_refs.iter().next() {
                 Some(&s) => s,
@@ -506,7 +513,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                 }
                 let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
                 if !self.analyzed_functions.contains_key(&entry_rva) {
-                    self.analyze_function(text, entry, address, DatFuncAnalysisMode::ArrayIndex)
+                    self.analyze_function(entry, address, DatFuncAnalysisMode::ArrayIndex)
                 } else {
                     EntryOf::Retry
                 }
@@ -516,7 +523,6 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
 
     fn analyze_function(
         &mut self,
-        text: &'e BinarySection<E::VirtualAddress>,
         entry: E::VirtualAddress,
         ref_address: E::VirtualAddress,
         mode: DatFuncAnalysisMode,
@@ -524,7 +530,8 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
         let binary = self.binary;
         let ctx = self.analysis.ctx;
         let mut analysis = FuncAnalysis::new(binary, ctx, entry);
-        let mut analyzer = DatReferringFuncAnalysis::new(self, text, entry, ref_address, mode);
+        let mut analyzer =
+            DatReferringFuncAnalysis::new(self, self.text, entry, ref_address, mode);
         analysis.analyze(&mut analyzer);
         analyzer.generate_needed_patches(analysis);
         let result = analyzer.result;
@@ -537,7 +544,6 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
     fn add_u8_func_patches(&mut self) {
         let functions = self.analysis.functions();
         let binary = self.binary;
-        let text = binary.section(b".text\0\0\0").unwrap();
         let mut checked_funcs = FxHashSet::with_capacity_and_hasher(64, Default::default());
         let funcs = mem::replace(&mut self.u8_funcs, Vec::new());
         for &func_rva in &funcs {
@@ -550,19 +556,14 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                     }
                     let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
                     if !self.analyzed_functions.contains_key(&entry_rva) {
-                        self.analyze_function(
-                            text,
-                            entry,
-                            address,
-                            DatFuncAnalysisMode::ArrayIndex,
-                        );
+                        self.analyze_function(entry, address, DatFuncAnalysisMode::ArrayIndex);
                     }
                     let mut result = EntryOf::Retry;
                     if let Some(mut state) = self.analyzed_functions.remove(&entry_rva) {
                         if state.has_called_func(func_rva) {
                             if checked_funcs.insert(entry_rva) {
                                 let mut analyzer =
-                                    DatReferringFuncAnalysis::rebuild(self, text, state);
+                                    DatReferringFuncAnalysis::rebuild(self, self.text, state);
                                 for &rva in &funcs {
                                     if let Some(&index) =
                                         analyzer.state.calls_reverse_lookup.get(&rva)
@@ -586,7 +587,6 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
     fn add_func_arg_patches(&mut self) {
         let functions = self.analysis.functions();
         let binary = self.binary;
-        let text = binary.section(b".text\0\0\0").unwrap();
         while let Some(child_func) = self.func_arg_widen_queue.pop() {
             let callers = crate::find_callers(self.analysis, child_func);
             for &address in &callers {
@@ -597,12 +597,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                     if entry == self.update_status_screen_tooltip {
                         return EntryOf::Ok(());
                     }
-                    self.analyze_function(
-                        text,
-                        entry,
-                        address,
-                        DatFuncAnalysisMode::FuncArg,
-                    );
+                    self.analyze_function(entry, address, DatFuncAnalysisMode::FuncArg);
                     if self.found_func_arg_widen_refs.contains(&address) {
                         EntryOf::Ok(())
                     } else {
@@ -1542,16 +1537,9 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
         }
         for &custom_id in needed_func_results.iter() {
             // Func args may be added for extension unnecessarily
-            let mut any = self.mode == DatFuncAnalysisMode::FuncArg;
             for rva in u8_instruction_lists.iter(U8Operand::Return(custom_id)) {
                 let address = binary.base + rva.0;
                 self.widen_instruction(address);
-                any = true;
-            }
-            if !any {
-                self.add_warning(
-                    format!("Expected to find instruction to patch for custom {:x}", custom_id),
-                );
             }
         }
         for rva in u8_instruction_lists.iter(U8Operand::DatField) {
@@ -1731,8 +1719,8 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
                     self.add_patch(address, &patch, ins_len);
                 }
             }
-            // cmp r8, rm8; cmp rm8, r8
-            [0x3a, ..] | [0x38, ..] => {
+            // add rm8, r8; cmp r8, rm8; cmp rm8, r8
+            [0x00, ..] | [0x3a, ..] | [0x38, ..] => {
                 if !is_struct_field_rm(&bytes) {
                     let mut patch = [0x90u8; 8];
                     for i in 0..8 {
@@ -1761,6 +1749,13 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
                 }
                 self.fixup_instruction_rm(&mut patch);
                 self.add_hook(address, ins_len, &patch);
+            }
+            // test rm8, r8
+            [0x84, second, ..] => {
+                // Going to only support test r8low with itself for now
+                if second & 0xc0 == 0xc0 && second & 0x7 == (second >> 3) & 0x7 {
+                    self.add_patch(address, &[0x85, second], ins_len);
+                }
             }
             // mov r8, rm8, to mov r32, rm32
             [0x8a, ..] => {

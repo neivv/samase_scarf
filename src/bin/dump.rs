@@ -62,16 +62,39 @@ fn main() {
                 let mapped = debug.entry_counts.iter().map(|x| x.as_u64()).collect::<Vec<_>>();
                 println!("{:?} entry count patches: {:x?}", dat, mapped);
                 println!("{:?} array patches:", dat);
-                for (i, arr) in debug.array_patches.iter().enumerate() {
-                    let all_offsets_zero = arr.iter().all(|x| x.1 == 0);
+                let orig_arrays_end = debug.array_patches.iter()
+                    .take(0x80)
+                    .rev()
+                    .position(|x| x.len() != 0)
+                    .map(|x| debug.array_patches.len().min(0x80) - x - 1)
+                    .unwrap_or(0);
+                let print_array = |arr: &[(scarf::VirtualAddress, i32, u32)], i: usize| {
+                    let all_offsets_zero = arr.iter().all(|x| x.1 == 0 && x.2 == 0);
                     if all_offsets_zero {
                         let mapped = arr.iter().map(|x| x.0.as_u64()).collect::<Vec<_>>();
                         println!("    {:02x}: {:x?}", i, mapped);
                     } else {
                         let mapped = arr.iter()
-                            .map(|x| format!("{:x}:{:x}", x.0.as_u64(), x.1))
+                            .map(|x| format!("{:x}:{:x}+{:x}", x.0.as_u64(), x.1, x.2))
                             .collect::<Vec<_>>();
                         println!("    {:02x}: {:x?}", i, mapped);
+                    }
+                };
+                if orig_arrays_end != 0 {
+                    for (i, arr) in debug.array_patches.iter().enumerate().take(orig_arrays_end) {
+                        print_array(&arr, i);
+                    }
+                }
+                if debug.array_patches.len() > 0x80 {
+                    let ext_arrays_start = debug.array_patches.iter().skip(0x80)
+                        .position(|x| x.len() != 0)
+                        .map(|x| 0x80 + x)
+                        .unwrap_or(debug.array_patches.len());
+                    for (i, arr) in debug.array_patches.iter()
+                        .enumerate()
+                        .skip(ext_arrays_start)
+                    {
+                        print_array(&arr, i);
                     }
                 }
             }
