@@ -920,7 +920,8 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 // Accept jumps inside a jump dest, as those are sometimes
                                 // generated
                                 let accept =
-                                    e.2 == IsJumpDest::Yes && e.0 <= input.0 && e.1 >= input.1;
+                                    (e.2 == IsJumpDest::Yes && e.0 <= input.0 && e.1 >= input.1) ||
+                                    (e.2 == IsJumpDest::Yes && e.0 >= input.0 && e.1 <= input.1);
                                 if !accept {
                                     self.add_warning(
                                         format!(
