@@ -46,7 +46,7 @@ pub fn active_hidden_units<'e, E: ExecutionState<'e>>(
             })
         }).unwrap_or_else(|| Vec::new())
     };
-    weapon_order_refs.sort_by_key(|x| x.1.func_entry);
+    weapon_order_refs.sort_unstable_by_key(|x| x.1.func_entry);
     weapon_order_refs.dedup_by_key(|x| x.1.func_entry);
     let mut result = None;
     for (global_addr, global_ref) in weapon_order_refs {
@@ -180,7 +180,7 @@ pub fn order_issuing<'e, E: ExecutionState<'e>>(
             })
         }).unwrap_or_else(|| Vec::new())
     };
-    arbiter_idle_orders.sort_by_key(|x| (x.0.func_entry, x.1.clone()));
+    arbiter_idle_orders.sort_unstable_by_key(|x| (x.0.func_entry, x.1.clone()));
     arbiter_idle_orders.dedup_by_key(|x| (x.0.func_entry, x.1.clone()));
     let mut result = None;
     let arg_cache = &analysis.arg_cache;

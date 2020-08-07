@@ -53,9 +53,10 @@ pub fn sprite_serialization<'e, E: ExecutionState<'e>>(
         Some(s) => E::VirtualAddress::from_u64(s),
         None => return result,
     };
-    let mut globals = find_functions_using_global(analysis, sprite_array_address);
-    globals.sort_by_key(|x| x.func_entry);
-    globals.dedup_by_key(|x| x.func_entry);
+    let globals = find_functions_using_global(analysis, sprite_array_address);
+    // Note: Globals were sorted and deduped by func_entry, but
+    // it turned out to miss something sometimes, so rely on the checked
+    // vec instead to avoid duplicate work.
     let mut checked = Vec::with_capacity(globals.len());
     checked.push(Rva((init_sprites.as_u64() - binary.base.as_u64()) as u32));
     let map_height_tiles = ctx.mem16(ctx.add_const(game, 0xe6));

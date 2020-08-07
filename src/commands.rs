@@ -265,7 +265,7 @@ pub fn process_commands<'e, E: ExecutionState<'e>>(
             .into_iter()
             .map(move |caller| (switch.clone(), caller, process_commands))
             .collect::<Vec<_>>();
-        callers.sort();
+        callers.sort_unstable();
         callers.dedup();
         callers
     });
@@ -719,7 +719,7 @@ pub fn step_network<'e, E: ExecutionState<'e>>(
             }
         }
         entries = new_entries;
-        entries.sort();
+        entries.sort_unstable();
         entries.dedup();
     }
     let arg_cache = &analysis.arg_cache;

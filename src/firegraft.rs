@@ -45,18 +45,18 @@ pub fn find_unit_status_funcs<'exec, E: ExecutionState<'exec>>(
             crate::dialog::find_dialog_global(cache, entry, &str_ref)
         }).into_option()
     }).collect::<Vec<_>>();
-    statdata_bin_globals.sort();
+    statdata_bin_globals.sort_unstable();
     statdata_bin_globals.dedup();
 
     let mut statdata_using_funcs = statdata_bin_globals.iter().flat_map(|&addr| {
         find_functions_using_global(cache, addr).into_iter().map(|x| x.func_entry)
     }).collect::<Vec<_>>();
-    statdata_using_funcs.sort();
+    statdata_using_funcs.sort_unstable();
     statdata_using_funcs.dedup();
     let mut statdata = statdata_using_funcs.iter().flat_map(|&addr| {
         find_unit_status_func_uses(cache, addr)
     }).collect::<Vec<_>>();
-    statdata.sort();
+    statdata.sort_unstable();
     statdata.dedup();
     statdata
 }
@@ -76,7 +76,7 @@ fn find_unit_status_func_uses<'e, E: ExecutionState<'e>>(
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, func);
     analysis.analyze(&mut analyzer);
-    analyzer.result.sort();
+    analyzer.result.sort_unstable();
     analyzer.result.dedup();
     analyzer.result
 }

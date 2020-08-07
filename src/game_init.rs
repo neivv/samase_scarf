@@ -402,7 +402,7 @@ pub fn init_map_from_path<'e, E: ExecutionState<'e>>(
     let mut call_points = chk_validating_funcs.into_iter().flat_map(|f| {
         crate::find_callers(analysis, f.func_entry)
     }).collect::<Vec<_>>();
-    call_points.sort();
+    call_points.sort_unstable();
     call_points.dedup();
 
     let funcs = analysis.functions();
@@ -931,7 +931,7 @@ pub fn select_map_entry<'e, E: ExecutionState<'e>>(
             if analyzer.arg3_write_seen {
                 let mut is_multiplayer_candidates = analyzer.mem_byte_conds;
                 let not_is_multiplayer = analyzer.mem_bytes_written;
-                is_multiplayer_candidates.sort();
+                is_multiplayer_candidates.sort_unstable();
                 result.select_map_entry = Some(entry);
                 let is_multiplayer = is_multiplayer_candidates.iter()
                     .map(|x| x.1)
@@ -1661,7 +1661,7 @@ pub fn join_game<'e, E: ExecutionState<'e>>(
     let funcs = analysis.functions();
     let funcs = &funcs[..];
     let mut global_refs = crate::find_functions_using_global(analysis, local_storm_id);
-    global_refs.sort_by_key(|x| x.func_entry);
+    global_refs.sort_unstable_by_key(|x| x.func_entry);
     global_refs.dedup_by_key(|x| x.func_entry);
     let mut result = None;
     let arg_cache = &analysis.arg_cache;

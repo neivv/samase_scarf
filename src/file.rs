@@ -46,7 +46,7 @@ pub fn find_load_dat_fn<'e, E: ExecutionState<'e>>(
         binary,
     };
     analysis.analyze(&mut analyzer);
-    analyzer.result.sort();
+    analyzer.result.sort_unstable();
     analyzer.result.dedup();
     analyzer.result
 }
@@ -206,7 +206,7 @@ pub fn open_file<'e, E: ExecutionState<'e>>(
     if load_dat_fns.is_empty() {
         return Vec::new();
     }
-    load_dat_fns.sort();
+    load_dat_fns.sort_unstable();
     load_dat_fns.dedup();
     let open_file_fns = load_dat_fns.iter().flat_map(|&addr| {
         find_open_file_fn(analysis, binary, addr)

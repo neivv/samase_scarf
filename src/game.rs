@@ -49,7 +49,7 @@ pub fn step_objects<'e, E: ExecutionState<'e>>(
             }
         }
     }
-    rng_refs.sort();
+    rng_refs.sort_unstable();
     rng_refs.dedup();
     let mut checked_vision_funcs = Vec::new();
     let mut result = None;
@@ -483,7 +483,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetLimits<'a,
                         if ok {
                             self.result.set_limits = Some(dest);
                             for arr in &mut self.result.arrays {
-                                arr.sort();
+                                arr.sort_unstable();
                                 arr.dedup();
                             }
                             ctrl.end_analysis();

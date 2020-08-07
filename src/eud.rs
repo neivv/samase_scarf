@@ -44,7 +44,7 @@ pub fn eud_table<'e, E: ExecutionState<'e>>(
 ) -> EudTable<'e> {
     fn finish_euds(result: &mut EudTable) {
         result.euds.retain(|x| x.operand.if_constant() != Some(0));
-        result.euds.sort_by_key(|x| x.address);
+        result.euds.sort_unstable_by_key(|x| x.address);
     }
 
     let binary = analysis.binary;
@@ -53,7 +53,7 @@ pub fn eud_table<'e, E: ExecutionState<'e>>(
     for &addr in EUD_ADDRS {
         find_const_refs_in_code(binary, addr, &mut const_refs);
     }
-    const_refs.sort();
+    const_refs.sort_unstable();
     let funcs = analysis.functions();
     for &cref in &const_refs {
         let entry = match find_stack_reserve_entry::<E>(ctx, binary, &funcs, cref) {

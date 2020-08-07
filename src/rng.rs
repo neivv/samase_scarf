@@ -32,7 +32,7 @@ pub fn rng<'e, E: ExecutionState<'e>>(
             })
         }).unwrap_or_else(|| Vec::new())
     };
-    spawn_direction_refs.sort_by_key(|x| x.func_entry);
+    spawn_direction_refs.sort_unstable_by_key(|x| x.func_entry);
     spawn_direction_refs.dedup_by_key(|x| x.func_entry);
     let functions = analysis.functions();
     let arg_cache = &analysis.arg_cache;

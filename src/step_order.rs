@@ -541,7 +541,7 @@ pub fn step_secondary_order<'e, E: ExecutionState<'e>>(
     let mut callers = step_order.iter()
         .flat_map(|&x| find_callers(analysis, x))
         .collect::<Vec<_>>();
-    callers.sort();
+    callers.sort_unstable();
     callers.dedup();
     let mut checked_funcs = Vec::new();
     let result = callers.into_iter().filter_map(|caller| {

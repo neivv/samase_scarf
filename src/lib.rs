@@ -642,7 +642,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                     }).unwrap_or(false)
                 })
             });
-            result.sort_by_key(|x| x.address);
+            result.sort_unstable_by_key(|x| x.address);
             Rc::new(result)
         }).clone()
     }
@@ -900,7 +900,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn vtables_for_class(&mut self, name: &[u8]) -> Vec<E::VirtualAddress> {
         let mut vtables = vtables::vtables(self, name);
-        vtables.sort();
+        vtables.sort_unstable();
         vtables.dedup();
         vtables
     }
@@ -1553,14 +1553,14 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                         vec.push(Vec::new());
                     }
                     vec[a.field_id as usize].push((a.address, a.entry, a.byte_offset));
-                    vec[a.field_id as usize].sort();
+                    vec[a.field_id as usize].sort_unstable();
                 }
                 DatPatch::EntryCount(ref a) => {
                     let entry_counts = &mut map.entry(a.dat)
                         .or_insert_with(DatTablePatchesDebug::default)
                         .entry_counts;
                     entry_counts.push(a.address);
-                    entry_counts.sort();
+                    entry_counts.sort_unstable();
                 }
                 DatPatch::Replace(addr, offset, len) => {
                     let data = &patches.code_bytes[offset as usize..][..len as usize];
@@ -1579,10 +1579,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 }
             }
         }
-        replaces.sort_by_key(|x| x.0);
-        func_replaces.sort_by_key(|x| x.0);
-        hooks.sort_by_key(|x| x.0);
-        two_step_hooks.sort_by_key(|x| x.0);
+        replaces.sort_unstable_by_key(|x| x.0);
+        func_replaces.sort_unstable_by_key(|x| x.0);
+        hooks.sort_unstable_by_key(|x| x.0);
+        two_step_hooks.sort_unstable_by_key(|x| x.0);
         Some(DatPatchesDebug {
             tables: map,
             replaces,
