@@ -15,6 +15,12 @@ pub struct TooltipRelated<'e, Va: VirtualAddress> {
     pub draw_tooltip_layer: Option<Va>,
 }
 
+#[derive(Clone, Default)]
+pub struct ButtonDdsgrps<'e> {
+    pub cmdicons: Option<Operand<'e>>,
+    pub cmdbtns: Option<Operand<'e>>,
+}
+
 pub fn run_dialog<'a, E: ExecutionState<'a>>(
     analysis: &mut Analysis<'a, E>,
 ) -> Option<E::VirtualAddress> {
@@ -755,35 +761,48 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsDrawGraphicLayers<'e, 
     }
 }
 
-pub fn cmdicons_ddsgrp<'e, E: ExecutionState<'e>>(
+pub fn button_ddsgrps<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<Operand<'e>> {
+) -> ButtonDdsgrps<'e> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
 
+    let mut result = ButtonDdsgrps {
+        cmdbtns: None,
+        cmdicons: None,
+    };
+
     let firegraft = analysis.firegraft_addresses();
-    let &status_arr = firegraft.unit_status_funcs.get(0)?;
-    let marine_status = binary.read_address(status_arr + 0x8).ok()?;
+    let &status_arr = match firegraft.unit_status_funcs.get(0) {
+        Some(s) => s,
+        None => return result,
+    };
+    let gateway_status = match binary.read_address(status_arr + 0xa0 * 0xc + 0x8).ok() {
+        Some(s) => s,
+        None => return result,
+    };
     // Search for [Control.user_pointer].field0 = *cmdicons_ddsgrp
     // Right before that it sets Control.user_u16 to 0xc
     let arg_cache = &analysis.arg_cache;
-    let mut analysis = FuncAnalysis::new(binary, ctx, marine_status);
+    let mut analysis = FuncAnalysis::new(binary, ctx, gateway_status);
     let mut analyzer = CmdIconsDdsGrp::<E> {
-        result: None,
+        result: &mut result,
         inline_depth: 0,
         arg_cache,
         current_function_u16_param_set: None,
+        u16_param_offset: 0,
     };
     analysis.analyze(&mut analyzer);
-    analyzer.result
+    result
 }
 
 struct CmdIconsDdsGrp<'a, 'e, E: ExecutionState<'e>> {
-    result: Option<Operand<'e>>,
+    result: &'a mut ButtonDdsgrps<'e>,
     arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
     // Base operand, offset
     current_function_u16_param_set: Option<(Operand<'e>, u16)>,
+    u16_param_offset: u16,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, 'e, E> {
@@ -811,7 +830,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                             ctrl.skip_operation();
                             self.current_function_u16_param_set = u16_param_set;
                         }
-                        if self.result.is_some() {
+                        if self.result.cmdbtns.is_some() {
                             ctrl.end_analysis();
                         }
                     }
@@ -820,18 +839,34 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
             Operation::Move(DestOperand::Memory(mem), val, None) => {
                 let dest = ctrl.resolve(mem.address);
                 let val = ctrl.resolve(val);
-                if mem.size == MemAccessSize::Mem16 && val.if_constant() == Some(0xc) {
-                    let is_u16_move = dest.if_arithmetic_add()
-                        .and_then(|(l, r)| {
-                            let c = r.if_constant()?;
-                            match c {
-                                // 0x26 is older offset
-                                0x3e | 0x26 => Some((l, c as u16)),
-                                _ => None,
+                if mem.size == MemAccessSize::Mem16 {
+                    if let Some(c) = val.if_constant() {
+                        if self.result.cmdicons.is_none() && c == 0xc {
+                            let is_u16_move = dest.if_arithmetic_add()
+                                .and_then(|(l, r)| {
+                                    let c = r.if_constant()?;
+                                    match c {
+                                        // 0x26 is older offset
+                                        0x3e | 0x26 => Some((l, c as u16)),
+                                        _ => None,
+                                    }
+                                });
+                            if let Some(base) = is_u16_move {
+                                self.current_function_u16_param_set = Some(base);
                             }
-                        });
-                    if let Some(base) = is_u16_move {
-                        self.current_function_u16_param_set = Some(base);
+                        } else if self.result.cmdicons.is_some() && c == 0x2 {
+                            let is_u16_move = dest.if_arithmetic_add()
+                                .and_then(|(l, r)| {
+                                    let c = r.if_constant()?;
+                                    match c == self.u16_param_offset as u64 {
+                                        true => Some((l, c as u16)),
+                                        false => None,
+                                    }
+                                });
+                            if let Some(base) = is_u16_move {
+                                self.current_function_u16_param_set = Some(base);
+                            }
+                        }
                     }
                 }
                 if mem.size == MemAccessSize::Mem32 {
@@ -844,8 +879,19 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                             .is_some();
                         if ok {
                             if let Some(outer) = ctrl.if_mem_word(val) {
-                                self.result = Some(outer);
-                                ctrl.end_analysis();
+                                match self.result.cmdicons {
+                                    None => {
+                                        self.result.cmdicons = Some(outer);
+                                        self.u16_param_offset = offset;
+                                        ctrl.end_analysis();
+                                    }
+                                    Some(s) => {
+                                        if s != outer {
+                                            self.result.cmdbtns = Some(outer);
+                                            ctrl.end_analysis();
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

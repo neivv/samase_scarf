@@ -1055,6 +1055,7 @@ fn everything_1235e() {
         assert_eq!(analysis.smem_alloc().unwrap().0, 0x0094d940);
         assert_eq!(analysis.smem_free().unwrap().0, 0x0094d980);
         assert_eq!(analysis.cmdicons_ddsgrp().unwrap(), ctx.constant(0x11b7960));
+        assert_eq!(analysis.cmdbtns_ddsgrp().unwrap(), ctx.constant(0x11b7920));
     })
 }
 
@@ -1577,6 +1578,7 @@ fn test_nongeneric<'e>(
     assert!(analysis.do_attack_main().is_some());
     check_global(analysis.last_bullet_spawner().unwrap(), binary, "last_bullet_spawner");
     check_global_struct(analysis.cmdicons_ddsgrp().unwrap(), binary, "cmdicons_ddsgrp");
+    check_global_struct(analysis.cmdbtns_ddsgrp().unwrap(), binary, "cmdbtns_ddsgrp");
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

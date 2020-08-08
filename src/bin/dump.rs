@@ -449,6 +449,7 @@ fn main() {
     println!("SMemAlloc: {:?}", analysis.smem_alloc());
     println!("SMemFree: {:?}", analysis.smem_free());
     println!("cmdicons_ddsgrp: {}", format_op_operand(analysis.cmdicons_ddsgrp()));
+    println!("cmdbtns_ddsgrp: {}", format_op_operand(analysis.cmdbtns_ddsgrp()));
 
     let undef = ctx.new_undef();
     println!();

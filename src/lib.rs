@@ -226,7 +226,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     snet_initialize_provider: Cached<Option<E::VirtualAddress>>,
     do_attack: Cached<Option<step_order::DoAttack<'e, E::VirtualAddress>>>,
     dat_patches: Cached<Option<Rc<DatPatches<E::VirtualAddress>>>>,
-    cmdicons_ddsgrp: Cached<Option<Operand<'e>>>,
+    button_ddsgrps: Cached<dialog::ButtonDdsgrps<'e>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -484,7 +484,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             dat_patches: Default::default(),
             snet_initialize_provider: Default::default(),
             do_attack: Default::default(),
-            cmdicons_ddsgrp: Default::default(),
+            button_ddsgrps: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1626,13 +1626,21 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.limits().smem_free
     }
 
-    pub fn cmdicons_ddsgrp(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.cmdicons_ddsgrp.cached() {
+    fn button_ddsgrps(&mut self) -> dialog::ButtonDdsgrps<'e> {
+        if let Some(cached) = self.button_ddsgrps.cached() {
             return cached;
         }
-        let result = dialog::cmdicons_ddsgrp(self);
-        self.cmdicons_ddsgrp.cache(&result);
+        let result = dialog::button_ddsgrps(self);
+        self.button_ddsgrps.cache(&result);
         result
+    }
+
+    pub fn cmdicons_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.button_ddsgrps().cmdicons
+    }
+
+    pub fn cmdbtns_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.button_ddsgrps().cmdbtns
     }
 }
 
@@ -2056,6 +2064,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn cmdicons_ddsgrp(&mut self) -> Option<Operand<'e>> {
         self.0.cmdicons_ddsgrp()
+    }
+
+    pub fn cmdbtns_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.0.cmdbtns_ddsgrp()
     }
 }
 
