@@ -446,6 +446,9 @@ fn main() {
     println!("do_attack_main: {:?}", analysis.do_attack_main());
     println!("last_bullet_spawner: {}", format_op_operand(analysis.last_bullet_spawner()));
 
+    println!("SMemAlloc: {:?}", analysis.smem_alloc());
+    println!("SMemFree: {:?}", analysis.smem_free());
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {

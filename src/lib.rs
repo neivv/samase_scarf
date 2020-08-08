@@ -1612,6 +1612,14 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn last_bullet_spawner(&mut self) -> Option<Operand<'e>> {
         self.do_attack_struct().map(|x| x.last_bullet_spawner)
     }
+
+    pub fn smem_alloc(&mut self) -> Option<E::VirtualAddress> {
+        self.limits().smem_alloc
+    }
+
+    pub fn smem_free(&mut self) -> Option<E::VirtualAddress> {
+        self.limits().smem_free
+    }
 }
 
 pub struct DatPatchesDebug<Va: VirtualAddressTrait> {

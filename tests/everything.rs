@@ -100,6 +100,9 @@ fn everything_1210b() {
         assert_eq!(analysis.tooltip_draw_func().unwrap(), ctx.mem32(ctx.constant(0xd49148)));
         assert_eq!(analysis.current_tooltip_ctrl().unwrap(), ctx.mem32(ctx.constant(0xd4914c)));
         assert_eq!(analysis.layout_draw_text().unwrap().0, 0x008d5fd0);
+
+        assert_eq!(analysis.smem_alloc().unwrap().0, 0x0089ead0);
+        assert_eq!(analysis.smem_free().unwrap().0, 0x0089eb10);
     });
 }
 
@@ -196,6 +199,9 @@ fn everything_1213() {
             exit: VirtualAddress(0x0058f86e),
             unit: ctx.register(6),
         });
+
+        assert_eq!(analysis.smem_alloc().unwrap().0, 0x0083ee80);
+        assert_eq!(analysis.smem_free().unwrap().0, 0x0083eec0);
     })
 }
 
@@ -1044,7 +1050,9 @@ fn everything_1235d() {
 
 #[test]
 fn everything_1235e() {
-    test_with_extra_checks(Path::new("1235e.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1235e.exe"), |_ctx, analysis| {
+        assert_eq!(analysis.smem_alloc().unwrap().0, 0x0094d940);
+        assert_eq!(analysis.smem_free().unwrap().0, 0x0094d980);
     })
 }
 
@@ -1484,6 +1492,8 @@ fn test_nongeneric<'e>(
     let limits = analysis.limits();
     if extended_limits {
         assert!(limits.set_limits.is_some());
+        assert!(analysis.smem_alloc().is_some());
+        assert!(analysis.smem_free().is_some());
         if minor_version < 21 || (minor_version == 21 && patch_version < 1) {
             assert_eq!(limits.arrays.len(), 7);
             assert_eq!(limits.arrays[0].len(), 1);
@@ -1504,6 +1514,8 @@ fn test_nongeneric<'e>(
             assert_eq!(limits.arrays[6].len(), 1);
         }
     } else {
+        assert!(analysis.smem_alloc().is_none());
+        assert!(analysis.smem_free().is_none());
         assert!(limits.set_limits.is_none());
         assert_eq!(limits.arrays.len(), 0);
     }

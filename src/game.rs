@@ -22,6 +22,8 @@ pub struct Limits<'e, Va: VirtualAddress> {
     // (Some sprite arrays are resized to sprite_count + 1,
     // unit arrays to unit_count * 2)
     pub arrays: Vec<Vec<(Operand<'e>, u32, u32)>>,
+    pub smem_alloc: Option<Va>,
+    pub smem_free: Option<Va>,
 }
 
 pub fn step_objects<'e, E: ExecutionState<'e>>(
@@ -380,6 +382,8 @@ pub fn limits<'e, E: ExecutionState<'e>>(
     let mut result = Limits {
         set_limits: None,
         arrays: Vec::with_capacity(7),
+        smem_alloc: None,
+        smem_free: None,
     };
     let game_loop = match analysis.game_init().game_loop {
         Some(s) => s,
@@ -424,6 +428,11 @@ struct SetLimitsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
     inlining_object_subfunc: bool,
+    // Set once inside Vec::resize, for finding SMemAlloc and SMemFree
+    // (Trying this for images only)
+    check_malloc_free: bool,
+    // If detecting inlined resize, the function has to be redone
+    redo_check_malloc_free: bool,
     func_initial_esp: Operand<'e>,
     // The code does both `global_limits = arg1` and `global_limits = default_limits()`
     // at set_limits (inline_depth == 0)
@@ -475,6 +484,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetLimits<'a,
                             inline_depth: 0,
                             func_initial_esp: ctx.register(4),
                             inlining_object_subfunc: false,
+                            check_malloc_free: false,
+                            redo_check_malloc_free: false,
                             depth_0_arg1_global_stores: Vec::with_capacity(0x10),
                         };
                         analysis.analyze(&mut analyzer);
@@ -548,6 +559,27 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetLimitsAnalyzer
                 let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                 let ecx = ctrl.resolve(ctx.register(1));
                 let mut inline = false;
+                if self.check_malloc_free {
+                    // Note: Assuming this is inside image vector resize.
+                    // alloc image_count * 0x40
+                    let is_alloc = arg1.if_arithmetic(scarf::ArithOpType::Lsh)
+                        .and_then(|(_, r)| r.if_constant())
+                        .filter(|&c| c == 6)
+                        .is_some();
+                    if is_alloc {
+                        self.result.smem_alloc = Some(dest);
+                        return;
+                    }
+                    let is_free = arg1.if_memory()
+                        .and_then(|mem| {
+                            Some(mem.address == self.result.arrays.get(0)?.get(0)?.0)
+                        })
+                        .unwrap_or(false);
+                    if is_free {
+                        self.result.smem_free = Some(dest);
+                        return;
+                    }
+                }
                 if let Some((off, add, mul)) = self.arg1_off(arg1) {
                     if ecx.if_constant().is_some() {
                         if off & 3 != 0 {
@@ -556,9 +588,18 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetLimitsAnalyzer
                             return;
                         }
                         self.add_result(off, add, mul, ecx);
+                        // off == 0 => images
+                        if self.result.smem_alloc.is_none() && off == 0 {
+                            self.check_malloc_free = true;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.check_malloc_free = false;
+                        }
                     } else {
                         inline = true;
                     }
+                }
+                if self.check_malloc_free && ecx.if_constant().is_some() {
+                    inline = true;
                 }
                 if inline || self.inline_depth == 0 {
                     if self.inline_depth < 3 {
@@ -577,6 +618,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetLimitsAnalyzer
 
                         self.inline_depth += 1;
                         let was_inlining_object_subfunc = self.inlining_object_subfunc;
+                        let was_checking_malloc_free = self.check_malloc_free;
                         self.inlining_object_subfunc = inline;
                         let esp = self.func_initial_esp;
                         let ctx = ctrl.ctx();
@@ -586,8 +628,15 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetLimitsAnalyzer
                         );
                         ctrl.analyze_with_current_state(self, dest);
                         self.inlining_object_subfunc = was_inlining_object_subfunc;
+                        self.check_malloc_free = was_checking_malloc_free;
                         self.func_initial_esp = esp;
                         self.inline_depth -= 1;
+                        if self.redo_check_malloc_free {
+                            self.redo_check_malloc_free = false;
+                            self.check_malloc_free = true;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.check_malloc_free = was_checking_malloc_free;
+                        }
                     }
                 }
             }
@@ -608,7 +657,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetLimitsAnalyzer
                             );
                         }
                     }
-                    DestOperand::Memory(mem) => {
+                    DestOperand::Memory(mem) if !self.redo_check_malloc_free => {
                         let value = ctrl.resolve(value);
                         // Generally vector.resize(limits.x) is caught at call
                         // but check also for inlined vector.size = limits.x
@@ -623,6 +672,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetLimitsAnalyzer
                                     let vector =
                                         ctx.sub_const(dest, E::VirtualAddress::SIZE as u64);
                                     self.add_result(off, add, mul, vector);
+                                    // off == 0 => images
+                                    if self.result.smem_alloc.is_none() && off == 0 {
+                                        self.redo_check_malloc_free = true;
+                                    }
                                 } else if self.inline_depth == 0 {
                                     self.depth_0_arg1_global_stores.push((dest, value));
                                 }
