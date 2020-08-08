@@ -137,6 +137,9 @@ impl<T: Clone> Default for Cached<T> {
     }
 }
 
+#[cfg(feature = "x86")]
+pub struct AnalysisX86<'e>(pub Analysis<'e, scarf::ExecutionStateX86<'e>>);
+
 pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     relocs: Cached<Rc<Vec<E::VirtualAddress>>>,
     relocs_with_values: Cached<Rc<Vec<RelocValues<E::VirtualAddress>>>>,
@@ -1619,6 +1622,425 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn smem_free(&mut self) -> Option<E::VirtualAddress> {
         self.limits().smem_free
+    }
+}
+
+#[cfg(feature = "x86")]
+impl<'e> AnalysisX86<'e> {
+    pub fn new(
+        binary: &'e BinaryFile<VirtualAddress>,
+        ctx: scarf::OperandCtx<'e>,
+    ) -> AnalysisX86<'e> {
+        AnalysisX86(Analysis::new(binary, ctx))
+    }
+
+    pub fn firegraft_addresses(&mut self) -> Rc<FiregraftAddresses<VirtualAddress>> {
+        self.0.firegraft_addresses()
+    }
+
+    pub fn dat(&mut self, ty: DatType) -> Option<DatTablePtr<'e>> {
+        self.0.dat(ty)
+    }
+
+    pub fn file_hook(&mut self) -> Rc<Vec<VirtualAddress>> {
+        self.0.file_hook()
+    }
+
+    pub fn rng(&mut self) -> Rc<Rng<'e>> {
+        self.0.rng()
+    }
+
+    pub fn step_objects(&mut self) -> Option<VirtualAddress> {
+        self.0.step_objects()
+    }
+
+    pub fn game(&mut self) -> Option<Operand<'e>> {
+        self.0.game()
+    }
+
+    pub fn aiscript_hook(&mut self) -> Rc<Option<AiScriptHook<'e, VirtualAddress>>> {
+        self.0.aiscript_hook()
+    }
+
+    pub fn regions(&mut self) -> Rc<RegionRelated<'e, VirtualAddress>> {
+        self.0.regions()
+    }
+
+    pub fn pathing(&mut self) -> Option<Operand<'e>> {
+        self.0.pathing()
+    }
+
+    pub fn active_hidden_units(&mut self) -> Rc<ActiveHiddenUnits<'e>> {
+        self.0.active_hidden_units()
+    }
+
+    pub fn order_issuing(&mut self) -> Rc<OrderIssuing<VirtualAddress>> {
+        self.0.order_issuing()
+    }
+
+    pub fn process_commands(&mut self) -> Rc<ProcessCommands<'e, VirtualAddress>> {
+        self.0.process_commands()
+    }
+
+    pub fn command_user(&mut self) -> Option<Operand<'e>> {
+        self.0.command_user()
+    }
+
+    // May return an overly long array
+    pub fn command_lengths(&mut self) -> Rc<Vec<u32>> {
+        self.0.command_lengths()
+    }
+
+    pub fn selections(&mut self) -> Rc<Selections<'e>> {
+        self.0.selections()
+    }
+
+    pub fn is_replay(&mut self) -> Option<Operand<'e>> {
+        self.0.is_replay()
+    }
+
+    pub fn process_lobby_commands(&mut self) -> Option<VirtualAddress> {
+        self.0.process_lobby_commands()
+    }
+
+    pub fn send_command(&mut self) -> Option<VirtualAddress> {
+        self.0.send_command()
+    }
+
+    pub fn print_text(&mut self) -> Option<VirtualAddress> {
+        self.0.print_text()
+    }
+
+    pub fn init_map_from_path(&mut self) -> Option<VirtualAddress> {
+        self.0.init_map_from_path()
+    }
+
+    pub fn choose_snp(&mut self) -> Option<VirtualAddress> {
+        self.0.choose_snp()
+    }
+
+    pub fn renderer_vtables(&mut self) -> Rc<Vec<VirtualAddress>> {
+        self.0.renderer_vtables()
+    }
+
+    pub fn vtables(&mut self) -> Vec<VirtualAddress> {
+        self.0.vtables()
+    }
+
+    pub fn vtables_for_class(&mut self, name: &[u8]) -> Vec<VirtualAddress> {
+        self.0.vtables_for_class(name)
+    }
+
+    pub fn single_player_start(&mut self) -> Rc<SinglePlayerStart<'e, VirtualAddress>> {
+        self.0.single_player_start()
+    }
+
+    pub fn local_player_id(&mut self) -> Option<Operand<'e>> {
+        self.0.local_player_id()
+    }
+
+    pub fn game_screen_rclick(&mut self) -> Rc<GameScreenRClick<'e, VirtualAddress>> {
+        self.0.game_screen_rclick()
+    }
+
+    pub fn select_map_entry(&mut self) -> Rc<SelectMapEntry<'e, VirtualAddress>> {
+        self.0.select_map_entry()
+    }
+
+    pub fn load_images(&mut self) -> Option<VirtualAddress> {
+        self.0.load_images()
+    }
+
+    pub fn images_loaded(&mut self) -> Option<Operand<'e>> {
+        self.0.images_loaded()
+    }
+
+    pub fn init_real_time_lighting(&mut self) -> Option<VirtualAddress> {
+        self.0.init_real_time_lighting()
+    }
+
+    pub fn local_player_name(&mut self) -> Option<Operand<'e>> {
+        self.0.local_player_name()
+    }
+
+    pub fn step_network(&mut self) -> Rc<StepNetwork<'e, VirtualAddress>> {
+        self.0.step_network()
+    }
+
+    pub fn init_game_network(&mut self) -> Option<VirtualAddress> {
+        self.0.init_game_network()
+    }
+
+    pub fn snp_definitions(&mut self) -> Option<SnpDefinitions<'e>> {
+        self.0.snp_definitions()
+    }
+
+    pub fn lobby_state(&mut self) -> Option<Operand<'e>> {
+        self.0.lobby_state()
+    }
+
+    pub fn init_storm_networking(&mut self) -> Rc<InitStormNetworking<VirtualAddress>> {
+        self.0.init_storm_networking()
+    }
+
+    pub fn step_order(&mut self) -> Option<VirtualAddress> {
+        self.0.step_order()
+    }
+
+    pub fn step_order_hidden(&mut self) ->
+        Rc<Vec<step_order::StepOrderHiddenHook<'e, VirtualAddress>>>
+    {
+        self.0.step_order_hidden()
+    }
+
+    pub fn step_secondary_order(&mut self) ->
+        Rc<Vec<step_order::SecondaryOrderHook<'e, VirtualAddress>>>
+    {
+        self.0.step_secondary_order()
+    }
+
+    pub fn step_iscript(&mut self) -> Rc<StepIscript<'e, VirtualAddress>> {
+        self.0.step_iscript()
+    }
+
+    pub fn add_overlay_iscript(&mut self) -> Option<VirtualAddress> {
+        self.0.add_overlay_iscript()
+    }
+
+    pub fn draw_cursor_marker(&mut self) -> Option<Operand<'e>> {
+        self.0.draw_cursor_marker()
+    }
+
+    pub fn play_smk(&mut self) -> Option<VirtualAddress> {
+        self.0.play_smk()
+    }
+
+    pub fn game_init(&mut self) -> Rc<GameInit<'e, VirtualAddress>> {
+        self.0.game_init()
+    }
+
+    pub fn misc_clientside(&mut self) -> Rc<MiscClientSide<'e>> {
+        self.0.misc_clientside()
+    }
+
+    pub fn init_units(&mut self) -> Option<VirtualAddress> {
+        self.0.init_units()
+    }
+
+    pub fn load_dat(&mut self) -> Option<VirtualAddress> {
+        self.0.load_dat()
+    }
+
+    pub fn units(&mut self) -> Option<Operand<'e>> {
+        self.0.units()
+    }
+
+    pub fn first_ai_script(&mut self) -> Option<Operand<'e>> {
+        self.0.first_ai_script()
+    }
+
+    pub fn first_guard_ai(&mut self) -> Option<Operand<'e>> {
+        self.0.first_guard_ai()
+    }
+
+    pub fn player_ai_towns(&mut self) -> Option<Operand<'e>> {
+        self.0.player_ai_towns()
+    }
+
+    pub fn player_ai(&mut self) -> Option<Operand<'e>> {
+        self.0.player_ai()
+    }
+
+    pub fn init_game(&mut self) -> Rc<InitGame<'e, VirtualAddress>> {
+        self.0.init_game()
+    }
+
+    pub fn sprites(&mut self) -> Rc<Sprites<'e, VirtualAddress>> {
+        self.0.sprites()
+    }
+
+    pub fn eud_table(&mut self) -> Rc<EudTable<'e>> {
+        self.0.eud_table()
+    }
+
+    pub fn map_tile_flags(&mut self) -> Rc<MapTileFlags<'e, VirtualAddress>> {
+        self.0.map_tile_flags()
+    }
+
+    pub fn players(&mut self) -> Option<Operand<'e>> {
+        self.0.players()
+    }
+
+    pub fn draw_image(&mut self) -> Option<VirtualAddress> {
+        self.0.draw_image()
+    }
+
+    pub fn bullet_creation(&mut self) -> Rc<BulletCreation<'e, VirtualAddress>> {
+        self.0.bullet_creation()
+    }
+
+    pub fn net_players(&mut self) -> Rc<NetPlayers<'e, VirtualAddress>> {
+        self.0.net_players()
+    }
+
+    pub fn campaigns(&mut self) -> Option<Operand<'e>> {
+        self.0.campaigns()
+    }
+
+    pub fn run_dialog(&mut self) -> Option<VirtualAddress> {
+        self.0.run_dialog()
+    }
+
+    pub fn ai_update_attack_target(&mut self) -> Option<VirtualAddress> {
+        self.0.ai_update_attack_target()
+    }
+
+    pub fn is_outside_game_screen(&mut self) -> Option<VirtualAddress> {
+        self.0.is_outside_game_screen()
+    }
+
+    pub fn game_coord_conversion(&mut self) -> Rc<GameCoordConversion<'e>> {
+        self.0.game_coord_conversion()
+    }
+
+    pub fn fow_sprites(&mut self) -> Rc<FowSprites<'e>> {
+        self.0.fow_sprites()
+    }
+
+    pub fn spawn_dialog(&mut self) -> Option<VirtualAddress> {
+        self.0.spawn_dialog()
+    }
+
+    pub fn unit_creation(&mut self) -> Rc<UnitCreation<VirtualAddress>> {
+        self.0.unit_creation()
+    }
+
+    pub fn fonts(&mut self) -> Option<Operand<'e>> {
+        self.0.fonts()
+    }
+
+    pub fn init_sprites(&mut self) -> Option<VirtualAddress> {
+        self.0.init_sprites()
+    }
+
+    pub fn sprite_array(&mut self) -> Option<(Operand<'e>, u32)> {
+        self.0.sprite_array()
+    }
+
+    pub fn serialize_sprites(&mut self) -> Option<VirtualAddress> {
+        self.0.serialize_sprites()
+    }
+
+    pub fn deserialize_sprites(&mut self) -> Option<VirtualAddress> {
+        self.0.deserialize_sprites()
+    }
+
+    pub fn limits(&mut self) -> Rc<Limits<'e, VirtualAddress>> {
+        self.0.limits()
+    }
+
+    pub fn font_cache_render_ascii(&mut self) -> Option<VirtualAddress> {
+        self.0.font_cache_render_ascii()
+    }
+
+    pub fn ttf_cache_character(&mut self) -> Option<VirtualAddress> {
+        self.0.ttf_cache_character()
+    }
+
+    pub fn ttf_render_sdf(&mut self) -> Option<VirtualAddress> {
+        self.0.ttf_render_sdf()
+    }
+
+    /// Memory allocation function that at least TTF code uses.
+    ///
+    /// (Should be Win32 HeapAlloc with a specific heap)
+    pub fn ttf_malloc(&mut self) -> Option<VirtualAddress> {
+        self.0.ttf_malloc()
+    }
+
+    /// Offset to CreateGameScreen.OnMultiplayerGameCreate in the dialog's vtable
+    pub fn create_game_dialog_vtbl_on_multiplayer_create(&mut self) -> Option<usize> {
+        self.0.create_game_dialog_vtbl_on_multiplayer_create()
+    }
+
+    pub fn tooltip_draw_func(&mut self) -> Option<Operand<'e>> {
+        self.0.tooltip_draw_func()
+    }
+
+    pub fn current_tooltip_ctrl(&mut self) -> Option<Operand<'e>> {
+        self.0.current_tooltip_ctrl()
+    }
+
+    pub fn layout_draw_text(&mut self) -> Option<VirtualAddress> {
+        self.0.layout_draw_text()
+    }
+
+    pub fn graphic_layers(&mut self) -> Option<Operand<'e>> {
+        self.0.graphic_layers()
+    }
+
+    pub fn draw_f10_menu_tooltip(&mut self) -> Option<VirtualAddress> {
+        self.0.draw_f10_menu_tooltip()
+    }
+
+    pub fn draw_tooltip_layer(&mut self) -> Option<VirtualAddress> {
+        self.0.draw_tooltip_layer()
+    }
+
+    pub fn draw_graphic_layers(&mut self) -> Option<VirtualAddress> {
+        self.0.draw_graphic_layers()
+    }
+
+    pub fn prism_vertex_shaders(&mut self) -> Rc<Vec<VirtualAddress>> {
+        self.0.prism_vertex_shaders()
+    }
+
+    pub fn prism_pixel_shaders(&mut self) -> Rc<Vec<VirtualAddress>> {
+        self.0.prism_pixel_shaders()
+    }
+
+    pub fn ai_attack_prepare(&mut self) -> Option<VirtualAddress> {
+        self.0.ai_attack_prepare()
+    }
+
+    pub fn ai_step_region(&mut self) -> Option<VirtualAddress> {
+        self.0.ai_step_region()
+    }
+
+    pub fn join_game(&mut self) -> Option<VirtualAddress> {
+        self.0.join_game()
+    }
+
+    pub fn snet_initialize_provider(&mut self) -> Option<VirtualAddress> {
+        self.0.snet_initialize_provider()
+    }
+
+    pub fn set_status_screen_tooltip(&mut self) -> Option<VirtualAddress> {
+        self.0.set_status_screen_tooltip()
+    }
+
+    pub fn dat_patches(&mut self) -> Option<Rc<DatPatches<VirtualAddress>>> {
+        self.0.dat_patches()
+    }
+
+    pub fn do_attack(&mut self) -> Option<VirtualAddress> {
+        self.0.do_attack()
+    }
+
+    pub fn do_attack_main(&mut self) -> Option<VirtualAddress> {
+        self.0.do_attack_main()
+    }
+
+    pub fn last_bullet_spawner(&mut self) -> Option<Operand<'e>> {
+        self.0.last_bullet_spawner()
+    }
+
+    pub fn smem_alloc(&mut self) -> Option<VirtualAddress> {
+        self.0.smem_alloc()
+    }
+
+    pub fn smem_free(&mut self) -> Option<VirtualAddress> {
+        self.0.smem_free()
     }
 }
 
