@@ -202,6 +202,7 @@ fn everything_1213() {
 
         assert_eq!(analysis.smem_alloc().unwrap().0, 0x0083ee80);
         assert_eq!(analysis.smem_free().unwrap().0, 0x0083eec0);
+        assert_eq!(analysis.cmdicons_ddsgrp().unwrap(), ctx.constant(0x0EC7CAC));
     })
 }
 
@@ -1050,9 +1051,10 @@ fn everything_1235d() {
 
 #[test]
 fn everything_1235e() {
-    test_with_extra_checks(Path::new("1235e.exe"), |_ctx, analysis| {
+    test_with_extra_checks(Path::new("1235e.exe"), |ctx, analysis| {
         assert_eq!(analysis.smem_alloc().unwrap().0, 0x0094d940);
         assert_eq!(analysis.smem_free().unwrap().0, 0x0094d980);
+        assert_eq!(analysis.cmdicons_ddsgrp().unwrap(), ctx.constant(0x11b7960));
     })
 }
 
@@ -1574,6 +1576,7 @@ fn test_nongeneric<'e>(
     assert!(analysis.do_attack().is_some());
     assert!(analysis.do_attack_main().is_some());
     check_global(analysis.last_bullet_spawner().unwrap(), binary, "last_bullet_spawner");
+    check_global_struct(analysis.cmdicons_ddsgrp().unwrap(), binary, "cmdicons_ddsgrp");
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

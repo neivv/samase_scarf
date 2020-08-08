@@ -754,3 +754,104 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsDrawGraphicLayers<'e, 
         }
     }
 }
+
+pub fn cmdicons_ddsgrp<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Operand<'e>> {
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+
+    let firegraft = analysis.firegraft_addresses();
+    let &status_arr = firegraft.unit_status_funcs.get(0)?;
+    let marine_status = binary.read_address(status_arr + 0x8).ok()?;
+    // Search for [Control.user_pointer].field0 = *cmdicons_ddsgrp
+    // Right before that it sets Control.user_u16 to 0xc
+    let arg_cache = &analysis.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, marine_status);
+    let mut analyzer = CmdIconsDdsGrp::<E> {
+        result: None,
+        inline_depth: 0,
+        arg_cache,
+        current_function_u16_param_set: None,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct CmdIconsDdsGrp<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<Operand<'e>>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+    // Base operand, offset
+    current_function_u16_param_set: Option<(Operand<'e>, u16)>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if self.inline_depth < 5 {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        // Only inline when status_screen dialog is being passed to the function
+                        // as arg1
+                        if arg1 == self.arg_cache.on_entry(0) {
+                            self.inline_depth += 1;
+                            let u16_param_set = self.current_function_u16_param_set;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth -= 1;
+                            self.current_function_u16_param_set = u16_param_set;
+                        } else if self.current_function_u16_param_set.is_some() {
+                            let u16_param_set = self.current_function_u16_param_set;
+                            self.current_function_u16_param_set = None;
+                            ctrl.inline(self, dest);
+                            ctrl.skip_operation();
+                            self.current_function_u16_param_set = u16_param_set;
+                        }
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Move(DestOperand::Memory(mem), val, None) => {
+                let dest = ctrl.resolve(mem.address);
+                let val = ctrl.resolve(val);
+                if mem.size == MemAccessSize::Mem16 && val.if_constant() == Some(0xc) {
+                    let is_u16_move = dest.if_arithmetic_add()
+                        .and_then(|(l, r)| {
+                            let c = r.if_constant()?;
+                            match c {
+                                // 0x26 is older offset
+                                0x3e | 0x26 => Some((l, c as u16)),
+                                _ => None,
+                            }
+                        });
+                    if let Some(base) = is_u16_move {
+                        self.current_function_u16_param_set = Some(base);
+                    }
+                }
+                if mem.size == MemAccessSize::Mem32 {
+                    if let Some((base, offset)) = self.current_function_u16_param_set {
+                        let ok = ctrl.if_mem_word(dest)
+                            .and_then(|x| x.if_arithmetic_add())
+                            .filter(|&(l, _)| l == base)
+                            .and_then(|(_, r)| r.if_constant())
+                            .filter(|&c| c == offset as u64 + 2)
+                            .is_some();
+                        if ok {
+                            if let Some(outer) = ctrl.if_mem_word(val) {
+                                self.result = Some(outer);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}

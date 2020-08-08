@@ -226,6 +226,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     snet_initialize_provider: Cached<Option<E::VirtualAddress>>,
     do_attack: Cached<Option<step_order::DoAttack<'e, E::VirtualAddress>>>,
     dat_patches: Cached<Option<Rc<DatPatches<E::VirtualAddress>>>>,
+    cmdicons_ddsgrp: Cached<Option<Operand<'e>>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -483,6 +484,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             dat_patches: Default::default(),
             snet_initialize_provider: Default::default(),
             do_attack: Default::default(),
+            cmdicons_ddsgrp: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1623,6 +1625,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn smem_free(&mut self) -> Option<E::VirtualAddress> {
         self.limits().smem_free
     }
+
+    pub fn cmdicons_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cmdicons_ddsgrp.cached() {
+            return cached;
+        }
+        let result = dialog::cmdicons_ddsgrp(self);
+        self.cmdicons_ddsgrp.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2041,6 +2052,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn smem_free(&mut self) -> Option<VirtualAddress> {
         self.0.smem_free()
+    }
+
+    pub fn cmdicons_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.0.cmdicons_ddsgrp()
     }
 }
 
