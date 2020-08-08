@@ -203,6 +203,10 @@ fn everything_1213() {
         assert_eq!(analysis.smem_alloc().unwrap().0, 0x0083ee80);
         assert_eq!(analysis.smem_free().unwrap().0, 0x0083eec0);
         assert_eq!(analysis.cmdicons_ddsgrp().unwrap(), ctx.constant(0x0EC7CAC));
+
+        let mouse_xy = analysis.mouse_xy();
+        assert_eq!(mouse_xy.x_var.unwrap(), ctx.mem16(ctx.constant(0xea9910)));
+        assert_eq!(mouse_xy.y_var.unwrap(), ctx.mem16(ctx.constant(0xea9914)));
     })
 }
 
@@ -1056,6 +1060,9 @@ fn everything_1235e() {
         assert_eq!(analysis.smem_free().unwrap().0, 0x0094d980);
         assert_eq!(analysis.cmdicons_ddsgrp().unwrap(), ctx.constant(0x11b7960));
         assert_eq!(analysis.cmdbtns_ddsgrp().unwrap(), ctx.constant(0x11b7920));
+        let mouse_xy = analysis.mouse_xy();
+        assert_eq!(mouse_xy.x_func.unwrap().0, 0x006bf090);
+        assert_eq!(mouse_xy.y_func.unwrap().0, 0x006bf0a0);
     })
 }
 
@@ -1579,6 +1586,20 @@ fn test_nongeneric<'e>(
     check_global(analysis.last_bullet_spawner().unwrap(), binary, "last_bullet_spawner");
     check_global_struct(analysis.cmdicons_ddsgrp().unwrap(), binary, "cmdicons_ddsgrp");
     check_global_struct(analysis.cmdbtns_ddsgrp().unwrap(), binary, "cmdbtns_ddsgrp");
+
+    // 1.23.0 added input abstraction
+    let mouse_xy = analysis.mouse_xy();
+    if minor_version >= 23 {
+        assert!(mouse_xy.x_func.is_some());
+        assert!(mouse_xy.y_func.is_some());
+        assert!(mouse_xy.x_var.is_none());
+        assert!(mouse_xy.y_var.is_none());
+    } else {
+        check_global(mouse_xy.x_var.unwrap(), binary, "mouse x");
+        check_global(mouse_xy.y_var.unwrap(), binary, "mouse y");
+        assert!(mouse_xy.x_func.is_none());
+        assert!(mouse_xy.y_func.is_none());
+    }
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

@@ -21,6 +21,14 @@ pub struct ButtonDdsgrps<'e> {
     pub cmdbtns: Option<Operand<'e>>,
 }
 
+#[derive(Clone )]
+pub struct MouseXy<'e, Va: VirtualAddress> {
+    pub x_var: Option<Operand<'e>>,
+    pub y_var: Option<Operand<'e>>,
+    pub x_func: Option<Va>,
+    pub y_func: Option<Va>,
+}
+
 pub fn run_dialog<'a, E: ExecutionState<'a>>(
     analysis: &mut Analysis<'a, E>,
 ) -> Option<E::VirtualAddress> {
@@ -893,6 +901,99 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+pub fn mouse_xy<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> MouseXy<'e, E::VirtualAddress> {
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+
+    let mut result = MouseXy {
+        x_var: None,
+        y_var: None,
+        x_func: None,
+        y_func: None,
+    };
+
+    let run_dialog = match analysis.run_dialog() {
+        Some(s) => s,
+        None => return result,
+    };
+    // Search for [Control.user_pointer].field0 = *cmdicons_ddsgrp
+    // Right before that it sets Control.user_u16 to 0xc
+    let arg_cache = &analysis.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, run_dialog);
+    let mut analyzer = MouseXyAnalyzer::<E> {
+        result: &mut result,
+        inline_depth: 0,
+        arg_cache,
+        funcs: Vec::with_capacity(32),
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct MouseXyAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut MouseXy<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+    funcs: Vec<E::VirtualAddress>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MouseXyAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                let dest = ctrl.resolve(dest);
+                if let Some(dest) = dest.if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if self.inline_depth < 2 {
+                        self.inline_depth += 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth -= 1;
+                        if self.result.x_var.is_some() || self.result.x_func.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                    ctrl.skip_operation();
+                    let ctx = ctrl.ctx();
+                    let custom = ctx.custom(self.funcs.len() as u32);
+                    self.funcs.push(dest);
+                    let exec_state = ctrl.exec_state();
+                    exec_state.move_to(
+                        &DestOperand::Register64(scarf::operand::Register(0)),
+                        custom,
+                    );
+                } else {
+                    let ctx = ctrl.ctx();
+                    let is_calling_event_handler = ctrl.if_mem_word(dest)
+                        .and_then(|addr| addr.if_arithmetic_add())
+                        .and_then(|(_, r)| r.if_constant())
+                        .filter(|&c| c > 0x28 && c < 0x80)
+                        .is_some();
+                    if is_calling_event_handler {
+                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let x = ctrl.read_memory(ctx.add_const(arg2, 0x12), MemAccessSize::Mem16);
+                        let y = ctrl.read_memory(ctx.add_const(arg2, 0x14), MemAccessSize::Mem16);
+                        if let Some(c) = Operand::and_masked(x).0.if_custom() {
+                            self.result.x_func = Some(self.funcs[c as usize]);
+                        } else {
+                            self.result.x_var = Some(x);
+                        }
+                        if let Some(c) = Operand::and_masked(y).0.if_custom() {
+                            self.result.y_func = Some(self.funcs[c as usize]);
+                        } else {
+                            self.result.y_var = Some(y);
                         }
                     }
                 }

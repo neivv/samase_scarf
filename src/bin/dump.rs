@@ -451,6 +451,12 @@ fn main() {
     println!("cmdicons_ddsgrp: {}", format_op_operand(analysis.cmdicons_ddsgrp()));
     println!("cmdbtns_ddsgrp: {}", format_op_operand(analysis.cmdbtns_ddsgrp()));
 
+    let mouse_xy = analysis.mouse_xy();
+    println!("mouse_x: {}", format_op_operand(mouse_xy.x_var));
+    println!("mouse_y: {}", format_op_operand(mouse_xy.y_var));
+    println!("get_mouse_x: {:?}", mouse_xy.x_func);
+    println!("get_mouse_y: {:?}", mouse_xy.y_func);
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {

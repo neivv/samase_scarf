@@ -63,7 +63,7 @@ pub use crate::commands::{ProcessCommands, Selections, StepNetwork};
 pub use crate::dat::{
     DatTablePtr, DatPatch, DatPatches, DatArrayPatch, DatEntryCountPatch, DatReplaceFunc
 };
-pub use crate::dialog::{TooltipRelated};
+pub use crate::dialog::{MouseXy, TooltipRelated};
 pub use crate::eud::EudTable;
 pub use crate::firegraft::RequirementTables;
 pub use crate::game::{Limits};
@@ -227,6 +227,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     do_attack: Cached<Option<step_order::DoAttack<'e, E::VirtualAddress>>>,
     dat_patches: Cached<Option<Rc<DatPatches<E::VirtualAddress>>>>,
     button_ddsgrps: Cached<dialog::ButtonDdsgrps<'e>>,
+    mouse_xy: Cached<dialog::MouseXy<'e, E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -485,6 +486,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             snet_initialize_provider: Default::default(),
             do_attack: Default::default(),
             button_ddsgrps: Default::default(),
+            mouse_xy: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1642,6 +1644,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn cmdbtns_ddsgrp(&mut self) -> Option<Operand<'e>> {
         self.button_ddsgrps().cmdbtns
     }
+
+    pub fn mouse_xy(&mut self) -> MouseXy<'e, E::VirtualAddress> {
+        if let Some(cached) = self.mouse_xy.cached() {
+            return cached;
+        }
+        let result = dialog::mouse_xy(self);
+        self.mouse_xy.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2068,6 +2079,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn cmdbtns_ddsgrp(&mut self) -> Option<Operand<'e>> {
         self.0.cmdbtns_ddsgrp()
+    }
+
+    pub fn mouse_xy(&mut self) -> MouseXy<'e, VirtualAddress> {
+        self.0.mouse_xy()
     }
 }
 
