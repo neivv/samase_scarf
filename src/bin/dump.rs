@@ -456,6 +456,7 @@ fn main() {
     println!("mouse_y: {}", format_op_operand(mouse_xy.y_var));
     println!("get_mouse_x: {:?}", mouse_xy.x_func);
     println!("get_mouse_y: {:?}", mouse_xy.y_func);
+    println!("status_screen_mode: {}", format_op_operand(analysis.status_screen_mode()));
 
     let undef = ctx.new_undef();
     println!();

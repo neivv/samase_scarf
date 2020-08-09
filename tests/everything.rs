@@ -1063,6 +1063,7 @@ fn everything_1235e() {
         let mouse_xy = analysis.mouse_xy();
         assert_eq!(mouse_xy.x_func.unwrap().0, 0x006bf090);
         assert_eq!(mouse_xy.y_func.unwrap().0, 0x006bf0a0);
+        assert_eq!(analysis.status_screen_mode().unwrap(), ctx.mem8(ctx.constant(0x11b7a0e)));
     })
 }
 
@@ -1600,6 +1601,8 @@ fn test_nongeneric<'e>(
         assert!(mouse_xy.x_func.is_none());
         assert!(mouse_xy.y_func.is_none());
     }
+
+    check_global(analysis.status_screen_mode().unwrap(), binary, "status_screen_mode");
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

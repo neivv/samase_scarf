@@ -1002,3 +1002,65 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MouseXyAnalyzer<'a, 
         }
     }
 }
+
+pub fn status_screen_mode<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Operand<'e>> {
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+
+    let firegraft = analysis.firegraft_addresses();
+    let &status_arr = firegraft.unit_status_funcs.get(0)?;
+    let goliath_turret_status = binary.read_address(status_arr + 0x4 * 0xc + 0x8).ok()?;
+    // First variable that goliath turret's status screen function writes to is
+    // setting that mode to 0.
+    let mut analysis = FuncAnalysis::new(binary, ctx, goliath_turret_status);
+    let mut analyzer = StatusScreenMode::<E> {
+        result: None,
+        inline_depth: 0,
+        phantom: Default::default(),
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct StatusScreenMode<'e, E: ExecutionState<'e>> {
+    result: Option<Operand<'e>>,
+    inline_depth: u8,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StatusScreenMode<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if self.inline_depth < 1 {
+                        self.inline_depth += 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth -= 1;
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Move(DestOperand::Memory(mem), val, None) => {
+                if mem.size == MemAccessSize::Mem8 {
+                    let ctx = ctrl.ctx();
+                    if ctx.and_const(ctrl.resolve(val), 0xff).if_constant() == Some(0) {
+                        let dest = ctrl.resolve(mem.address);
+                        if dest.if_constant().is_some() {
+                            self.result = Some(ctx.mem8(dest));
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}

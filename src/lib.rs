@@ -228,6 +228,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     dat_patches: Cached<Option<Rc<DatPatches<E::VirtualAddress>>>>,
     button_ddsgrps: Cached<dialog::ButtonDdsgrps<'e>>,
     mouse_xy: Cached<dialog::MouseXy<'e, E::VirtualAddress>>,
+    status_screen_mode: Cached<Option<Operand<'e>>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -487,6 +488,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             do_attack: Default::default(),
             button_ddsgrps: Default::default(),
             mouse_xy: Default::default(),
+            status_screen_mode: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1653,6 +1655,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.mouse_xy.cache(&result);
         result
     }
+
+    pub fn status_screen_mode(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.status_screen_mode.cached() {
+            return cached;
+        }
+        let result = dialog::status_screen_mode(self);
+        self.status_screen_mode.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2083,6 +2094,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn mouse_xy(&mut self) -> MouseXy<'e, VirtualAddress> {
         self.0.mouse_xy()
+    }
+
+    pub fn status_screen_mode(&mut self) -> Option<Operand<'e>> {
+        self.0.status_screen_mode()
     }
 }
 
