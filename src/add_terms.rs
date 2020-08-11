@@ -48,6 +48,8 @@ impl<'e> AddTerms<'e> {
         }
     }
 
+    /// If exactly one term returns true from callback, remove it and return true.
+    /// Otherwise do nothing and return false.
     pub fn remove_one<F>(&mut self, mut func: F) -> bool
     where F: FnMut(Operand<'e>, bool) -> bool
     {

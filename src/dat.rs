@@ -1,3 +1,5 @@
+mod game;
+
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
@@ -47,15 +49,15 @@ pub struct DatTablePtr<'e> {
     pub entry_size: u32,
 }
 
-pub struct DatPatches<Va: VirtualAddress> {
-    pub patches: Vec<DatPatch<Va>>,
+pub struct DatPatches<'e, Va: VirtualAddress> {
+    pub patches: Vec<DatPatch<'e, Va>>,
     /// Bytes refered by hook/replace patches
     pub code_bytes: Vec<u8>,
     pub set_status_screen_tooltip: Option<Va>,
 }
 
-impl<Va: VirtualAddress> DatPatches<Va> {
-    fn empty() -> DatPatches<Va> {
+impl<'e, Va: VirtualAddress> DatPatches<'e, Va> {
+    fn empty() -> DatPatches<'e, Va> {
         DatPatches {
             patches: Vec::new(),
             code_bytes: Vec::new(),
@@ -64,7 +66,7 @@ impl<Va: VirtualAddress> DatPatches<Va> {
     }
 }
 
-pub enum DatPatch<Va: VirtualAddress> {
+pub enum DatPatch<'e, Va: VirtualAddress> {
     Array(DatArrayPatch<Va>),
     EntryCount(DatEntryCountPatch<Va>),
     /// Address, index to code_bytes, patch length
@@ -83,6 +85,7 @@ pub enum DatPatch<Va: VirtualAddress> {
     /// Hook address, free space start, index to code_bytes, hook len, bytes to skip over
     TwoStepHook(Va, Va, u32, u8, u8),
     ReplaceFunc(Va, DatReplaceFunc),
+    ExtendedArray(ExtArrayPatch<'e, Va>),
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -120,6 +123,14 @@ pub struct DatEntryCountPatch<Va: VirtualAddress> {
     // If the entry count to be written should be multiplied by a constant
     pub multiply: u32,
     pub address: Va,
+}
+
+pub struct ExtArrayPatch<'e, Va: VirtualAddress> {
+    pub address: Va,
+    pub instruction_len: u8,
+    pub hook_len: u8,
+    pub ext_array_id: u32,
+    pub index: Operand<'e>,
 }
 
 pub(crate) fn dat_table<'e, E: ExecutionState<'e>>(
@@ -219,7 +230,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindDatRoot<'a, '
 
 pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<DatPatches<E::VirtualAddress>> {
+) -> Option<DatPatches<'e, E::VirtualAddress>> {
     let dats = [
         DatType::Units, DatType::Weapons, DatType::Flingy, DatType::Upgrades,
         DatType::TechData,
@@ -258,6 +269,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         );
         dat_ctx.add_warning(msg);
     }
+    game::dat_game_analysis(&mut dat_ctx.analysis, &mut dat_ctx.result);
     Some(mem::replace(&mut dat_ctx.result, DatPatches::empty()))
 }
 
@@ -271,7 +283,7 @@ struct DatPatchContext<'a, 'e, E: ExecutionState<'e>> {
     techdata: DatTable<E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     text: &'e BinarySection<E::VirtualAddress>,
-    result: DatPatches<E::VirtualAddress>,
+    result: DatPatches<'e, E::VirtualAddress>,
     unchecked_refs: FxHashSet<Rva>,
     // Funcs that seem to possibly only return in al need to be patched to widen
     // the return value to entirety of eax.

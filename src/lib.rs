@@ -225,7 +225,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     join_game: Cached<Option<E::VirtualAddress>>,
     snet_initialize_provider: Cached<Option<E::VirtualAddress>>,
     do_attack: Cached<Option<step_order::DoAttack<'e, E::VirtualAddress>>>,
-    dat_patches: Cached<Option<Rc<DatPatches<E::VirtualAddress>>>>,
+    dat_patches: Cached<Option<Rc<DatPatches<'e, E::VirtualAddress>>>>,
     button_ddsgrps: Cached<dialog::ButtonDdsgrps<'e>>,
     mouse_xy: Cached<dialog::MouseXy<'e, E::VirtualAddress>>,
     status_screen_mode: Cached<Option<Operand<'e>>>,
@@ -1532,7 +1532,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.dat_patches()?.set_status_screen_tooltip
     }
 
-    pub fn dat_patches(&mut self) -> Option<Rc<DatPatches<E::VirtualAddress>>> {
+    pub fn dat_patches(&mut self) -> Option<Rc<DatPatches<'e, E::VirtualAddress>>> {
         if let Some(cached) = self.dat_patches.cached() {
             return cached;
         }
@@ -1545,13 +1545,14 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
-    ) -> Option<DatPatchesDebug<E::VirtualAddress>> {
+    ) -> Option<DatPatchesDebug<'e, E::VirtualAddress>> {
         let patches = self.dat_patches()?;
         let mut map = fxhash::FxHashMap::default();
         let mut replaces = Vec::new();
         let mut func_replaces = Vec::new();
         let mut hooks = Vec::new();
         let mut two_step_hooks = Vec::new();
+        let mut ext_array_patches = Vec::new();
         for patch in &patches.patches {
             match *patch {
                 DatPatch::Array(ref a) => {
@@ -1586,18 +1587,25 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 DatPatch::ReplaceFunc(addr, ty) => {
                     func_replaces.push((addr, ty));
                 }
+                DatPatch::ExtendedArray(ref a) => {
+                    ext_array_patches.push(
+                        (a.address, a.instruction_len, a.ext_array_id, a.index)
+                    );
+                }
             }
         }
         replaces.sort_unstable_by_key(|x| x.0);
         func_replaces.sort_unstable_by_key(|x| x.0);
         hooks.sort_unstable_by_key(|x| x.0);
         two_step_hooks.sort_unstable_by_key(|x| x.0);
+        ext_array_patches.sort_unstable_by_key(|x| (x.2, x.0));
         Some(DatPatchesDebug {
             tables: map,
             replaces,
             func_replaces,
             hooks,
             two_step_hooks,
+            ext_array_patches,
         })
     }
 
@@ -2060,7 +2068,7 @@ impl<'e> AnalysisX86<'e> {
         self.0.set_status_screen_tooltip()
     }
 
-    pub fn dat_patches(&mut self) -> Option<Rc<DatPatches<VirtualAddress>>> {
+    pub fn dat_patches(&mut self) -> Option<Rc<DatPatches<'e, VirtualAddress>>> {
         self.0.dat_patches()
     }
 
@@ -2101,12 +2109,13 @@ impl<'e> AnalysisX86<'e> {
     }
 }
 
-pub struct DatPatchesDebug<Va: VirtualAddressTrait> {
+pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
     pub tables: fxhash::FxHashMap<DatType, DatTablePatchesDebug<Va>>,
     pub replaces: Vec<(Va, Vec<u8>)>,
     pub func_replaces: Vec<(Va, DatReplaceFunc)>,
     pub hooks: Vec<(Va, u8, Vec<u8>)>,
     pub two_step_hooks: Vec<(Va, Va, u8, Vec<u8>)>,
+    pub ext_array_patches: Vec<(Va, u8, u32, Operand<'e>)>,
 }
 
 pub struct DatTablePatchesDebug<Va: VirtualAddressTrait> {
@@ -2490,6 +2499,7 @@ trait OperandExt<'e> {
     fn if_arithmetic_sub_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_mul_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_and_const(self, offset: u64) -> Option<Operand<'e>>;
+    fn if_arithmetic_lsh_const(self, offset: u64) -> Option<Operand<'e>>;
 }
 
 impl<'e> OperandExt<'e> for Operand<'e> {
@@ -2535,6 +2545,16 @@ impl<'e> OperandExt<'e> for Operand<'e> {
 
     fn if_arithmetic_and_const(self, offset: u64) -> Option<Operand<'e>> {
         let (l, r) = self.if_arithmetic_and()?;
+        let r = r.if_constant()?;
+        if r != offset {
+            None
+        } else {
+            Some(l)
+        }
+    }
+
+    fn if_arithmetic_lsh_const(self, offset: u64) -> Option<Operand<'e>> {
+        let (l, r) = self.if_arithmetic(scarf::operand::ArithOpType::Lsh)?;
         let r = r.if_constant()?;
         if r != offset {
             None
