@@ -190,6 +190,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 } else if !self.had_file_call && self.is_stack_temp_hlines(dest) {
                     if value.iter().any(|x| x == self.last_y_hline) {
                         self.result = EntryOf::Ok(SpriteSerializationFunc::Serialize);
+                        ctrl.end_analysis();
                     }
                 }
             }
