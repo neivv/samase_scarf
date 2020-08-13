@@ -69,7 +69,6 @@ impl<'a, 'e, E: ExecutionState<'e>> GameContext<'a, 'e, E> {
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
-                    //if entry.as_u64() == 0x00667FB0
                     if self.unchecked_refs.contains(&game_ref_addr) {
                         EntryOf::Retry
                     } else {

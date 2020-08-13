@@ -332,7 +332,7 @@ fn is_aiscript_switch_jump<'e, E: ExecutionState<'e>>(
     // The chances of there being another jump with different constresults when Mem8[x]
     // is replaced by 0x70 and 0x71 is low, so use that instead of trying to match all
     // gt/lt/ge/le variations
-    let simplified_70 = ctx.transform(condition, |x| match x.if_mem8().is_some() {
+    let simplified_70 = ctx.transform(condition, 16, |x| match x.if_mem8().is_some() {
         true => Some(ctx.constant(0x70)),
         false => None,
     });
@@ -340,7 +340,7 @@ fn is_aiscript_switch_jump<'e, E: ExecutionState<'e>>(
         Some(x) => x,
         _ => return None,
     };
-    let simplified_71 = ctx.transform(condition, |x| match x.if_mem8().is_some() {
+    let simplified_71 = ctx.transform(condition, 16, |x| match x.if_mem8().is_some() {
         true => Some(ctx.constant(0x71)),
         false => None,
     });

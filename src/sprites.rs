@@ -452,7 +452,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
             .find_map(|op| mem16_related_offset(op));
         let mut ok = true;
         if let Some(off) = related_unit_offset {
-            let value = ctx.transform(value, |op| {
+            let value = ctx.transform(value, 16, |op| {
                 if let Some(id) = op.if_custom() {
                     let val = self.resolve_custom(id);
                     if val.is_none() {

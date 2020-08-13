@@ -730,6 +730,7 @@ struct DatReferringFuncAnalysis<'a, 'b, 'e, E: ExecutionState<'e>> {
     /// So buffer 2step hooks and do them last.
     pending_hooks: Vec<(E::VirtualAddress, u32, u8, u8)>,
     is_update_status_screen_tooltip: bool,
+    switch_table: E::VirtualAddress,
     mode: DatFuncAnalysisMode,
 }
 
@@ -815,7 +816,14 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             return;
         }
         let ref_addr = self.ref_address;
-        if ref_addr >= ctrl.address() && ref_addr < ctrl.current_instruction_end() {
+        let ins_address = ctrl.address();
+        if ins_address == self.switch_table {
+            // Executed to switch table cases, stop
+            ctrl.skip_operation();
+            ctrl.end_branch();
+            return;
+        }
+        if ref_addr >= ins_address && ref_addr < ctrl.current_instruction_end() {
             self.result = EntryOf::Ok(());
         }
         match *op {
@@ -946,6 +954,27 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                     }
                 }
+                // A bit hacky fix to register switch table locations to prevent certain
+                // noreturn code from executing them.
+                // Probably could be better to have analysis to recognize that noreturn
+                // function instead of relying control flow from it reaching switch table.
+                if let Some(address) = ctrl.if_mem_word(to) {
+                    let address = ctrl.resolve(address);
+                    if let Some((index, base)) = address.if_arithmetic_add() {
+                        let index = index.if_arithmetic_mul()
+                            .and_then(|(l, r)| {
+                                r.if_constant()
+                                    .filter(|&c| c == E::VirtualAddress::SIZE as u64)?;
+                                Some(l)
+                            });
+                        if let (Some(c), Some(index)) = (base.if_constant(), index) {
+                            let exec_state = ctrl.exec_state();
+                            if exec_state.value_limits(index).0 == 0 {
+                                self.switch_table = E::VirtualAddress::from_u64(c);
+                            }
+                        }
+                    }
+                }
                 if self.mode == DatFuncAnalysisMode::ArrayIndex {
                     let condition = ctrl.resolve(condition);
                     let make_jump_unconditional = condition.if_arithmetic_gt()
@@ -1034,6 +1063,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             entry: entry,
             pending_hooks: Vec::new(),
             is_update_status_screen_tooltip: false,
+            switch_table: E::VirtualAddress::from_u64(0),
             mode,
             state: Box::new(DatFuncAnalysisState {
                 calls: Vec::with_capacity(64),
@@ -1070,6 +1100,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             entry: E::VirtualAddress::from_u64(0),
             pending_hooks: Vec::new(),
             is_update_status_screen_tooltip: false,
+            switch_table: E::VirtualAddress::from_u64(0),
             state,
             mode: DatFuncAnalysisMode::ArrayIndex,
         }
