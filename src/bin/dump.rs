@@ -440,6 +440,14 @@ fn main() {
 
     println!("Prism vertex shader sets: 0x{:x}", analysis.prism_vertex_shaders().len());
     println!("Prism pixel shader sets: 0x{:x}", analysis.prism_pixel_shaders().len());
+    println!(
+        "Prism vertex shaders: {:x?}",
+        analysis.prism_vertex_shaders().iter().map(|x| x.as_u64()).collect::<Vec<_>>(),
+    );
+    println!(
+        "Prism pixel shaders: {:x?}",
+        analysis.prism_pixel_shaders().iter().map(|x| x.as_u64()).collect::<Vec<_>>(),
+    );
 
     println!("ai_attack_prepare: {:?}", analysis.ai_attack_prepare());
     println!("ai_step_region: {:?}", analysis.ai_step_region());
