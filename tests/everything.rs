@@ -1075,7 +1075,10 @@ fn everything_1235f() {
 
 #[test]
 fn everything_1235g() {
-    test_with_extra_checks(Path::new("1235g.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1235g.exe"), |ctx, analysis| {
+        assert_eq!(analysis.check_unit_requirements().unwrap().0, 0x006627D0);
+        assert_eq!(analysis.check_dat_requirements().unwrap().0, 0x00538f80);
+        assert_eq!(analysis.dat_requirement_error().unwrap(), ctx.mem32(ctx.constant(0xffaad8)));
     })
 }
 
@@ -1615,6 +1618,9 @@ fn test_nongeneric<'e>(
     }
 
     check_global(analysis.status_screen_mode().unwrap(), binary, "status_screen_mode");
+    assert!(analysis.check_unit_requirements().is_some());
+    assert!(analysis.check_dat_requirements().is_some());
+    check_global(analysis.dat_requirement_error().unwrap(), binary, "dat_requirement_error");
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

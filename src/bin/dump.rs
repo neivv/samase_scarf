@@ -470,6 +470,10 @@ fn main() {
     println!("get_mouse_y: {:?}", mouse_xy.y_func);
     println!("status_screen_mode: {}", format_op_operand(analysis.status_screen_mode()));
 
+    println!("check_unit_requirements: {:?}", analysis.check_unit_requirements());
+    println!("check_dat_requirements: {:?}", analysis.check_dat_requirements());
+    println!("dat_requirement_error: {}", format_op_operand(analysis.dat_requirement_error()));
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {

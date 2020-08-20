@@ -34,6 +34,7 @@ mod pathing;
 mod players;
 mod range_list;
 mod renderer;
+mod requirements;
 mod rng;
 mod save;
 mod step_order;
@@ -229,6 +230,9 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     button_ddsgrps: Cached<dialog::ButtonDdsgrps<'e>>,
     mouse_xy: Cached<dialog::MouseXy<'e, E::VirtualAddress>>,
     status_screen_mode: Cached<Option<Operand<'e>>>,
+    check_unit_requirements:
+        Cached<Option<requirements::CheckUnitRequirements<'e, E::VirtualAddress>>>,
+    check_dat_requirements: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -489,6 +493,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             button_ddsgrps: Default::default(),
             mouse_xy: Default::default(),
             status_screen_mode: Default::default(),
+            check_unit_requirements: Default::default(),
+            check_dat_requirements: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1672,6 +1678,34 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.status_screen_mode.cache(&result);
         result
     }
+
+    fn check_unit_reqs_struct(
+        &mut self,
+    ) -> Option<requirements::CheckUnitRequirements<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.check_unit_requirements.cached() {
+            return cached;
+        }
+        let result = requirements::check_unit_requirements(self);
+        self.check_unit_requirements.cache(&result);
+        result
+    }
+
+    pub fn check_unit_requirements(&mut self) -> Option<E::VirtualAddress> {
+        self.check_unit_reqs_struct().map(|x| x.check_unit_requirements)
+    }
+
+    pub fn check_dat_requirements(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.check_dat_requirements.cached() {
+            return cached;
+        }
+        let result = requirements::check_dat_requirements(self);
+        self.check_dat_requirements.cache(&result);
+        result
+    }
+
+    pub fn dat_requirement_error(&mut self) -> Option<Operand<'e>> {
+        self.check_unit_reqs_struct().map(|x| x.requirement_error)
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2106,6 +2140,18 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn status_screen_mode(&mut self) -> Option<Operand<'e>> {
         self.0.status_screen_mode()
+    }
+
+    pub fn check_unit_requirements(&mut self) -> Option<VirtualAddress> {
+        self.0.check_unit_requirements()
+    }
+
+    pub fn check_dat_requirements(&mut self) -> Option<VirtualAddress> {
+        self.0.check_dat_requirements()
+    }
+
+    pub fn dat_requirement_error(&mut self) -> Option<Operand<'e>> {
+        self.0.dat_requirement_error()
     }
 }
 
