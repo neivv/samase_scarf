@@ -128,7 +128,6 @@ pub struct DatEntryCountPatch<Va: VirtualAddress> {
 pub struct ExtArrayPatch<'e, Va: VirtualAddress> {
     pub address: Va,
     pub instruction_len: u8,
-    pub hook_len: u8,
     pub ext_array_id: u32,
     pub index: Operand<'e>,
 }

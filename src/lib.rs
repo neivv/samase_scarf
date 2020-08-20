@@ -2500,6 +2500,7 @@ trait OperandExt<'e> {
     fn if_arithmetic_mul_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_and_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_lsh_const(self, offset: u64) -> Option<Operand<'e>>;
+    fn if_arithmetic_rsh_const(self, offset: u64) -> Option<Operand<'e>>;
 }
 
 impl<'e> OperandExt<'e> for Operand<'e> {
@@ -2555,6 +2556,16 @@ impl<'e> OperandExt<'e> for Operand<'e> {
 
     fn if_arithmetic_lsh_const(self, offset: u64) -> Option<Operand<'e>> {
         let (l, r) = self.if_arithmetic(scarf::operand::ArithOpType::Lsh)?;
+        let r = r.if_constant()?;
+        if r != offset {
+            None
+        } else {
+            Some(l)
+        }
+    }
+
+    fn if_arithmetic_rsh_const(self, offset: u64) -> Option<Operand<'e>> {
+        let (l, r) = self.if_arithmetic(scarf::operand::ArithOpType::Rsh)?;
         let r = r.if_constant()?;
         if r != offset {
             None
