@@ -233,6 +233,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     check_unit_requirements:
         Cached<Option<requirements::CheckUnitRequirements<'e, E::VirtualAddress>>>,
     check_dat_requirements: Cached<Option<E::VirtualAddress>>,
+    cheat_flags: Cached<Option<Operand<'e>>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -495,6 +496,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             status_screen_mode: Default::default(),
             check_unit_requirements: Default::default(),
             check_dat_requirements: Default::default(),
+            cheat_flags: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1706,6 +1708,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn dat_requirement_error(&mut self) -> Option<Operand<'e>> {
         self.check_unit_reqs_struct().map(|x| x.requirement_error)
     }
+
+    pub fn cheat_flags(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cheat_flags.cached() {
+            return cached;
+        }
+        let result = requirements::cheat_flags(self);
+        self.cheat_flags.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2152,6 +2163,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn dat_requirement_error(&mut self) -> Option<Operand<'e>> {
         self.0.dat_requirement_error()
+    }
+
+    pub fn cheat_flags(&mut self) -> Option<Operand<'e>> {
+        self.0.cheat_flags()
     }
 }
 

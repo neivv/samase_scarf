@@ -473,6 +473,7 @@ fn main() {
     println!("check_unit_requirements: {:?}", analysis.check_unit_requirements());
     println!("check_dat_requirements: {:?}", analysis.check_dat_requirements());
     println!("dat_requirement_error: {}", format_op_operand(analysis.dat_requirement_error()));
+    println!("cheat_flags: {}", format_op_operand(analysis.cheat_flags()));
 
     let undef = ctx.new_undef();
     println!();
