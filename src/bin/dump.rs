@@ -216,6 +216,8 @@ fn main() {
     println!("upgrades.dat: {}", format_dat(&analysis.dat(DatType::Upgrades)));
     println!("techdata.dat: {}", format_dat(&analysis.dat(DatType::TechData)));
     println!("sfxdata.dat: {}", format_dat(&analysis.dat(DatType::SfxData)));
+    println!("portdata.dat: {}", format_dat(&analysis.dat(DatType::PortData)));
+    println!("mapdata.dat: {}", format_dat(&analysis.dat(DatType::MapData)));
 
     println!("init_units: {:?}", analysis.init_units());
     println!("load_dat: {:?}", analysis.load_dat());
