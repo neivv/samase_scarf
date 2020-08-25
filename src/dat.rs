@@ -1,4 +1,5 @@
 mod game;
+mod units;
 
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
@@ -6,6 +7,7 @@ use std::hash::Hash;
 use std::mem;
 use std::rc::Rc;
 
+use byteorder::{ByteOrder, LittleEndian};
 use fxhash::{FxHashMap, FxHashSet};
 
 use scarf::analysis::{self, Cfg, Control, FuncAnalysis, RelocValues};
@@ -19,28 +21,33 @@ use crate::{
 };
 use crate::range_list::RangeList;
 
-pub static UNIT_ARRAY_WIDTHS: &[u8] = &[
+static UNIT_ARRAY_WIDTHS: &[u8] = &[
     1, 2, 2, 2, 4, 1, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2,
-    2, 2, 2, 2, 4, 2, 8, 2, 2, 2, 2, 2, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 4, 1, 1, 1, 1, 1, 1, 2, 2, 2,
+    2, 2, 2, 2, 4, 4, 8, 2, 2, 2, 2, 2, 1, 1, 1, 1,
     1, 2, 2, 2, 1, 2,
 ];
 
-pub static WEAPON_ARRAY_WIDTHS: &[u8] = &[
+static WEAPON_ARRAY_WIDTHS: &[u8] = &[
     2, 4, 1, 2, 4, 4, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2,
     1, 1, 1, 1, 1, 1, 2, 2,
 ];
 
-pub static FLINGY_ARRAY_WIDTHS: &[u8] = &[
+static FLINGY_ARRAY_WIDTHS: &[u8] = &[
     2, 4, 2, 4, 1, 1, 1,
 ];
 
-pub static UPGRADE_ARRAY_WIDTHS: &[u8] = &[
+static UPGRADE_ARRAY_WIDTHS: &[u8] = &[
     2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1,
 ];
 
-pub static TECHDATA_ARRAY_WIDTHS: &[u8] = &[
+static TECHDATA_ARRAY_WIDTHS: &[u8] = &[
     2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1,
+];
+
+static ORDER_ARRAY_WIDTHS: &[u8] = &[
+    2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    2, 2, 1,
 ];
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -53,6 +60,7 @@ pub struct DatPatches<'e, Va: VirtualAddress> {
     pub patches: Vec<DatPatch<'e, Va>>,
     /// Bytes refered by hook/replace patches
     pub code_bytes: Vec<u8>,
+    pub arrays_in_code_bytes: Vec<(usize, DatType, u8)>,
     pub set_status_screen_tooltip: Option<Va>,
 }
 
@@ -61,6 +69,7 @@ impl<'e, Va: VirtualAddress> DatPatches<'e, Va> {
         DatPatches {
             patches: Vec::new(),
             code_bytes: Vec::new(),
+            arrays_in_code_bytes: Vec::new(),
             set_status_screen_tooltip: None,
         }
     }
@@ -232,7 +241,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
 ) -> Option<DatPatches<'e, E::VirtualAddress>> {
     let dats = [
         DatType::Units, DatType::Weapons, DatType::Flingy, DatType::Upgrades,
-        DatType::TechData,
+        DatType::TechData, DatType::Orders,
     ];
     let firegraft = analysis.firegraft_addresses();
     let mut dat_ctx = DatPatchContext::new(analysis);
@@ -241,13 +250,6 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         let table = dat_ctx.analysis.dat(dat)?;
         let address = table.address.if_constant().map(|x| E::VirtualAddress::from_u64(x))?;
         dat_ctx.add_dat(dat, address, table.entry_size).ok()?;
-    }
-
-    let dats = [(DatType::Orders, 0x13)];
-    for &(dat, field_count) in &dats {
-        let table = dat_ctx.analysis.dat(dat)?;
-        let address = table.address.if_constant().map(|x| E::VirtualAddress::from_u64(x))?;
-        dat_ctx.register_dat(dat, address, table.entry_size, field_count).ok()?;
     }
 
     dat_ctx.add_patches_from_code_refs();
@@ -259,7 +261,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     // Status screen array (Using unit 0xff)
     for &status_addr in &firegraft.unit_status_funcs {
         let end_ptr = status_addr + 0xe4 * 0xc;
-        dat_ctx.add_dat_global_refs(DatType::Units, 0xff, status_addr, end_ptr, 0xc, false);
+        dat_ctx.add_dat_global_refs(DatType::Units, 0xff, status_addr, end_ptr, 0, 0xc, false);
     }
     if dat_ctx.unknown_global_u8_mem.len() != 1 {
         let msg = format!(
@@ -269,10 +271,11 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         dat_ctx.add_warning(msg);
     }
     game::dat_game_analysis(&mut dat_ctx.analysis, &mut dat_ctx.result);
+    units::init_units_analysis(dat_ctx);
     Some(mem::replace(&mut dat_ctx.result, DatPatches::empty()))
 }
 
-struct DatPatchContext<'a, 'e, E: ExecutionState<'e>> {
+pub(crate) struct DatPatchContext<'a, 'e, E: ExecutionState<'e>> {
     relocs: Rc<Vec<RelocValues<E::VirtualAddress>>>,
     array_lookup: FxHashMap<E::VirtualAddress, (DatType, u8)>,
     units: DatTable<E::VirtualAddress>,
@@ -280,6 +283,7 @@ struct DatPatchContext<'a, 'e, E: ExecutionState<'e>> {
     flingy: DatTable<E::VirtualAddress>,
     upgrades: DatTable<E::VirtualAddress>,
     techdata: DatTable<E::VirtualAddress>,
+    orders: DatTable<E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     text: &'e BinarySection<E::VirtualAddress>,
     result: DatPatches<'e, E::VirtualAddress>,
@@ -298,6 +302,10 @@ struct DatPatchContext<'a, 'e, E: ExecutionState<'e>> {
     analysis: &'a mut Analysis<'e, E>,
     patched_addresses: FxHashSet<E::VirtualAddress>,
     analyzed_functions: FxHashMap<Rva, Box<DatFuncAnalysisState>>,
+    /// Maps array address patch -> index in result vector.
+    /// Meant to solve conflicts where an address technically is inside one array but
+    /// in reality is `array[unit_id - first_index]`
+    array_address_patches: FxHashMap<Rva, usize>,
 
     /// Structures for widening variables that are being passed to a function.
     /// func_arg_widen_requests are used during analysis to lookup if a certain insturction
@@ -359,6 +367,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             flingy: dat_table(0x7),
             upgrades: dat_table(0xc),
             techdata: dat_table(0xb),
+            orders: dat_table(0x13),
             binary: analysis.binary,
             relocs: analysis.relocs_with_values(),
             text,
@@ -366,6 +375,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             result: DatPatches {
                 patches: Vec::with_capacity(1024),
                 code_bytes: Vec::with_capacity(2048),
+                arrays_in_code_bytes: Vec::with_capacity(64),
                 set_status_screen_tooltip: None,
             },
             patched_addresses: FxHashSet::with_capacity_and_hasher(64, Default::default()),
@@ -376,50 +386,13 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                 FxHashSet::with_capacity_and_hasher(128, Default::default()),
             step_iscript,
             unknown_global_u8_mem: FxHashMap::with_capacity_and_hasher(4, Default::default()),
+            array_address_patches: FxHashMap::with_capacity_and_hasher(256, Default::default()),
             update_status_screen_tooltip: E::VirtualAddress::from_u64(0),
         })
     }
 
     fn add_warning(&mut self, msg: String) {
         warn!("{}", msg);
-    }
-
-    fn register_dat(
-        &mut self,
-        dat: DatType,
-        table_address: E::VirtualAddress,
-        entry_size: u32,
-        field_count: u32,
-    ) -> Result<(), ()> {
-        for i in 0..field_count {
-            let entry_address = table_address + i * entry_size;
-            let array_ptr = self.binary.read_address(entry_address)
-                .map_err(|_| ())?;
-            self.array_lookup.insert(array_ptr, (dat, i as u8));
-            let add_as_unchecked_ref = match (dat, i) {
-                (DatType::Units, 0x11) | (DatType::Units, 0x13) | (DatType::Orders, 0x0d) |
-                    (DatType::Units, 0x00) => true,
-                _ => false,
-            };
-            if add_as_unchecked_ref {
-                let text = self.text;
-                let text_end = text.virtual_address + text.virtual_size;
-                let start = self.relocs.binary_search_by(|x| match x.value >= array_ptr {
-                    true => Ordering::Greater,
-                    false => Ordering::Less,
-                }).unwrap_err();
-                let refs = (&self.relocs[start..]).iter()
-                    .take_while(|x| x.value == array_ptr)
-                    .map(|x| x.address);
-                for address in refs {
-                    if address >= text.virtual_address && address < text_end {
-                        let rva = Rva((address.as_u64() - self.binary.base.as_u64()) as u32);
-                        self.unchecked_refs.insert(rva);
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 
     fn add_dat(
@@ -434,6 +407,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             DatType::Flingy => (&mut self.flingy, 0xd1, &FLINGY_ARRAY_WIDTHS),
             DatType::Upgrades => (&mut self.upgrades, 0x3d, &UPGRADE_ARRAY_WIDTHS),
             DatType::TechData => (&mut self.techdata, 0x2c, &TECHDATA_ARRAY_WIDTHS),
+            DatType::Orders => (&mut self.orders, 0xbd, &ORDER_ARRAY_WIDTHS),
             _ => unimplemented!(),
         };
         entry.table_address = table_address;
@@ -444,11 +418,6 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                 .map_err(|_| ())?;
             self.array_lookup.insert(array_ptr, (dat, i as u8));
 
-            if dat == DatType::Units {
-                // TODO
-                continue;
-            }
-
             // DatTable size value. DatTable ptr isn't needed since it's also a global ref
             self.result.patches.push(DatPatch::EntryCount(DatEntryCountPatch {
                 dat,
@@ -457,10 +426,36 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                 address: entry_address + E::VirtualAddress::SIZE + 4,
             }));
 
+            let do_analysis = match dat {
+                DatType::Units | DatType::Weapons | DatType::Flingy | DatType::Upgrades |
+                    DatType::TechData => true,
+                _ => false,
+            };
             // Global refs
             let field_size = field_sizes[i as usize];
-            let end_ptr = array_ptr + entry_count * field_size as u32;
-            self.add_dat_global_refs(dat, i as u8, array_ptr, end_ptr, field_size, true);
+            let (array_entries, start_index) = match (dat, i) {
+                (DatType::Units, 0x03) => (0x60, 0x6a),
+                (DatType::Units, 0x1d) => (0x6a, 0x00),
+                (DatType::Units, 0x20) => (0x6a, 0x00),
+                (DatType::Units, 0x21) => (0x6a, 0x00),
+                (DatType::Units, 0x22) => (0x6a, 0x00),
+                (DatType::Units, 0x23) => (0x6a, 0x00),
+                (DatType::Units, 0x25) => (0x60, 0x6a),
+                (DatType::Sprites, 0x01) => (0x183, 0x82),
+                (DatType::Sprites, 0x04) => (0x183, 0x82),
+                (DatType::Sprites, 0x05) => (0x183, 0x82),
+                _ => (entry_count, 0),
+            };
+            let end_ptr = array_ptr + array_entries * field_size as u32;
+            self.add_dat_global_refs(
+                dat,
+                i as u8,
+                array_ptr,
+                end_ptr,
+                start_index,
+                field_size,
+                do_analysis,
+            );
         }
         Ok(())
     }
@@ -471,6 +466,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
         field_id: u8,
         array_ptr: E::VirtualAddress,
         end_ptr: E::VirtualAddress,
+        start_index: u32,
         field_size: u8,
         add_unchecked_ref_analysis: bool,
     ) {
@@ -478,15 +474,34 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             true => Ordering::Greater,
             false => Ordering::Less,
         }).unwrap_err();
-        let refs = (&self.relocs[start..]).iter()
-            .take_while(|x| x.value < end_ptr);
         let text = self.text;
         let text_end = text.virtual_address + text.virtual_size;
-        for reloc in refs {
+        for i in start.. {
+            let reloc = match self.relocs.get(i) {
+                Some(s) if s.value < end_ptr => s,
+                _ => break,
+            };
             let address = reloc.address;
+            let rva = Rva((address.as_u64() - self.binary.base.as_u64()) as u32);
             let offset_bytes = (reloc.value.as_u64() - array_ptr.as_u64()) as i32;
-            let offset = offset_bytes / field_size as i32;
+            let offset = (start_index as i32).saturating_add(offset_bytes / field_size as i32);
             let byte_offset = offset_bytes as u32 % field_size as u32;
+            match self.array_address_patches.entry(rva) {
+                Entry::Occupied(_) => {
+                    // Overlap, if the offset isn't 0 it's likely 0 entry
+                    // for an array whose start_index isn't 0
+                    if byte_offset == 0 {
+                        self.add_warning( format!(
+                            "Conflict with dat global refs @ {:?}  {:?}:{:x}",
+                            address, dat, field_id,
+                        ));
+                    }
+                    continue;
+                }
+                Entry::Vacant(e) => {
+                    e.insert(self.result.patches.len());
+                }
+            }
             self.result.patches.push(DatPatch::Array(DatArrayPatch {
                 dat,
                 field_id,
@@ -501,9 +516,47 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             // offset 0 addresses.
             if add_unchecked_ref_analysis && offset_bytes == 0 {
                 if address >= text.virtual_address && address < text_end {
-                    let rva = Rva((address.as_u64() - self.binary.base.as_u64()) as u32);
                     self.unchecked_refs.insert(rva);
                 }
+            }
+        }
+        if start_index != 0 {
+            // If there's a reloc for array_ptr - start_index * field_size,
+            // assume it's meant for array[id - start_index]
+            let zero_ptr = array_ptr - start_index.wrapping_mul(field_size as u32);
+            let start = self.relocs.binary_search_by(|x| match x.value >= zero_ptr {
+                true => Ordering::Greater,
+                false => Ordering::Less,
+            }).unwrap_err();
+            for i in start.. {
+                if let Some(reloc) = self.relocs.get(i).filter(|x| x.value == zero_ptr) {
+                    let patch = DatArrayPatch {
+                        dat,
+                        field_id,
+                        address: reloc.address,
+                        entry: 0,
+                        byte_offset: 0,
+                    };
+                    self.add_or_override_dat_array_patch(patch);
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn add_or_override_dat_array_patch(&mut self, patch: DatArrayPatch<E::VirtualAddress>) {
+        let address = patch.address;
+        let rva = Rva((address.as_u64() - self.binary.base.as_u64()) as u32);
+        let patch = DatPatch::Array(patch);
+        match self.array_address_patches.entry(rva) {
+            Entry::Occupied(e) => {
+                let index = *e.get();
+                self.result.patches[index] = patch;
+            }
+            Entry::Vacant(e) => {
+                e.insert(self.result.patches.len());
+                self.result.patches.push(patch);
             }
         }
     }
@@ -935,12 +988,13 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         {
                             let e = (e.0, e.1, *e.2);
                             let input = (to, end, IsJumpDest::Yes);
-                            if e != input {
+                            if (e.0, e.1) != (input.0, input.1) {
                                 // Accept jumps inside a jump dest, as those are sometimes
                                 // generated
-                                let accept =
-                                    (e.2 == IsJumpDest::Yes && e.0 <= input.0 && e.1 >= input.1) ||
-                                    (e.2 == IsJumpDest::Yes && e.0 >= input.0 && e.1 <= input.1);
+                                let accept = e.2 == IsJumpDest::Yes && (
+                                        (e.0 <= input.0 && e.1 >= input.1) ||
+                                        (e.0 >= input.0 && e.1 <= input.1)
+                                    );
                                 if !accept {
                                     self.add_warning(
                                         format!(
@@ -1013,10 +1067,22 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                         })
                                 })
                         });
-                    if let Some((jump, _op, dat)) = make_jump_unconditional {
+                    if let Some((jump, op, dat)) = make_jump_unconditional {
                         // TODO currently just assumes that those above constant checks are always
                         // dat limit checks
+
                         let address = ctrl.address();
+                        // Hackfix for step_lone_sprites, which does a lone.sprite.id > 0x81
+                        // check
+                        if dat == DatType::Weapons {
+                            let skip = op.if_mem16()
+                                .and_then(|x| x.if_arithmetic_add_const(8))
+                                .and_then(|x| x.if_mem32())
+                                .is_some();
+                            if skip {
+                                return;
+                            }
+                        }
                         let first_invalid_is_none = match dat {
                             DatType::Units | DatType::Weapons | DatType::Upgrades |
                                 DatType::TechData => true,
@@ -1234,8 +1300,41 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             None => return None,
         };
         let addr = E::VirtualAddress::from_u64(base);
-        if let Some(&(dat, _field_id)) = self.dat_ctx.array_lookup.get(&addr) {
+        if let Some(&(dat, field_id)) = self.dat_ctx.array_lookup.get(&addr) {
             self.reached_array_ref_32(ctrl, addr);
+            let array_itself_needs_widen = match (dat, field_id) {
+                // Unit flingy
+                (DatType::Units, 0x0) => true,
+                // Weapons
+                (DatType::Units, 0x11) => true,
+                (DatType::Units, 0x13) => true,
+                (DatType::Orders, 0x0d) => true,
+                // Upgrades
+                (DatType::Units, 0x19) => true,
+                (DatType::Weapons, 0x06) => true,
+                // Tech
+                (DatType::Orders, 0x0e) => true,
+                _ => false,
+            };
+            if array_itself_needs_widen {
+                let code_bytes_before = self.dat_ctx.result.code_bytes.len();
+                self.widen_instruction(ctrl.address(), true);
+                // If this instruction had the array address immediate, mark is at something
+                // that needs to be fixed in result.code_bytes
+                let result = &mut self.dat_ctx.result;
+                let mut i = code_bytes_before + 2;
+                loop {
+                    i += 1;
+                    if let Some(bytes) = result.code_bytes.get_mut(i..(i + 4)) {
+                        if LittleEndian::read_u32(bytes) == addr.as_u64() as u32 {
+                            result.arrays_in_code_bytes.push((i, dat, field_id));
+                            LittleEndian::write_u32(bytes, u32::max_value());
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
             if dat == DatType::Orders {
                 // Probs never reason to increase order limit
                 return None;
@@ -1516,16 +1615,9 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
         ctrl: &mut Control<'e, '_, '_, Self>,
         array_addr: E::VirtualAddress,
     ) {
-        let mut imm_addr = ctrl.current_instruction_end() - 4;
-        while imm_addr > ctrl.address() {
-            if let Ok(imm) = self.binary.read_u32(imm_addr) {
-                if imm == array_addr.as_u64() as u32 {
-                    let rva = Rva((imm_addr.as_u64() - self.binary.base.as_u64()) as u32);
-                    self.dat_ctx.unchecked_refs.remove(&rva);
-                    return;
-                }
-            }
-            imm_addr = imm_addr - 1;
+        if let Some(imm_addr) = reloc_address_of_instruction(ctrl, self.binary, array_addr) {
+            let rva = Rva((imm_addr.as_u64() - self.binary.base.as_u64()) as u32);
+            self.dat_ctx.unchecked_refs.remove(&rva);
         }
     }
 
@@ -1575,19 +1667,19 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             self.dat_ctx.add_func_arg_widening_request(self.entry, i as u8, dat);
             for rva in u8_instruction_lists.iter(U8Operand::Arg(i as u8)) {
                 let address = binary.base + rva.0;
-                self.widen_instruction(address);
+                self.widen_instruction(address, false);
             }
         }
         for &custom_id in needed_func_results.iter() {
             // Func args may be added for extension unnecessarily
             for rva in u8_instruction_lists.iter(U8Operand::Return(custom_id)) {
                 let address = binary.base + rva.0;
-                self.widen_instruction(address);
+                self.widen_instruction(address, false);
             }
         }
         for rva in u8_instruction_lists.iter(U8Operand::DatField) {
             let address = binary.base + rva.0;
-            self.widen_instruction(address);
+            self.widen_instruction(address, false);
         }
         self.state.u8_instruction_lists = u8_instruction_lists;
     }
@@ -1727,7 +1819,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
         self.add_patch(address, &nops[..ins_len as usize], ins_len);
     }
 
-    fn widen_instruction(&mut self, address: E::VirtualAddress) {
+    fn widen_instruction(&mut self, address: E::VirtualAddress, widen_index_size: bool) {
         use lde::Isa;
 
         fn is_struct_field_rm(bytes: &[u8]) -> bool {
@@ -1751,27 +1843,25 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
         match *bytes {
             // movzx to mov
             [0x0f, 0xb6, ..] => {
-                if !is_struct_field_rm(&bytes[1..]) {
+                if widen_index_size || !is_struct_field_rm(&bytes[1..]) {
                     let mut patch = [0x90u8; 8];
                     for i in 0..8 {
                         patch[i] = bytes[i];
                     }
                     patch[0] = 0x90;
                     patch[1] = 0x8b;
-                    self.fixup_instruction_rm(&mut patch[1..]);
-                    self.add_patch(address, &patch, ins_len);
+                    self.add_rm_patch(address, &mut patch, 1, ins_len, ins_len, widen_index_size);
                 }
             }
             // add rm8, r8; cmp r8, rm8; cmp rm8, r8
             [0x00, ..] | [0x3a, ..] | [0x38, ..] => {
-                if !is_struct_field_rm(&bytes) {
+                if widen_index_size || !is_struct_field_rm(&bytes) {
                     let mut patch = [0x90u8; 8];
                     for i in 0..8 {
                         patch[i] = bytes[i];
                     }
                     patch[0] += 1;
-                    self.fixup_instruction_rm(&mut patch);
-                    self.add_patch(address, &patch, ins_len);
+                    self.add_rm_patch(address, &mut patch, 0, ins_len, ins_len, widen_index_size);
                 }
             }
             // cmp al, constant
@@ -1790,8 +1880,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
                 for i in ins_len..(ins_len + 3) {
                     patch[i as usize] = 0x00;
                 }
-                self.fixup_instruction_rm(&mut patch);
-                self.add_hook(address, ins_len, &patch);
+                self.add_rm_patch(address, &mut patch, 0, ins_len + 3, ins_len, widen_index_size);
             }
             // test rm8, r8
             [0x84, second, ..] => {
@@ -1803,39 +1892,43 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             // mov r8, rm8, to mov r32, rm32
             [0x8a, ..] => {
                 let mut patch = [0x90; 8];
-                if is_struct_field_rm(&bytes) {
+                if !widen_index_size && is_struct_field_rm(&bytes) {
                     // Convert to movzx r32, rm8
                     for i in 0..(ins_len as usize) {
                         patch[i + 1] = bytes[i];
                     }
                     patch[0] = 0x0f;
                     patch[1] = 0xb6;
-                    self.fixup_instruction_rm(&mut patch[1..]);
-                    self.add_hook(address, ins_len, &patch);
+                    self.add_rm_patch(
+                        address,
+                        &mut patch,
+                        1,
+                        ins_len + 1,
+                        ins_len,
+                        widen_index_size,
+                    );
                 } else {
                     for i in 0..8 {
                         patch[i] = bytes[i];
                     }
                     patch[0] = 0x8b;
-                    self.fixup_instruction_rm(&mut patch);
-                    self.add_patch(address, &patch, ins_len);
+                    self.add_rm_patch(address, &mut patch, 0, ins_len, ins_len, widen_index_size);
                 }
             }
             // mov rm8, r8
             [0x88, ..] => {
-                if !is_struct_field_rm(&bytes) {
+                if widen_index_size || !is_struct_field_rm(&bytes) {
                     let mut patch = [0u8; 8];
                     for i in 0..8 {
                         patch[i] = bytes[i];
                     }
                     patch[0] = 0x89;
-                    self.fixup_instruction_rm(&mut patch);
-                    self.add_patch(address, &patch, ins_len);
+                    self.add_rm_patch(address, &mut patch, 0, ins_len, ins_len, widen_index_size);
                 }
             }
             // mov rm8, const8
             [0xc6, ..] => {
-                if !is_struct_field_rm(&bytes) {
+                if widen_index_size || !is_struct_field_rm(&bytes) {
                     let mut patch = [0x90; 16];
                     for i in 0..(ins_len as usize) {
                         patch[i] = bytes[i];
@@ -1855,12 +1948,16 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
                 patch[1] = bytes[1];
                 self.add_hook(address, ins_len, &patch);
             }
+            // Already u32 cmp
+            [0x3d, ..] => (),
             // Already u32 moves
             [0x89, ..] | [0x8b, ..] | [0xc7, ..] => (),
-            // Push reg
-            [x, ..] if x >= 0x50 && x < 0x58 => (),
+            // Push, pop reg
+            [x, ..] if x >= 0x50 && x < 0x60 => (),
             // Push any
             [0xff, x, ..] if (x >> 3) & 7 == 6 => (),
+            // Hoping that u16 is fine
+            [0x66, ..] => (),
             _ => self.add_warning(format!("Can't widen instruction @ {:?}", address)),
         }
     }
@@ -1883,13 +1980,47 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
         }
     }
 
+    fn add_rm_patch(
+        &mut self,
+        address: E::VirtualAddress,
+        patch: &mut [u8],
+        start: usize,
+        patch_len: u8,
+        ins_len: u8,
+        widen_index_size: bool,
+    ) {
+        let widen = widen_index_size &&
+            matches!(patch[start + 1] & 0xc7, 0x80 | 0x81 | 0x82 | 0x83 | 0x85 | 0x86 | 0x87);
+        if !widen {
+            self.fixup_instruction_rm(&mut patch[start..]);
+            if ins_len == patch_len {
+                self.add_patch(address, &patch, ins_len);
+            } else {
+                self.add_hook(address, ins_len, &patch[..(patch_len as usize)]);
+            }
+        } else {
+            let index_reg = patch[start + 1] & 0x7;
+            let other = patch[start + 1] & 0x38;
+            let mut buf = [0; 16];
+            for i in 0..(start + 1) {
+                buf[i as usize] = patch[i as usize];
+            }
+            buf[start + 1] = 0x4 | other;
+            buf[start + 2] = 0x85 | (index_reg << 3);
+            for i in (start + 3)..(patch_len as usize + 1) {
+                buf[i] = patch[i - 1];
+            }
+            self.add_hook(address, ins_len, &buf[..(patch_len as usize + 1)]);
+        }
+    }
+
     /// NOTE: Address should be start of a instruction, and the patch should be long
     /// enough to cover the entire instruction even if some later bytes are redundant.
     /// Needed due to marking that instruction as required_stable_address
     fn add_patch(&mut self, address: E::VirtualAddress, patch: &[u8], len: u8) {
+        let patch = &patch[..len as usize];
         self.add_required_stable_address_for_patch(address, address + len as u32);
         let result = &mut self.dat_ctx.result;
-        let patch = &patch[..len as usize];
         let code_bytes_offset = result.code_bytes.len() as u32;
         result.code_bytes.extend_from_slice(patch);
         result.patches.push(DatPatch::Replace(address, code_bytes_offset, len));
@@ -2213,7 +2344,7 @@ impl<'a, 'b, 'c, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'e, E> {
 
     fn finishing_branch(&mut self, op: Operand<'e>) {
         if let Some(address) = self.assigning_instruction.take() {
-            self.parent.widen_instruction(address);
+            self.parent.widen_instruction(address, false);
         }
         if let Some(s) = self.rerun_branch.take() {
             self.add_unchecked_branch(s.0, s.1, s.2);
@@ -2254,7 +2385,7 @@ impl<'a, 'b, 'c, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'e, E> {
 
         for rva in self.instruction_lists.iter(op.hash_by_address()) {
             let address = self.parent.binary.base + rva.0;
-            self.parent.widen_instruction(address);
+            self.parent.widen_instruction(address, false);
         }
         if let Some(own_branch_link) = self.cfg.get_link(self.branch) {
             for link in self.predecessors.predecessors(self.cfg, &own_branch_link) {
@@ -2539,4 +2670,23 @@ fn arg_n_from_offset(constant: u64) -> Option<u8> {
     } else {
         None
     }
+}
+
+fn reloc_address_of_instruction<'e, E: ExecutionState<'e>, A>(
+    ctrl: &mut Control<'e, '_, '_, A>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    addr: E::VirtualAddress,
+) -> Option<E::VirtualAddress>
+where A: analysis::Analyzer<'e, Exec=E>
+{
+    let mut imm_addr = ctrl.current_instruction_end() - 4;
+    while imm_addr > ctrl.address() {
+        if let Ok(imm) = binary.read_u32(imm_addr) {
+            if imm == addr.as_u64() as u32 {
+                return Some(imm_addr);
+            }
+        }
+        imm_addr = imm_addr - 1;
+    }
+    None
 }

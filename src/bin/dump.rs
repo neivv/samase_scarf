@@ -66,7 +66,7 @@ fn main() {
                     .take(0x80)
                     .rev()
                     .position(|x| x.len() != 0)
-                    .map(|x| debug.array_patches.len().min(0x80) - x - 1)
+                    .map(|x| debug.array_patches.len().min(0x80) - x)
                     .unwrap_or(0);
                 let print_array = |arr: &[(scarf::VirtualAddress, i32, u32)], i: usize| {
                     let all_offsets_zero = arr.iter().all(|x| x.1 == 0 && x.2 == 0);
