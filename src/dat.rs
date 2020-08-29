@@ -783,6 +783,13 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             self.func_arg_widen_queue.push(func);
         }
     }
+
+    fn add_replace_patch(&mut self, address: E::VirtualAddress, patch: &[u8]) {
+        let result = &mut self.result;
+        let code_bytes_offset = result.code_bytes.len() as u32;
+        result.code_bytes.extend_from_slice(patch);
+        result.patches.push(DatPatch::Replace(address, code_bytes_offset, patch.len() as u8));
+    }
 }
 
 struct DatReferringFuncAnalysis<'a, 'b, 'e, E: ExecutionState<'e>> {
@@ -2105,10 +2112,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
     fn add_patch(&mut self, address: E::VirtualAddress, patch: &[u8], len: u8) {
         let patch = &patch[..len as usize];
         self.add_required_stable_address_for_patch(address, address + len as u32);
-        let result = &mut self.dat_ctx.result;
-        let code_bytes_offset = result.code_bytes.len() as u32;
-        result.code_bytes.extend_from_slice(patch);
-        result.patches.push(DatPatch::Replace(address, code_bytes_offset, len));
+        self.dat_ctx.add_replace_patch(address, patch);
     }
 
     fn add_hook(&mut self, address: E::VirtualAddress, skip: u8, hook: &[u8]) {

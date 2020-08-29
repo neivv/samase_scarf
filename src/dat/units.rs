@@ -87,6 +87,15 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 1,
                                 false,
                             );
+                            // Also nop the current instruction so that bw no longer
+                            // stores anything to the wireframe type array.
+                            if self.dat_ctx.patched_addresses.insert(ctrl.address()) {
+                                let ins_len = (ctrl.current_instruction_end().as_u64() as usize)
+                                    .wrapping_sub(ctrl.address().as_u64() as usize);
+                                let nops = [0x90; 0x10];
+                                self.dat_ctx.add_replace_patch(ctrl.address(), &nops[..ins_len]);
+                            }
+
                             self.state = InitUnitsState::UnitSearchInit;
                         }
                     }
