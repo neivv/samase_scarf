@@ -1,5 +1,6 @@
 mod game;
 mod units;
+mod stack_analysis;
 
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
@@ -9,6 +10,7 @@ use std::rc::Rc;
 
 use byteorder::{ByteOrder, LittleEndian};
 use fxhash::{FxHashMap, FxHashSet};
+use lde::Isa;
 
 use scarf::analysis::{self, Cfg, Control, FuncAnalysis, RelocValues};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -253,7 +255,10 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     }
 
     dat_ctx.add_patches_from_code_refs();
-    while !dat_ctx.funcs_needing_retval_patch.is_empty() {
+    while !dat_ctx.funcs_needing_retval_patch.is_empty() ||
+        dat_ctx.u8_funcs_pos != dat_ctx.u8_funcs.len() ||
+        !dat_ctx.func_arg_widen_queue.is_empty()
+    {
         dat_ctx.retval_patch_funcs();
         dat_ctx.add_u8_func_patches();
         dat_ctx.add_func_arg_patches();
@@ -272,6 +277,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     }
     game::dat_game_analysis(&mut dat_ctx.analysis, &mut dat_ctx.result);
     units::init_units_analysis(dat_ctx);
+    dat_ctx.finish_all_patches();
     Some(mem::replace(&mut dat_ctx.result, DatPatches::empty()))
 }
 
@@ -298,10 +304,12 @@ pub(crate) struct DatPatchContext<'a, 'e, E: ExecutionState<'e>> {
     // Funcs that returned u8 and any of their callers now need to patched to widen the
     // return value
     u8_funcs: Vec<Rva>,
+    // First unhandled rva in u8_funcs
+    u8_funcs_pos: usize,
     operand_to_u8_op: FxHashMap<OperandHashByAddress<'e>, Option<U8Operand>>,
     analysis: &'a mut Analysis<'e, E>,
     patched_addresses: FxHashSet<E::VirtualAddress>,
-    analyzed_functions: FxHashMap<Rva, Box<DatFuncAnalysisState>>,
+    analyzed_functions: FxHashMap<Rva, Box<DatFuncAnalysisState<'e, E>>>,
     /// Maps array address patch -> index in result vector.
     /// Meant to solve conflicts where an address technically is inside one array but
     /// in reality is `array[unit_id - first_index]`
@@ -338,8 +346,6 @@ enum U8Operand {
     Arg(u8),
     /// Custom id
     Return(u32),
-    /// A dat field which should be widened (weapon/flingy id)
-    DatField,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
@@ -361,6 +367,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             funcs_added_for_retval_patch:
                 FxHashSet::with_capacity_and_hasher(16, Default::default()),
             u8_funcs: Vec::with_capacity(16),
+            u8_funcs_pos: 0,
             unchecked_refs: FxHashSet::with_capacity_and_hasher(1024, Default::default()),
             units: dat_table(0x36),
             weapons: dat_table(0x18),
@@ -426,11 +433,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                 address: entry_address + E::VirtualAddress::SIZE + 4,
             }));
 
-            let do_analysis = match dat {
-                DatType::Units | DatType::Weapons | DatType::Flingy | DatType::Upgrades |
-                    DatType::TechData => true,
-                _ => false,
-            };
+            let do_analysis = true;
             // Global refs
             let field_size = field_sizes[i as usize];
             let (array_entries, start_index) = match (dat, i) {
@@ -576,8 +579,9 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                     return EntryOf::Ok(());
                 }
                 let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
+                let mode = DatFuncAnalysisMode::ArrayIndex;
                 if !self.analyzed_functions.contains_key(&entry_rva) {
-                    self.analyze_function(entry, address, DatFuncAnalysisMode::ArrayIndex)
+                    self.analyze_function(entry, address, mode)
                 } else {
                     EntryOf::Retry
                 }
@@ -594,13 +598,15 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
         let binary = self.binary;
         let ctx = self.analysis.ctx;
         let mut analysis = FuncAnalysis::new(binary, ctx, entry);
-        let mut analyzer =
-            DatReferringFuncAnalysis::new(self, self.text, entry, ref_address, mode);
+        let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
+        let mut analyzer = match self.analyzed_functions.remove(&entry_rva) {
+            Some(state) => DatReferringFuncAnalysis::rebuild(self, self.text, state, mode),
+            None => DatReferringFuncAnalysis::new(self, self.text, entry, ref_address, mode),
+        };
         analysis.analyze(&mut analyzer);
         analyzer.generate_needed_patches(analysis);
         let result = analyzer.result;
         let state = analyzer.state;
-        let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
         self.analyzed_functions.insert(entry_rva, state);
         result
     }
@@ -609,8 +615,14 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
         let functions = self.analysis.functions();
         let binary = self.binary;
         let mut checked_funcs = FxHashSet::with_capacity_and_hasher(64, Default::default());
-        let funcs = mem::replace(&mut self.u8_funcs, Vec::new());
-        for &func_rva in &funcs {
+        for i in self.u8_funcs_pos.. {
+            let func_rva = match self.u8_funcs.get(i) {
+                Some(&s) => s,
+                None => {
+                    self.u8_funcs_pos = i;
+                    break;
+                }
+            };
             let func = binary.base + func_rva.0;
             let callers = crate::find_callers(self.analysis, func);
             for &address in &callers {
@@ -619,16 +631,21 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                         return EntryOf::Ok(());
                     }
                     let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
+                    let mode = DatFuncAnalysisMode::ArrayIndex;
                     if !self.analyzed_functions.contains_key(&entry_rva) {
-                        self.analyze_function(entry, address, DatFuncAnalysisMode::ArrayIndex);
+                        self.analyze_function(entry, address, mode);
                     }
                     let mut result = EntryOf::Retry;
                     if let Some(mut state) = self.analyzed_functions.remove(&entry_rva) {
                         if state.has_called_func(func_rva) {
                             if checked_funcs.insert(entry_rva) {
-                                let mut analyzer =
-                                    DatReferringFuncAnalysis::rebuild(self, self.text, state);
-                                for &rva in &funcs {
+                                let mut analyzer = DatReferringFuncAnalysis::rebuild(
+                                    self,
+                                    self.text,
+                                    state,
+                                    mode,
+                                );
+                                for &rva in &analyzer.dat_ctx.u8_funcs {
                                     if let Some(&index) =
                                         analyzer.state.calls_reverse_lookup.get(&rva)
                                     {
@@ -669,6 +686,23 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                     }
                 });
             }
+        }
+    }
+
+    fn finish_all_patches(&mut self) {
+        let funcs = mem::replace(&mut self.analyzed_functions, Default::default());
+        for (rva, state) in funcs.into_iter() {
+            if self.u8_funcs.contains(&rva) {
+                // These funcs are hooked completely, no need to process their
+                // instruction-level hooks
+                // (And the hooks may overlap with hooking over the entry point, which would
+                // cause issues)
+                continue;
+            }
+            let mode = DatFuncAnalysisMode::ArrayIndex;
+            let mut analyzer = DatReferringFuncAnalysis::rebuild(self, self.text, state, mode);
+            analyzer.generate_stack_size_patches();
+            analyzer.process_pending_hooks();
         }
     }
 
@@ -720,15 +754,6 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                         if let Some(arg_n) = arg_n_from_offset(constant) {
                             l.if_register().filter(|r| r.0 == 4)?;
                             Some(U8Operand::Arg(arg_n))
-                        } else if constant > 0x4000 {
-                            let addr = E::VirtualAddress::from_u64(constant);
-                            let &(dat, field_id) = self.array_lookup.get(&addr)?;
-                            match (dat, field_id) {
-                                (DatType::Units, 0x0) | (DatType::Units, 0x11) |
-                                (DatType::Units, 0x13) | (DatType::Orders, 0x0d) =>
-                                    Some(U8Operand::DatField),
-                                _ => None,
-                            }
                         } else {
                             None
                         }
@@ -762,7 +787,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
 
 struct DatReferringFuncAnalysis<'a, 'b, 'e, E: ExecutionState<'e>> {
     dat_ctx: &'a mut DatPatchContext<'b, 'e, E>,
-    state: Box<DatFuncAnalysisState>,
+    state: Box<DatFuncAnalysisState<'e, E>>,
     ref_address: E::VirtualAddress,
     needed_stack_params: [Option<DatType>; 16],
     needed_func_results: FxHashSet<u32>,
@@ -773,27 +798,19 @@ struct DatReferringFuncAnalysis<'a, 'b, 'e, E: ExecutionState<'e>> {
     text: &'e BinarySection<E::VirtualAddress>,
     current_branch: E::VirtualAddress,
     entry: E::VirtualAddress,
-    /// Buffer hooks after all other patches to be sure that we don't add a longjump
-    /// hook which prevents another patch.
-    ///
-    /// 2 step hooks require a 10 byte free block from somewhere, but just
-    /// taking one while asking for a hook could end up taking an address
-    /// that would need to be hooked.
-    /// So buffer 2step hooks and do them last.
-    pending_hooks: Vec<(E::VirtualAddress, u32, u8, u8)>,
     is_update_status_screen_tooltip: bool,
     switch_table: E::VirtualAddress,
     mode: DatFuncAnalysisMode,
 }
 
-#[derive(Eq, PartialEq, Copy, Clone, Debug)]
+#[derive(Eq, PartialEq, Copy, Clone, Debug, Hash)]
 enum DatFuncAnalysisMode {
     ArrayIndex,
     FuncArg,
 }
 
 /// State that can be saved away while other analysises are ran
-struct DatFuncAnalysisState {
+struct DatFuncAnalysisState<'e, E: ExecutionState<'e>> {
     // Eax from calls is written as Custom(index_to_calls_vec)
     // to distinguish them from undefs that come from state merges
     calls: Vec<Rva>,
@@ -805,9 +822,18 @@ struct DatFuncAnalysisState {
     required_stable_addresses: RangeList<Rva, IsJumpDest>,
     next_cfg_custom_id: u32,
     u8_instruction_lists: InstructionLists<U8Operand>,
+    stack_size_tracker: stack_analysis::StackSizeTracker<'e, E>,
+    /// Buffer hooks after all other patches to be sure that we don't add a longjump
+    /// hook which prevents another patch.
+    ///
+    /// 2 step hooks require a 10 byte free block from somewhere, but just
+    /// taking one while asking for a hook could end up taking an address
+    /// that would need to be hooked.
+    /// So buffer 2step hooks and do them last.
+    pending_hooks: Vec<(E::VirtualAddress, u32, u8, u8)>,
 }
 
-impl DatFuncAnalysisState {
+impl<'e, E: ExecutionState<'e>> DatFuncAnalysisState<'e, E> {
     fn has_called_func(&self, rva: Rva) -> bool {
         self.calls_reverse_lookup.contains_key(&rva)
     }
@@ -835,6 +861,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        self.state.stack_size_tracker.operation(ctrl, op);
         let ctx = ctrl.ctx();
         if self.is_update_status_screen_tooltip {
             match *op {
@@ -1126,7 +1153,6 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             text,
             current_branch: entry,
             entry: entry,
-            pending_hooks: Vec::new(),
             is_update_status_screen_tooltip: false,
             switch_table: E::VirtualAddress::from_u64(0),
             mode,
@@ -1142,6 +1168,11 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
                         FxHashSet::with_capacity_and_hasher(64, Default::default()),
                 },
                 next_cfg_custom_id: 0,
+                stack_size_tracker: stack_analysis::StackSizeTracker::new(
+                    entry,
+                    binary,
+                ),
+                pending_hooks: Vec::new(),
             }),
         }
     }
@@ -1149,7 +1180,8 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
     pub fn rebuild(
         dat_ctx: &'a mut DatPatchContext<'b, 'e, E>,
         text: &'e BinarySection<E::VirtualAddress>,
-        state: Box<DatFuncAnalysisState>,
+        state: Box<DatFuncAnalysisState<'e, E>>,
+        mode: DatFuncAnalysisMode,
     ) -> DatReferringFuncAnalysis<'a, 'b, 'e, E> {
         let binary = dat_ctx.binary;
         DatReferringFuncAnalysis {
@@ -1163,11 +1195,10 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             text,
             current_branch: E::VirtualAddress::from_u64(0),
             entry: E::VirtualAddress::from_u64(0),
-            pending_hooks: Vec::new(),
             is_update_status_screen_tooltip: false,
             switch_table: E::VirtualAddress::from_u64(0),
             state,
-            mode: DatFuncAnalysisMode::ArrayIndex,
+            mode,
         }
     }
 
@@ -1645,7 +1676,6 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             }
         }
         self.generate_noncfg_patches();
-        self.process_pending_hooks();
     }
 
     fn generate_noncfg_patches(&mut self) {
@@ -1676,10 +1706,6 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
                 let address = binary.base + rva.0;
                 self.widen_instruction(address, false);
             }
-        }
-        for rva in u8_instruction_lists.iter(U8Operand::DatField) {
-            let address = binary.base + rva.0;
-            self.widen_instruction(address, false);
         }
         self.state.u8_instruction_lists = u8_instruction_lists;
     }
@@ -1801,8 +1827,6 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
     }
 
     fn instruction_length(&mut self, address: E::VirtualAddress) -> Option<u8> {
-        use lde::Isa;
-
         let bytes = self.binary.slice_from_address(address, 0x10).ok()?;
         Some(lde::X86::ld(bytes) as u8)
     }
@@ -1820,8 +1844,6 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
     }
 
     fn widen_instruction(&mut self, address: E::VirtualAddress, widen_index_size: bool) {
-        use lde::Isa;
-
         fn is_struct_field_rm(bytes: &[u8]) -> bool {
             // Just checking if the base register != ebp but still a memory access
             let base = bytes[1] & 0x7;
@@ -1899,14 +1921,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
                     }
                     patch[0] = 0x0f;
                     patch[1] = 0xb6;
-                    self.add_rm_patch(
-                        address,
-                        &mut patch,
-                        1,
-                        ins_len + 1,
-                        ins_len,
-                        widen_index_size,
-                    );
+                    self.add_hook(address, ins_len, &patch[..(ins_len as usize + 1)]);
                 } else {
                     for i in 0..8 {
                         patch[i] = bytes[i];
@@ -1937,8 +1952,14 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
                     for i in ins_len..(ins_len + 3) {
                         patch[i as usize] = 0x00;
                     }
-                    self.fixup_instruction_rm(&mut patch);
-                    self.add_hook(address, ins_len, &patch[..(ins_len as usize + 3)]);
+                    self.add_rm_patch(
+                        address,
+                        &mut patch,
+                        0,
+                        ins_len + 3,
+                        ins_len,
+                        widen_index_size,
+                    );
                 }
             }
             // mov r8, const8
@@ -1950,33 +1971,57 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             }
             // Already u32 cmp
             [0x3d, ..] => (),
+            // Already u32 arith
+            [0x81, ..] | [0x83, ..] => (),
             // Already u32 moves
-            [0x89, ..] | [0x8b, ..] | [0xc7, ..] => (),
+            [0x89, ..] | [0xc7, ..] => (),
             // Push, pop reg
             [x, ..] if x >= 0x50 && x < 0x60 => (),
+            // mov r32, rm32
+            [0x8b, ..] => {
+                if !widen_index_size {
+                    self.add_rm_patch_if_stack_relocated(address, &bytes[..(ins_len as usize)]);
+                }
+            }
             // Push any
-            [0xff, x, ..] if (x >> 3) & 7 == 6 => (),
+            [0xff, x, ..] if (x >> 3) & 7 == 6 => {
+                if !widen_index_size {
+                    self.add_rm_patch_if_stack_relocated(address, &bytes[..(ins_len as usize)]);
+                }
+            }
             // Hoping that u16 is fine
             [0x66, ..] => (),
             _ => self.add_warning(format!("Can't widen instruction @ {:?}", address)),
         }
     }
 
-    /// Modifies any offset in form of [ebp +/- x] so that x becomes 4-aligned,
-    /// as sometimes 1byte values are stored at aligned address.
-    /// Hopefully there aren't any other 1byte values that get overwritten by this;
-    /// at least that seems to be rare.
-    fn fixup_instruction_rm(&mut self, bytes: &mut [u8]) {
-        let base = bytes[1] & 0x7;
-        match (bytes[1] & 0xc0) >> 6 {
-            1 | 2 => {
-                match base {
-                    // sib
-                    4 => bytes[3] &= !0x3,
-                    _ => bytes[2] &= !0x3,
-                }
+    // For instructions which read from rm but are already u32 wide.
+    // They still may use an address that should be relocated, so relocate
+    // them by calling add_rm_patch if it's using [ebp - x].
+    fn add_rm_patch_if_stack_relocated(&mut self, address: E::VirtualAddress, patch: &[u8]) {
+        let rm_byte = match patch.get(1) {
+            Some(&s) => s,
+            None => return,
+        };
+        let base = rm_byte & 0x7;
+        let variant = rm_byte >> 6;
+        if (variant == 1 || variant == 2) && base == 5 {
+            let offset = if variant == 1 {
+                patch[2] as i8 as i32
+            } else {
+                LittleEndian::read_u32(&patch[2..]) as i32
+            };
+            if offset > 0 && offset & 3 == 0 {
+                // [ebp + x] and already aligned to 4
+                return;
             }
-            _ => (),
+
+            // [ebp - x]
+            let mut copy = [0; 16];
+            for i in 0..patch.len().min(16) {
+                copy[i] = patch[i];
+            }
+            self.add_rm_patch(address, &mut copy, 0, patch.len() as u8, patch.len() as u8, false);
         }
     }
 
@@ -1992,13 +2037,53 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
         let widen = widen_index_size &&
             matches!(patch[start + 1] & 0xc7, 0x80 | 0x81 | 0x82 | 0x83 | 0x85 | 0x86 | 0x87);
         if !widen {
-            self.fixup_instruction_rm(&mut patch[start..]);
+            let base = patch[start + 1] & 0x7;
+            let variant = (patch[start + 1] & 0xc0) >> 6;
+            let mut patch = patch;
+            let mut patch_len = patch_len;
+            let mut buffer = [0u8; 16];
+            // Fix u8 [ebp - x] offset to a newly allocated u32
+            if (variant == 1 || variant == 2) && base == 5 {
+                let offset = if variant == 1 {
+                    patch[start + 2] as i8 as i32 as u32
+                } else {
+                    LittleEndian::read_u32(&patch[(start + 2)..])
+                };
+                if offset as i32 > 0 {
+                    // Don't reallocate [ebp + x] arguments, but still align them to 4
+                    // The argument slots may be used for temps later, but assuming
+                    // that conflicts there are rare enough to not be relevant.
+                    patch[start + 2] &= 0xfc;
+                } else {
+                    let new_offset = self.state.stack_size_tracker.remap_ebp_offset(offset);
+                    if new_offset >= 0xffff_ff80 {
+                        patch[start + 1] = (patch[start + 1] & !0xc0) | 0x40;
+                        patch[start + 2] = new_offset as u8;
+                    } else {
+                        for i in 0..(patch_len as usize) {
+                            buffer[i] = patch[i];
+                        }
+                        if variant == 1 {
+                            for i in ((start + 3)..(patch_len as usize)).rev() {
+                                buffer[i + 3] = buffer[i];
+                            }
+                        }
+                        buffer[start + 1] = (buffer[start + 1] & !0xc0) | 0x80;
+                        LittleEndian::write_u32(&mut buffer[(start + 2)..], new_offset);
+                        patch = &mut buffer[..];
+                        if variant == 1 {
+                            patch_len = patch_len.wrapping_add(3);
+                        }
+                    }
+                }
+            }
             if ins_len == patch_len {
                 self.add_patch(address, &patch, ins_len);
             } else {
                 self.add_hook(address, ins_len, &patch[..(patch_len as usize)]);
             }
         } else {
+            // Widen [reg + base] to [reg * 4 + base]
             let index_reg = patch[start + 1] & 0x7;
             let other = patch[start + 1] & 0x38;
             let mut buf = [0; 16];
@@ -2030,11 +2115,31 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
         let result = &mut self.dat_ctx.result;
         let code_bytes_offset = result.code_bytes.len() as u32;
         result.code_bytes.extend_from_slice(hook);
-        self.pending_hooks.push((address, code_bytes_offset, hook.len() as u8, skip));
+        self.state.pending_hooks.push((address, code_bytes_offset, hook.len() as u8, skip));
+    }
+
+    fn generate_stack_size_patches(&mut self) {
+        let mut stack_size_tracker = mem::replace(
+            &mut self.state.stack_size_tracker,
+            stack_analysis::StackSizeTracker::empty(self.binary),
+        );
+        stack_size_tracker.generate_patches(|addr, patch, skip| {
+            if !self.dat_ctx.patched_addresses.insert(addr) {
+                // This shouldn't happen, it would likely mean that two stack_size_trackers
+                // which may give different allocation mappings had ran.
+                self.add_warning(format!("Patch conflict for stack size @ {:?}", addr));
+                return;
+            }
+            if skip == patch.len() {
+                self.add_patch(addr, patch, patch.len() as u8);
+            } else {
+                self.add_hook(addr, skip as u8, patch);
+            }
+        });
     }
 
     fn process_pending_hooks(&mut self) {
-        let mut pending_hooks = mem::replace(&mut self.pending_hooks, Vec::new());
+        let mut pending_hooks = mem::replace(&mut self.state.pending_hooks, Vec::new());
         pending_hooks.sort_unstable_by_key(|x| x.0);
         let mut i = 0;
         let mut short_jump_hooks = 0;
@@ -2142,7 +2247,6 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             let bytes = self.binary.slice_from_address(cand, 0x20).ok()?;
             let mut len = 0;
             while len < 0xa {
-                use lde::Isa;
                 let slice = bytes.get(len as usize..)?;
                 len += lde::X86::ld(slice);
             }
@@ -2195,6 +2299,7 @@ struct CfgAnalyzer<'a, 'b, 'c, 'e, E: ExecutionState<'e>> {
     predecessors: &'a scarf::cfg::Predecessors,
     instruction_lists: InstructionLists<OperandHashByAddress<'e>>,
     assigning_instruction: Option<E::VirtualAddress>,
+    // Tells if the current branch needs to be reanalyzed with a different operand & end
     rerun_branch: Option<(E::VirtualAddress, Operand<'e>, E::VirtualAddress)>,
     dat: DatType,
     ending: bool,
@@ -2215,6 +2320,24 @@ impl<'a, 'b, 'c, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Move(ref dest, val, None) => {
                 let resolved = ctrl.resolve(val);
                 self.check_u8_instruction(ctrl, resolved, val);
+                match *dest {
+                    DestOperand::Register32(r) | DestOperand::Register64(r) => {
+                        if let Some(op) = self.needed_operand {
+                            if Operand::and_masked(op).0.if_register()
+                                .filter(|x| x.0 == r.0)
+                                .is_some()
+                            {
+                                // I feel like this doesn't need to be a branch rerun..
+                                // (It wouldn't hurt but would be just a bit more time spent)
+                                // But saving this as an assigning instruction that needs widening
+                                // catches an edge case where [ebp - xx] needs to be relocated.
+                                // Specifically `mov r32, [ebp - xx]`
+                                self.assigning_instruction = Some(address);
+                            }
+                        }
+                    }
+                    _ => (),
+                }
                 if let DestOperand::Register8Low(r) = *dest {
                     // We want to also patch assignment like mov al, 82,
                     // but that isn't caught by check_u8_instruction
@@ -2348,6 +2471,7 @@ impl<'a, 'b, 'c, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'e, E> {
         }
         if let Some(s) = self.rerun_branch.take() {
             self.add_unchecked_branch(s.0, s.1, s.2);
+            return;
         }
         match *Operand::and_masked(op).0.ty() {
             OperandType::Register(_) => (),
