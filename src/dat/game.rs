@@ -14,7 +14,13 @@ pub fn dat_game_analysis<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
     result: &mut DatPatches<'e, E::VirtualAddress>,
 ) -> Option<()> {
+    let ctx = analysis.ctx;
+    let relocs = analysis.relocs_with_values();
+    let text = analysis.binary.section(b".text\0\0\0").unwrap();
+    let text_end = text.virtual_address + text.virtual_size;
     let game = analysis.game()?;
+    let unit_strength = analysis.unit_strength()?;
+    let player_ai = analysis.player_ai()?;
     let game_address = game.iter_no_mem_addr()
         .filter_map(|x| {
             x.if_memory()
@@ -39,8 +45,38 @@ pub fn dat_game_analysis<'e, E: ExecutionState<'e>>(
         game,
         game_address,
         patched_addresses: FxHashMap::with_capacity_and_hasher(128, Default::default()),
+        unit_strength,
+        ai_build_limit: ctx.add_const(player_ai, 0x3f0),
     };
     game_ctx.do_analysis();
+    debug_assert!(game_ctx.unchecked_refs.is_empty());
+    let other_globals = [
+        unit_strength.if_constant().map(|x| {
+            let start = E::VirtualAddress::from_u64(x);
+            (start, start + 0xe4 * 4 * 2)
+        }),
+        player_ai.if_constant().map(|x| {
+            let start = E::VirtualAddress::from_u64(x) + 0x3f0;
+            (start, start + 0xe4)
+        }),
+    ];
+    for (start, end) in other_globals.iter().flat_map(|&x| x) {
+        let start = relocs.binary_search_by(|x| match x.value >= start {
+            true => std::cmp::Ordering::Greater,
+            false => std::cmp::Ordering::Less,
+        }).unwrap_err();
+        for i in start.. {
+            let reloc = match relocs.get(i) {
+                Some(s) if s.value < end => s,
+                _ => break,
+            };
+            let address = reloc.address;
+            if address >= text.virtual_address && address < text_end {
+                game_ctx.unchecked_refs.insert(address);
+            }
+        }
+    }
+    game_ctx.other_global_analysis();
     Some(())
 }
 
@@ -52,6 +88,8 @@ pub struct GameContext<'a, 'e, E: ExecutionState<'e>> {
     game: Operand<'e>,
     game_address: E::VirtualAddress,
     patched_addresses: FxHashMap<E::VirtualAddress, (usize, Operand<'e>)>,
+    unit_strength: Operand<'e>,
+    ai_build_limit: Operand<'e>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> GameContext<'a, 'e, E> {
@@ -66,6 +104,7 @@ impl<'a, 'e, E: ExecutionState<'e>> GameContext<'a, 'e, E> {
                         game_ctx: self,
                         binary,
                         game_ref_seen: false,
+                        other_globals: false,
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
@@ -83,6 +122,36 @@ impl<'a, 'e, E: ExecutionState<'e>> GameContext<'a, 'e, E> {
             }
         }
     }
+
+    fn other_global_analysis(&mut self) {
+        let binary = self.analysis.binary;
+        let ctx = self.analysis.ctx;
+        let functions = self.analysis.functions();
+        while let Some(ref_addr) = self.unchecked_refs.iter().cloned().next() {
+            let result = entry_of_until(binary, &functions, ref_addr, |entry| {
+                if self.checked_functions.insert(entry) {
+                    let mut analyzer = GameAnalyzer {
+                        game_ctx: self,
+                        binary,
+                        game_ref_seen: true,
+                        other_globals: true,
+                    };
+                    let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+                    analysis.analyze(&mut analyzer);
+                    if self.unchecked_refs.contains(&ref_addr) {
+                        EntryOf::Retry
+                    } else {
+                        EntryOf::Ok(())
+                    }
+                } else {
+                    EntryOf::Retry
+                }
+            }).into_option();
+            if result.is_none() {
+                self.unchecked_refs.remove(&ref_addr);
+            }
+        }
+    }
 }
 
 pub struct GameAnalyzer<'a, 'b, 'e, E: ExecutionState<'e>> {
@@ -90,6 +159,7 @@ pub struct GameAnalyzer<'a, 'b, 'e, E: ExecutionState<'e>> {
     binary: &'e BinaryFile<E::VirtualAddress>,
     // Optimization to avoid some work before first game address ref
     game_ref_seen: bool,
+    other_globals: bool,
 }
 
 impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameAnalyzer<'a, 'b, 'e, E> {
@@ -98,47 +168,47 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameAnalyzer<
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Move(ref dest, unres_val, None) => {
-                // Any instruction referring to a global must be at least 5 bytes
-                let instruction_len = ctrl.current_instruction_end().as_u64()
-                    .wrapping_sub(ctrl.address().as_u64());
-                if instruction_len >= 5 {
-                    let const_addr = if_const_or_mem_const::<E>(unres_val)
-                        .or_else(|| {
-                            if let OperandType::Arithmetic(ref arith) = *unres_val.ty() {
-                                if_const_or_mem_const::<E>(arith.left)
-                                    .or_else(|| if_const_or_mem_const::<E>(arith.right))
-                            } else {
-                                None
+                if !self.game_ref_seen {
+                    // Any instruction referring to a global must be at least 5 bytes
+                    let instruction_len = ctrl.current_instruction_end().as_u64()
+                        .wrapping_sub(ctrl.address().as_u64());
+                    if instruction_len >= 5 {
+                        let const_addr = if_const_or_mem_const::<E>(unres_val)
+                            .or_else(|| {
+                                if let OperandType::Arithmetic(ref arith) = *unres_val.ty() {
+                                    if_const_or_mem_const::<E>(arith.left)
+                                        .or_else(|| if_const_or_mem_const::<E>(arith.right))
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(const_addr) = const_addr {
+                            if const_addr == self.game_ctx.game_address {
+                                self.reached_game_ref(ctrl);
+                                self.game_ref_seen = true;
                             }
-                        });
-                    if let Some(const_addr) = const_addr {
-                        if const_addr == self.game_ctx.game_address {
-                            self.reached_game_ref(ctrl);
-                            self.game_ref_seen = true;
-                            return;
                         }
                     }
+                    return;
                 }
-                if self.game_ref_seen {
-                    if let Some(mem) = unres_val.if_memory() {
-                        self.check_game_mem_access(ctrl, mem.address);
-                    } else if let DestOperand::Memory(ref mem) = *dest {
-                        self.check_game_mem_access(ctrl, mem.address);
-                    } else if let OperandType::Arithmetic(ref arith) = *unres_val.ty() {
-                        if let Some(mem) = arith.left.if_memory() {
-                            self.check_game_mem_access(ctrl, mem.address);
-                        } else if let Some(mem) = arith.right.if_memory() {
-                            self.check_game_mem_access(ctrl, mem.address);
-                        }
+                if let Some(mem) = unres_val.if_memory() {
+                    self.check_mem_access(ctrl, mem.address);
+                } else if let DestOperand::Memory(ref mem) = *dest {
+                    self.check_mem_access(ctrl, mem.address);
+                } else if let OperandType::Arithmetic(ref arith) = *unres_val.ty() {
+                    if let Some(mem) = arith.left.if_memory() {
+                        self.check_mem_access(ctrl, mem.address);
+                    } else if let Some(mem) = arith.right.if_memory() {
+                        self.check_mem_access(ctrl, mem.address);
                     }
                 }
             }
             Operation::SetFlags(arith, _size) => {
                 if self.game_ref_seen {
                     if let Some(mem) = arith.left.if_memory() {
-                        self.check_game_mem_access(ctrl, mem.address);
+                        self.check_mem_access(ctrl, mem.address);
                     } if let Some(mem) = arith.right.if_memory() {
-                        self.check_game_mem_access(ctrl, mem.address);
+                        self.check_mem_access(ctrl, mem.address);
                     }
                 }
             }
@@ -165,12 +235,46 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'e, E> {
         }
     }
 
-    fn check_game_mem_access(
+    fn check_mem_access(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
         address_unres: Operand<'e>,
     ) {
         let addr = ctrl.resolve(address_unres);
+        if self.other_globals {
+            let ctx = ctrl.ctx();
+            let others = [
+                (self.game_ctx.unit_strength, 0xe4 * 4 * 2),
+                (self.game_ctx.ai_build_limit, 0xe4),
+            ];
+            let (base, index) = addr.if_arithmetic_add()
+                .map(|x| (x.1, x.0))
+                .unwrap_or_else(|| (addr, ctx.const_0()));
+            if let Some(c) = base.if_constant() {
+                for &(start, len) in &others {
+                    if let Some(c2) = start.if_constant() {
+                        let offset = c.wrapping_sub(c2);
+                        if offset < len {
+                            let index = ctx.add_const(index, offset);
+                            if start == self.game_ctx.unit_strength {
+                                self.patch_unit_strength(ctrl, index);
+                            } else if start == self.game_ctx.ai_build_limit {
+                                self.patch_ai_unit_limit(ctrl, index);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            self.check_game_mem_access(ctrl, addr);
+        }
+    }
+
+    fn check_game_mem_access(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        addr: Operand<'e>,
+    ) {
         let mut terms = match crate::add_terms::collect_arith_add_terms(addr) {
             Some(s) => s,
             None => return,
@@ -602,6 +706,128 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'e, E> {
             );
         }
         self.add_patch(ctrl, ext_array_id, index);
+    }
+
+    fn patch_unit_strength(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        index: Operand<'e>,
+    ) {
+        let ctx = ctrl.ctx();
+        let id_ground_from_index = |index: Operand<'e>| {
+            // index = unit_id * 4 + is_ground * e4 * 4
+            // => unit_id = (index / 4) % e4
+            //      is_ground = (index / 4) / e4
+            index.if_arithmetic_mul_const(4)
+                .and_then(|x| x.if_arithmetic_add())
+                .and_either(|x| x.if_arithmetic_mul_const(0xe4))
+                .map(|(ground, id)| (id, ground))
+                .or_else(|| {
+                    index.if_arithmetic_add_const(0xe4 * 4)
+                        .and_then(|x| x.if_arithmetic_mul_const(4))
+                        .map(|x| (x, ctx.const_1()))
+                })
+                .or_else(|| {
+                    index.if_arithmetic_mul_const(0xe4 * 4)
+                        .map(|x| (ctx.const_0(), x))
+                })
+                .or_else(|| {
+                    index.if_arithmetic_mul_const(0x4)
+                        .map(|x| (x, ctx.const_0()))
+                })
+                .unwrap_or_else(|| {
+                    let dword_index = ctx.div(index, ctx.constant(4));
+                    let unit_id = ctx.modulo(dword_index, ctx.constant(0xe4));
+                    let is_ground = ctx.div(dword_index, ctx.constant(0xe4));
+                    (unit_id, is_ground)
+                })
+        };
+        let (unit_id, is_ground) = id_ground_from_index(index);
+        let (unit_id, is_ground) =
+            match (self.unresolve(ctrl, unit_id), self.unresolve(ctrl, is_ground))
+        {
+            (Some(a), Some(b)) => (a, b),
+            (Some(unit_id), None) => {
+                if let Some(index_unres) = self.unresolve(ctrl, index) {
+                    let is_ground = ctx.div(
+                        ctx.sub(
+                            index_unres,
+                            ctx.mul_const(unit_id, 4),
+                        ),
+                        ctx.constant(0xe4 * 4),
+                    );
+                    (unit_id, is_ground)
+                } else {
+                    self.add_warning(format!("Unable to find operands for is_ground/id"));
+                    return;
+                }
+            }
+            (None, Some(is_ground)) => {
+                if let Some(index_unres) = self.unresolve(ctrl, index) {
+                    let unit_id = ctx.div(
+                        ctx.sub(
+                            index_unres,
+                            ctx.mul_const(is_ground, 0xe4 * 4),
+                        ),
+                        ctx.constant(4),
+                    );
+                    (unit_id, is_ground)
+                } else {
+                    self.add_warning(format!("Unable to find operands for is_ground/id"));
+                    return;
+                }
+            }
+            _ => {
+                self.add_warning(format!("Unable to find operands for is_ground/id"));
+                return;
+            }
+        };
+        // Convert to (unit_id * 2 + is_ground) * 4
+        let index = ctx.add(
+            ctx.mul_const(unit_id, 8),
+            ctx.mul_const(is_ground, 4),
+        );
+        self.add_patch(ctrl, 0xb, index);
+    }
+
+    fn patch_ai_unit_limit(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        index: Operand<'e>,
+    ) {
+        let ctx = ctrl.ctx();
+        // index = player * 4e8 + unit_id
+        //      (The base is already player_ai + 0x3f0)
+        // => unit_id = index % 4e8
+        //      player = index / 4e8
+        let (unit_id, player) = Some(index)
+            .and_then(|x| x.if_arithmetic_add())
+            .and_either(|x| x.if_arithmetic_mul_const(0x4e8))
+            .map(|(player, id)| (id, player))
+            .or_else(|| {
+                index.if_arithmetic_mul_const(0xe4 * 4)
+                    .map(|x| (ctx.const_0(), x))
+            })
+            .unwrap_or_else(|| {
+                let unit_id = ctx.modulo(index, ctx.constant(0x4e8));
+                let player = ctx.div(index, ctx.constant(0x4e8));
+                (unit_id, player)
+            });
+        let (unit_id, player) =
+            match (self.unresolve(ctrl, unit_id), self.unresolve(ctrl, player))
+        {
+            (Some(a), Some(b)) => (a, b),
+            _ => {
+                self.add_warning(format!("Unable to find operands for player/id"));
+                return;
+            }
+        };
+        // Convert to (unit_id + player * 0xc)
+        let index = ctx.add(
+            unit_id,
+            ctx.mul_const(player, 0xc),
+        );
+        self.add_patch(ctrl, 0xc, index);
     }
 
     fn unresolve(
