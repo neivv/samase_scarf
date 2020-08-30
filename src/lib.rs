@@ -234,6 +234,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
         Cached<Option<requirements::CheckUnitRequirements<'e, E::VirtualAddress>>>,
     check_dat_requirements: Cached<Option<E::VirtualAddress>>,
     cheat_flags: Cached<Option<Operand<'e>>>,
+    unit_strength: Cached<Option<Operand<'e>>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -497,6 +498,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             check_unit_requirements: Default::default(),
             check_dat_requirements: Default::default(),
             cheat_flags: Default::default(),
+            unit_strength: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1717,6 +1719,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.cheat_flags.cache(&result);
         result
     }
+
+    pub fn unit_strength(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.unit_strength.cached() {
+            return cached;
+        }
+        let result = units::strength(self);
+        self.unit_strength.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2167,6 +2178,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn cheat_flags(&mut self) -> Option<Operand<'e>> {
         self.0.cheat_flags()
+    }
+
+    pub fn unit_strength(&mut self) -> Option<Operand<'e>> {
+        self.0.unit_strength()
     }
 }
 

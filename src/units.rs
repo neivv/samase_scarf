@@ -1,9 +1,9 @@
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, DestOperand, Operand, Operation};
+use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation};
 
 use crate::{
-    Analysis, DatType, OptionExt, EntryOf, ArgCache, single_result_assign,
+    Analysis, DatType, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
     find_functions_using_global, entry_of_until, unwrap_sext,
 };
 
@@ -572,6 +572,81 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnaly
                                 );
                             }
                         }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+pub fn strength<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Operand<'e>> {
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+    let init_game = analysis.init_game().init_game?;
+    let init_units = analysis.init_units()?;
+    let mut analyzer = StrengthAnalyzer::<E> {
+        result: None,
+        init_units,
+        init_units_seen: false,
+        candidate: None,
+        inline_depth: 0,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, init_game);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct StrengthAnalyzer<'e, E: ExecutionState<'e>> {
+    result: Option<Operand<'e>>,
+    init_units: E::VirtualAddress,
+    init_units_seen: bool,
+    candidate: Option<Operand<'e>>,
+    inline_depth: u8,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StrengthAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if !self.init_units_seen {
+                        if dest == self.init_units {
+                            self.init_units_seen = true;
+                        }
+                        return;
+                    }
+                    if self.inline_depth < 2 {
+                        self.inline_depth += 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth -= 1;
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Move(DestOperand::Memory(ref mem), _, None) => {
+                if self.init_units_seen && mem.size == MemAccessSize::Mem32 {
+                    let dest = ctrl.resolve(mem.address);
+                    let base = dest.if_arithmetic_add()
+                        .and_either_other(|x| x.if_arithmetic_mul_const(4));
+                    if let Some(base) = base {
+                        if let Some(old) = self.candidate {
+                            let ctx = ctrl.ctx();
+                            // Ground strength is guaranteed to be 0xe4 * 4 bytes after air
+                            if ctx.add_const(old, 0xe4 * 4) == base {
+                                self.result = Some(old);
+                                ctrl.end_analysis();
+                                return;
+                            }
+                        }
+                        self.candidate = Some(base);
                     }
                 }
             }

@@ -1080,6 +1080,7 @@ fn everything_1235g() {
         assert_eq!(analysis.check_dat_requirements().unwrap().0, 0x00538f80);
         assert_eq!(analysis.dat_requirement_error().unwrap(), ctx.mem32(ctx.constant(0xffaad8)));
         assert_eq!(analysis.cheat_flags().unwrap(), ctx.mem32(ctx.constant(0x1180f74)));
+        assert_eq!(analysis.unit_strength().unwrap(), ctx.constant(0xfe8998));
     })
 }
 
@@ -1623,6 +1624,7 @@ fn test_nongeneric<'e>(
     assert!(analysis.check_dat_requirements().is_some());
     check_global(analysis.dat_requirement_error().unwrap(), binary, "dat_requirement_error");
     check_global(analysis.cheat_flags().unwrap(), binary, "cheat_flags");
+    check_global_struct(analysis.unit_strength().unwrap(), binary, "unit_strength");
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

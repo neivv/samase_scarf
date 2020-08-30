@@ -476,6 +476,7 @@ fn main() {
     println!("check_dat_requirements: {:?}", analysis.check_dat_requirements());
     println!("dat_requirement_error: {}", format_op_operand(analysis.dat_requirement_error()));
     println!("cheat_flags: {}", format_op_operand(analysis.cheat_flags()));
+    println!("unit_strength: {}", format_op_operand(analysis.unit_strength()));
 
     let undef = ctx.new_undef();
     println!();
