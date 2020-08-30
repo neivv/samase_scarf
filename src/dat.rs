@@ -1414,7 +1414,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             }
         }
         let value = get_8bit_from_ors(orig_value);
-        if value != orig_value {
+        if value != orig_value || value.is_undefined() {
             self.needed_cfg_analysis.push((
                 self.current_branch,
                 ctrl.address(),
