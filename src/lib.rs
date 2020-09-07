@@ -64,7 +64,7 @@ pub use crate::commands::{ProcessCommands, Selections, StepNetwork};
 pub use crate::dat::{
     DatTablePtr, DatPatch, DatPatches, DatArrayPatch, DatEntryCountPatch, DatReplaceFunc
 };
-pub use crate::dialog::{MouseXy, TooltipRelated};
+pub use crate::dialog::{MouseXy, MultiWireframes, TooltipRelated};
 pub use crate::eud::EudTable;
 pub use crate::firegraft::RequirementTables;
 pub use crate::game::{Limits};
@@ -235,6 +235,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     check_dat_requirements: Cached<Option<E::VirtualAddress>>,
     cheat_flags: Cached<Option<Operand<'e>>>,
     unit_strength: Cached<Option<Operand<'e>>>,
+    multi_wireframes: Cached<MultiWireframes<'e>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -499,6 +500,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             check_dat_requirements: Default::default(),
             cheat_flags: Default::default(),
             unit_strength: Default::default(),
+            multi_wireframes: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1728,6 +1730,34 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.unit_strength.cache(&result);
         result
     }
+
+    /// Smaller size wireframes, that is multiselection and transport
+    /// (Fits multiple in status screen)
+    /// Also relevant mostly for SD, HD always uses wirefram.ddsgrp for the drawing.
+    fn multi_wireframes(&mut self) -> MultiWireframes<'e> {
+        if let Some(cached) = self.multi_wireframes.cached() {
+            return cached;
+        }
+        let result = dialog::multi_wireframes(self);
+        self.multi_wireframes.cache(&result);
+        result
+    }
+
+    pub fn grpwire_grp(&mut self) -> Option<Operand<'e>> {
+        self.multi_wireframes().grpwire_grp
+    }
+
+    pub fn grpwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.multi_wireframes().grpwire_ddsgrp
+    }
+
+    pub fn tranwire_grp(&mut self) -> Option<Operand<'e>> {
+        self.multi_wireframes().tranwire_grp
+    }
+
+    pub fn tranwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.multi_wireframes().tranwire_ddsgrp
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2182,6 +2212,22 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn unit_strength(&mut self) -> Option<Operand<'e>> {
         self.0.unit_strength()
+    }
+
+    pub fn grpwire_grp(&mut self) -> Option<Operand<'e>> {
+        self.0.grpwire_grp()
+    }
+
+    pub fn grpwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.0.grpwire_ddsgrp()
+    }
+
+    pub fn tranwire_grp(&mut self) -> Option<Operand<'e>> {
+        self.0.tranwire_grp()
+    }
+
+    pub fn tranwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.0.tranwire_ddsgrp()
     }
 }
 

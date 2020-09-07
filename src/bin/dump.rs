@@ -478,6 +478,11 @@ fn main() {
     println!("cheat_flags: {}", format_op_operand(analysis.cheat_flags()));
     println!("unit_strength: {}", format_op_operand(analysis.unit_strength()));
 
+    println!("grpwire_grp: {}", format_op_operand(analysis.grpwire_grp()));
+    println!("grpwire_ddsgrp: {}", format_op_operand(analysis.grpwire_ddsgrp()));
+    println!("tranwire_grp: {}", format_op_operand(analysis.tranwire_grp()));
+    println!("tranwire_ddsgrp: {}", format_op_operand(analysis.tranwire_ddsgrp()));
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {

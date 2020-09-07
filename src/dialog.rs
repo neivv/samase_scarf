@@ -1,7 +1,7 @@
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{MemAccess, MemAccessSize};
-use scarf::{DestOperand, Operation, Operand, OperandCtx};
+use scarf::{BinaryFile, DestOperand, Operation, Operand, OperandCtx};
 
 use crate::{Analysis, ArgCache, EntryOf, single_result_assign, StringRefs};
 
@@ -21,12 +21,20 @@ pub struct ButtonDdsgrps<'e> {
     pub cmdbtns: Option<Operand<'e>>,
 }
 
-#[derive(Clone )]
+#[derive(Clone)]
 pub struct MouseXy<'e, Va: VirtualAddress> {
     pub x_var: Option<Operand<'e>>,
     pub y_var: Option<Operand<'e>>,
     pub x_func: Option<Va>,
     pub y_func: Option<Va>,
+}
+
+#[derive(Clone, Default)]
+pub struct MultiWireframes<'e> {
+    pub grpwire_grp: Option<Operand<'e>>,
+    pub grpwire_ddsgrp: Option<Operand<'e>>,
+    pub tranwire_grp: Option<Operand<'e>>,
+    pub tranwire_ddsgrp: Option<Operand<'e>>,
 }
 
 pub fn run_dialog<'a, E: ExecutionState<'a>>(
@@ -1062,5 +1070,116 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StatusScreenMode<'e, E> 
             }
             _ => (),
         }
+    }
+}
+
+pub fn multi_wireframes<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> MultiWireframes<'e> {
+    let mut result = MultiWireframes::default();
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+    let funcs = analysis.functions();
+    let str_refs = crate::string_refs(binary, analysis, b"unit\\wirefram\\tranwire");
+    let arg_cache = &analysis.arg_cache;
+    for str_ref in &str_refs {
+        crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+            let mut analyzer = MultiWireframeAnalyzer {
+                result: &mut result,
+                arg_cache,
+                binary,
+                check_return_store: None,
+            };
+
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            if result.grpwire_grp.is_some() {
+                EntryOf::Ok(())
+            } else {
+                EntryOf::Retry
+            }
+        }).into_option();
+        if result.grpwire_grp.is_some() {
+            break;
+        }
+    }
+    result
+}
+
+struct MultiWireframeAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut MultiWireframes<'e>,
+    arg_cache: &'a ArgCache<'e, E>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    check_return_store: Option<MultiGrpType>,
+}
+
+#[derive(Eq, PartialEq, Copy, Clone, Debug)]
+enum MultiGrpType {
+    Group,
+    Transport,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        // load_grp(path, 0, ..)
+        // load_ddsgrp(path, out, ..)
+        // Both are called by same status screen init func
+        match *op {
+            Operation::Move(DestOperand::Memory(mem), val, None) => {
+                let val = ctrl.resolve(val);
+                if val.if_custom().is_some() {
+                    if let Some(ty) = self.check_return_store.take() {
+                        let address = ctrl.resolve(mem.address);
+                        let dest = ctrl.mem_word(address);
+                        match ty {
+                            MultiGrpType::Group => self.result.grpwire_grp = Some(dest),
+                            MultiGrpType::Transport => self.result.tranwire_grp = Some(dest),
+                        };
+                    }
+                }
+            }
+            Operation::Call(_) => {
+                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                if let Some(ty) = self.is_multi_grp_path(arg1) {
+                    let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                    if arg2.if_constant() == Some(0) {
+                        self.check_return_store = Some(ty);
+                        ctrl.skip_operation();
+                        let ctx = ctrl.ctx();
+                        let custom = ctx.custom(0);
+                        let exec_state = ctrl.exec_state();
+                        exec_state.move_to(
+                            &DestOperand::Register64(scarf::operand::Register(0)),
+                            custom,
+                        );
+                    } else {
+                        match ty {
+                            MultiGrpType::Group => self.result.grpwire_ddsgrp = Some(arg2),
+                            MultiGrpType::Transport => self.result.tranwire_ddsgrp = Some(arg2),
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> MultiWireframeAnalyzer<'a, 'e, E> {
+    fn is_multi_grp_path(&self, val: Operand<'e>) -> Option<MultiGrpType> {
+        let address = E::VirtualAddress::from_u64(val.if_constant()?);
+        static CANDIDATES: &[(&[u8], MultiGrpType)] = &[
+            (b"unit\\wirefram\\grpwire", MultiGrpType::Group),
+            (b"unit\\wirefram\\tranwire", MultiGrpType::Transport),
+        ];
+
+        CANDIDATES.iter()
+            .filter_map(|&(path, ty)| {
+                let bytes = self.binary.slice_from_address(address, path.len() as u32).ok()?;
+                Some(ty).filter(|_| bytes.eq_ignore_ascii_case(path))
+            })
+            .next()
     }
 }

@@ -1081,6 +1081,11 @@ fn everything_1235g() {
         assert_eq!(analysis.dat_requirement_error().unwrap(), ctx.mem32(ctx.constant(0xffaad8)));
         assert_eq!(analysis.cheat_flags().unwrap(), ctx.mem32(ctx.constant(0x1180f74)));
         assert_eq!(analysis.unit_strength().unwrap(), ctx.constant(0xfe8998));
+
+        assert_eq!(analysis.grpwire_grp().unwrap(), ctx.mem32(ctx.constant(0x11cc9a4)));
+        assert_eq!(analysis.tranwire_grp().unwrap(), ctx.mem32(ctx.constant(0x11cc9a0)));
+        assert_eq!(analysis.grpwire_ddsgrp().unwrap(), ctx.constant(0x11cc9ac));
+        assert_eq!(analysis.tranwire_ddsgrp().unwrap(), ctx.constant(0x11cc9b8));
     })
 }
 
@@ -1625,6 +1630,11 @@ fn test_nongeneric<'e>(
     check_global(analysis.dat_requirement_error().unwrap(), binary, "dat_requirement_error");
     check_global(analysis.cheat_flags().unwrap(), binary, "cheat_flags");
     check_global_struct(analysis.unit_strength().unwrap(), binary, "unit_strength");
+
+    check_global(analysis.grpwire_grp().unwrap(), binary, "grpwire_grp");
+    check_global(analysis.tranwire_grp().unwrap(), binary, "tranwire_grp");
+    check_global_struct(analysis.grpwire_ddsgrp().unwrap(), binary, "grpwire_ddsgrp");
+    check_global_struct(analysis.tranwire_ddsgrp().unwrap(), binary, "tranwire_ddsgrp");
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {
