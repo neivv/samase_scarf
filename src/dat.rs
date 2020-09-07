@@ -272,6 +272,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     for &buttons in &firegraft.buttonsets {
         let end_ptr = buttons + 0xfa * 0xc;
         dat_ctx.add_dat_global_refs(DatType::Units, 0xfe, buttons, end_ptr, 0, 0xc, false);
+        units::button_use_analysis(dat_ctx, buttons)?;
     }
     if dat_ctx.unknown_global_u8_mem.len() != 1 {
         let msg = format!(
@@ -281,7 +282,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         dat_ctx.add_warning(msg);
     }
     game::dat_game_analysis(&mut dat_ctx.analysis, &mut dat_ctx.result);
-    units::init_units_analysis(dat_ctx);
+    units::init_units_analysis(dat_ctx)?;
     dat_ctx.finish_all_patches();
     Some(mem::replace(&mut dat_ctx.result, DatPatches::empty()))
 }

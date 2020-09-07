@@ -2,7 +2,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
 
-use crate::{DatType, OperandExt };
+use crate::{DatType, OperandExt, entry_of_until, EntryOf};
 use super::{DatPatchContext, DatArrayPatch, reloc_address_of_instruction};
 
 pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
@@ -161,6 +161,118 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) fn button_use_analysis<'a, 'e, E: ExecutionState<'e>>(
+    dat_ctx: &mut DatPatchContext<'a, 'e, E>,
+    buttons: E::VirtualAddress,
+) -> Option<()> {
+    // For some reason, button condition param is passed as u8 to the condition function.
+    // Widen it to u16.
+    let analysis = &mut dat_ctx.analysis;
+    let globals = crate::find_functions_using_global(analysis, buttons);
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let functions = analysis.functions();
+    for global in &globals {
+        entry_of_until(binary, &functions, global.use_address, |entry| {
+            let mut analyzer = ButtonUseAnalyzer {
+                dat_ctx,
+                use_address: global.use_address,
+                result: EntryOf::Retry,
+                candidate_instruction: None,
+                binary,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.result
+        });
+    }
+
+    Some(())
+}
+
+pub struct ButtonUseAnalyzer<'a, 'b, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'b, 'e, E>,
+    result: EntryOf<()>,
+    use_address: E::VirtualAddress,
+    candidate_instruction: Option<E::VirtualAddress>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+}
+
+impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    ButtonUseAnalyzer<'a, 'b, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.use_address >= ctrl.address() &&
+            self.use_address < ctrl.current_instruction_end()
+        {
+            self.result = EntryOf::Ok(());
+        }
+        match *op {
+            Operation::Move(_, val, None) => {
+                if let Some(addr) = val.if_mem8() {
+                    let addr = ctrl.resolve(addr);
+                    if addr.if_arithmetic_add_const(0xc).is_some() {
+                        self.candidate_instruction = Some(ctrl.address());
+                    }
+                }
+            }
+            Operation::Call(dest) => {
+                if let Some(cand) = self.candidate_instruction {
+                    let dest = ctrl.resolve(dest);
+                    let is_button_cond = ctrl.if_mem_word(dest)
+                        .and_then(|x| x.if_arithmetic_add_const(0x4))
+                        .is_some();
+                    if is_button_cond {
+                        let arg_cache = &self.dat_ctx.analysis.arg_cache;
+                        let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                        let needs_widen = arg1.if_mem8()
+                            .and_then(|x| x.if_arithmetic_add_const(0xc))
+                            .is_some();
+                        if needs_widen {
+                            self.widen_instruction(cand);
+                            self.result = EntryOf::Ok(());
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+
+    fn branch_start(&mut self, _ctrl: &mut Control<'e, '_, '_, Self>) {
+        self.candidate_instruction = None;
+    }
+}
+
+impl<'a, 'b, 'e, E: ExecutionState<'e>> ButtonUseAnalyzer<'a, 'b, 'e, E> {
+    fn widen_instruction(&mut self, address: E::VirtualAddress) {
+        // Would be nice if this could be shared with DatReferringFuncAnalysis::widen_instruction,
+        // but seems inconvinient to implement..
+        // Especially since this does u8 -> u16 conversion
+        if !self.dat_ctx.patched_addresses.insert(address) {
+            return;
+        }
+
+        let bytes = match self.binary.slice_from_address(address, 0x18) {
+            Ok(o) => o,
+            Err(_) => {
+                self.dat_ctx.add_warning(format!("Can't widen instruction @ {:?}", address));
+                return;
+            }
+        };
+        match *bytes {
+            // movzx u8 to movzx u16
+            [0x0f, 0xb6, ..] => {
+                self.dat_ctx.add_replace_patch(address + 1, &[0xb7]);
+            }
+            _ => self.dat_ctx.add_warning(format!("Can't widen instruction @ {:?}", address)),
         }
     }
 }
