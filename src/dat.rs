@@ -116,6 +116,7 @@ pub struct DatArrayPatch<Va: VirtualAddress> {
     /// Also using some of the ids for non-dat fields that are limited by entry count
     /// Units:
     ///     0xff: Status screen funcs
+    ///     0xfe: Unit buttons
     pub field_id: u8,
     /// Unaligned address of a pointer in .text (Or .data/.rdata, whynot)
     /// (e.g. casting it to *const usize and reading it would give pointer to the orig
@@ -267,6 +268,10 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     for &status_addr in &firegraft.unit_status_funcs {
         let end_ptr = status_addr + 0xe4 * 0xc;
         dat_ctx.add_dat_global_refs(DatType::Units, 0xff, status_addr, end_ptr, 0, 0xc, false);
+    }
+    for &buttons in &firegraft.buttonsets {
+        let end_ptr = buttons + 0xfa * 0xc;
+        dat_ctx.add_dat_global_refs(DatType::Units, 0xfe, buttons, end_ptr, 0, 0xc, false);
     }
     if dat_ctx.unknown_global_u8_mem.len() != 1 {
         let msg = format!(
