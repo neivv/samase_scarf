@@ -64,7 +64,7 @@ pub use crate::commands::{ProcessCommands, Selections, StepNetwork};
 pub use crate::dat::{
     DatTablePtr, DatPatch, DatPatches, DatArrayPatch, DatEntryCountPatch, DatReplaceFunc
 };
-pub use crate::dialog::{MouseXy, MultiWireframes, TooltipRelated};
+pub use crate::dialog::{MouseXy, TooltipRelated};
 pub use crate::eud::EudTable;
 pub use crate::firegraft::RequirementTables;
 pub use crate::game::{Limits};
@@ -82,6 +82,7 @@ pub use crate::sprites::{FowSprites, InitSprites, Sprites};
 pub use crate::text::{FontRender};
 pub use crate::units::{ActiveHiddenUnits, InitUnits, OrderIssuing, UnitCreation};
 
+use crate::dialog::{MultiWireframes};
 use crate::switch::{CompleteSwitch, full_switch_info};
 
 use scarf::exec_state::ExecutionState as ExecutionStateTrait;
@@ -235,7 +236,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     check_dat_requirements: Cached<Option<E::VirtualAddress>>,
     cheat_flags: Cached<Option<Operand<'e>>>,
     unit_strength: Cached<Option<Operand<'e>>>,
-    multi_wireframes: Cached<MultiWireframes<'e>>,
+    multi_wireframes: Cached<MultiWireframes<'e, E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -1734,7 +1735,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     /// Smaller size wireframes, that is multiselection and transport
     /// (Fits multiple in status screen)
     /// Also relevant mostly for SD, HD always uses wirefram.ddsgrp for the drawing.
-    fn multi_wireframes(&mut self) -> MultiWireframes<'e> {
+    fn multi_wireframes(&mut self) -> MultiWireframes<'e, E::VirtualAddress> {
         if let Some(cached) = self.multi_wireframes.cached() {
             return cached;
         }
@@ -1757,6 +1758,14 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn tranwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
         self.multi_wireframes().tranwire_ddsgrp
+    }
+
+    pub fn status_screen(&mut self) -> Option<Operand<'e>> {
+        self.multi_wireframes().status_screen
+    }
+
+    pub fn status_screen_event_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.multi_wireframes().status_screen_event_handler
     }
 }
 
@@ -2228,6 +2237,14 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn tranwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
         self.0.tranwire_ddsgrp()
+    }
+
+    pub fn status_screen(&mut self) -> Option<Operand<'e>> {
+        self.0.status_screen()
+    }
+
+    pub fn status_screen_event_handler(&mut self) -> Option<VirtualAddress> {
+        self.0.status_screen_event_handler()
     }
 }
 

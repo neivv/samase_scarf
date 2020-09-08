@@ -482,6 +482,8 @@ fn main() {
     println!("grpwire_ddsgrp: {}", format_op_operand(analysis.grpwire_ddsgrp()));
     println!("tranwire_grp: {}", format_op_operand(analysis.tranwire_grp()));
     println!("tranwire_ddsgrp: {}", format_op_operand(analysis.tranwire_ddsgrp()));
+    println!("status_screen: {}", format_op_operand(analysis.status_screen()));
+    println!("status_screen_event_handler: {:?}", analysis.status_screen_event_handler());
 
     let undef = ctx.new_undef();
     println!();

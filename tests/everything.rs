@@ -24,6 +24,13 @@ fn everything_1208() {
         assert_eq!(init_sprites.0, 0x00666040);
         let serialize = analysis.serialize_sprites().unwrap();
         assert_eq!(serialize.0, 0x00666900);
+
+        assert_eq!(analysis.grpwire_grp().unwrap(), ctx.mem32(ctx.constant(0x113e9bc)));
+        assert_eq!(analysis.tranwire_grp().unwrap(), ctx.mem32(ctx.constant(0x113e9b8)));
+        assert_eq!(analysis.grpwire_ddsgrp().unwrap(), ctx.constant(0x113e960));
+        assert_eq!(analysis.tranwire_ddsgrp().unwrap(), ctx.constant(0x113e96c));
+        assert_eq!(analysis.status_screen().unwrap(), ctx.mem32(ctx.constant(0x113e9c0)));
+        assert_eq!(analysis.status_screen_event_handler().unwrap().0, 0x00813760);
     });
 }
 
@@ -1086,6 +1093,8 @@ fn everything_1235g() {
         assert_eq!(analysis.tranwire_grp().unwrap(), ctx.mem32(ctx.constant(0x11cc9a0)));
         assert_eq!(analysis.grpwire_ddsgrp().unwrap(), ctx.constant(0x11cc9ac));
         assert_eq!(analysis.tranwire_ddsgrp().unwrap(), ctx.constant(0x11cc9b8));
+        assert_eq!(analysis.status_screen().unwrap(), ctx.mem32(ctx.constant(0x11cc9a8)));
+        assert_eq!(analysis.status_screen_event_handler().unwrap().0, 0x00795590);
     })
 }
 
@@ -1635,6 +1644,8 @@ fn test_nongeneric<'e>(
     check_global(analysis.tranwire_grp().unwrap(), binary, "tranwire_grp");
     check_global_struct(analysis.grpwire_ddsgrp().unwrap(), binary, "grpwire_ddsgrp");
     check_global_struct(analysis.tranwire_ddsgrp().unwrap(), binary, "tranwire_ddsgrp");
+    check_global(analysis.status_screen().unwrap(), binary, "status_screen");
+    assert!(analysis.status_screen_event_handler().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

@@ -29,12 +29,27 @@ pub struct MouseXy<'e, Va: VirtualAddress> {
     pub y_func: Option<Va>,
 }
 
-#[derive(Clone, Default)]
-pub struct MultiWireframes<'e> {
+#[derive(Clone)]
+pub struct MultiWireframes<'e, Va: VirtualAddress> {
     pub grpwire_grp: Option<Operand<'e>>,
     pub grpwire_ddsgrp: Option<Operand<'e>>,
     pub tranwire_grp: Option<Operand<'e>>,
     pub tranwire_ddsgrp: Option<Operand<'e>>,
+    pub status_screen: Option<Operand<'e>>,
+    pub status_screen_event_handler: Option<Va>,
+}
+
+impl<'e, Va: VirtualAddress> Default for MultiWireframes<'e, Va> {
+    fn default() -> Self {
+        MultiWireframes {
+            grpwire_grp: None,
+            grpwire_ddsgrp: None,
+            tranwire_grp: None,
+            tranwire_ddsgrp: None,
+            status_screen: None,
+            status_screen_event_handler: None,
+        }
+    }
 }
 
 pub fn run_dialog<'a, E: ExecutionState<'a>>(
@@ -1075,11 +1090,15 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StatusScreenMode<'e, E> 
 
 pub fn multi_wireframes<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> MultiWireframes<'e> {
+) -> MultiWireframes<'e, E::VirtualAddress> {
     let mut result = MultiWireframes::default();
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     let funcs = analysis.functions();
+    let spawn_dialog = match analysis.spawn_dialog() {
+        Some(s) => s,
+        None => return result,
+    };
     let str_refs = crate::string_refs(binary, analysis, b"unit\\wirefram\\tranwire");
     let arg_cache = &analysis.arg_cache;
     for str_ref in &str_refs {
@@ -1089,11 +1108,13 @@ pub fn multi_wireframes<'e, E: ExecutionState<'e>>(
                 arg_cache,
                 binary,
                 check_return_store: None,
+                spawn_dialog,
+                last_global_store_address: None,
             };
 
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             analysis.analyze(&mut analyzer);
-            if result.grpwire_grp.is_some() {
+            if result.status_screen.is_some() {
                 EntryOf::Ok(())
             } else {
                 EntryOf::Retry
@@ -1107,10 +1128,12 @@ pub fn multi_wireframes<'e, E: ExecutionState<'e>>(
 }
 
 struct MultiWireframeAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    result: &'a mut MultiWireframes<'e>,
+    result: &'a mut MultiWireframes<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     check_return_store: Option<MultiGrpType>,
+    spawn_dialog: E::VirtualAddress,
+    last_global_store_address: Option<Operand<'e>>,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
@@ -1129,19 +1152,48 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
         match *op {
             Operation::Move(DestOperand::Memory(mem), val, None) => {
                 let val = ctrl.resolve(val);
-                if val.if_custom().is_some() {
-                    if let Some(ty) = self.check_return_store.take() {
-                        let address = ctrl.resolve(mem.address);
-                        let dest = ctrl.mem_word(address);
-                        match ty {
-                            MultiGrpType::Group => self.result.grpwire_grp = Some(dest),
-                            MultiGrpType::Transport => self.result.tranwire_grp = Some(dest),
-                        };
+                if let Some(c) = val.if_custom() {
+                    let address = ctrl.resolve(mem.address);
+                    if c == 0 {
+                        if let Some(ty) = self.check_return_store.take() {
+                            let dest = ctrl.mem_word(address);
+                            match ty {
+                                MultiGrpType::Group => self.result.grpwire_grp = Some(dest),
+                                MultiGrpType::Transport => self.result.tranwire_grp = Some(dest),
+                            };
+                        }
+                    } else {
+                        if address.if_constant().is_some() {
+                            // Skip storing other func returns to globals
+                            // (So that spawn_dialog call doesn't just get Custom(1) for
+                            // status_screen)
+                            ctrl.skip_operation();
+                            self.last_global_store_address = Some(address);
+                        }
                     }
                 }
             }
-            Operation::Call(_) => {
+            Operation::Call(dest) => {
                 let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if dest == self.spawn_dialog {
+                        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                        // spawn_dialog(dialog, 0, event_handler)
+                        // The dialog variable may have been written and is reread for the call,
+                        // or it may just pass the return address directly (but still have
+                        // it written to the global before call)
+                        if arg1.if_custom() == Some(1) {
+                            self.result.status_screen = self.last_global_store_address.take()
+                                .map(|x| ctrl.mem_word(x));
+                        } else {
+                            self.result.status_screen = Some(arg1);
+                        }
+                        self.result.status_screen_event_handler = arg3.if_constant()
+                            .map(|x| E::VirtualAddress::from_u64(x));
+                        return;
+                    }
+                }
                 if let Some(ty) = self.is_multi_grp_path(arg1) {
                     let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
                     if arg2.if_constant() == Some(0) {
@@ -1160,6 +1212,17 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
                             MultiGrpType::Transport => self.result.tranwire_ddsgrp = Some(arg2),
                         }
                     }
+                } else {
+                    // Make other call results Custom(1), and prevent writing them to
+                    // memory (Prevent writing load_dialog result to status_screen global)
+                    ctrl.skip_operation();
+                    let ctx = ctrl.ctx();
+                    let custom = ctx.custom(1);
+                    let exec_state = ctrl.exec_state();
+                    exec_state.move_to(
+                        &DestOperand::Register64(scarf::operand::Register(0)),
+                        custom,
+                    );
                 }
             }
             _ => (),
