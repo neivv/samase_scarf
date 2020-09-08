@@ -1779,6 +1779,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.wirefram_ddsgrp.cache(&result);
         result
     }
+
+    pub fn init_status_screen(&mut self) -> Option<E::VirtualAddress> {
+        self.multi_wireframes().init_status_screen
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2261,6 +2265,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn wirefram_ddsgrp(&mut self) -> Option<Operand<'e>> {
         self.0.wirefram_ddsgrp()
+    }
+
+    pub fn init_status_screen(&mut self) -> Option<VirtualAddress> {
+        self.0.init_status_screen()
     }
 }
 

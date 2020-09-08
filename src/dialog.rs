@@ -39,6 +39,7 @@ pub struct MultiWireframes<'e, Va: VirtualAddress> {
     pub tranwire_ddsgrp: Option<Operand<'e>>,
     pub status_screen: Option<Operand<'e>>,
     pub status_screen_event_handler: Option<Va>,
+    pub init_status_screen: Option<Va>,
 }
 
 impl<'e, Va: VirtualAddress> Default for MultiWireframes<'e, Va> {
@@ -50,6 +51,7 @@ impl<'e, Va: VirtualAddress> Default for MultiWireframes<'e, Va> {
             tranwire_ddsgrp: None,
             status_screen: None,
             status_screen_event_handler: None,
+            init_status_screen: None,
         }
     }
 }
@@ -1104,7 +1106,7 @@ pub fn multi_wireframes<'e, E: ExecutionState<'e>>(
     let str_refs = crate::string_refs(binary, analysis, b"unit\\wirefram\\tranwire");
     let arg_cache = &analysis.arg_cache;
     for str_ref in &str_refs {
-        crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+        let res = crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let mut analyzer = MultiWireframeAnalyzer {
                 result: &mut result,
                 arg_cache,
@@ -1121,9 +1123,12 @@ pub fn multi_wireframes<'e, E: ExecutionState<'e>>(
             } else {
                 EntryOf::Retry
             }
-        }).into_option();
-        if result.grpwire_grp.is_some() {
-            break;
+        }).into_option_with_entry();
+        if let Some((addr, ())) = res {
+            if result.grpwire_grp.is_some() {
+                result.init_status_screen = Some(addr);
+                break;
+            }
         }
     }
     result
