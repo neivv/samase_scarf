@@ -1,9 +1,11 @@
+use std::convert::TryInto;
+
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{MemAccess, MemAccessSize};
 use scarf::{BinaryFile, DestOperand, Operation, Operand, OperandCtx};
 
-use crate::{Analysis, ArgCache, EntryOf, single_result_assign, StringRefs};
+use crate::{Analysis, ArgCache, EntryOf, OperandExt, single_result_assign, StringRefs};
 
 #[derive(Clone)]
 pub struct TooltipRelated<'e, Va: VirtualAddress> {
@@ -1244,5 +1246,251 @@ impl<'a, 'e, E: ExecutionState<'e>> MultiWireframeAnalyzer<'a, 'e, E> {
                 Some(ty).filter(|_| bytes.eq_ignore_ascii_case(path))
             })
             .next()
+    }
+}
+
+pub fn wirefram_ddsgrp<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Operand<'e>> {
+    // Search for control draw function of the main wireframe control
+    // - Status screen event handler w/ init event calls init_child_event_handlers
+    // - Index 0 of those handlers is wireframe
+    // - Wireframe control handler w/ init event sets the drawfunc
+    // Then search for grp_frame_header(wirefram_ddsgrp, index, stack_out1, stack_out2)
+    // wirefram_ddsgrp is likely `deref_this(get_wirefram_ddsgrp())`, so inline a bit
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+    let event_handler = analysis.status_screen_event_handler()?;
+
+    let wireframe_event = find_child_event_handler::<E>(analysis, event_handler, 0)?;
+    let draw_func = find_child_draw_func::<E>(analysis, wireframe_event)?;
+    let arg_cache = &analysis.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, draw_func);
+    let mut analyzer = WireframDdsgrpAnalyzer {
+        inline_depth: 0,
+        arg_cache,
+        result: None,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct WireframDdsgrpAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+    result: Option<Operand<'e>>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        fn is_stack(op: Operand<'_>) -> bool {
+            op.if_arithmetic_sub()
+                .filter(|x| x.1.if_constant().is_some())
+                .map(|x| Operand::and_masked(x.0).0)
+                .and_then(|x| x.if_register())
+                .filter(|x| x.0 == 4)
+                .is_some()
+        }
+        match *op {
+            Operation::Call(dest) => {
+                if self.inline_depth == 0 {
+                    // Arg 3 and 4 should be referring to stack, arg 1 global mem
+                    let result = Some(())
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
+                        .filter(|&a3| is_stack(a3))
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
+                        .filter(|&a4| is_stack(a4))
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                        .and_then(|a1| ctrl.if_mem_word(a1))
+                        .filter(|&a1| a1.if_constant().is_some());
+                    if result.is_some() {
+                        self.result = result;
+                        ctrl.end_analysis();
+                        return;
+                    }
+                }
+                if self.inline_depth < 2 {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let ctx = ctrl.ctx();
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        // Force keep esp/ebp same across calls
+                        // esp being same can be wrong but oh well
+                        let esp = ctrl.resolve(ctx.register(4));
+                        let ebp = ctrl.resolve(ctx.register(5));
+                        self.inline_depth += 1;
+                        ctrl.inline(self, dest);
+                        self.inline_depth -= 1;
+                        ctrl.skip_operation();
+                        let exec_state = ctrl.exec_state();
+                        exec_state.move_resolved(
+                            &DestOperand::Register64(scarf::operand::Register(4)),
+                            esp,
+                        );
+                        exec_state.move_resolved(
+                            &DestOperand::Register64(scarf::operand::Register(5)),
+                            ebp,
+                        );
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+/// Given address of a dialog event handler, tries to find
+/// `handlers` in init_child_event_handlers(dlg, handlers, handler_len_bytes)
+fn find_child_event_handlers<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+    event_handler: E::VirtualAddress,
+) -> Option<(E::VirtualAddress, u32)> {
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+
+    let arg_cache = &analysis.arg_cache;
+    // Move event (custom 0) to arg2, and write
+    // event.type = 0xe, event.ext_type = 0x0
+    let mut exec_state = E::initial_state(ctx, binary);
+    let arg2_loc = arg_cache.on_entry(1);
+    let event_address = ctx.custom(0);
+    exec_state.move_to(
+        &DestOperand::from_oper(arg2_loc),
+        event_address,
+    );
+    exec_state.move_to(
+        &DestOperand::from_oper(ctx.mem16(ctx.add_const(event_address, 0x10))),
+        ctx.constant(0xe),
+    );
+    exec_state.move_to(
+        &DestOperand::from_oper(ctx.mem32(ctx.add_const(event_address, 0x0))),
+        ctx.constant(0x0),
+    );
+    let mut analysis = FuncAnalysis::custom_state(
+        binary,
+        ctx,
+        event_handler,
+        exec_state,
+        Default::default(),
+    );
+    let mut analyzer = FindChildEventHandlers {
+        arg_cache,
+        result: None,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+fn find_child_event_handler<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+    event_handler: E::VirtualAddress,
+    index: u32
+) -> Option<E::VirtualAddress> {
+    let (array, len) = find_child_event_handlers(analysis, event_handler)?;
+    if index * E::VirtualAddress::SIZE >= len {
+        return None;
+    }
+    let binary = analysis.binary;
+    binary.read_address(array + index * E::VirtualAddress::SIZE).ok()
+        .filter(|addr| addr.as_u64() != 0)
+}
+
+struct FindChildEventHandlers<'a, 'e, E: ExecutionState<'e>> {
+    arg_cache: &'a ArgCache<'e, E>,
+    result: Option<(E::VirtualAddress, u32)>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindChildEventHandlers<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(_) => {
+                let result = Some(())
+                    .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                    .filter(|&a1| a1 == self.arg_cache.on_entry(0))
+                    .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                    .and_then(|a2| {
+                        let addr = E::VirtualAddress::from_u64(a2.if_constant()?);
+                        let a3 = ctrl.resolve(self.arg_cache.on_call(2));
+                        let len: u32 = a3.if_constant()?.try_into().ok()?;
+                        Some((addr, len))
+                    });
+                if single_result_assign(result, &mut self.result) {
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+fn find_child_draw_func<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+    event_handler: E::VirtualAddress,
+) -> Option<E::VirtualAddress> {
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+
+    let arg_cache = &analysis.arg_cache;
+    // Move event (custom 0) to arg2, and write
+    // event.type = 0xe, event.ext_type = 0x0
+    let mut exec_state = E::initial_state(ctx, binary);
+    let arg2_loc = arg_cache.on_entry(1);
+    let event_address = ctx.custom(0);
+    exec_state.move_to(
+        &DestOperand::from_oper(arg2_loc),
+        event_address,
+    );
+    exec_state.move_to(
+        &DestOperand::from_oper(ctx.mem16(ctx.add_const(event_address, 0x10))),
+        ctx.constant(0xe),
+    );
+    exec_state.move_to(
+        &DestOperand::from_oper(ctx.mem32(ctx.add_const(event_address, 0x0))),
+        ctx.constant(0x0),
+    );
+    let mut analysis = FuncAnalysis::custom_state(
+        binary,
+        ctx,
+        event_handler,
+        exec_state,
+        Default::default(),
+    );
+    let mut analyzer = FindChildDrawFunc {
+        result: None,
+        arg_cache,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct FindChildDrawFunc<'a, 'e, E: ExecutionState<'e>> {
+    arg_cache: &'a ArgCache<'e, E>,
+    result: Option<E::VirtualAddress>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindChildDrawFunc<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Move(DestOperand::Memory(mem), val, None) if mem.size == E::WORD_SIZE => {
+                if let Some(val) = ctrl.resolve(val).if_constant() {
+                    let addr = ctrl.resolve(mem.address);
+                    // Older offset for draw func was 0x30, 0x48 is current
+                    let ok = addr.if_arithmetic_add_const(0x48)
+                        .or_else(|| addr.if_arithmetic_add_const(0x30))
+                        .filter(|&other| other == self.arg_cache.on_entry(0))
+                        .is_some();
+                    if ok && val > 0x10000 {
+                        self.result = Some(E::VirtualAddress::from_u64(val));
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            _ => (),
+        }
     }
 }

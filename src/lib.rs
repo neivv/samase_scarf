@@ -237,6 +237,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     cheat_flags: Cached<Option<Operand<'e>>>,
     unit_strength: Cached<Option<Operand<'e>>>,
     multi_wireframes: Cached<MultiWireframes<'e, E::VirtualAddress>>,
+    wirefram_ddsgrp: Cached<Option<Operand<'e>>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -502,6 +503,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             cheat_flags: Default::default(),
             unit_strength: Default::default(),
             multi_wireframes: Default::default(),
+            wirefram_ddsgrp: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1767,6 +1769,16 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn status_screen_event_handler(&mut self) -> Option<E::VirtualAddress> {
         self.multi_wireframes().status_screen_event_handler
     }
+
+    /// Note: Struct that contains { grp, sd_ddsgrp, hd_ddsgrp }
+    pub fn wirefram_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.wirefram_ddsgrp.cached() {
+            return cached;
+        }
+        let result = dialog::wirefram_ddsgrp(self);
+        self.wirefram_ddsgrp.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2245,6 +2257,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn status_screen_event_handler(&mut self) -> Option<VirtualAddress> {
         self.0.status_screen_event_handler()
+    }
+
+    pub fn wirefram_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.0.wirefram_ddsgrp()
     }
 }
 
