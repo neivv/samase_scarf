@@ -283,6 +283,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     }
     game::dat_game_analysis(&mut dat_ctx.analysis, &mut dat_ctx.result);
     units::init_units_analysis(dat_ctx)?;
+    units::command_analysis(dat_ctx)?;
     dat_ctx.finish_all_patches();
     Some(mem::replace(&mut dat_ctx.result, DatPatches::empty()))
 }

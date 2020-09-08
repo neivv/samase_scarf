@@ -2,7 +2,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
 
-use crate::{DatType, OperandExt, entry_of_until, EntryOf};
+use crate::{DatType, OperandExt, entry_of_until, EntryOf, OptionExt};
 use super::{DatPatchContext, DatArrayPatch, reloc_address_of_instruction};
 
 pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
@@ -273,6 +273,115 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> ButtonUseAnalyzer<'a, 'b, 'e, E> {
                 self.dat_ctx.add_replace_patch(address + 1, &[0xb7]);
             }
             _ => self.dat_ctx.add_warning(format!("Can't widen instruction @ {:?}", address)),
+        }
+    }
+}
+
+pub(crate) fn command_analysis<'a, 'e, E: ExecutionState<'e>>(
+    dat_ctx: &mut DatPatchContext<'a, 'e, E>,
+) -> Option<()> {
+    // Remove unit_id <= 105 check from Command_train,
+    // unit_id >= 130 && unit_id <= 152 from zerg building morph
+    let analysis = &mut dat_ctx.analysis;
+    let process_commands = analysis.process_commands();
+    let switch = process_commands.switch.as_ref()?;
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    for &case in &[0x1f, 0x35] {
+        let branch = switch.branch(case)?;
+
+        let mut analyzer = CommandPatch {
+            dat_ctx,
+            inline_depth: 0,
+            done: false,
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, branch);
+        analysis.analyze(&mut analyzer);
+    }
+
+    Some(())
+}
+
+pub struct CommandPatch<'a, 'b, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'b, 'e, E>,
+    inline_depth: u8,
+    done: bool,
+}
+
+impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    CommandPatch<'a, 'b, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Jump { condition, to } => {
+                if self.inline_depth == 0 {
+                    // Stop at switch jump
+                    let to = ctrl.resolve(to);
+                    if to.if_memory().is_some() {
+                        ctrl.end_branch();
+                        return;
+                    }
+                }
+                let condition = ctrl.resolve(condition);
+                // Train check
+                let mut ok = condition.if_arithmetic_gt()
+                    .and_then(|x| {
+                        if x.1.if_constant() == Some(0x69) {
+                            Some(x.0)
+                        } else if x.0.if_constant() == Some(0x6a) {
+                            Some(x.1)
+                        } else {
+                            None
+                        }
+                    })
+                    .and_then(|x| x.if_mem16())
+                    .and_then(|x| x.if_arithmetic_add_const(1))
+                    .is_some();
+                if !ok {
+                    // Zerg building morph check. Scarf should simplify this better than it
+                    // currently does.
+                    // (((Mem16[(x + 1)] - 82) & ffff) > 15) & ((98 == Mem16[(x + 1)]) == 0)
+                    ok = condition.if_arithmetic_and()
+                        .and_either_other(|x| {
+                            crate::if_arithmetic_eq_neq(x)
+                                .map(|x| (x.0, x.1))
+                                .and_either_other(|x| x.if_constant().filter(|&c| c == 0x98))?
+                                .if_mem16()?
+                                .if_arithmetic_add_const(1)
+                        })
+                        .is_some();
+                }
+                if ok {
+                    let nops = [0x90; 0x10];
+                    let address = ctrl.address();
+                    let instruction_len = (ctrl.current_instruction_end().as_u64() as u32)
+                        .wrapping_sub(address.as_u64() as u32);
+                    if let Some(nops) = nops.get(..(instruction_len as usize)) {
+                        if !self.dat_ctx.patched_addresses.insert(address) {
+                            return;
+                        }
+                        self.dat_ctx.add_replace_patch(address, nops);
+                    }
+                    self.done = true;
+                    ctrl.end_analysis();
+                }
+            }
+            Operation::Call(dest) => {
+                if self.inline_depth < 2 {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        self.inline_depth += 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth -= 1;
+                        if self.done {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            _ => (),
         }
     }
 }
