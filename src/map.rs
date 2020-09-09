@@ -13,7 +13,7 @@ pub struct MapTileFlags<'e, Va: VirtualAddress> {
     pub update_visibility_point: Option<Va>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct RunTriggers<Va: VirtualAddress> {
     pub conditions: Option<Va>,
     pub actions: Option<Va>,
@@ -26,6 +26,12 @@ impl<Va: VirtualAddress> Default for RunTriggers<Va> {
             actions: None,
         }
     }
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct TriggerUnitCountCaches<'e> {
+    pub completed_units: Option<Operand<'e>>,
+    pub all_units: Option<Operand<'e>>,
 }
 
 pub fn map_tile_flags<'e, E: ExecutionState<'e>>(
@@ -376,6 +382,86 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                                 custom,
                             );
                             ctrl.skip_operation();
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+pub fn trigger_unit_count_caches<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> TriggerUnitCountCaches<'e> {
+    let mut result = TriggerUnitCountCaches::default();
+    let conditions = match analysis.trigger_conditions() {
+        Some(s) => s,
+        None => return result,
+    };
+    let game = match analysis.game() {
+        Some(s) => s,
+        None => return result,
+    };
+    // Find the caches by looking for a memcpy calls from game arrays
+    // in condition #2 Command
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let cond_command = match binary.read_address(conditions + 2 * E::VirtualAddress::SIZE) {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+    let arg_cache = &analysis.arg_cache;
+    let mut analyzer = CountCacheAnalyzer::<E> {
+        result: &mut result,
+        arg_cache,
+        inline_depth: 0,
+        game,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, cond_command);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct CountCacheAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    inline_depth: u8,
+    result: &'a mut TriggerUnitCountCaches<'e>,
+    arg_cache: &'a ArgCache<'e, E>,
+    game: Operand<'e>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CountCacheAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                if arg3.if_constant() == Some(0xe4 * 12 * 4) {
+                    let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                    let ctx = ctrl.ctx();
+                    if let Some(offset) = ctx.sub(arg2, self.game).if_constant() {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        if offset == 0x5cf4 {
+                            self.result.completed_units = Some(arg1);
+                        } else if offset == 0x3234 {
+                            self.result.all_units = Some(arg1);
+                        }
+                        let res = &self.result;
+                        if res.all_units.is_some() && res.completed_units.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+                if self.inline_depth < 2 {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        self.inline_depth += 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth -= 1;
+                        let res = &self.result;
+                        if res.all_units.is_some() && res.completed_units.is_some() {
+                            ctrl.end_analysis();
                         }
                     }
                 }

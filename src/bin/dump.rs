@@ -497,6 +497,11 @@ fn main() {
 
     println!("trigger_conditions: {:?}", analysis.trigger_conditions());
     println!("trigger_actions: {:?}", analysis.trigger_actions());
+    println!("trigger_all_units_cache: {}", format_op_operand(analysis.trigger_all_units_cache()));
+    println!(
+        "trigger_completed_units_cache: {}",
+        format_op_operand(analysis.trigger_completed_units_cache()),
+    );
 
     let undef = ctx.new_undef();
     println!();

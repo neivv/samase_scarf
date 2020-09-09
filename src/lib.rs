@@ -83,7 +83,7 @@ pub use crate::text::{FontRender};
 pub use crate::units::{ActiveHiddenUnits, InitUnits, OrderIssuing, UnitCreation};
 
 use crate::dialog::{MultiWireframes};
-use crate::map::{RunTriggers};
+use crate::map::{RunTriggers, TriggerUnitCountCaches};
 use crate::switch::{CompleteSwitch, full_switch_info};
 
 use scarf::exec_state::ExecutionState as ExecutionStateTrait;
@@ -240,6 +240,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     multi_wireframes: Cached<MultiWireframes<'e, E::VirtualAddress>>,
     wirefram_ddsgrp: Cached<Option<Operand<'e>>>,
     run_triggers: Cached<RunTriggers<E::VirtualAddress>>,
+    trigger_unit_count_caches: Cached<TriggerUnitCountCaches<'e>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -507,6 +508,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             multi_wireframes: Default::default(),
             wirefram_ddsgrp: Default::default(),
             run_triggers: Default::default(),
+            trigger_unit_count_caches: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1817,6 +1819,23 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn trigger_actions(&mut self) -> Option<E::VirtualAddress> {
         self.run_triggers().actions
     }
+
+    fn trigger_unit_count_caches(&mut self) -> TriggerUnitCountCaches<'e> {
+        if let Some(cached) = self.trigger_unit_count_caches.cached() {
+            return cached;
+        }
+        let result = map::trigger_unit_count_caches(self);
+        self.trigger_unit_count_caches.cache(&result);
+        result
+    }
+
+    pub fn trigger_completed_units_cache(&mut self) -> Option<Operand<'e>> {
+        self.trigger_unit_count_caches().completed_units
+    }
+
+    pub fn trigger_all_units_cache(&mut self) -> Option<Operand<'e>> {
+        self.trigger_unit_count_caches().all_units
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2311,6 +2330,14 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn trigger_actions(&mut self) -> Option<VirtualAddress> {
         self.trigger_actions()
+    }
+
+    pub fn trigger_completed_units_cache(&mut self) -> Option<Operand<'e>> {
+        self.trigger_completed_units_cache()
+    }
+
+    pub fn trigger_all_units_cache(&mut self) -> Option<Operand<'e>> {
+        self.trigger_all_units_cache()
     }
 }
 

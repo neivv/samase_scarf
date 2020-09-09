@@ -1106,6 +1106,8 @@ fn everything_1235g() {
 
         assert_eq!(analysis.trigger_conditions().unwrap().0, 0x00f1b0d8);
         assert_eq!(analysis.trigger_actions().unwrap().0, 0x00f1afe8);
+        assert_eq!(analysis.trigger_all_units_cache().unwrap(), ctx.constant(0x00FFE028));
+        assert_eq!(analysis.trigger_completed_units_cache().unwrap(), ctx.constant(0x00FFB568));
     })
 }
 
@@ -1662,6 +1664,12 @@ fn test_nongeneric<'e>(
 
     assert!(analysis.trigger_conditions().is_some());
     assert!(analysis.trigger_actions().is_some());
+    check_global_struct_opt(analysis.trigger_all_units_cache(), binary, "all units cache");
+    check_global_struct_opt(
+        analysis.trigger_completed_units_cache(),
+        binary,
+        "completed units cache",
+    );
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {
