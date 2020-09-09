@@ -835,48 +835,9 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'e, E> {
         ctrl: &mut Control<'e, '_, '_, Self>,
         op: Operand<'e>,
     ) -> Option<Operand<'e>> {
-        if op.if_constant().is_some() {
-            return Some(op);
-        }
         let ctx = ctrl.ctx();
-        for i in 0..8 {
-            let reg = ctx.register(i);
-            let val = ctrl.resolve(reg);
-            if val == op {
-                return Some(reg);
-            }
-            if let Some((l, r)) = val.if_arithmetic_add() {
-                if l == op {
-                    if let Some(c) = r.if_constant() {
-                        return Some(ctx.sub_const(reg, c));
-                    }
-                }
-            }
-        }
-        if let Some(mem) = op.if_memory() {
-            if let Some(addr) = self.unresolve(ctrl, mem.address) {
-                return Some(ctx.mem_variable_rc(mem.size, addr));
-            }
-        }
-        if op.if_register().filter(|r| r.0 == 4).is_some() {
-            for i in 4..6 {
-                let unres = ctx.register(i);
-                let esp = ctrl.resolve(unres);
-                if let Some((l, r)) = esp.if_arithmetic_sub() {
-                    if l.if_register().filter(|r| r.0 == 4).is_some() {
-                        return Some(ctx.add(unres, r));
-                    }
-                }
-            }
-        }
-        if let OperandType::Arithmetic(ref arith) = *op.ty() {
-            if let Some(left) = self.unresolve(ctrl, arith.left) {
-                if let Some(right) = self.unresolve(ctrl, arith.right) {
-                    return Some(ctx.arithmetic(arith.ty, left, right));
-                }
-            }
-        }
-        None
+        let exec_state = ctrl.exec_state();
+        super::unresolve(ctx, exec_state, op)
     }
 }
 

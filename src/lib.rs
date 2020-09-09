@@ -1568,6 +1568,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         let mut hooks = Vec::new();
         let mut two_step_hooks = Vec::new();
         let mut ext_array_patches = Vec::new();
+        let mut grp_index_hooks = Vec::new();
+        let mut grp_texture_hooks = Vec::new();
         for patch in &patches.patches {
             match *patch {
                 DatPatch::Array(ref a) => {
@@ -1607,6 +1609,14 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                         (a.address, a.instruction_len, a.ext_array_id, a.index)
                     );
                 }
+                DatPatch::GrpIndexHook(addr) => {
+                    grp_index_hooks.push(addr);
+                }
+                DatPatch::GrpTextureHook(ref a) => {
+                    grp_texture_hooks.push(
+                        (a.address, a.instruction_len, a.dest, a.base, a.index_bytes)
+                    );
+                }
             }
         }
         replaces.sort_unstable_by_key(|x| x.0);
@@ -1614,6 +1624,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         hooks.sort_unstable_by_key(|x| x.0);
         two_step_hooks.sort_unstable_by_key(|x| x.0);
         ext_array_patches.sort_unstable_by_key(|x| (x.2, x.0));
+        grp_index_hooks.sort_unstable_by_key(|x| *x);
+        grp_texture_hooks.sort_unstable_by_key(|x| x.0);
         Some(DatPatchesDebug {
             tables: map,
             replaces,
@@ -1621,6 +1633,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             hooks,
             two_step_hooks,
             ext_array_patches,
+            grp_index_hooks,
+            grp_texture_hooks,
         })
     }
 
@@ -2279,6 +2293,8 @@ pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
     pub hooks: Vec<(Va, u8, Vec<u8>)>,
     pub two_step_hooks: Vec<(Va, Va, u8, Vec<u8>)>,
     pub ext_array_patches: Vec<(Va, u8, u32, Operand<'e>)>,
+    pub grp_index_hooks: Vec<Va>,
+    pub grp_texture_hooks: Vec<(Va, u8, Operand<'e>, Operand<'e>, Operand<'e>)>,
 }
 
 pub struct DatTablePatchesDebug<Va: VirtualAddressTrait> {

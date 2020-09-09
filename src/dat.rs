@@ -1,6 +1,7 @@
 mod game;
 mod units;
 mod stack_analysis;
+mod wireframe;
 
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
@@ -15,7 +16,7 @@ use lde::Isa;
 use scarf::analysis::{self, Cfg, Control, FuncAnalysis, RelocValues};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, ArithOperand, MemAccessSize, OperandType, OperandHashByAddress};
-use scarf::{BinaryFile, BinarySection, DestOperand, Operand, Operation, Rva};
+use scarf::{BinaryFile, BinarySection, DestOperand, Operand, OperandCtx, Operation, Rva};
 
 use crate::{
     ArgCache, Analysis, EntryOf, StringRefs, DatType, entry_of_until, single_result_assign,
@@ -97,6 +98,8 @@ pub enum DatPatch<'e, Va: VirtualAddress> {
     TwoStepHook(Va, Va, u32, u8, u8),
     ReplaceFunc(Va, DatReplaceFunc),
     ExtendedArray(ExtArrayPatch<'e, Va>),
+    GrpIndexHook(Va),
+    GrpTextureHook(GrpTexturePatch<'e, Va>),
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -142,6 +145,14 @@ pub struct ExtArrayPatch<'e, Va: VirtualAddress> {
     pub instruction_len: u8,
     pub ext_array_id: u32,
     pub index: Operand<'e>,
+}
+
+pub struct GrpTexturePatch<'e, Va: VirtualAddress> {
+    pub address: Va,
+    pub instruction_len: u8,
+    pub dest: Operand<'e>,
+    pub base: Operand<'e>,
+    pub index_bytes: Operand<'e>,
 }
 
 pub(crate) fn dat_table<'e, E: ExecutionState<'e>>(
@@ -284,6 +295,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     game::dat_game_analysis(&mut dat_ctx.analysis, &mut dat_ctx.result);
     units::init_units_analysis(dat_ctx)?;
     units::command_analysis(dat_ctx)?;
+    wireframe::grp_index_patches(dat_ctx)?;
     dat_ctx.finish_all_patches();
     Some(mem::replace(&mut dat_ctx.result, DatPatches::empty()))
 }
@@ -2822,6 +2834,54 @@ where A: analysis::Analyzer<'e, Exec=E>
             }
         }
         imm_addr = imm_addr - 1;
+    }
+    None
+}
+
+fn unresolve<'e, E: ExecutionState<'e>>(
+    ctx: OperandCtx<'e>,
+    exec_state: &mut E,
+    op: Operand<'e>,
+) -> Option<Operand<'e>> {
+    if op.if_constant().is_some() {
+        return Some(op);
+    }
+    for i in 0..8 {
+        let reg = ctx.register(i);
+        let val = exec_state.resolve(reg);
+        if val == op {
+            return Some(reg);
+        }
+        if let Some((l, r)) = val.if_arithmetic_add() {
+            if l == op {
+                if let Some(c) = r.if_constant() {
+                    return Some(ctx.sub_const(reg, c));
+                }
+            }
+        }
+    }
+    if let Some(mem) = op.if_memory() {
+        if let Some(addr) = unresolve(ctx, exec_state, mem.address) {
+            return Some(ctx.mem_variable_rc(mem.size, addr));
+        }
+    }
+    if op.if_register().filter(|r| r.0 == 4).is_some() {
+        for i in 4..6 {
+            let unres = ctx.register(i);
+            let esp = exec_state.resolve(unres);
+            if let Some((l, r)) = esp.if_arithmetic_sub() {
+                if l.if_register().filter(|r| r.0 == 4).is_some() {
+                    return Some(ctx.add(unres, r));
+                }
+            }
+        }
+    }
+    if let OperandType::Arithmetic(ref arith) = *op.ty() {
+        if let Some(left) = unresolve(ctx, exec_state, arith.left) {
+            if let Some(right) = unresolve(ctx, exec_state, arith.right) {
+                return Some(ctx.arithmetic(arith.ty, left, right));
+            }
+        }
     }
     None
 }

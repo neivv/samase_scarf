@@ -117,6 +117,14 @@ fn main() {
             for (addr, len, ext_id, operand) in dat_patches.ext_array_patches {
                 println!("{:02x}: {:?}:{:x} = {:?}", ext_id, addr, len, operand);
             }
+            println!("--- Grp texture hooks ---");
+            for (addr, len, dest, base, index) in dat_patches.grp_texture_hooks {
+                println!("{:08x}:{:x}: {} <= {}, {}", addr.as_u64(), len, dest, base, index);
+            }
+            let mapped = dat_patches.grp_index_hooks.iter()
+                .map(|x| format!("{:08x}", x.as_u64()))
+                .collect::<Vec<_>>();
+            println!("Grp index hooks: {:?}", mapped);
             println!("--- Func replaces ---");
             for (addr, ty) in dat_patches.func_replaces {
                 println!("{:08x} = {:?}", addr.as_u64(), ty);
