@@ -495,6 +495,9 @@ fn main() {
     println!("init_status_screen: {:?}", analysis.init_status_screen());
     println!("wirefram_ddsgrp: {}", format_op_operand(analysis.wirefram_ddsgrp()));
 
+    println!("trigger_conditions: {:?}", analysis.trigger_conditions());
+    println!("trigger_actions: {:?}", analysis.trigger_actions());
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {

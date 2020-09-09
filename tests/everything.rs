@@ -34,6 +34,9 @@ fn everything_1208() {
         // This is actually only address of the grp on old versions like 1208;
         // the ddsgrp set doesn't exist here.
         assert_eq!(analysis.wirefram_ddsgrp().unwrap(), ctx.constant(0x113f5d0));
+
+        assert_eq!(analysis.trigger_conditions().unwrap().0, 0x00DC8BB0);
+        assert_eq!(analysis.trigger_actions().unwrap().0, 0x00DC8AC0);
     });
 }
 
@@ -1100,6 +1103,9 @@ fn everything_1235g() {
         assert_eq!(analysis.status_screen_event_handler().unwrap().0, 0x00795590);
         assert_eq!(analysis.init_status_screen().unwrap().0, 0x00795810);
         assert_eq!(analysis.wirefram_ddsgrp().unwrap(), ctx.constant(0x11cd4d4));
+
+        assert_eq!(analysis.trigger_conditions().unwrap().0, 0x00f1b0d8);
+        assert_eq!(analysis.trigger_actions().unwrap().0, 0x00f1afe8);
     })
 }
 
@@ -1653,6 +1659,9 @@ fn test_nongeneric<'e>(
     assert!(analysis.status_screen_event_handler().is_some());
     assert!(analysis.init_status_screen().is_some());
     check_global_struct(analysis.wirefram_ddsgrp().unwrap(), binary, "wirefram_ddsgrp");
+
+    assert!(analysis.trigger_conditions().is_some());
+    assert!(analysis.trigger_actions().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

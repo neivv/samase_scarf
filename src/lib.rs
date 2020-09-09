@@ -83,6 +83,7 @@ pub use crate::text::{FontRender};
 pub use crate::units::{ActiveHiddenUnits, InitUnits, OrderIssuing, UnitCreation};
 
 use crate::dialog::{MultiWireframes};
+use crate::map::{RunTriggers};
 use crate::switch::{CompleteSwitch, full_switch_info};
 
 use scarf::exec_state::ExecutionState as ExecutionStateTrait;
@@ -238,6 +239,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     unit_strength: Cached<Option<Operand<'e>>>,
     multi_wireframes: Cached<MultiWireframes<'e, E::VirtualAddress>>,
     wirefram_ddsgrp: Cached<Option<Operand<'e>>>,
+    run_triggers: Cached<RunTriggers<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -504,6 +506,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             unit_strength: Default::default(),
             multi_wireframes: Default::default(),
             wirefram_ddsgrp: Default::default(),
+            run_triggers: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1797,6 +1800,23 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn init_status_screen(&mut self) -> Option<E::VirtualAddress> {
         self.multi_wireframes().init_status_screen
     }
+
+    fn run_triggers(&mut self) -> RunTriggers<E::VirtualAddress> {
+        if let Some(cached) = self.run_triggers.cached() {
+            return cached;
+        }
+        let result = map::run_triggers(self);
+        self.run_triggers.cache(&result);
+        result
+    }
+
+    pub fn trigger_conditions(&mut self) -> Option<E::VirtualAddress> {
+        self.run_triggers().conditions
+    }
+
+    pub fn trigger_actions(&mut self) -> Option<E::VirtualAddress> {
+        self.run_triggers().actions
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2284,6 +2304,14 @@ impl<'e> AnalysisX86<'e> {
     pub fn init_status_screen(&mut self) -> Option<VirtualAddress> {
         self.0.init_status_screen()
     }
+
+    pub fn trigger_conditions(&mut self) -> Option<VirtualAddress> {
+        self.trigger_conditions()
+    }
+
+    pub fn trigger_actions(&mut self) -> Option<VirtualAddress> {
+        self.trigger_actions()
+    }
 }
 
 pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
@@ -2460,8 +2488,20 @@ fn entry_of_until<'a, Va: VirtualAddressTrait, R, F>(
 ) -> EntryOfResult<R, Va>
 where F: FnMut(Va) -> EntryOf<R>
 {
+    entry_of_until_with_limit(binary, funcs, caller, 16, &mut cb)
+}
+
+fn entry_of_until_with_limit<'a, Va: VirtualAddressTrait, R, F>(
+    binary: &BinaryFile<Va>,
+    funcs: &[Va],
+    caller: Va,
+    limit: usize,
+    mut cb: F,
+) -> EntryOfResult<R, Va>
+where F: FnMut(Va) -> EntryOf<R>
+{
     let entry = entry_of(funcs, caller);
-    let (start, end) = first_definite_entry(binary, entry, funcs, 16);
+    let (start, end) = first_definite_entry(binary, entry, funcs, limit);
     for &entry in funcs.iter().take(end).skip(start) {
         match cb(entry) {
             EntryOf::Ok(s) => return EntryOfResult::Ok(entry, s),

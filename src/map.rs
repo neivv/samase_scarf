@@ -1,13 +1,31 @@
 use scarf::{DestOperand, Operand, Operation};
 use scarf::analysis::{self, Control, FuncAnalysis};
-
 use scarf::exec_state::{ExecutionState, VirtualAddress};
+use scarf::operand::{ArithOpType, ArithOperand};
 
-use crate::{Analysis, OptionExt};
+use crate::{
+    Analysis, ArgCache, EntryOf, OptionExt, OperandExt, entry_of_until_with_limit, find_callers,
+    single_result_assign,
+};
 
 pub struct MapTileFlags<'e, Va: VirtualAddress> {
     pub map_tile_flags: Option<Operand<'e>>,
     pub update_visibility_point: Option<Va>,
+}
+
+#[derive(Clone)]
+pub struct RunTriggers<Va: VirtualAddress> {
+    pub conditions: Option<Va>,
+    pub actions: Option<Va>,
+}
+
+impl<Va: VirtualAddress> Default for RunTriggers<Va> {
+    fn default() -> Self {
+        RunTriggers {
+            conditions: None,
+            actions: None,
+        }
+    }
 }
 
 pub fn map_tile_flags<'e, E: ExecutionState<'e>>(
@@ -130,3 +148,239 @@ fn tile_flags_from_update_visibility_point<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
+pub fn run_triggers<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> RunTriggers<E::VirtualAddress> {
+    let mut result = RunTriggers::default();
+    let rng = analysis.rng();
+    let rng_enable = match rng.enable {
+        Some(s) => s,
+        None => return result,
+    };
+    let step_objects = match analysis.step_objects() {
+        Some(s) => s,
+        None => return result,
+    };
+    // Search for main_game_loop which calls step_objects
+    // main_game_loop also calls run_triggers -> run_player_triggers
+    // rng is enabled for the run_triggers_call, use that to filter out most
+    // of main_game_loop.
+    let callers = find_callers(analysis, step_objects);
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let funcs = analysis.functions();
+    let arg_cache = &analysis.arg_cache;
+    for caller in callers {
+        entry_of_until_with_limit(binary, &funcs, caller, 128, |entry| {
+            let mut analyzer = RunTriggersAnalyzer::<E> {
+                inline_depth: 0,
+                jump_limit: 0,
+                rng_enabled: false,
+                caller_ref: caller,
+                entry_of: EntryOf::Retry,
+                result: &mut result,
+                rng_enable,
+                arg_cache,
+                next_func_return_id: 0,
+                trigger_player: None,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.entry_of
+        });
+        if result.conditions.is_some() {
+            break;
+        }
+    }
+
+    result
+}
+
+struct RunTriggersAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    inline_depth: u8,
+    // Prevent unnecessary inlining when rng isn't enabled
+    jump_limit: u8,
+    rng_enabled: bool,
+    rng_enable: Operand<'e>,
+    caller_ref: E::VirtualAddress,
+    entry_of: EntryOf<()>,
+    result: &'a mut RunTriggers<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    next_func_return_id: u32,
+    trigger_player: Option<Operand<'e>>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if ctrl.address() <= self.caller_ref && ctrl.current_instruction_end() > self.caller_ref {
+            self.entry_of = EntryOf::Stop;
+        }
+        let ctx = ctrl.ctx();
+        if self.rng_enabled && self.inline_depth >= 2 {
+            // Analyzing run_player_triggers
+            match *op {
+                Operation::Call(dest) => {
+                    let dest = ctrl.resolve(dest);
+                    let base_index = ctrl.if_mem_word(dest)
+                        .and_then(|x| x.if_arithmetic_add())
+                        .and_then(|(l, r)| {
+                            let base = E::VirtualAddress::from_u64(r.if_constant()?);
+                            let index =
+                                l.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())?;
+                            Some((base, index))
+                        });
+                    if let Some((base, index)) = base_index {
+                        if let Some(offset) = index.if_mem8()
+                            .and_then(|x| x.if_arithmetic_add())
+                            .and_then(|x| x.1.if_constant())
+                        {
+                            // For some reason the trigger pointer is aligned past linked list
+                            // prev/next, but check for x + 8 offsets as well to be safe
+                            if offset == 0xf || offset == 0x17 {
+                                // Condition is at trigger + 8 + 0xf
+                                single_result_assign(Some(base), &mut self.result.conditions);
+                            } else if offset == 0x15a || offset == 0x162 {
+                                // Action is at trigger + 8 + 0x148 + 0x1a
+                                single_result_assign(Some(base), &mut self.result.actions);
+                            }
+                            let res = &self.result;
+                            if res.conditions.is_some() && res.actions.is_some() {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                    if self.inline_depth == 2 {
+                        if let Some(dest) = dest.if_constant() {
+                            let dest = E::VirtualAddress::from_u64(dest);
+                            self.inline_depth += 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth -= 1;
+                        }
+                    }
+                }
+                _ => (),
+            }
+            return;
+        }
+        fn is_complex_address<'e>(op: Operand<'e>) -> bool {
+            fn recurse<'e>(op: Operand<'e>, limit: u32) -> Option<u32> {
+                use scarf::OperandType;
+                match *op.ty() {
+                    OperandType::Arithmetic(ref a) => {
+                        let limit = recurse(a.left, limit)?;
+                        recurse(a.right, limit)?
+                            .checked_sub(1)
+                    }
+                    OperandType::Memory(ref mem) => {
+                        recurse(mem.address, limit)?
+                            .checked_sub(1)
+                    }
+                    _ => limit.checked_sub(1),
+                }
+            }
+            recurse(op, 24).is_none()
+        }
+        match *op {
+            Operation::SetFlags(ref arith, size) => {
+                // Assume that complex mem addresses are volatile
+                if !self.rng_enabled && arith.ty == ArithOpType::Sub {
+                    let left = ctrl.resolve(arith.left);
+                    let right = ctrl.resolve(arith.right);
+                    if left == right {
+                        if let Some(addr) = left.if_memory().map(|x| x.address) {
+                            if is_complex_address(addr) {
+                                ctrl.skip_operation();
+                                let exec_state = ctrl.exec_state();
+                                exec_state.update(&Operation::SetFlags(
+                                    ArithOperand {
+                                        left: arith.left,
+                                        right: ctx.new_undef(),
+                                        ty: ArithOpType::Sub,
+                                    },
+                                    size,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            Operation::Move(DestOperand::Memory(ref mem), val, None) => {
+                let dest = ctrl.resolve(mem.address);
+                let is_setting_rng_enable = self.rng_enable.if_memory()
+                    .filter(|x| x.address == dest)
+                    .is_some();
+                if is_setting_rng_enable {
+                    if let Some(c) = ctrl.resolve(val).if_constant() {
+                        self.rng_enabled = c != 0;
+                    }
+                }
+            }
+            Operation::Jump { condition, .. } => {
+                if self.jump_limit != 0 {
+                    self.jump_limit -= 1;
+                    if self.jump_limit == 0 {
+                        ctrl.end_analysis();
+                    }
+                }
+                if self.inline_depth != 0 && self.rng_enabled {
+                    // check for if (next_trigger_player() < 8)
+                    let condition = ctrl.resolve(condition);
+                    let is_jae_8 = condition.if_arithmetic_gt()
+                        .filter(|x| x.1.if_constant() == Some(7))
+                        .map(|x| Operand::and_masked(x.0).0);
+                    if let Some(trigger_player) = is_jae_8 {
+                        self.trigger_player = Some(trigger_player);
+                    }
+                }
+            }
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if !self.rng_enabled {
+                        if self.inline_depth == 0 {
+                            self.inline_depth += 1;
+                            self.jump_limit = 10;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.jump_limit = 0;
+                            self.inline_depth -= 1;
+                        }
+                    } else {
+                        if self.inline_depth == 0 {
+                            self.inline_depth += 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth -= 1;
+                            if self.result.conditions.is_some() {
+                                ctrl.end_analysis();
+                            }
+                        } else {
+                            if let Some(player) = self.trigger_player {
+                                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                                if arg1 == player {
+                                    self.inline_depth += 1;
+                                    ctrl.analyze_with_current_state(self, dest);
+                                    self.inline_depth -= 1;
+                                    if self.result.conditions.is_some() {
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+
+                            let custom = ctx.custom(self.next_func_return_id);
+                            self.next_func_return_id = self.next_func_return_id
+                                .wrapping_add(1);
+                            let exec_state = ctrl.exec_state();
+                            exec_state.move_to(
+                                &DestOperand::Register64(scarf::operand::Register(0)),
+                                custom,
+                            );
+                            ctrl.skip_operation();
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
