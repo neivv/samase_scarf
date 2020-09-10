@@ -3,15 +3,19 @@ use fxhash::{FxHashSet, FxHashMap};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{OperandType};
-use scarf::{BinaryFile, DestOperand, Operand, Operation};
+use scarf::{BinaryFile, DestOperand, Operand, Operation, Rva};
 
 use crate::{
     Analysis, EntryOf, entry_of_until, OperandExt, OptionExt,
 };
-use super::{DatPatches, DatPatch, ExtArrayPatch};
+use super::{
+    DatPatches, DatPatch, ExtArrayPatch, RequiredStableAddressesMap, RequiredStableAddresses,
+    FunctionHookContext,
+};
 
-pub fn dat_game_analysis<'e, E: ExecutionState<'e>>(
+pub(crate) fn dat_game_analysis<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
+    required_stable_addresses: &mut RequiredStableAddressesMap<E::VirtualAddress>,
     result: &mut DatPatches<'e, E::VirtualAddress>,
 ) -> Option<()> {
     let ctx = analysis.ctx;
@@ -52,7 +56,7 @@ pub fn dat_game_analysis<'e, E: ExecutionState<'e>>(
         trigger_all_units,
         trigger_completed_units,
     };
-    game_ctx.do_analysis();
+    game_ctx.do_analysis(required_stable_addresses);
     debug_assert!(game_ctx.unchecked_refs.is_empty());
     let other_globals = [
         unit_strength.if_constant().map(|x| {
@@ -89,7 +93,7 @@ pub fn dat_game_analysis<'e, E: ExecutionState<'e>>(
         }
     }
     game_ctx.checked_functions.clear();
-    game_ctx.other_global_analysis();
+    game_ctx.other_global_analysis(required_stable_addresses);
     Some(())
 }
 
@@ -108,28 +112,53 @@ pub struct GameContext<'a, 'e, E: ExecutionState<'e>> {
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> GameContext<'a, 'e, E> {
-    fn do_analysis(&mut self) {
+    fn do_analysis(
+        &mut self,
+        required_stable_addresses: &mut RequiredStableAddressesMap<E::VirtualAddress>,
+    ) {
         let binary = self.analysis.binary;
         let ctx = self.analysis.ctx;
         let functions = self.analysis.functions();
+        let mut function_ends = FxHashMap::with_capacity_and_hasher(64, Default::default());
         while let Some(game_ref_addr) = self.unchecked_refs.iter().cloned().next() {
             let result = entry_of_until(binary, &functions, game_ref_addr, |entry| {
                 if self.checked_functions.insert(entry) {
+                    let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
+                    let rsa = required_stable_addresses.get(entry_rva);
                     let mut analyzer = GameAnalyzer {
                         game_ctx: self,
                         binary,
                         game_ref_seen: false,
                         other_globals: false,
+                        required_stable_addresses: rsa,
+                        switch_table: E::VirtualAddress::from_u64(0),
+                        patch_indices: Vec::new(),
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
-                    if self.unchecked_refs.contains(&game_ref_addr) {
+                    analyzer.convert_to_two_step_hooks_where_needed();
+                    // Using switch_table as a heuristic for function end.
+                    // Some game_ref_addrs are in unreachable code, so assume
+                    // that if the function end is after game_ref_addr it's fine
+                    if analyzer.switch_table > entry {
+                        function_ends.insert(entry, analyzer.switch_table);
+                    }
+                    if analyzer.switch_table < game_ref_addr &&
+                        self.unchecked_refs.contains(&game_ref_addr)
+                    {
                         EntryOf::Retry
                     } else {
                         EntryOf::Ok(())
                     }
                 } else {
-                    EntryOf::Retry
+                    let is_inside_analyzed_func = function_ends.get(&entry)
+                        .filter(|&&end| end > game_ref_addr)
+                        .is_some();
+                    if is_inside_analyzed_func {
+                        EntryOf::Stop
+                    } else {
+                        EntryOf::Retry
+                    }
                 }
             }).into_option();
             if result.is_none() {
@@ -138,21 +167,30 @@ impl<'a, 'e, E: ExecutionState<'e>> GameContext<'a, 'e, E> {
         }
     }
 
-    fn other_global_analysis(&mut self) {
+    fn other_global_analysis(
+        &mut self,
+        required_stable_addresses: &mut RequiredStableAddressesMap<E::VirtualAddress>,
+    ) {
         let binary = self.analysis.binary;
         let ctx = self.analysis.ctx;
         let functions = self.analysis.functions();
         while let Some(ref_addr) = self.unchecked_refs.iter().cloned().next() {
             let result = entry_of_until(binary, &functions, ref_addr, |entry| {
                 if self.checked_functions.insert(entry) {
+                    let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
+                    let rsa = required_stable_addresses.get(entry_rva);
                     let mut analyzer = GameAnalyzer {
                         game_ctx: self,
                         binary,
                         game_ref_seen: true,
                         other_globals: true,
+                        required_stable_addresses: rsa,
+                        switch_table: E::VirtualAddress::from_u64(0),
+                        patch_indices: Vec::new(),
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
+                    analyzer.convert_to_two_step_hooks_where_needed();
                     if self.unchecked_refs.contains(&ref_addr) {
                         EntryOf::Retry
                     } else {
@@ -175,12 +213,21 @@ pub struct GameAnalyzer<'a, 'b, 'e, E: ExecutionState<'e>> {
     // Optimization to avoid some work before first game address ref
     game_ref_seen: bool,
     other_globals: bool,
+    required_stable_addresses: &'a mut RequiredStableAddresses<E::VirtualAddress>,
+    switch_table: E::VirtualAddress,
+    patch_indices: Vec<usize>,
 }
 
 impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameAnalyzer<'a, 'b, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if ctrl.address() == self.switch_table {
+            // Executed to switch table cases, stop
+            ctrl.skip_operation();
+            ctrl.end_branch();
+            return;
+        }
         match *op {
             Operation::Move(ref dest, unres_val, None) => {
                 if !self.game_ref_seen {
@@ -218,6 +265,40 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameAnalyzer<
                     }
                 }
             }
+            Operation::Jump { to, .. } => {
+                if let Some(to) = ctrl.resolve(to).if_constant() {
+                    let to = E::VirtualAddress::from_u64(to);
+                    let binary = self.binary;
+                    if let Err(e) = self.required_stable_addresses.add_jump_dest(binary, to) {
+                        self.add_warning(format!(
+                            "Overlapping stable addresses {:?} for jump {:?} -> {:?}",
+                            e, ctrl.address(), to,
+                        ));
+                    }
+                }
+                // A bit hacky fix to register switch table locations to prevent certain
+                // noreturn code from executing them.
+                // Probably could be better to have analysis to recognize that noreturn
+                // function instead of relying control flow from it reaching switch table.
+                // NOTE: Copypaste from DatReferringFuncAnalysis
+                if let Some(address) = ctrl.if_mem_word(to) {
+                    let address = ctrl.resolve(address);
+                    if let Some((index, base)) = address.if_arithmetic_add() {
+                        let index = index.if_arithmetic_mul()
+                            .and_then(|(l, r)| {
+                                r.if_constant()
+                                    .filter(|&c| c == E::VirtualAddress::SIZE as u64)?;
+                                Some(l)
+                            });
+                        if let (Some(c), Some(index)) = (base.if_constant(), index) {
+                            let exec_state = ctrl.exec_state();
+                            if exec_state.value_limits(index).0 == 0 {
+                                self.switch_table = E::VirtualAddress::from_u64(c);
+                            }
+                        }
+                    }
+                }
+            }
             Operation::Call(_) => {
                 if self.other_globals {
                     // Check for a memcpy/memset of trigger unit caches
@@ -234,7 +315,8 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameAnalyzer<
                         // Hacky way to reuse the patched addr array
                         let address = ctrl.address();
                         let dummy = self.game_ctx.game;
-                        if self.game_ctx.patched_addresses.insert(address, (0, dummy)).is_some() {
+                        if self.game_ctx.patched_addresses.insert(address, (!0, dummy)).is_some()
+                        {
                             return;
                         }
                         // Arg2 may be pointer to a game table (if memcpy)
@@ -255,6 +337,16 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameAnalyzer<
                         ];
                         let patches = &mut self.game_ctx.result.patches;
                         patches.push(DatPatch::ExtendedArrayArg(address, args));
+                        if let Err(e) = self.required_stable_addresses.try_add_for_patch(
+                            self.binary,
+                            ctrl.address(),
+                            ctrl.current_instruction_end(),
+                        ) {
+                            self.add_warning(format!(
+                                "Can't add stable address for patch @ {:?}, conflict {:?}",
+                                ctrl.address(), e,
+                            ));
+                        }
                     }
                 }
             }
@@ -430,14 +522,17 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'e, E> {
         // Redo patch if it was already patched, as the second time should give more
         // accurate index (E.g. undefined instead of constant).
         let patches = &mut self.game_ctx.result.patches;
+        let patch_indices = &mut self.patch_indices;
         let &mut (i, old_index) = self.game_ctx.patched_addresses.entry(address)
             .or_insert_with(|| {
                 let i = patches.len();
+                patch_indices.push(i);
                 patches.push(DatPatch::ExtendedArray(ExtArrayPatch {
                     address,
                     instruction_len: 0,
                     ext_array_id: 0,
                     index,
+                    two_step: None,
                 }));
                 (i, index)
             });
@@ -452,6 +547,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'e, E> {
             instruction_len,
             ext_array_id,
             index,
+            two_step: None,
         });
     }
 
@@ -921,6 +1017,47 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'e, E> {
         let ctx = ctrl.ctx();
         let exec_state = ctrl.exec_state();
         super::unresolve(ctx, exec_state, op)
+    }
+
+    fn convert_to_two_step_hooks_where_needed(&mut self) {
+        let binary = self.binary;
+        for &i in &self.patch_indices {
+            let address = match self.game_ctx.result.patches[i] {
+                DatPatch::ExtendedArray(ref patch) => Some(patch.address),
+                _ => None,
+            };
+            if let Some(address) = address {
+                if let Err(_) = self.required_stable_addresses.try_add_for_patch(
+                    binary,
+                    address,
+                    address + 5,
+                ) {
+                    if let Err(_) = self.required_stable_addresses.try_add_for_patch(
+                        binary,
+                        address,
+                        address + 2,
+                    ) {
+                        warn!("Can't fit extended array patch to {:?}", address);
+                        continue;
+                    }
+                    let mut hook_ctx = FunctionHookContext::<E> {
+                        result: &mut self.game_ctx.result,
+                        required_stable_addresses: self.required_stable_addresses,
+                        binary: binary,
+                    };
+                    if let Some(free_space) = hook_ctx.find_short_jump_hook_space(address) {
+                        match self.game_ctx.result.patches[i] {
+                            DatPatch::ExtendedArray(ref mut patch) => {
+                                patch.two_step = Some(free_space);
+                            }
+                            _ => (),
+                        }
+                    } else {
+                        warn!("Can't free space for hook @ {:?}", address);
+                    }
+                }
+            }
+        }
     }
 }
 

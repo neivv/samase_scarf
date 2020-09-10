@@ -1612,7 +1612,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 }
                 DatPatch::ExtendedArray(ref a) => {
                     ext_array_patches.push(
-                        (a.address, a.instruction_len, a.ext_array_id, a.index)
+                        (a.address, a.two_step, a.instruction_len, a.ext_array_id, a.index)
                     );
                 }
                 DatPatch::ExtendedArrayArg(addr, args) => {
@@ -1635,7 +1635,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         func_replaces.sort_unstable_by_key(|x| x.0);
         hooks.sort_unstable_by_key(|x| x.0);
         two_step_hooks.sort_unstable_by_key(|x| x.0);
-        ext_array_patches.sort_unstable_by_key(|x| (x.2, x.0));
+        ext_array_patches.sort_unstable_by_key(|x| (x.3, x.0));
         ext_array_args.sort_unstable_by_key(|x| x.0);
         grp_index_hooks.sort_unstable_by_key(|x| *x);
         grp_texture_hooks.sort_unstable_by_key(|x| x.0);
@@ -2356,7 +2356,7 @@ pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
     pub func_replaces: Vec<(Va, DatReplaceFunc)>,
     pub hooks: Vec<(Va, u8, Vec<u8>)>,
     pub two_step_hooks: Vec<(Va, Va, u8, Vec<u8>)>,
-    pub ext_array_patches: Vec<(Va, u8, u32, Operand<'e>)>,
+    pub ext_array_patches: Vec<(Va, Option<Va>, u8, u32, Operand<'e>)>,
     pub ext_array_args: Vec<(Va, Vec<(usize, u8)>)>,
     pub grp_index_hooks: Vec<Va>,
     pub grp_texture_hooks: Vec<(Va, u8, Operand<'e>, Operand<'e>, Operand<'e>)>,

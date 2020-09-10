@@ -148,6 +148,7 @@ pub struct ExtArrayPatch<'e, Va: VirtualAddress> {
     pub instruction_len: u8,
     pub ext_array_id: u32,
     pub index: Operand<'e>,
+    pub two_step: Option<Va>,
 }
 
 pub struct GrpTexturePatch<'e, Va: VirtualAddress> {
@@ -295,7 +296,11 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         );
         dat_ctx.add_warning(msg);
     }
-    game::dat_game_analysis(&mut dat_ctx.analysis, &mut dat_ctx.result);
+    game::dat_game_analysis(
+        &mut dat_ctx.analysis,
+        &mut dat_ctx.required_stable_addresses,
+        &mut dat_ctx.result,
+    );
     units::init_units_analysis(dat_ctx)?;
     units::command_analysis(dat_ctx)?;
     wireframe::grp_index_patches(dat_ctx)?;
@@ -353,6 +358,127 @@ pub(crate) struct DatPatchContext<'a, 'e, E: ExecutionState<'e>> {
     /// Set during analysis, contains refs but isn't fully analyzed.
     /// Maybe dumb to special case this
     update_status_screen_tooltip: E::VirtualAddress,
+    required_stable_addresses: RequiredStableAddressesMap<E::VirtualAddress>,
+}
+
+pub(crate) struct RequiredStableAddressesMap<Va: VirtualAddress> {
+    map: FxHashMap<Rva, RequiredStableAddresses<Va>>,
+}
+
+pub(crate) struct RequiredStableAddresses<Va: VirtualAddress> {
+    list: RangeList<Rva, IsJumpDest>,
+    phantom: std::marker::PhantomData<*const Va>,
+}
+
+impl<Va: VirtualAddress> RequiredStableAddressesMap<Va> {
+    pub fn with_capacity(cap: usize) -> RequiredStableAddressesMap<Va> {
+        RequiredStableAddressesMap {
+            map: FxHashMap::with_capacity_and_hasher(cap, Default::default()),
+        }
+    }
+
+    pub fn get(&mut self, rva: Rva) -> &mut RequiredStableAddresses<Va> {
+        self.map.entry(rva)
+            .or_insert_with(|| RequiredStableAddresses {
+                list: RangeList::with_capacity(64),
+                phantom: Default::default(),
+            })
+    }
+
+    pub fn take(&mut self, rva: Rva) -> RequiredStableAddresses<Va> {
+        match self.map.entry(rva) {
+            Entry::Occupied(e) => e.remove(),
+            Entry::Vacant(_) => RequiredStableAddresses {
+                list: RangeList::with_capacity(64),
+                phantom: Default::default(),
+            },
+        }
+    }
+
+    pub fn add_back(&mut self, rva: Rva, list: RequiredStableAddresses<Va>) {
+        let had_any = self.map.insert(rva, list).is_some();
+        debug_assert!(!had_any);
+    }
+}
+
+impl<Va: VirtualAddress> RequiredStableAddresses<Va> {
+    pub fn try_add(
+        &mut self,
+        binary: &BinaryFile<Va>,
+        start: Va,
+        end: Va,
+        is_jump_dest: IsJumpDest,
+    ) -> Result<(), (Va, Va, &mut IsJumpDest)> {
+        let start = Rva((start.as_u64() - binary.base.as_u64()) as u32);
+        let end = Rva((end.as_u64() - binary.base.as_u64()) as u32);
+        if let Err(old_range) = self.list.add(start, end, is_jump_dest) {
+            let start = binary.base + (old_range.0).0;
+            let end = binary.base + (old_range.1).0;
+            Err((start, end, old_range.2))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn try_add_for_patch(
+        &mut self,
+        binary: &BinaryFile<Va>,
+        start: Va,
+        end: Va,
+    ) -> Result<(), (Va, Va)> {
+        match self.try_add(binary, start, end, IsJumpDest::No) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                if e.0 == start && e.1 >= end && *e.2 == IsJumpDest::Yes {
+                    *e.2 = IsJumpDest::No;
+                    Ok(())
+                } else if e.0 == start && e.1 < end && *e.2 == IsJumpDest::Yes {
+                    // Can potentially grow this to contain this entire range.
+                    let start = Rva((start.as_u64() - binary.base.as_u64()) as u32);
+                    let end = Rva((end.as_u64() - binary.base.as_u64()) as u32);
+                    if let Err(e2) = self.list.grow(start, end, IsJumpDest::No) {
+                        let start = binary.base + (e2.0).0;
+                        let end = binary.base + (e2.1).0;
+                        Err((start, end))
+                    } else {
+                        Ok(())
+                    }
+                } else {
+                    Err((e.0, e.1))
+                }
+            }
+        }
+    }
+
+    pub fn add_jump_dest(
+        &mut self,
+        binary: &BinaryFile<Va>,
+        to: Va,
+    ) -> Result<(), (Va, Va)> {
+        if let Some(len) = instruction_length(binary, to) {
+            let end = to + len as u32;
+            if let Err(e) = self.try_add(binary, to, end, IsJumpDest::Yes) {
+                let e = (e.0, e.1, *e.2);
+                let input = (to, end, IsJumpDest::Yes);
+                if (e.0, e.1) != (input.0, input.1) {
+                    // Accept jumps inside a jump dest, as those are sometimes
+                    // generated
+                    let accept = e.2 == IsJumpDest::Yes && (
+                            (e.0 <= input.0 && e.1 >= input.1) ||
+                            (e.0 >= input.0 && e.1 <= input.1)
+                        );
+                    if !accept {
+                        return Err((e.0, e.1));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item = (Rva, Rva)> + 'a {
+        self.list.iter()
+    }
 }
 
 struct DatTable<Va: VirtualAddress> {
@@ -417,6 +543,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             unknown_global_u8_mem: FxHashMap::with_capacity_and_hasher(4, Default::default()),
             array_address_patches: FxHashMap::with_capacity_and_hasher(256, Default::default()),
             update_status_screen_tooltip: E::VirtualAddress::from_u64(0),
+            required_stable_addresses: RequiredStableAddressesMap::with_capacity(1024),
         })
     }
 
@@ -621,14 +748,20 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
         let ctx = self.analysis.ctx;
         let mut analysis = FuncAnalysis::new(binary, ctx, entry);
         let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
+        let mut rsa = self.required_stable_addresses.take(entry_rva);
         let mut analyzer = match self.analyzed_functions.remove(&entry_rva) {
-            Some(state) => DatReferringFuncAnalysis::rebuild(self, self.text, state, mode),
-            None => DatReferringFuncAnalysis::new(self, self.text, entry, ref_address, mode),
+            Some(state) => {
+                DatReferringFuncAnalysis::rebuild(self, self.text, &mut rsa, state, mode)
+            }
+            None => {
+                DatReferringFuncAnalysis::new(self, self.text, &mut rsa, entry, ref_address, mode)
+            }
         };
         analysis.analyze(&mut analyzer);
         analyzer.generate_needed_patches(analysis);
         let result = analyzer.result;
         let state = analyzer.state;
+        self.required_stable_addresses.add_back(entry_rva, rsa);
         self.analyzed_functions.insert(entry_rva, state);
         result
     }
@@ -661,9 +794,11 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                     if let Some(mut state) = self.analyzed_functions.remove(&entry_rva) {
                         if state.has_called_func(func_rva) {
                             if checked_funcs.insert(entry_rva) {
+                                let mut rsa = self.required_stable_addresses.take(entry_rva);
                                 let mut analyzer = DatReferringFuncAnalysis::rebuild(
                                     self,
                                     self.text,
+                                    &mut rsa,
                                     state,
                                     mode,
                                 );
@@ -676,6 +811,7 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                                 }
                                 analyzer.generate_noncfg_patches();
                                 state = analyzer.state;
+                                self.required_stable_addresses.add_back(entry_rva, rsa);
                             }
                             result = EntryOf::Ok(());
                         }
@@ -722,9 +858,20 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
                 continue;
             }
             let mode = DatFuncAnalysisMode::ArrayIndex;
-            let mut analyzer = DatReferringFuncAnalysis::rebuild(self, self.text, state, mode);
+            let mut rsa = self.required_stable_addresses.take(rva);
+            let mut analyzer =
+                DatReferringFuncAnalysis::rebuild(self, self.text, &mut rsa, state, mode);
             analyzer.generate_stack_size_patches();
-            analyzer.process_pending_hooks();
+            let pending_hooks = mem::replace(&mut analyzer.state.pending_hooks, Vec::new());
+            if !pending_hooks.is_empty() {
+                let binary = self.binary;
+                let mut hook_ctx = FunctionHookContext::<E> {
+                    result: &mut self.result,
+                    required_stable_addresses: &mut rsa,
+                    binary,
+                };
+                hook_ctx.process_pending_hooks(pending_hooks);
+            }
         }
     }
 
@@ -830,6 +977,11 @@ struct DatReferringFuncAnalysis<'a, 'b, 'e, E: ExecutionState<'e>> {
     is_update_status_screen_tooltip: bool,
     switch_table: E::VirtualAddress,
     mode: DatFuncAnalysisMode,
+    /// Address ranges which can't be patched over. Either because they have a
+    /// patch/hook already, or they are a jump destination.
+    /// (Jump destinations can be patched over if the patch starts at the start
+    /// of the range)
+    required_stable_addresses: &'a mut RequiredStableAddresses<E::VirtualAddress>,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash)]
@@ -844,11 +996,6 @@ struct DatFuncAnalysisState<'e, E: ExecutionState<'e>> {
     // to distinguish them from undefs that come from state merges
     calls: Vec<Rva>,
     calls_reverse_lookup: FxHashMap<Rva, u32>,
-    /// Address ranges which can't be patched over. Either because they have a
-    /// patch/hook already, or they are a jump destination.
-    /// (Jump destinations can be patched over if the patch starts at the start
-    /// of the range)
-    required_stable_addresses: RangeList<Rva, IsJumpDest>,
     next_cfg_custom_id: u32,
     u8_instruction_lists: InstructionLists<U8Operand>,
     stack_size_tracker: stack_analysis::StackSizeTracker<'e, E>,
@@ -869,7 +1016,7 @@ impl<'e, E: ExecutionState<'e>> DatFuncAnalysisState<'e, E> {
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
-enum IsJumpDest {
+pub(crate) enum IsJumpDest {
     Yes,
     No,
 }
@@ -1037,36 +1184,18 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Jump { condition, to } => {
                 if let Some(to) = ctrl.resolve(to).if_constant() {
                     let to = E::VirtualAddress::from_u64(to);
-                    if let Some(len) = self.instruction_length(to) {
-                        let end = to + len as u32;
-                        if let Err(e) =
-                            self.try_add_required_stable_address(to, end, IsJumpDest::Yes)
-                        {
-                            let e = (e.0, e.1, *e.2);
-                            let input = (to, end, IsJumpDest::Yes);
-                            if (e.0, e.1) != (input.0, input.1) {
-                                // Accept jumps inside a jump dest, as those are sometimes
-                                // generated
-                                let accept = e.2 == IsJumpDest::Yes && (
-                                        (e.0 <= input.0 && e.1 >= input.1) ||
-                                        (e.0 >= input.0 && e.1 <= input.1)
-                                    );
-                                if !accept {
-                                    self.add_warning(
-                                        format!(
-                                            "Overlapping stable addresses {:?} {:?}",
-                                            e, input
-                                        ),
-                                    );
-                                }
-                            }
-                        }
+                    let binary = self.binary;
+                    if let Err(e) = self.required_stable_addresses.add_jump_dest(binary, to) {
+                        self.add_warning(
+                            format!("Overlapping stable addresses {:?} for jump to {:?}", e, to),
+                        );
                     }
                 }
                 // A bit hacky fix to register switch table locations to prevent certain
                 // noreturn code from executing them.
                 // Probably could be better to have analysis to recognize that noreturn
                 // function instead of relying control flow from it reaching switch table.
+                // NOTE: Copypasted to game::GameAnalyzer
                 if let Some(address) = ctrl.if_mem_word(to) {
                     let address = ctrl.resolve(address);
                     if let Some((index, base)) = address.if_arithmetic_add() {
@@ -1166,6 +1295,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
     pub fn new(
         dat_ctx: &'a mut DatPatchContext<'b, 'e, E>,
         text: &'e BinarySection<E::VirtualAddress>,
+        required_stable_addresses: &'a mut RequiredStableAddresses<E::VirtualAddress>,
         entry: E::VirtualAddress,
         ref_address: E::VirtualAddress,
         mode: DatFuncAnalysisMode,
@@ -1185,11 +1315,11 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             is_update_status_screen_tooltip: false,
             switch_table: E::VirtualAddress::from_u64(0),
             mode,
+            required_stable_addresses,
             state: Box::new(DatFuncAnalysisState {
                 calls: Vec::with_capacity(64),
                 calls_reverse_lookup:
                     FxHashMap::with_capacity_and_hasher(64, Default::default()),
-                required_stable_addresses: RangeList::with_capacity(64),
                 u8_instruction_lists: InstructionLists {
                     heads: FxHashMap::with_capacity_and_hasher(32, Default::default()),
                     store: Vec::with_capacity(128),
@@ -1209,6 +1339,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
     pub fn rebuild(
         dat_ctx: &'a mut DatPatchContext<'b, 'e, E>,
         text: &'e BinarySection<E::VirtualAddress>,
+        required_stable_addresses: &'a mut RequiredStableAddresses<E::VirtualAddress>,
         state: Box<DatFuncAnalysisState<'e, E>>,
         mode: DatFuncAnalysisMode,
     ) -> DatReferringFuncAnalysis<'a, 'b, 'e, E> {
@@ -1228,6 +1359,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             switch_table: E::VirtualAddress::from_u64(0),
             state,
             mode,
+            required_stable_addresses,
         }
     }
 
@@ -1246,7 +1378,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
             Err(e) => {
                 let warn =
                     format!("Required stable address overlap: {:?} vs {:?}", e, (start, end));
-                self.add_warning(warn);
+                self.dat_ctx.add_warning(warn);
             }
         }
     }
@@ -1256,49 +1388,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
         start: E::VirtualAddress,
         end: E::VirtualAddress,
     ) -> Result<(), (E::VirtualAddress, E::VirtualAddress)> {
-        match self.try_add_required_stable_address(start, end, IsJumpDest::No) {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                if e.0 == start && e.1 >= end && *e.2 == IsJumpDest::Yes {
-                    *e.2 = IsJumpDest::No;
-                    Ok(())
-                } else if e.0 == start && e.1 < end && *e.2 == IsJumpDest::Yes {
-                    // Can potentially grow this to contain this entire range.
-                    let start = Rva((start.as_u64() - self.binary.base.as_u64()) as u32);
-                    let end = Rva((end.as_u64() - self.binary.base.as_u64()) as u32);
-                    if let Err(e2) =
-                        self.state.required_stable_addresses.grow(start, end, IsJumpDest::No)
-                    {
-                        let start = self.binary.base + (e2.0).0;
-                        let end = self.binary.base + (e2.1).0;
-                        Err((start, end))
-                    } else {
-                        Ok(())
-                    }
-                } else {
-                    Err((e.0, e.1))
-                }
-            }
-        }
-    }
-
-    fn try_add_required_stable_address(
-        &mut self,
-        start: E::VirtualAddress,
-        end: E::VirtualAddress,
-        is_jump_dest: IsJumpDest,
-    ) -> Result<(), (E::VirtualAddress, E::VirtualAddress, &mut IsJumpDest)> {
-        let start = Rva((start.as_u64() - self.binary.base.as_u64()) as u32);
-        let end = Rva((end.as_u64() - self.binary.base.as_u64()) as u32);
-        if let Err(old_range) =
-            self.state.required_stable_addresses.add(start, end, is_jump_dest)
-        {
-            let start = self.binary.base + (old_range.0).0;
-            let end = self.binary.base + (old_range.1).0;
-            Err((start, end, old_range.2))
-        } else {
-            Ok(())
-        }
+        self.required_stable_addresses.try_add_for_patch(self.binary, start, end)
     }
 
     fn custom_value_for_call(&mut self, dest: E::VirtualAddress) -> Option<Operand<'e>> {
@@ -1855,16 +1945,11 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
         }
     }
 
-    fn instruction_length(&mut self, address: E::VirtualAddress) -> Option<u8> {
-        let bytes = self.binary.slice_from_address(address, 0x10).ok()?;
-        Some(lde::X86::ld(bytes) as u8)
-    }
-
     fn nop(&mut self, address: E::VirtualAddress) {
         if !self.dat_ctx.patched_addresses.insert(address) {
             return;
         }
-        let ins_len = match self.instruction_length(address) {
+        let ins_len = match instruction_length(self.binary, address) {
             Some(s) => s,
             None => return,
         };
@@ -2162,123 +2247,6 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'e, E> 
                 self.add_hook(addr, skip as u8, patch);
             }
         });
-    }
-
-    fn process_pending_hooks(&mut self) {
-        let mut pending_hooks = mem::replace(&mut self.state.pending_hooks, Vec::new());
-        pending_hooks.sort_unstable_by_key(|x| x.0);
-        let mut i = 0;
-        let mut short_jump_hooks = 0;
-        let long_jump_len = 5;
-        // Add anything that can do a long hook
-        while i < pending_hooks.len() {
-            let (address, code_offset, len, skip) = pending_hooks[i];
-            let mut needs_short_jump = false;
-            let mut can_hook_at_all = true;
-            // First check if another hook forces a short jump
-            if let Some(next) = pending_hooks.get(i + 1) {
-                if next.0 < address + long_jump_len {
-                    needs_short_jump = true;
-                }
-                if next.0 < address + 2 {
-                    can_hook_at_all = false;
-                }
-            }
-            // Add long jump if other stable addresses won't conflict
-            if !needs_short_jump {
-                let stable_address_result = self.try_add_required_stable_address_for_patch(
-                    address,
-                    address + 5,
-                );
-                match stable_address_result {
-                    Ok(()) => {
-                        let result = &mut self.dat_ctx.result;
-                        result.patches.push(DatPatch::Hook(address, code_offset, len, skip));
-                    }
-                    Err(_conflict_address) => {
-                        needs_short_jump = true;
-                    }
-                }
-            }
-            if needs_short_jump && can_hook_at_all {
-                // Reserve the 2byte shortjmp space here
-                if let Err(_) =
-                    self.try_add_required_stable_address_for_patch(address, address + 2)
-                {
-                    can_hook_at_all = false;
-                }
-            }
-            if !can_hook_at_all {
-                self.add_warning(format!("Can't hook @ {:?}", address));
-            } else if needs_short_jump {
-                // Keep the pending hook for a second loop, move it to start of the vec
-                pending_hooks[short_jump_hooks] = pending_hooks[i];
-                short_jump_hooks += 1;
-            } else {
-                // Was added succesfully as a long hook
-            }
-
-            // Add hook return position as jump dest
-            let return_pos = address + skip as u32;
-            if let Some(len) = self.instruction_length(return_pos) {
-                let _ = self.try_add_required_stable_address(
-                    return_pos,
-                    return_pos + len as u32,
-                    IsJumpDest::Yes,
-                );
-            }
-
-            i += 1;
-        }
-        // Shortjump hooks
-        let short_jump_hook_slice = &pending_hooks[..short_jump_hooks];
-        for &(address, code_offset, len, skip) in short_jump_hook_slice {
-            let space = match self.find_short_jump_hook_space(address) {
-                Some(s) => s,
-                None => {
-                    self.add_warning(format!("Can't find shortjmp space for {:?}", address));
-                    continue;
-                }
-            };
-            let result = &mut self.dat_ctx.result;
-            result.patches.push(DatPatch::TwoStepHook(address, space, code_offset, len, skip));
-        }
-    }
-
-    fn find_short_jump_hook_space(
-        &mut self,
-        address: E::VirtualAddress,
-    ) -> Option<E::VirtualAddress> {
-        let min = address - 0x7c;
-        let max = address + 0x7c;
-        let mut cand = None;
-        let mut result = None;
-        for (start, end) in self.state.required_stable_addresses.iter() {
-            let start = self.binary.base + start.0;
-            let end = self.binary.base + end.0;
-            if let Some(cand) = cand.take() {
-                if start >= cand + 0xa {
-                    result = Some(cand);
-                    break;
-                }
-            }
-            if end > max {
-                break;
-            }
-            if end > min {
-                cand = Some(end);
-            }
-        }
-        if let Some(cand) = result {
-            let bytes = self.binary.slice_from_address(cand, 0x20).ok()?;
-            let mut len = 0;
-            while len < 0xa {
-                let slice = bytes.get(len as usize..)?;
-                len += lde::X86::ld(slice);
-            }
-            self.add_required_stable_address_for_patch(cand, cand + len);
-        }
-        result
     }
 
     fn check_u8_instruction(
@@ -2887,4 +2855,169 @@ fn unresolve<'e, E: ExecutionState<'e>>(
         }
     }
     None
+}
+
+fn instruction_length<Va: VirtualAddress>(binary: &BinaryFile<Va>, address: Va) -> Option<u8> {
+    let bytes = binary.slice_from_address(address, 0x10).ok()?;
+    Some(lde::X86::ld(bytes) as u8)
+}
+
+/// Data required to build hooks for a function
+struct FunctionHookContext<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut DatPatches<'e, E::VirtualAddress>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    required_stable_addresses: &'a mut RequiredStableAddresses<E::VirtualAddress>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'e, E> {
+    fn add_warning(&mut self, msg: String) {
+        warn!("{}", msg);
+    }
+
+    /// Creates patches from pending hooks and adds them to result.
+    fn process_pending_hooks(
+        &mut self,
+        mut pending_hooks: Vec<(E::VirtualAddress, u32, u8, u8)>,
+    ) {
+        pending_hooks.sort_unstable_by_key(|x| x.0);
+        let binary = self.binary;
+        let mut i = 0;
+        let mut short_jump_hooks = 0;
+        let long_jump_len = 5;
+        // Add anything that can do a long hook
+        while i < pending_hooks.len() {
+            let (address, code_offset, len, skip) = pending_hooks[i];
+            let mut needs_short_jump = false;
+            let mut can_hook_at_all = true;
+            // First check if another hook forces a short jump
+            if let Some(next) = pending_hooks.get(i + 1) {
+                if next.0 < address + long_jump_len {
+                    needs_short_jump = true;
+                }
+                if next.0 < address + 2 {
+                    can_hook_at_all = false;
+                }
+            }
+            // Add long jump if other stable addresses won't conflict
+            if !needs_short_jump {
+                let stable_address_result = self.try_add_required_stable_address_for_patch(
+                    address,
+                    address + 5,
+                );
+                match stable_address_result {
+                    Ok(()) => {
+                        let result = &mut self.result;
+                        result.patches.push(DatPatch::Hook(address, code_offset, len, skip));
+                    }
+                    Err(_conflict_address) => {
+                        needs_short_jump = true;
+                    }
+                }
+            }
+            if needs_short_jump && can_hook_at_all {
+                // Reserve the 2byte shortjmp space here
+                if let Err(_) =
+                    self.try_add_required_stable_address_for_patch(address, address + 2)
+                {
+                    can_hook_at_all = false;
+                }
+            }
+            if !can_hook_at_all {
+                self.add_warning(format!("Can't hook @ {:?}", address));
+            } else if needs_short_jump {
+                // Keep the pending hook for a second loop, move it to start of the vec
+                pending_hooks[short_jump_hooks] = pending_hooks[i];
+                short_jump_hooks += 1;
+            } else {
+                // Was added succesfully as a long hook
+            }
+
+            // Add hook return position as jump dest
+            let return_pos = address + skip as u32;
+            if let Some(len) = instruction_length(binary, return_pos) {
+                let _ = self.required_stable_addresses.try_add(
+                    binary,
+                    return_pos,
+                    return_pos + len as u32,
+                    IsJumpDest::Yes,
+                );
+            }
+
+            i += 1;
+        }
+        // Shortjump hooks
+        let short_jump_hook_slice = &pending_hooks[..short_jump_hooks];
+        for &(address, code_offset, len, skip) in short_jump_hook_slice {
+            let space = match self.find_short_jump_hook_space(address) {
+                Some(s) => s,
+                None => {
+                    self.add_warning(format!("Can't find shortjmp space for {:?}", address));
+                    continue;
+                }
+            };
+            let result = &mut self.result;
+            result.patches.push(DatPatch::TwoStepHook(address, space, code_offset, len, skip));
+        }
+    }
+
+    fn find_short_jump_hook_space(
+        &mut self,
+        address: E::VirtualAddress,
+    ) -> Option<E::VirtualAddress> {
+        let min = address - 0x7c;
+        let max = address + 0x7c;
+        let mut cand = None;
+        let mut result = None;
+        let binary = self.binary;
+        for (start, end) in self.required_stable_addresses.iter() {
+            let start = binary.base + start.0;
+            let end = binary.base + end.0;
+            if let Some(cand) = cand.take() {
+                if start >= cand + 0xa {
+                    result = Some(cand);
+                    break;
+                }
+            }
+            if end > max {
+                break;
+            }
+            if end > min {
+                cand = Some(end);
+            }
+        }
+        if let Some(cand) = result {
+            let bytes = binary.slice_from_address(cand, 0x20).ok()?;
+            let mut len = 0;
+            while len < 0xa {
+                let slice = bytes.get(len as usize..)?;
+                len += lde::X86::ld(slice);
+            }
+            self.add_required_stable_address_for_patch(cand, cand + len);
+        }
+        result
+    }
+
+    /// If there's a conflict in a jump instruction then converts to IsJumpDest::No.
+    fn add_required_stable_address_for_patch(
+        &mut self,
+        start: E::VirtualAddress,
+        end: E::VirtualAddress,
+    ) {
+        match self.try_add_required_stable_address_for_patch(start, end) {
+            Ok(()) => (),
+            Err(e) => {
+                let warn =
+                    format!("Required stable address overlap: {:?} vs {:?}", e, (start, end));
+                self.add_warning(warn);
+            }
+        }
+    }
+
+    fn try_add_required_stable_address_for_patch(
+        &mut self,
+        start: E::VirtualAddress,
+        end: E::VirtualAddress,
+    ) -> Result<(), (E::VirtualAddress, E::VirtualAddress)> {
+        self.required_stable_addresses.try_add_for_patch(self.binary, start, end)
+    }
 }

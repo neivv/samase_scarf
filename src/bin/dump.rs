@@ -114,8 +114,15 @@ fn main() {
                 );
             }
             println!("--- Extended array patches ---");
-            for (addr, len, ext_id, operand) in dat_patches.ext_array_patches {
-                println!("{:02x}: {:?}:{:x} = {:?}", ext_id, addr, len, operand);
+            for (addr, two_step, len, ext_id, operand) in dat_patches.ext_array_patches {
+                if let Some(two_step) = two_step {
+                    println!(
+                        "{:02x}: {:?}:{:x} (Two step {:?}) = {:?}",
+                        ext_id, addr, len, two_step, operand,
+                    );
+                } else {
+                    println!("{:02x}: {:?}:{:x} = {:?}", ext_id, addr, len, operand);
+                }
             }
             println!("--- Extended array arg patches ---");
             for (addr, args) in dat_patches.ext_array_args {
