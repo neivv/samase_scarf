@@ -21,6 +21,8 @@ pub fn dat_game_analysis<'e, E: ExecutionState<'e>>(
     let game = analysis.game()?;
     let unit_strength = analysis.unit_strength()?;
     let player_ai = analysis.player_ai()?;
+    let trigger_all_units = analysis.trigger_all_units_cache()?;
+    let trigger_completed_units = analysis.trigger_completed_units_cache()?;
     let game_address = game.iter_no_mem_addr()
         .filter_map(|x| {
             x.if_memory()
@@ -47,6 +49,8 @@ pub fn dat_game_analysis<'e, E: ExecutionState<'e>>(
         patched_addresses: FxHashMap::with_capacity_and_hasher(128, Default::default()),
         unit_strength,
         ai_build_limit: ctx.add_const(player_ai, 0x3f0),
+        trigger_all_units,
+        trigger_completed_units,
     };
     game_ctx.do_analysis();
     debug_assert!(game_ctx.unchecked_refs.is_empty());
@@ -58,6 +62,14 @@ pub fn dat_game_analysis<'e, E: ExecutionState<'e>>(
         player_ai.if_constant().map(|x| {
             let start = E::VirtualAddress::from_u64(x) + 0x3f0;
             (start, start + 0xe4)
+        }),
+        trigger_all_units.if_constant().map(|x| {
+            let start = E::VirtualAddress::from_u64(x);
+            (start, start + 0xe4 * 12 * 4)
+        }),
+        trigger_completed_units.if_constant().map(|x| {
+            let start = E::VirtualAddress::from_u64(x);
+            (start, start + 0xe4 * 12 * 4)
         }),
     ];
     for (start, end) in other_globals.iter().flat_map(|&x| x) {
@@ -76,6 +88,7 @@ pub fn dat_game_analysis<'e, E: ExecutionState<'e>>(
             }
         }
     }
+    game_ctx.checked_functions.clear();
     game_ctx.other_global_analysis();
     Some(())
 }
@@ -90,6 +103,8 @@ pub struct GameContext<'a, 'e, E: ExecutionState<'e>> {
     patched_addresses: FxHashMap<E::VirtualAddress, (usize, Operand<'e>)>,
     unit_strength: Operand<'e>,
     ai_build_limit: Operand<'e>,
+    trigger_all_units: Operand<'e>,
+    trigger_completed_units: Operand<'e>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> GameContext<'a, 'e, E> {
@@ -203,6 +218,46 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameAnalyzer<
                     }
                 }
             }
+            Operation::Call(_) => {
+                if self.other_globals {
+                    // Check for a memcpy/memset of trigger unit caches
+                    let arg_cache = &self.game_ctx.analysis.arg_cache;
+                    let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                    let ext_array_id = if arg1 == self.game_ctx.trigger_all_units {
+                        Some(0x0du8)
+                    } else if arg1 == self.game_ctx.trigger_completed_units {
+                        Some(0x0e)
+                    } else {
+                        None
+                    };
+                    if let Some(id) = ext_array_id {
+                        // Hacky way to reuse the patched addr array
+                        let address = ctrl.address();
+                        let dummy = self.game_ctx.game;
+                        if self.game_ctx.patched_addresses.insert(address, (0, dummy)).is_some() {
+                            return;
+                        }
+                        // Arg2 may be pointer to a game table (if memcpy)
+                        let arg2 = ctrl.resolve(arg_cache.on_call(1));
+                        let ext_array2 = arg2.if_arithmetic_add()
+                            .filter(|x| x.0 == self.game_ctx.game)
+                            .and_then(|x| x.1.if_constant())
+                            .and_then(|c| match c {
+                                0x3234 => Some(0x07u8),
+                                0x5cf4 => Some(0x08),
+                                _ => None,
+                            });
+                        let args = [
+                            id.wrapping_add(1),
+                            ext_array2.map(|x| x.wrapping_add(1)).unwrap_or(0),
+                            0,
+                            0,
+                        ];
+                        let patches = &mut self.game_ctx.result.patches;
+                        patches.push(DatPatch::ExtendedArrayArg(address, args));
+                    }
+                }
+            }
             Operation::SetFlags(arith, _size) => {
                 if self.game_ref_seen {
                     if let Some(mem) = arith.left.if_memory() {
@@ -246,6 +301,8 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'e, E> {
             let others = [
                 (self.game_ctx.unit_strength, 0xe4 * 4 * 2),
                 (self.game_ctx.ai_build_limit, 0xe4),
+                (self.game_ctx.trigger_all_units, 0xe4 * 4 * 12),
+                (self.game_ctx.trigger_completed_units, 0xe4 * 4 * 12),
             ];
             let (base, index) = addr.if_arithmetic_add()
                 .map(|x| (x.1, x.0))
@@ -260,6 +317,15 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'e, E> {
                                 self.patch_unit_strength(ctrl, index);
                             } else if start == self.game_ctx.ai_build_limit {
                                 self.patch_ai_unit_limit(ctrl, index);
+                            } else if start == self.game_ctx.trigger_all_units ||
+                                start == self.game_ctx.trigger_completed_units
+                            {
+                                let id = if start == self.game_ctx.trigger_all_units {
+                                    0x0d
+                                } else {
+                                    0x0e
+                                };
+                                self.patch_unit_counts(ctrl, index, id);
                             }
                         }
                     }
@@ -828,6 +894,23 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'e, E> {
             ctx.mul_const(player, 0xc),
         );
         self.add_patch(ctrl, 0xc, index);
+    }
+
+    fn patch_unit_counts(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        index: Operand<'e>,
+        ext_array_id: u32
+    ) {
+        // No need to change the index =)
+        let index = match self.unresolve(ctrl, index) {
+            Some(a) => a,
+            _ => {
+                self.add_warning(format!("Unable to find operands for player/id"));
+                return;
+            }
+        };
+        self.add_patch(ctrl, ext_array_id, index);
     }
 
     fn unresolve(

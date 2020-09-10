@@ -117,6 +117,10 @@ fn main() {
             for (addr, len, ext_id, operand) in dat_patches.ext_array_patches {
                 println!("{:02x}: {:?}:{:x} = {:?}", ext_id, addr, len, operand);
             }
+            println!("--- Extended array arg patches ---");
+            for (addr, args) in dat_patches.ext_array_args {
+                println!("{:08x}: {:?}", addr.as_u64(), args);
+            }
             println!("--- Grp texture hooks ---");
             for (addr, len, dest, base, index) in dat_patches.grp_texture_hooks {
                 println!("{:08x}:{:x}: {} <= {}, {}", addr.as_u64(), len, dest, base, index);

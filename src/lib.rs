@@ -1573,6 +1573,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         let mut hooks = Vec::new();
         let mut two_step_hooks = Vec::new();
         let mut ext_array_patches = Vec::new();
+        let mut ext_array_args = Vec::new();
         let mut grp_index_hooks = Vec::new();
         let mut grp_texture_hooks = Vec::new();
         for patch in &patches.patches {
@@ -1614,6 +1615,12 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                         (a.address, a.instruction_len, a.ext_array_id, a.index)
                     );
                 }
+                DatPatch::ExtendedArrayArg(addr, args) => {
+                    let args = args.iter().enumerate()
+                        .filter_map(|x| Some((x.0, x.1.checked_sub(1)?)))
+                        .collect();
+                    ext_array_args.push((addr, args));
+                }
                 DatPatch::GrpIndexHook(addr) => {
                     grp_index_hooks.push(addr);
                 }
@@ -1629,6 +1636,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         hooks.sort_unstable_by_key(|x| x.0);
         two_step_hooks.sort_unstable_by_key(|x| x.0);
         ext_array_patches.sort_unstable_by_key(|x| (x.2, x.0));
+        ext_array_args.sort_unstable_by_key(|x| x.0);
         grp_index_hooks.sort_unstable_by_key(|x| *x);
         grp_texture_hooks.sort_unstable_by_key(|x| x.0);
         Some(DatPatchesDebug {
@@ -1638,6 +1646,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             hooks,
             two_step_hooks,
             ext_array_patches,
+            ext_array_args,
             grp_index_hooks,
             grp_texture_hooks,
         })
@@ -2348,6 +2357,7 @@ pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
     pub hooks: Vec<(Va, u8, Vec<u8>)>,
     pub two_step_hooks: Vec<(Va, Va, u8, Vec<u8>)>,
     pub ext_array_patches: Vec<(Va, u8, u32, Operand<'e>)>,
+    pub ext_array_args: Vec<(Va, Vec<(usize, u8)>)>,
     pub grp_index_hooks: Vec<Va>,
     pub grp_texture_hooks: Vec<(Va, u8, Operand<'e>, Operand<'e>, Operand<'e>)>,
 }

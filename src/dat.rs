@@ -98,6 +98,9 @@ pub enum DatPatch<'e, Va: VirtualAddress> {
     TwoStepHook(Va, Va, u32, u8, u8),
     ReplaceFunc(Va, DatReplaceFunc),
     ExtendedArray(ExtArrayPatch<'e, Va>),
+    /// Address, array ids (1-based)
+    /// Expected to be on call instruction.
+    ExtendedArrayArg(Va, [u8; 4]),
     GrpIndexHook(Va),
     GrpTextureHook(GrpTexturePatch<'e, Va>),
 }
