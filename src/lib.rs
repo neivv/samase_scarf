@@ -2334,19 +2334,19 @@ impl<'e> AnalysisX86<'e> {
     }
 
     pub fn trigger_conditions(&mut self) -> Option<VirtualAddress> {
-        self.trigger_conditions()
+        self.0.trigger_conditions()
     }
 
     pub fn trigger_actions(&mut self) -> Option<VirtualAddress> {
-        self.trigger_actions()
+        self.0.trigger_actions()
     }
 
     pub fn trigger_completed_units_cache(&mut self) -> Option<Operand<'e>> {
-        self.trigger_completed_units_cache()
+        self.0.trigger_completed_units_cache()
     }
 
     pub fn trigger_all_units_cache(&mut self) -> Option<Operand<'e>> {
-        self.trigger_all_units_cache()
+        self.0.trigger_all_units_cache()
     }
 }
 
