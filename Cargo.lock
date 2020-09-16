@@ -167,7 +167,7 @@ dependencies = [
 [[package]]
 name = "scarf"
 version = "0.3.0"
-source = "git+https://github.com/neivv/scarf?rev=b27209b105032db6ac0fe7dba775cb27abb908bd#b27209b105032db6ac0fe7dba775cb27abb908bd"
+source = "git+https://github.com/neivv/scarf?rev=4c2425812dfd526ef0dadac7f57da8d3a5b09c59#4c2425812dfd526ef0dadac7f57da8d3a5b09c59"
 dependencies = [
  "array-init",
  "arrayvec",
@@ -178,6 +178,7 @@ dependencies = [
  "lde",
  "log",
  "quick-error",
+ "smallvec",
  "typed-arena",
 ]
 
@@ -189,9 +190,9 @@ checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
 
 [[package]]
 name = "smallvec"
-version = "1.1.0"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44e59e0c9fa00817912ae6e4e6e3c4fe04455e75699d06eedc7d85917ed8e8f4"
+checksum = "fbee7696b84bbf3d89a1c2eccff0850e3047ed46bfcd2e92c29a2d074d57e252"
 
 [[package]]
 name = "time"

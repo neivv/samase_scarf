@@ -880,12 +880,21 @@ fn everything_1233d() {
         let y_high = ctx.and_const(ctx.rsh_const(y, 0x10), 0xffff);
         let high = ctx.xor(
             ctx.xor(
-                ctx.and_const(
-                    ctx.xor(
-                        ctx.custom(0),
-                        ctx.mem16(ctx.add_const(ctx.mem32(ctx.constant(0x30)), 0x10)),
+                ctx.xor(
+                    ctx.and_const(
+                        ctx.rsh_const(
+                            ctx.custom(0),
+                            0x10,
+                        ),
+                        0xffff,
                     ),
-                    0xffff,
+                    ctx.and_const(
+                        ctx.xor(
+                            ctx.custom(0),
+                            ctx.mem16(ctx.add_const(ctx.mem32(ctx.constant(0x30)), 0x10)),
+                        ),
+                        0xffff,
+                    ),
                 ),
                 ctx.and_const(
                     ctx.xor(
