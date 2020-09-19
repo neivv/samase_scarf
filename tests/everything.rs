@@ -37,6 +37,10 @@ fn everything_1208() {
 
         assert_eq!(analysis.trigger_conditions().unwrap().0, 0x00DC8BB0);
         assert_eq!(analysis.trigger_actions().unwrap().0, 0x00DC8AC0);
+        // There's also snet_recv_server_packets for this version that would be confused
+        // with snet_recv_packets if it was ordered before.
+        assert_eq!(analysis.snet_send_packets().unwrap().0, 0x009ae6a0);
+        assert_eq!(analysis.snet_recv_packets().unwrap().0, 0x009b14f0);
     });
 }
 
@@ -1122,7 +1126,9 @@ fn everything_1235g() {
 
 #[test]
 fn everything_1235h() {
-    test_with_extra_checks(Path::new("1235h.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1235h.exe"), |_ctx, analysis| {
+        assert_eq!(analysis.snet_send_packets().unwrap().0, 0x007949f0);
+        assert_eq!(analysis.snet_recv_packets().unwrap().0, 0x007976e0);
     })
 }
 
@@ -1679,6 +1685,8 @@ fn test_nongeneric<'e>(
 
     assert!(analysis.trigger_conditions().is_some());
     assert!(analysis.trigger_actions().is_some());
+    assert!(analysis.snet_send_packets().is_some());
+    assert!(analysis.snet_recv_packets().is_some());
     check_global_struct_opt(analysis.trigger_all_units_cache(), binary, "all units cache");
     check_global_struct_opt(
         analysis.trigger_completed_units_cache(),

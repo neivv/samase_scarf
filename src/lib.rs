@@ -84,6 +84,7 @@ pub use crate::units::{ActiveHiddenUnits, InitUnits, OrderIssuing, UnitCreation}
 
 use crate::dialog::{MultiWireframes};
 use crate::map::{RunTriggers, TriggerUnitCountCaches};
+use crate::network::{SnetHandlePackets};
 use crate::switch::{CompleteSwitch, full_switch_info};
 
 use scarf::exec_state::ExecutionState as ExecutionStateTrait;
@@ -241,6 +242,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     wirefram_ddsgrp: Cached<Option<Operand<'e>>>,
     run_triggers: Cached<RunTriggers<E::VirtualAddress>>,
     trigger_unit_count_caches: Cached<TriggerUnitCountCaches<'e>>,
+    snet_handle_packets: Cached<SnetHandlePackets<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -509,6 +511,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             wirefram_ddsgrp: Default::default(),
             run_triggers: Default::default(),
             trigger_unit_count_caches: Default::default(),
+            snet_handle_packets: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1845,6 +1848,23 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn trigger_all_units_cache(&mut self) -> Option<Operand<'e>> {
         self.trigger_unit_count_caches().all_units
     }
+
+    fn snet_handle_packets(&mut self) -> SnetHandlePackets<E::VirtualAddress> {
+        if let Some(cached) = self.snet_handle_packets.cached() {
+            return cached;
+        }
+        let result = network::snet_handle_packets(self);
+        self.snet_handle_packets.cache(&result);
+        result
+    }
+
+    pub fn snet_send_packets(&mut self) -> Option<E::VirtualAddress> {
+        self.snet_handle_packets().send_packets
+    }
+
+    pub fn snet_recv_packets(&mut self) -> Option<E::VirtualAddress> {
+        self.snet_handle_packets().recv_packets
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2347,6 +2367,14 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn trigger_all_units_cache(&mut self) -> Option<Operand<'e>> {
         self.0.trigger_all_units_cache()
+    }
+
+    pub fn snet_send_packets(&mut self) -> Option<VirtualAddress> {
+        self.0.snet_send_packets()
+    }
+
+    pub fn snet_recv_packets(&mut self) -> Option<VirtualAddress> {
+        self.0.snet_recv_packets()
     }
 }
 
