@@ -440,6 +440,8 @@ fn everything_1221b() {
         assert_eq!(lobby_state.unwrap(), ctx.mem8(ctx.constant(0x01060fc5)));
         let init = analysis.init_storm_networking().init_storm_networking.unwrap();
         assert_eq!(init.0, 0x006F0BB0);
+
+        assert_eq!(analysis.chk_init_players().unwrap(), ctx.constant(0x1064330));
     })
 }
 
@@ -1126,9 +1128,10 @@ fn everything_1235g() {
 
 #[test]
 fn everything_1235h() {
-    test_with_extra_checks(Path::new("1235h.exe"), |_ctx, analysis| {
+    test_with_extra_checks(Path::new("1235h.exe"), |ctx, analysis| {
         assert_eq!(analysis.snet_send_packets().unwrap().0, 0x007949f0);
         assert_eq!(analysis.snet_recv_packets().unwrap().0, 0x007976e0);
+        assert_eq!(analysis.chk_init_players().unwrap(), ctx.constant(0x11d35d8));
     })
 }
 
@@ -1693,6 +1696,8 @@ fn test_nongeneric<'e>(
         binary,
         "completed units cache",
     );
+
+    check_global_struct_opt(analysis.chk_init_players(), binary, "chk orig players");
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

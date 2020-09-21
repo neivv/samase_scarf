@@ -83,6 +83,7 @@ pub use crate::text::{FontRender};
 pub use crate::units::{ActiveHiddenUnits, InitUnits, OrderIssuing, UnitCreation};
 
 use crate::dialog::{MultiWireframes};
+use crate::game_init::{InitMapFromPath};
 use crate::map::{RunTriggers, TriggerUnitCountCaches};
 use crate::network::{SnetHandlePackets};
 use crate::switch::{CompleteSwitch, full_switch_info};
@@ -198,7 +199,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     is_outside_game_screen: Cached<Option<E::VirtualAddress>>,
     game_coord_conversion: Cached<Rc<GameCoordConversion<'e>>>,
     fow_sprites: Cached<Rc<FowSprites<'e>>>,
-    init_map_from_path: Cached<Option<E::VirtualAddress>>,
+    init_map_from_path: Cached<Option<InitMapFromPath<E::VirtualAddress>>>,
     choose_snp: Cached<Option<E::VirtualAddress>>,
     single_player_start: Cached<Rc<SinglePlayerStart<'e, E::VirtualAddress>>>,
     select_map_entry: Cached<Rc<SelectMapEntry<'e, E::VirtualAddress>>>,
@@ -243,6 +244,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     run_triggers: Cached<RunTriggers<E::VirtualAddress>>,
     trigger_unit_count_caches: Cached<TriggerUnitCountCaches<'e>>,
     snet_handle_packets: Cached<SnetHandlePackets<E::VirtualAddress>>,
+    chk_init_players: Cached<Option<Operand<'e>>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -512,6 +514,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             run_triggers: Default::default(),
             trigger_unit_count_caches: Default::default(),
             snet_handle_packets: Default::default(),
+            chk_init_players: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -899,13 +902,17 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         result
     }
 
-    pub fn init_map_from_path(&mut self) -> Option<E::VirtualAddress> {
+    fn init_map_from_path_vars(&mut self) -> Option<InitMapFromPath<E::VirtualAddress>> {
         if let Some(cached) = self.init_map_from_path.cached() {
             return cached;
         }
         let result = game_init::init_map_from_path(self);
         self.init_map_from_path.cache(&result);
         result
+    }
+
+    pub fn init_map_from_path(&mut self) -> Option<E::VirtualAddress> {
+        self.init_map_from_path_vars().map(|x| x.init_map_from_path)
     }
 
     pub fn choose_snp(&mut self) -> Option<E::VirtualAddress> {
@@ -1865,6 +1872,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn snet_recv_packets(&mut self) -> Option<E::VirtualAddress> {
         self.snet_handle_packets().recv_packets
     }
+
+    pub fn chk_init_players(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.chk_init_players.cached() {
+            return cached;
+        }
+        let result = game_init::chk_init_players(self);
+        self.chk_init_players.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2375,6 +2391,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn snet_recv_packets(&mut self) -> Option<VirtualAddress> {
         self.0.snet_recv_packets()
+    }
+
+    pub fn chk_init_players(&mut self) -> Option<Operand<'e>> {
+        self.0.chk_init_players()
     }
 }
 

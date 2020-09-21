@@ -3,8 +3,8 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 
 use crate::{
-    Analysis, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, find_callers,
-    string_refs, if_arithmetic_eq_neq, single_result_assign,
+    Analysis, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt,
+    find_callers, string_refs, if_arithmetic_eq_neq, single_result_assign,
 };
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -44,6 +44,12 @@ pub struct SelectMapEntry<'e, Va: VirtualAddress> {
 pub struct ImagesLoaded<'e, Va: VirtualAddress> {
     pub images_loaded: Option<Operand<'e>>,
     pub init_real_time_lighting: Option<Va>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct InitMapFromPath<Va: VirtualAddress> {
+    pub init_map_from_path: Va,
+    pub map_init_chk_callbacks: Va,
 }
 
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
@@ -358,7 +364,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
 
 pub fn init_map_from_path<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
-) -> Option<E::VirtualAddress> {
+) -> Option<InitMapFromPath<E::VirtualAddress>> {
     // init_map_from_path calls another function
     // that calls chk validation function.
     // Chk validation array is static data in format
@@ -394,23 +400,29 @@ pub fn init_map_from_path<'e, E: ExecutionState<'e>>(
     let section_refs = chk_data.into_iter().flat_map(|rva| {
         let address = rdata.virtual_address + rva.0;
         crate::find_address_refs(&rdata.data, address)
+            .into_iter()
+            .map(move |x| (rva, x))
     }).collect::<Vec<_>>();
-    let chk_validating_funcs = section_refs.into_iter().flat_map(|rva| {
+    let chk_validating_funcs = section_refs.into_iter().flat_map(|(chk_funcs_rva, rva)| {
         let address = rdata.virtual_address + rva.0;
         crate::find_functions_using_global(analysis, address)
+            .into_iter()
+            .map(move |x| (chk_funcs_rva, x))
     }).collect::<Vec<_>>();
-    let mut call_points = chk_validating_funcs.into_iter().flat_map(|f| {
+    let mut call_points = chk_validating_funcs.into_iter().flat_map(|(chk_funcs_rva, f)| {
         crate::find_callers(analysis, f.func_entry)
+            .into_iter()
+            .map(move |x| (chk_funcs_rva, x))
     }).collect::<Vec<_>>();
-    call_points.sort_unstable();
-    call_points.dedup();
+    call_points.sort_unstable_by_key(|x| x.1);
+    call_points.dedup_by_key(|x| x.1);
 
     let funcs = analysis.functions();
     let funcs = &funcs[..];
     let arg_cache = &analysis.arg_cache;
     let ctx = analysis.ctx;
     let mut result = None;
-    for addr in call_points {
+    for (chk_funcs_rva, addr) in call_points {
         let new = entry_of_until(binary, funcs, addr, |entry| {
             let state = IsInitMapFromPathState {
                 jump_count: 0,
@@ -426,7 +438,11 @@ pub fn init_map_from_path<'e, E: ExecutionState<'e>>(
             analyzer.result
         });
         if let EntryOfResult::Ok(entry, ()) = new {
-            if single_result_assign(Some(entry), &mut result) {
+            let new = InitMapFromPath {
+                init_map_from_path: entry,
+                map_init_chk_callbacks: rdata.virtual_address + chk_funcs_rva.0,
+            };
+            if single_result_assign(Some(new), &mut result) {
                 break;
             }
         }
@@ -1770,3 +1786,77 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSnetInitProvi
     }
 }
 
+pub fn chk_init_players<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Operand<'e>> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let chk_callbacks = analysis.init_map_from_path_vars()?.map_init_chk_callbacks;
+    let mut ownr_callback = None;
+    for i in 0.. {
+        let struct_size = if E::WORD_SIZE == MemAccessSize::Mem32 { 0xc } else { 0x10 };
+        let section_id = binary.read_u32(chk_callbacks + i * struct_size).ok()?;
+        if section_id == 0 {
+            break;
+        }
+        if section_id == 0x524e574f {
+            let callback = binary.read_address(chk_callbacks + i * struct_size + 4).ok()?;
+            ownr_callback = Some(callback);
+            break;
+        }
+    }
+    let ownr_callback = ownr_callback?;
+
+    let mut analyzer = FindChkInitPlayer::<E> {
+        result: None,
+        phantom: Default::default(),
+        inlining: false,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, ownr_callback);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct FindChkInitPlayer<'e, E: ExecutionState<'e>> {
+    result: Option<Operand<'e>>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+    inlining: bool,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindChkInitPlayer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        // Just check for a store to chk_init_players.type
+        // Mem8[chk_init_players + x * 0x24 + 0x8]
+        // It is also looped from reverse, so the index is actually end_type - 24 * x
+        match *op {
+            Operation::Move(DestOperand::Memory(dest), val, None) => {
+                if !self.inlining && dest.size == MemAccessSize::Mem8 {
+                    let val = ctrl.resolve(val);
+                    if val.if_mem8().is_some() {
+                        let addr = ctrl.resolve(dest.address);
+                        let ctx = ctrl.ctx();
+                        let result = addr.if_constant()
+                            .and_then(|x| Some(ctx.constant(x.checked_sub(0x24 * 11 + 8)?)));
+                        if single_result_assign(result, &mut self.result) {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Call(dest) => {
+                if !self.inlining {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        self.inlining = true;
+                        ctrl.inline(self, dest);
+                        self.inlining = false;
+                        ctrl.skip_operation();
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}

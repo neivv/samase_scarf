@@ -517,6 +517,8 @@ fn main() {
     println!("snet_send_packets: {:?}", analysis.snet_send_packets());
     println!("snet_recv_packets: {:?}", analysis.snet_recv_packets());
 
+    println!("chk_init_players: {}", format_op_operand(analysis.chk_init_players()));
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {
