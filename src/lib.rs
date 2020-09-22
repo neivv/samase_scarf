@@ -245,6 +245,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     trigger_unit_count_caches: Cached<TriggerUnitCountCaches<'e>>,
     snet_handle_packets: Cached<SnetHandlePackets<E::VirtualAddress>>,
     chk_init_players: Cached<Option<Operand<'e>>>,
+    original_chk_player_types: Cached<Option<Operand<'e>>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -515,6 +516,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             trigger_unit_count_caches: Default::default(),
             snet_handle_packets: Default::default(),
             chk_init_players: Default::default(),
+            original_chk_player_types: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1881,6 +1883,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.chk_init_players.cache(&result);
         result
     }
+
+    pub fn original_chk_player_types(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.original_chk_player_types.cached() {
+            return cached;
+        }
+        let result = game_init::original_chk_player_types(self);
+        self.original_chk_player_types.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2395,6 +2406,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn chk_init_players(&mut self) -> Option<Operand<'e>> {
         self.0.chk_init_players()
+    }
+
+    pub fn original_chk_player_types(&mut self) -> Option<Operand<'e>> {
+        self.0.original_chk_player_types()
     }
 }
 

@@ -518,6 +518,10 @@ fn main() {
     println!("snet_recv_packets: {:?}", analysis.snet_recv_packets());
 
     println!("chk_init_players: {}", format_op_operand(analysis.chk_init_players()));
+    println!(
+        "original_chk_player_types: {}",
+        format_op_operand(analysis.original_chk_player_types()),
+    );
 
     let undef = ctx.new_undef();
     println!();

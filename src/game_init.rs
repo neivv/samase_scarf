@@ -3,7 +3,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 
 use crate::{
-    Analysis, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt,
+    Analysis, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, OperandExt,
     find_callers, string_refs, if_arithmetic_eq_neq, single_result_assign,
 };
 
@@ -1854,6 +1854,75 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindChkInitPlayer<'e,
                         self.inlining = false;
                         ctrl.skip_operation();
                     }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+pub fn original_chk_player_types<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<Operand<'e>> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let chk_init_players = analysis.chk_init_players()
+        .and_then(|x| x.if_constant())
+        .map(|x| E::VirtualAddress::from_u64(x))?;
+    let mut global_refs = crate::find_functions_using_global(analysis, chk_init_players);
+    global_refs.sort_unstable_by_key(|x| x.func_entry);
+    global_refs.dedup_by_key(|x| x.func_entry);
+    let funcs = analysis.functions();
+    let funcs = &funcs[..];
+    let arg_cache = &analysis.arg_cache;
+    let mut result = None;
+    for global in &global_refs {
+        let new_result = entry_of_until(binary, funcs, global.use_address, |entry| {
+            let mut analyzer = FindOrigPlayerTypes::<E> {
+                result: EntryOf::Retry,
+                arg_cache,
+                use_address: global.use_address,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.result
+        }).into_option();
+        if single_result_assign(new_result, &mut result) {
+            break;
+        }
+    }
+    result
+}
+
+struct FindOrigPlayerTypes<'a, 'e, E: ExecutionState<'e>> {
+    result: EntryOf<Operand<'e>>,
+    use_address: E::VirtualAddress,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindOrigPlayerTypes<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if ctrl.address() <= self.use_address &&
+            ctrl.current_instruction_end() > self.use_address
+        {
+            self.result = EntryOf::Stop;
+        }
+        // Command_48 does memcpy(original_chk_player_types, arg1 + 0x1f, 0xc)
+        // (Well, not a memcpy call)
+        match *op {
+            Operation::Move(DestOperand::Memory(dest), val, None) => {
+                let val = ctrl.resolve(val);
+                let input_ok = val.if_memory()
+                    .filter(|x| x.size == dest.size)
+                    .and_then(|mem| mem.address.if_arithmetic_add_const(0x1f))
+                    .filter(|&x| x == self.arg_cache.on_entry(0))
+                    .is_some();
+                if input_ok {
+                    let addr = ctrl.resolve(dest.address);
+                    self.result = EntryOf::Ok(addr);
+                    ctrl.end_analysis();
                 }
             }
             _ => (),

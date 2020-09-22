@@ -1132,6 +1132,7 @@ fn everything_1235h() {
         assert_eq!(analysis.snet_send_packets().unwrap().0, 0x007949f0);
         assert_eq!(analysis.snet_recv_packets().unwrap().0, 0x007976e0);
         assert_eq!(analysis.chk_init_players().unwrap(), ctx.constant(0x11d35d8));
+        assert_eq!(analysis.original_chk_player_types().unwrap(), ctx.constant(0x11d0474));
     })
 }
 
@@ -1698,6 +1699,11 @@ fn test_nongeneric<'e>(
     );
 
     check_global_struct_opt(analysis.chk_init_players(), binary, "chk orig players");
+    check_global_struct_opt(
+        analysis.original_chk_player_types(),
+        binary,
+        "original_chk_player_types",
+    );
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {
