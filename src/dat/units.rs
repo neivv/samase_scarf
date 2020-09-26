@@ -2,7 +2,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
 
-use crate::{DatType, OperandExt, entry_of_until, EntryOf, OptionExt};
+use crate::{DatType, OperandExt, entry_of_until, EntryOf};
 use super::{DatPatchContext, DatArrayPatch, reloc_address_of_instruction};
 
 pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
@@ -340,16 +340,16 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     .and_then(|x| x.if_arithmetic_add_const(1))
                     .is_some();
                 if !ok {
-                    // Zerg building morph check. Scarf should simplify this better than it
-                    // currently does.
-                    // (((Mem16[(x + 1)] - 82) & ffff) > 15) & ((98 == Mem16[(x + 1)]) == 0)
-                    ok = condition.if_arithmetic_and()
-                        .and_either_other(|x| {
-                            crate::if_arithmetic_eq_neq(x)
-                                .map(|x| (x.0, x.1))
-                                .and_either_other(|x| x.if_constant().filter(|&c| c == 0x98))?
-                                .if_mem16()?
-                                .if_arithmetic_add_const(1)
+                    // Zerg building morph check.
+                    // (((Mem16[(x + 1)] - 82) & ffff) > 16)
+                    ok = condition.if_arithmetic_gt()
+                        .and_then(|(l, r)| {
+                            r.if_constant().filter(|&c| c == 0x16)?;
+                            let l = l.if_arithmetic_and_const(0xffff)?;
+                            let l = l.if_arithmetic_sub_const(0x82)?;
+                            let l = l.if_mem16()?;
+                            l.if_arithmetic_add_const(1)?;
+                            Some(())
                         })
                         .is_some();
                 }
