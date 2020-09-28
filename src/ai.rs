@@ -1006,3 +1006,244 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
         }
     }
 }
+
+pub fn give_ai<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) -> Option<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let actions = analysis.trigger_actions()?;
+    let action_create_unit = binary.read_address(actions + E::VirtualAddress::SIZE * 0x2c).ok()?;
+    let units_dat = analysis.dat(DatType::Units)?;
+    let units_dat_address = E::VirtualAddress::from_u64(units_dat.address.if_constant()?);
+    let units_dat_group_flags =
+        binary.read_address(units_dat_address + 0x2c * units_dat.entry_size).ok()?;
+    let units_dat_ai_flags =
+        binary.read_address(units_dat_address + 0x15 * units_dat.entry_size).ok()?;
+
+    let arg_cache = &analysis.arg_cache;
+    let exec_state = E::initial_state(ctx, binary);
+    let state = GiveAiState::SearchingSwitchJump;
+    let mut analysis =
+        FuncAnalysis::custom_state(binary, ctx, action_create_unit, exec_state, state);
+    let mut analyzer = GiveAiAnalyzer {
+        result: None,
+        arg_cache,
+        inline_depth: 0,
+        units_dat_group_flags,
+        units_dat_ai_flags,
+        stop_on_first_branch: false,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct GiveAiAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+    units_dat_group_flags: E::VirtualAddress,
+    units_dat_ai_flags: E::VirtualAddress,
+    stop_on_first_branch: bool,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
+enum GiveAiState {
+    // At inline depth 0 or 1, there's a switch jump checking trigegr.current_player.
+    // Follow default case.
+    SearchingSwitchJump,
+    // Search for call to map_create_unit
+    SearchingMapCreateUnit,
+    // Wait for check against units_dat_group_flags[id]
+    SearchingRaceCheck,
+    // Search for GiveAi
+    RaceCheckSeen,
+    Stop,
+}
+
+impl analysis::AnalysisState for GiveAiState {
+    fn merge(&mut self, new: GiveAiState) {
+        if *self != new {
+            if matches!(*self, GiveAiState::SearchingRaceCheck | GiveAiState::RaceCheckSeen) &&
+                matches!(new, GiveAiState::SearchingRaceCheck | GiveAiState::RaceCheckSeen)
+            {
+                *self = GiveAiState::RaceCheckSeen;
+            } else {
+                *self = GiveAiState::Stop;
+            }
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GiveAiAnalyzer<'a, 'e, E> {
+    type State = GiveAiState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match *ctrl.user_state() {
+            GiveAiState::SearchingSwitchJump => {
+                match *op {
+                    Operation::Jump { condition, to } => {
+                        let condition = ctrl.resolve(condition);
+                        // Trigger.current_player = Mem32[arg1 + 10]
+                        let is_switch_default_case = condition
+                            .if_arithmetic_gt_const(0xd)
+                            .and_then(|x| x.if_arithmetic_and_const(0xffff_ffff))
+                            .and_then(|x| x.if_arithmetic_sub_const(0xd))
+                            .and_then(|x| x.if_mem32())
+                            .and_then(|x| x.if_arithmetic_add_const(0x10))
+                            .filter(|&x| x == self.arg_cache.on_entry(0))
+                            .is_some();
+                        if is_switch_default_case {
+                            if let Some(to) = ctrl.resolve(to).if_constant() {
+                                let to = E::VirtualAddress::from_u64(to);
+                                let mut analysis = FuncAnalysis::custom_state(
+                                    ctrl.binary(),
+                                    ctx,
+                                    to,
+                                    ctrl.exec_state().clone(),
+                                    GiveAiState::SearchingMapCreateUnit,
+                                );
+                                analysis.analyze(self);
+                                if self.result.is_some() {
+                                    ctrl.end_analysis();
+                                } else {
+                                    ctrl.end_branch();
+                                }
+                            }
+                        }
+                    }
+                    Operation::Call(dest) if self.inline_depth == 0 => {
+                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                            let dest = E::VirtualAddress::from_u64(dest);
+                            self.inline_depth += 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            if self.result.is_some() {
+                                ctrl.end_analysis();
+                            }
+                            self.inline_depth = match self.inline_depth.checked_sub(1) {
+                                Some(s) => s,
+                                None => {
+                                    ctrl.end_branch();
+                                    return;
+                                }
+                            };
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            GiveAiState::SearchingMapCreateUnit => {
+                fn is_sdiv_2(op: Operand<'_>) -> bool {
+                    // Just check for x sar 1
+                    // ((x >> 1) & 7fff_ffff) | (... & 8000_0000)
+                    op.if_arithmetic_or()
+                        .and_either(|x| x.if_arithmetic_and_const(0x7fff_ffff))
+                        .and_then(|x| x.0.if_arithmetic_rsh_const(1))
+                        .is_some()
+                }
+                match *op {
+                    Operation::Call(dest) => {
+                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                            let dest = E::VirtualAddress::from_u64(dest);
+                            // Arg 1 = unit id (Mem16[arg1] + 18)
+                            // Arg 2 = x ((location.left + location.right) sdiv 2)
+                            // Arg 3 = y ((location.top + location.bottom) sdiv 2)
+                            let ok = Some(())
+                                .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                                .and_then(|x| x.if_mem16()?.if_arithmetic_add_const(0x18))
+                                .filter(|&x| x == self.arg_cache.on_entry(0))
+                                .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                                .filter(|&x| is_sdiv_2(x))
+                                .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
+                                .filter(|&x| is_sdiv_2(x))
+                                .is_some();
+                            if ok {
+                                self.inline_depth = 0;
+                                *ctrl.user_state() = GiveAiState::SearchingRaceCheck;
+                                ctrl.analyze_with_current_state(self, dest);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            GiveAiState::SearchingRaceCheck => {
+                match *op {
+                    Operation::Call(dest) if self.inline_depth == 0 => {
+                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                            let dest = E::VirtualAddress::from_u64(dest);
+                            self.inline_depth = 1;
+                            self.stop_on_first_branch = true;
+                            ctrl.inline(self, dest);
+                            self.stop_on_first_branch = false;
+                            self.inline_depth = 0;
+                        }
+                    }
+                    Operation::Jump { condition, .. } => {
+                        let condition = ctrl.resolve(condition);
+                        // Mem8[units_dat_group_flags + unit.id] & flag == 0
+                        let ok = crate::if_arithmetic_eq_neq(condition)
+                            .and_then(|x| x.0.if_arithmetic_and())
+                            .filter(|x| x.1.if_constant().is_some())
+                            .and_then(|x| x.0.if_mem8())
+                            .and_then(|x| x.if_arithmetic_add())
+                            .and_either_other(|x| {
+                                x.if_constant()
+                                    .filter(|&c| c == self.units_dat_group_flags.as_u64())
+                            })
+                            .is_some();
+                        if ok {
+                            self.stop_on_first_branch = false;
+                            *ctrl.user_state() = GiveAiState::RaceCheckSeen;
+                        }
+                        if self.stop_on_first_branch {
+                            ctrl.end_analysis();
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            GiveAiState::RaceCheckSeen => {
+                match *op {
+                    Operation::Call(dest) if self.inline_depth == 0 => {
+                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                            let dest = E::VirtualAddress::from_u64(dest);
+                            self.inline_depth = 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            if self.result.is_some() {
+                                self.result = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                            self.inline_depth = 0;
+                        }
+                    }
+                    Operation::Jump { condition, .. } if self.inline_depth == 1 => {
+                        // Recognize give_ai from it checking units_dat_ai_flags & 0x2
+                        let condition = ctrl.resolve(condition);
+                        let ok = crate::if_arithmetic_eq_neq(condition)
+                            .and_then(|x| x.0.if_arithmetic_and_const(0x2))
+                            .and_then(|x| x.if_mem8())
+                            .and_then(|x| x.if_arithmetic_add())
+                            .and_either_other(|x| {
+                                x.if_constant()
+                                    .filter(|&c| c == self.units_dat_ai_flags.as_u64())
+                            })
+                            .is_some();
+                        if ok {
+                            // Caller fixes this
+                            self.result = Some(E::VirtualAddress::from_u64(0));
+                            ctrl.end_analysis();
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            GiveAiState::Stop => {
+                ctrl.end_branch();
+            }
+        }
+    }
+}

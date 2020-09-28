@@ -246,6 +246,7 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     snet_handle_packets: Cached<SnetHandlePackets<E::VirtualAddress>>,
     chk_init_players: Cached<Option<Operand<'e>>>,
     original_chk_player_types: Cached<Option<Operand<'e>>>,
+    give_ai: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
@@ -517,6 +518,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             snet_handle_packets: Default::default(),
             chk_init_players: Default::default(),
             original_chk_player_types: Default::default(),
+            give_ai: Default::default(),
             dat_tables: DatTables::new(),
             binary,
             ctx,
@@ -1892,6 +1894,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.original_chk_player_types.cache(&result);
         result
     }
+
+    pub fn give_ai(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.give_ai.cached() {
+            return cached;
+        }
+        let result = ai::give_ai(self);
+        self.give_ai.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2411,6 +2422,10 @@ impl<'e> AnalysisX86<'e> {
     pub fn original_chk_player_types(&mut self) -> Option<Operand<'e>> {
         self.0.original_chk_player_types()
     }
+
+    pub fn give_ai(&mut self) -> Option<VirtualAddress> {
+        self.0.give_ai()
+    }
 }
 
 pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
@@ -2820,6 +2835,7 @@ trait OperandExt<'e> {
     fn if_arithmetic_and_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_lsh_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_rsh_const(self, offset: u64) -> Option<Operand<'e>>;
+    fn if_arithmetic_gt_const(self, offset: u64) -> Option<Operand<'e>>;
 }
 
 impl<'e> OperandExt<'e> for Operand<'e> {
@@ -2885,6 +2901,16 @@ impl<'e> OperandExt<'e> for Operand<'e> {
 
     fn if_arithmetic_rsh_const(self, offset: u64) -> Option<Operand<'e>> {
         let (l, r) = self.if_arithmetic(scarf::operand::ArithOpType::Rsh)?;
+        let r = r.if_constant()?;
+        if r != offset {
+            None
+        } else {
+            Some(l)
+        }
+    }
+
+    fn if_arithmetic_gt_const(self, offset: u64) -> Option<Operand<'e>> {
+        let (l, r) = self.if_arithmetic(scarf::operand::ArithOpType::GreaterThan)?;
         let r = r.if_constant()?;
         if r != offset {
             None

@@ -522,6 +522,7 @@ fn main() {
         "original_chk_player_types: {}",
         format_op_operand(analysis.original_chk_player_types()),
     );
+    println!("give_ai: {:?}", analysis.give_ai());
 
     let undef = ctx.new_undef();
     println!();

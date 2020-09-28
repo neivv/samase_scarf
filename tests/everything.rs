@@ -1133,6 +1133,7 @@ fn everything_1235h() {
         assert_eq!(analysis.snet_recv_packets().unwrap().0, 0x007976e0);
         assert_eq!(analysis.chk_init_players().unwrap(), ctx.constant(0x11d35d8));
         assert_eq!(analysis.original_chk_player_types().unwrap(), ctx.constant(0x11d0474));
+        assert_eq!(analysis.give_ai().unwrap().0, 0x00658300);
     })
 }
 
@@ -1704,6 +1705,7 @@ fn test_nongeneric<'e>(
         binary,
         "original_chk_player_types",
     );
+    assert!(analysis.give_ai().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {
