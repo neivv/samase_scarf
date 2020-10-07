@@ -49,7 +49,6 @@ pub mod dat;
 use std::rc::Rc;
 
 use byteorder::{ReadBytesExt, LE};
-use quick_error::quick_error;
 
 use scarf::{BinaryFile, Operand, Rva};
 use scarf::analysis::{self, Control, FuncCallPair, RelocValues};
@@ -100,19 +99,6 @@ pub struct FiregraftAddresses<Va: VirtualAddressTrait> {
     pub buttonsets: Vec<Va>,
     pub requirement_table_refs: RequirementTables<Va>,
     pub unit_status_funcs: Vec<Va>,
-}
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum Error {
-        Scarf(addr: VirtualAddress, e: scarf::analysis::Error) {
-            display("Scarf {:08x}: {}", addr.0, e)
-        }
-        Scarf2(e: scarf::Error) {
-            display("Scarf: {}", e)
-            from()
-        }
-    }
 }
 
 // Just since option spam for caches is a bit hard to keep track of
