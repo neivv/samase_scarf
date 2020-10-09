@@ -2832,9 +2832,19 @@ fn unresolve<'e, E: ExecutionState<'e>>(
         }
     }
     if let Some(mem) = op.if_memory() {
-        if let Some(addr) = unresolve(ctx, exec_state, mem.address) {
-            return Some(ctx.mem_variable_rc(mem.size, addr));
+        // Unresolving Mem[x] as Mem[unres(x)] is only valid
+        // if that address hasn't been written.
+        // Which is common enough for stack args that it's worth doing.
+        if exec_state.read_memory(mem.address, mem.size)
+            .if_memory()
+            .filter(|&x| x == mem)
+            .is_some()
+        {
+            if let Some(addr) = unresolve(ctx, exec_state, mem.address) {
+                return Some(ctx.mem_variable_rc(mem.size, addr));
+            }
         }
+        return None;
     }
     if op.if_register().filter(|r| r.0 == 4).is_some() {
         for i in 4..6 {

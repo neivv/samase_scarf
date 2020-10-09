@@ -979,15 +979,42 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'e, E> {
             match (self.unresolve(ctrl, unit_id), self.unresolve(ctrl, player))
         {
             (Some(a), Some(b)) => (a, b),
+            (Some(unit_id), None) => {
+                if let Some(index_unres) = self.unresolve(ctrl, index) {
+                    let player = ctx.div(
+                        ctx.sub(
+                            index_unres,
+                            unit_id,
+                        ),
+                        ctx.constant(0x4e8),
+                    );
+                    (unit_id, player)
+                } else {
+                    self.add_warning(format!("Unable to find operands for player/id"));
+                    return;
+                }
+            }
+            (None, Some(player)) => {
+                if let Some(index_unres) = self.unresolve(ctrl, index) {
+                    let unit_id = ctx.sub(
+                        index_unres,
+                        ctx.mul_const(player, 0x4e8),
+                    );
+                    (unit_id, player)
+                } else {
+                    self.add_warning(format!("Unable to find operands for player/id"));
+                    return;
+                }
+            }
             _ => {
                 self.add_warning(format!("Unable to find operands for player/id"));
                 return;
             }
         };
-        // Convert to (unit_id + player * 0xc)
+        // Convert to (player + unit_id * 0xc)
         let index = ctx.add(
-            unit_id,
-            ctx.mul_const(player, 0xc),
+            player,
+            ctx.mul_const(unit_id, 0xc),
         );
         self.add_patch(ctrl, 0xc, index);
     }
