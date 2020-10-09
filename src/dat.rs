@@ -676,18 +676,26 @@ impl<'a, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'e, E> {
             // If there's a reloc for array_ptr - start_index * field_size,
             // assume it's meant for array[id - start_index]
             let zero_ptr = array_ptr - start_index.wrapping_mul(field_size as u32);
+            let last_valid = if dat == DatType::Units && field_id == 0x25 {
+                // Units.dat addon position should also accept .y index
+                zero_ptr + 2
+            } else {
+                zero_ptr
+            };
             let start = self.relocs.binary_search_by(|x| match x.value >= zero_ptr {
                 true => Ordering::Greater,
                 false => Ordering::Less,
             }).unwrap_err();
             for i in start.. {
-                if let Some(reloc) = self.relocs.get(i).filter(|x| x.value == zero_ptr) {
+                if let Some(reloc) = self.relocs.get(i).filter(|x| x.value <= last_valid) {
+                    let byte_offset = (reloc.value.as_u64() as u32)
+                        .wrapping_sub(zero_ptr.as_u64() as u32);
                     let patch = DatArrayPatch {
                         dat,
                         field_id,
                         address: reloc.address,
                         entry: 0,
-                        byte_offset: 0,
+                        byte_offset,
                     };
                     self.add_or_override_dat_array_patch(patch);
                 } else {
