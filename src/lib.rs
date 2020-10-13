@@ -131,11 +131,14 @@ impl<T: Clone> Default for Cached<T> {
 #[cfg(feature = "x86")]
 pub struct AnalysisX86<'e>(pub Analysis<'e, scarf::ExecutionStateX86<'e>>);
 
+// Using repr(C) to make sure that the large, less accessed cache is placed last
+// in this struct's layout
+#[repr(C)]
 pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
-    cache: AnalysisCache<'e, E>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
     arg_cache: ArgCache<'e, E>,
+    cache: AnalysisCache<'e, E>,
 }
 
 struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
