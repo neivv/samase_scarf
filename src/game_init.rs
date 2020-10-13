@@ -419,7 +419,7 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
 
     let funcs = analysis.functions();
     let funcs = &funcs[..];
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let ctx = analysis.ctx;
     let mut result = None;
     for (chk_funcs_rva, addr) in call_points {
@@ -536,7 +536,7 @@ pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let mut result = None;
     for vtable in vtables {
         let func = match binary.read_address(vtable + 0x6 * E::VirtualAddress::SIZE) {
@@ -694,7 +694,7 @@ pub(crate) fn single_player_start<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for caller in callers {
         let ok = entry_of_until(binary, funcs, caller, |entry| {
             let mut analyzer = SinglePlayerStartAnalyzer {
@@ -932,7 +932,7 @@ pub(crate) fn select_map_entry<'e, E: ExecutionState<'e>>(
     let callers = crate::find_callers(analysis, single_player_start);
     let funcs = analysis.functions();
     let funcs = &funcs[..];
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for caller in callers {
         entry_of_until(binary, funcs, caller, |entry| {
             let mut analyzer = FindSelectMapEntry::<E> {
@@ -1040,7 +1040,7 @@ pub(crate) fn load_images<'e, E: ExecutionState<'e>>(
     let mut result = None;
     for string in str_refs {
         let new = entry_of_until(binary, funcs, string.use_address, |entry| {
-            let arg_cache = &analysis.arg_cache;
+            let arg_cache = analysis.arg_cache;
             let mut analyzer = IsLoadImages::<E> {
                 result: EntryOf::Retry,
                 use_address: string.use_address,
@@ -1658,7 +1658,7 @@ pub(crate) fn create_game_dialog_vtbl_on_multiplayer_create<'e, E: ExecutionStat
     let ctx = analysis.ctx;
     let mut analyzer = Analyzer::<E> {
         result: None,
-        arg_cache: &analysis.arg_cache,
+        arg_cache: analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, select_map_entry);
     analysis.analyze(&mut analyzer);
@@ -1680,7 +1680,7 @@ pub(crate) fn join_game<'e, E: ExecutionState<'e>>(
     global_refs.sort_unstable_by_key(|x| x.func_entry);
     global_refs.dedup_by_key(|x| x.func_entry);
     let mut result = None;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for global in global_refs {
         let new = entry_of_until(binary, funcs, global.use_address, |entry| {
             let mut analyzer = IsJoinGame::<E> {
@@ -1745,7 +1745,7 @@ pub(crate) fn snet_initialize_provider<'e, E: ExecutionState<'e>>(
     let choose_snp = analysis.choose_snp()?;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
 
     let mut analyzer = FindSnetInitProvider::<E> {
         result: None,
@@ -1874,7 +1874,7 @@ pub(crate) fn original_chk_player_types<'e, E: ExecutionState<'e>>(
     global_refs.dedup_by_key(|x| x.func_entry);
     let funcs = analysis.functions();
     let funcs = &funcs[..];
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let mut result = None;
     for global in &global_refs {
         let new_result = entry_of_until(binary, funcs, global.use_address, |entry| {

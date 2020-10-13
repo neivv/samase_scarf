@@ -35,7 +35,7 @@ pub(crate) fn rng<'e, E: ExecutionState<'e>>(
     spawn_direction_refs.sort_unstable_by_key(|x| x.func_entry);
     spawn_direction_refs.dedup_by_key(|x| x.func_entry);
     let functions = analysis.functions();
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
 
     let mut result = None;
     for global_ref in spawn_direction_refs.iter() {

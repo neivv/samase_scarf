@@ -35,7 +35,7 @@ pub(crate) fn find_load_dat_fn<'e, E: ExecutionState<'e>>(
     parent: E::VirtualAddress,
     string_address: E::VirtualAddress,
 ) -> Vec<(E::VirtualAddress, E::VirtualAddress)> {
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     let mut analysis: FuncAnalysis<'_, E, _> = FuncAnalysis::new(binary, ctx, parent);
@@ -68,7 +68,7 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
     binary: &'e BinaryFile<E::VirtualAddress>,
     load_dat_fn: E::VirtualAddress,
 ) -> Vec<E::VirtualAddress> {
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let rdata = binary.section(b".rdata\0\0").unwrap();
     let ctx = analysis.ctx;
     let mut functions = vec![OpenFileFnIntermediate {

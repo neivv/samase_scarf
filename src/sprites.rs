@@ -73,7 +73,7 @@ pub(crate) fn sprites<'e, E: ExecutionState<'e>>(
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let mut analyzer = SpriteAnalyzer::<E> {
         state: FindSpritesState::NukeTrack,
         lone_free: Default::default(),
@@ -1050,7 +1050,7 @@ pub(crate) fn init_sprites<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let functions = analysis.functions();
     let str_refs = string_refs(binary, analysis, b"arr\\sprites.dat\0");
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for str_ref in str_refs {
         let val = entry_of_until(binary, &functions, str_ref.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);

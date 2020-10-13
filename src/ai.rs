@@ -106,7 +106,7 @@ pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
 
     let mut analyzer = Analyzer {
         result: None,
-        args: &analysis.arg_cache,
+        args: analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(analysis.binary, ctx, order_computer_return);
     analysis.analyze(&mut analyzer);
@@ -847,7 +847,7 @@ pub(crate) fn attack_prepare<'e, E: ExecutionState<'e>>(
     let addr_size = E::VirtualAddress::SIZE;
     let attack_prepare = binary.read_address(aiscript_hook.switch_table + 0xd * addr_size).ok()?;
 
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, attack_prepare);
     let mut analyzer = AttackPrepareAnalyzer {
         result: None,
@@ -904,7 +904,7 @@ pub(crate) fn step_region<'e, E: ExecutionState<'e>>(
     let step_objects = analysis.step_objects()?;
     let ai_regions = analysis.regions().ai_regions?;
 
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, step_objects);
     let mut analyzer = StepRegionAnalyzer {
         result: None,
@@ -1022,7 +1022,7 @@ pub(crate) fn give_ai<'e, E: ExecutionState<'e>>(
     let units_dat_ai_flags =
         binary.read_address(units_dat_address + 0x15 * units_dat.entry_size).ok()?;
 
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let exec_state = E::initial_state(ctx, binary);
     let state = GiveAiState::SearchingSwitchJump;
     let mut analysis =

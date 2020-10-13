@@ -177,7 +177,7 @@ pub(crate) fn run_triggers<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let funcs = analysis.functions();
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for caller in callers {
         entry_of_until_with_limit(binary, &funcs, caller, 128, |entry| {
             let mut analyzer = RunTriggersAnalyzer::<E> {
@@ -413,7 +413,7 @@ pub(crate) fn trigger_unit_count_caches<'e, E: ExecutionState<'e>>(
         Ok(o) => o,
         Err(_) => return result,
     };
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let mut analyzer = CountCacheAnalyzer::<E> {
         result: &mut result,
         arg_cache,

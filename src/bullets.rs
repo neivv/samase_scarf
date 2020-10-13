@@ -273,7 +273,7 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
         result: None,
         active_iscript_unit: None,
         calls_seen: 0,
-        arg_cache: &analysis.arg_cache,
+        arg_cache: analysis.arg_cache,
     };
     let exec_state = E::initial_state(ctx, binary);
     let mut analysis = FuncAnalysis::custom_state(

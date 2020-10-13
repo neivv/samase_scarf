@@ -157,7 +157,7 @@ pub(crate) fn send_command<'e, E: ExecutionState<'e>>(
     let firegraft = analysis.firegraft_addresses();
 
     let binary = analysis.binary;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let ctx = analysis.ctx;
 
     // Search for stim button action
@@ -722,7 +722,7 @@ pub(crate) fn step_network<'e, E: ExecutionState<'e>>(
         entries.sort_unstable();
         entries.dedup();
     }
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     if let Some(step_network) = result.step_network {
         let exec_state = E::initial_state(ctx, binary);
         let state = StepNetworkState {

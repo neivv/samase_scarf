@@ -71,7 +71,7 @@ pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let text = binary.section(b".text\0\0\0").unwrap();
     let ctx = analysis.ctx;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for vtable in vtables {
         let func = match binary.read_address(vtable + 0x3 * E::VirtualAddress::SIZE) {
             Ok(o) => o,
@@ -177,7 +177,7 @@ pub(crate) fn snet_handle_packets<'e, E: ExecutionState<'e>>(
     let vtables = crate::vtables::vtables(analysis, b".?AVUdpServer@");
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for root_inline_limit in 0..2 {
         for &vtable in &vtables {
             let func = match binary.read_address(vtable + 0x3 * E::VirtualAddress::SIZE) {

@@ -67,7 +67,7 @@ pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
         ),
         sprite_hlines_end,
     );
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for global_ref in globals {
         let val = entry_of_until(binary, &functions, global_ref.func_entry, |entry| {
             let rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);

@@ -392,7 +392,7 @@ pub(crate) fn limits<'e, E: ExecutionState<'e>>(
 
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
 
     let mut analysis = FuncAnalysis::new(binary, ctx, game_loop);
     let mut analyzer = FindSetLimits::<E> {

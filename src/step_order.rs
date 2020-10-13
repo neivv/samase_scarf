@@ -663,7 +663,7 @@ pub(crate) fn do_attack<'e, E: ExecutionState<'e>>(
 
     let attack_order = find_order_function(analysis, 0xa)?;
 
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, attack_order);
     let mut analyzer = FindDoAttack {
         do_attack: None,

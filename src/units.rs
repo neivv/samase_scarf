@@ -183,7 +183,7 @@ pub(crate) fn order_issuing<'e, E: ExecutionState<'e>>(
     arbiter_idle_orders.sort_unstable_by_key(|x| (x.0.func_entry, x.1.clone()));
     arbiter_idle_orders.dedup_by_key(|x| (x.0.func_entry, x.1.clone()));
     let mut result = None;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for (global_ref, order) in arbiter_idle_orders {
         let order_init_arbiter = global_ref.func_entry;
         let mut analysis = FuncAnalysis::new(binary, ctx, order_init_arbiter);
@@ -267,7 +267,7 @@ pub(crate) fn units<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let init_units = analysis.init_units()?;
 
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let mut analyzer = UnitsAnalyzer {
         result: None,
         arg_cache,
@@ -402,7 +402,7 @@ pub(crate) fn init_units<'e, E: ExecutionState<'e>>(
         }
     }
 
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let mut checked = Vec::with_capacity(4);
     for order_ref in &order_refs {
         if checked.iter().any(|&x| x == order_ref.func_entry) {
@@ -450,7 +450,7 @@ pub(crate) fn unit_creation<'e, E: ExecutionState<'e>>(
         None => return result,
     };
 
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let mut analyzer = UnitCreationAnalyzer::<E> {
         result: &mut result,
         arg_cache,

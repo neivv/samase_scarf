@@ -29,7 +29,7 @@ pub(crate) fn check_unit_requirements<'e, E: ExecutionState<'e>>(
     globals.sort_unstable_by_key(|x| x.func_entry);
     globals.dedup_by_key(|x| x.func_entry);
     let mut result = None;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for global_ref in globals {
         let val = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -131,7 +131,7 @@ pub(crate) fn check_dat_requirements<'e, E: ExecutionState<'e>>(
     globals.sort_unstable_by_key(|x| x.func_entry);
     globals.dedup_by_key(|x| x.func_entry);
     let mut result = None;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for global_ref in globals {
         let val = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);

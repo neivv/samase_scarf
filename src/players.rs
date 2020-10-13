@@ -491,7 +491,7 @@ pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let mut analyzer = FindInitNetPlayer {
         result: None,
-        arg_cache: &analysis.arg_cache,
+        arg_cache: analysis.arg_cache,
         in_child_func: false,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, cmd_3f);

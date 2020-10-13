@@ -33,7 +33,7 @@ pub(crate) fn fonts<'e, E: ExecutionState<'e>>(
     // fonts[3] = Func("font16x")
     // Uses Custom(x) to store what offset in array the result is stored to
     let mut result = None;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for cand in candidates {
         let use_address = cand.use_address;
         let val = entry_of_until(binary, funcs, use_address, |entry| {
@@ -167,7 +167,7 @@ pub(crate) fn font_render<'e, E: ExecutionState<'e>>(
     let ttf_init_candidates = font_string_rvas.iter().flat_map(|&font| {
         crate::find_functions_using_global(analysis, rdata.virtual_address + font.0)
     }).collect::<Vec<_>>();
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     for ttf_init in ttf_init_candidates {
         let use_address = ttf_init.use_address;
         entry_of_until(binary, funcs, use_address, |entry| {
@@ -421,7 +421,7 @@ pub(crate) fn ttf_malloc<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let mut analyzer = FindTtfMalloc::<E> {
-        arg_cache: &analysis.arg_cache,
+        arg_cache: analysis.arg_cache,
         result: None,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, ttf_render_sdf);

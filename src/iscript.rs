@@ -133,7 +133,7 @@ pub(crate) fn step_iscript<'e, E: ExecutionState<'e>>(
         let users = find_functions_using_global(analysis, switch.address);
         for user in users {
             let func_result = entry_of_until(binary, funcs, user.func_entry, |entry| {
-                let arg_cache = &analysis.arg_cache;
+                let arg_cache = analysis.arg_cache;
                 let mut analyzer = IscriptFromSwitchAnalyzer {
                     switch_addr: switch.address,
                     iscript_bin: None,
@@ -263,7 +263,7 @@ pub(crate) fn add_overlay_iscript<'e, E: ExecutionState<'e>>(
 
     let mut analyzer = AddOverlayAnalyzer::<E> {
         result: None,
-        args: &analysis.arg_cache,
+        args: analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, case_8);
     analysis.analyze(&mut analyzer);

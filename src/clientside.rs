@@ -244,7 +244,7 @@ pub(crate) fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
     let ctx = analysis.ctx;
     let mut analyzer = Analyzer {
         result: None,
-        args: &analysis.arg_cache,
+        args: analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_rclick);
     analysis.analyze(&mut analyzer);
@@ -407,7 +407,7 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
         is_outside_game_screen_seen: false,
         is_outside_game_screen,
         ctx,
-        args: &analysis.arg_cache,
+        args: analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_rclick);
     analysis.analyze(&mut analyzer);

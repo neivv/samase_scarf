@@ -36,7 +36,7 @@ pub(crate) fn regions<'e, E: ExecutionState<'e>>(
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
 
     let value_area = match binary.read_u32(aiscript_hook.switch_table + 0x2a * 4) {
         Ok(o) => E::VirtualAddress::from_u64(o as u64),

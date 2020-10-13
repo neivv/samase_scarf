@@ -206,7 +206,7 @@ fn find_dat_root<'e, E: ExecutionState<'e>>(
 ) -> EntryOf<E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, parent);
     let mut analyzer = FindDatRoot {
         str_ref,

@@ -139,7 +139,7 @@ pub(crate) fn prism_shaders<'e, E: ExecutionState<'e>>(
         if func < code_section.virtual_address || func >= code_end {
             break;
         }
-        let arg_cache = &analysis.arg_cache;
+        let arg_cache = analysis.arg_cache;
         let mut analyzer = FindPrismShaders::<E> {
             vertex: Vec::new(),
             pixel: Vec::new(),
