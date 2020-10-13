@@ -2,7 +2,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{MemAccessSize, Operand, Operation, BinarySection, BinaryFile};
 
-use crate::{Analysis, ArgCache, single_result_assign, find_bytes};
+use crate::{AnalysisCtx, ArgCache, single_result_assign, find_bytes};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SnpDefinitions<'e> {
@@ -22,8 +22,8 @@ pub struct SnetHandlePackets<Va: VirtualAddress> {
     pub recv_packets: Option<Va>,
 }
 
-pub fn snp_definitions<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn snp_definitions<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<SnpDefinitions<'e>> {
     // Search for BNAU code.
     // The data is expected to be
@@ -57,8 +57,8 @@ pub fn snp_definitions<'e, E: ExecutionState<'e>>(
     result
 }
 
-pub fn init_storm_networking<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> InitStormNetworking<E::VirtualAddress> {
     let mut result = InitStormNetworking {
         init_storm_networking: None,
@@ -164,8 +164,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetw
     }
 }
 
-pub fn snet_handle_packets<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn snet_handle_packets<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> SnetHandlePackets<E::VirtualAddress> {
     let mut result = SnetHandlePackets {
         send_packets: None,

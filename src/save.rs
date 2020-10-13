@@ -4,7 +4,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::add_terms::collect_arith_add_terms;
 use crate::{
-    ArgCache, Analysis, single_result_assign, entry_of_until, EntryOf,
+    ArgCache, AnalysisCtx, single_result_assign, entry_of_until, EntryOf,
     find_functions_using_global,
 };
 
@@ -14,8 +14,8 @@ pub struct SpriteSerialization<Va: VirtualAddress> {
     pub deserialize_sprites: Option<Va>,
 }
 
-pub fn sprite_serialization<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> SpriteSerialization<E::VirtualAddress> {
     // Find de/serialization functions by checking for
     // sprite_hlines_end[x] = deserialize_sprite_ptr(sprite_hlines_end[x])

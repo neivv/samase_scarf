@@ -4,7 +4,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, ArithOperand};
 
 use crate::{
-    Analysis, ArgCache, EntryOf, OptionExt, OperandExt, entry_of_until_with_limit, find_callers,
+    AnalysisCtx, ArgCache, EntryOf, OptionExt, OperandExt, entry_of_until_with_limit, find_callers,
     single_result_assign,
 };
 
@@ -34,14 +34,16 @@ pub struct TriggerUnitCountCaches<'e> {
     pub all_units: Option<Operand<'e>>,
 }
 
-pub fn map_tile_flags<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn map_tile_flags<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> MapTileFlags<'e, E::VirtualAddress> {
-    struct Analyzer<'a, 'b, 'c, F: ExecutionState<'b>> {
+    struct Analyzer<'a, 'b, 'c, 'acx, F: ExecutionState<'b>> {
         result: &'c mut MapTileFlags<'b, F::VirtualAddress>,
-        analysis: &'a mut Analysis<'b, F>,
+        analysis: &'a mut AnalysisCtx<'acx, 'b, F>,
     }
-    impl<'a, 'b, 'c, F: ExecutionState<'b>> scarf::Analyzer<'b> for Analyzer<'a, 'b, 'c, F> {
+    impl<'a, 'b, 'c, 'acx, F: ExecutionState<'b>> scarf::Analyzer<'b> for
+        Analyzer<'a, 'b, 'c, 'acx, F>
+    {
         type State = analysis::DefaultState;
         type Exec = F;
         fn operation(&mut self, ctrl: &mut Control<'b, '_, '_, Self>, op: &Operation<'b>) {
@@ -110,7 +112,7 @@ pub fn map_tile_flags<'e, E: ExecutionState<'e>>(
 }
 
 fn tile_flags_from_update_visibility_point<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
     addr: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     struct Analyzer<'e, F: ExecutionState<'e>> {
@@ -154,8 +156,8 @@ fn tile_flags_from_update_visibility_point<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-pub fn run_triggers<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn run_triggers<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> RunTriggers<E::VirtualAddress> {
     let mut result = RunTriggers::default();
     let rng = analysis.rng();
@@ -391,8 +393,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
     }
 }
 
-pub fn trigger_unit_count_caches<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn trigger_unit_count_caches<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> TriggerUnitCountCaches<'e> {
     let mut result = TriggerUnitCountCaches::default();
     let conditions = match analysis.trigger_conditions() {

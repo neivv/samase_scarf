@@ -7,7 +7,7 @@ use scarf::exec_state::ExecutionState;
 use scarf::exec_state::VirtualAddress;
 
 use crate::{
-    Analysis, ArgCache, entry_of_until, EntryOfResult, EntryOf, find_functions_using_global,
+    AnalysisCtx, ArgCache, entry_of_until, EntryOfResult, EntryOf, find_functions_using_global,
     OptionExt, single_result_assign,
 };
 
@@ -107,8 +107,8 @@ fn get_iscript_operand_from_goto<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-pub fn step_iscript<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn step_iscript<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> StepIscript<'e, E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
@@ -247,8 +247,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IscriptFromSwitchAna
     }
 }
 
-pub fn add_overlay_iscript<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn add_overlay_iscript<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let iscript = analysis.step_iscript();
     let ctx = analysis.ctx;
@@ -326,8 +326,8 @@ impl<'e, 'b, Exec: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyze
     }
 }
 
-pub fn draw_cursor_marker<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn draw_cursor_marker<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let iscript = analysis.step_iscript();
     let ctx = analysis.ctx;

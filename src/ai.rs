@@ -9,8 +9,8 @@ use scarf::exec_state::{ExecutionState};
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
 use crate::{
-    ArgCache, OptionExt, OperandExt, single_result_assign, Analysis, find_functions_using_global,
-    entry_of_until, EntryOf, find_callers, DatType,
+    ArgCache, OptionExt, OperandExt, single_result_assign, AnalysisCtx,
+    find_functions_using_global, entry_of_until, EntryOf, find_callers, DatType,
 };
 
 fn check_step_ai_scripts<'e, E: ExecutionState<'e>>(
@@ -69,8 +69,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepAiScriptsAnalyzer
     }
 }
 
-pub fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let ctx = analysis.ctx;
     // Order 0xa3 (Computer return) immediately calls ai_update_attack_target
@@ -127,8 +127,8 @@ pub struct AiScriptHook<'e, Va: VirtualAddressTrait> {
     pub return_address: Va,
 }
 
-pub fn aiscript_hook<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn aiscript_hook<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<AiScriptHook<'e, E::VirtualAddress>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -516,8 +516,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchEnd
     }
 }
 
-pub fn first_ai_script<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn first_ai_script<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -545,8 +545,8 @@ pub fn first_ai_script<'e, E: ExecutionState<'e>>(
     result
 }
 
-pub fn first_guard_ai<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn first_guard_ai<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -634,8 +634,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GuardAiAnalyzer<'e, E
     }
 }
 
-pub fn player_ai_towns<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn player_ai_towns<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -751,8 +751,8 @@ impl<'e, E: ExecutionState<'e>> AiTownAnalyzer<'e, E> {
     }
 }
 
-pub fn player_ai<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn player_ai<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -835,8 +835,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlayerAiAnalyzer<'e, 
     }
 }
 
-pub fn attack_prepare<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn attack_prepare<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -895,8 +895,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnal
     }
 }
 
-pub fn step_region<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn step_region<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -1007,8 +1007,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
     }
 }
 
-pub fn give_ai<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn give_ai<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;

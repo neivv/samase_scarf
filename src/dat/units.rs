@@ -6,7 +6,7 @@ use crate::{DatType, OperandExt, entry_of_until, EntryOf};
 use super::{DatPatchContext, DatArrayPatch, reloc_address_of_instruction};
 
 pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
-    dat_ctx: &mut DatPatchContext<'a, 'e, E>,
+    dat_ctx: &mut DatPatchContext<'a, '_, 'e, E>,
 ) -> Option<()> {
     let analysis = &mut dat_ctx.analysis;
     let init_units = analysis.init_units()?;
@@ -32,8 +32,8 @@ pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
     Some(())
 }
 
-pub struct InitUnitsAnalyzer<'a, 'b, 'e, E: ExecutionState<'e>> {
-    dat_ctx: &'a mut DatPatchContext<'b, 'e, E>,
+pub struct InitUnitsAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
     load_dat: E::VirtualAddress,
     units_dat_target_acq_range: E::VirtualAddress,
     units_dat_dimensionbox_end: E::VirtualAddress,
@@ -53,8 +53,8 @@ enum InitUnitsState<'e> {
     Done,
 }
 
-impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    InitUnitsAnalyzer<'a, 'b, 'e, E>
+impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    InitUnitsAnalyzer<'a, 'b, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;
@@ -165,8 +165,8 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-pub(crate) fn button_use_analysis<'a, 'e, E: ExecutionState<'e>>(
-    dat_ctx: &mut DatPatchContext<'a, 'e, E>,
+pub(crate) fn button_use_analysis<'a, 'acx, 'e, E: ExecutionState<'e>>(
+    dat_ctx: &mut DatPatchContext<'a, 'acx, 'e, E>,
     buttons: E::VirtualAddress,
 ) -> Option<()> {
     // For some reason, button condition param is passed as u8 to the condition function.
@@ -194,16 +194,16 @@ pub(crate) fn button_use_analysis<'a, 'e, E: ExecutionState<'e>>(
     Some(())
 }
 
-pub struct ButtonUseAnalyzer<'a, 'b, 'e, E: ExecutionState<'e>> {
-    dat_ctx: &'a mut DatPatchContext<'b, 'e, E>,
+pub struct ButtonUseAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
     result: EntryOf<()>,
     use_address: E::VirtualAddress,
     candidate_instruction: Option<E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
 }
 
-impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    ButtonUseAnalyzer<'a, 'b, 'e, E>
+impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    ButtonUseAnalyzer<'a, 'b, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;
@@ -251,7 +251,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-impl<'a, 'b, 'e, E: ExecutionState<'e>> ButtonUseAnalyzer<'a, 'b, 'e, E> {
+impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> ButtonUseAnalyzer<'a, 'b, 'acx, 'e, E> {
     fn widen_instruction(&mut self, address: E::VirtualAddress) {
         // Would be nice if this could be shared with DatReferringFuncAnalysis::widen_instruction,
         // but seems inconvinient to implement..
@@ -277,8 +277,8 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> ButtonUseAnalyzer<'a, 'b, 'e, E> {
     }
 }
 
-pub(crate) fn command_analysis<'a, 'e, E: ExecutionState<'e>>(
-    dat_ctx: &mut DatPatchContext<'a, 'e, E>,
+pub(crate) fn command_analysis<'a, 'acx, 'e, E: ExecutionState<'e>>(
+    dat_ctx: &mut DatPatchContext<'a, 'acx, 'e, E>,
 ) -> Option<()> {
     // Remove unit_id <= 105 check from Command_train,
     // unit_id >= 130 && unit_id <= 152 from zerg building morph
@@ -302,14 +302,14 @@ pub(crate) fn command_analysis<'a, 'e, E: ExecutionState<'e>>(
     Some(())
 }
 
-pub struct CommandPatch<'a, 'b, 'e, E: ExecutionState<'e>> {
-    dat_ctx: &'a mut DatPatchContext<'b, 'e, E>,
+pub struct CommandPatch<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
     inline_depth: u8,
     done: bool,
 }
 
-impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    CommandPatch<'a, 'b, 'e, E>
+impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    CommandPatch<'a, 'b, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;

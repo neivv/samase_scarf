@@ -6,7 +6,7 @@ use scarf::operand::{OperandType};
 use scarf::{BinaryFile, DestOperand, Operand, Operation, Rva};
 
 use crate::{
-    Analysis, EntryOf, entry_of_until, OperandExt, OptionExt,
+    AnalysisCtx, EntryOf, entry_of_until, OperandExt, OptionExt,
 };
 use super::{
     DatPatches, DatPatch, ExtArrayPatch, RequiredStableAddressesMap, RequiredStableAddresses,
@@ -14,7 +14,7 @@ use super::{
 };
 
 pub(crate) fn dat_game_analysis<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
     required_stable_addresses: &mut RequiredStableAddressesMap<E::VirtualAddress>,
     result: &mut DatPatches<'e, E::VirtualAddress>,
 ) -> Option<()> {
@@ -97,8 +97,8 @@ pub(crate) fn dat_game_analysis<'e, E: ExecutionState<'e>>(
     Some(())
 }
 
-pub struct GameContext<'a, 'e, E: ExecutionState<'e>> {
-    analysis: &'a mut Analysis<'e, E>,
+pub struct GameContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    analysis: &'a mut AnalysisCtx<'acx, 'e, E>,
     result: &'a mut DatPatches<'e, E::VirtualAddress>,
     unchecked_refs: FxHashSet<E::VirtualAddress>,
     checked_functions: FxHashSet<E::VirtualAddress>,
@@ -111,7 +111,7 @@ pub struct GameContext<'a, 'e, E: ExecutionState<'e>> {
     trigger_completed_units: Operand<'e>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> GameContext<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
     fn do_analysis(
         &mut self,
         required_stable_addresses: &mut RequiredStableAddressesMap<E::VirtualAddress>,
@@ -207,8 +207,8 @@ impl<'a, 'e, E: ExecutionState<'e>> GameContext<'a, 'e, E> {
     }
 }
 
-pub struct GameAnalyzer<'a, 'b, 'e, E: ExecutionState<'e>> {
-    game_ctx: &'a mut GameContext<'b, 'e, E>,
+pub struct GameAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
+    game_ctx: &'a mut GameContext<'b, 'acx, 'e, E>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     // Optimization to avoid some work before first game address ref
     game_ref_seen: bool,
@@ -218,7 +218,9 @@ pub struct GameAnalyzer<'a, 'b, 'e, E: ExecutionState<'e>> {
     patch_indices: Vec<usize>,
 }
 
-impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameAnalyzer<'a, 'b, 'e, E> {
+impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    GameAnalyzer<'a, 'b, 'acx, 'e, E>
+{
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -364,7 +366,7 @@ impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameAnalyzer<
     }
 }
 
-impl<'a, 'b, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'e, E> {
+impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> {
     fn add_warning(&mut self, msg: String) {
         warn!("{}", msg);
     }

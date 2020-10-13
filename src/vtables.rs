@@ -2,10 +2,10 @@ use smallvec::SmallVec;
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{Analysis};
+use crate::{AnalysisCtx};
 
-pub fn vtables<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn vtables<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
     name: &[u8],
 ) -> Vec<E::VirtualAddress> {
     // TODO x86_64 probs has Rvas instead

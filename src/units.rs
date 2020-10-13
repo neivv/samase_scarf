@@ -3,7 +3,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation};
 
 use crate::{
-    Analysis, DatType, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
+    AnalysisCtx, DatType, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
     find_functions_using_global, entry_of_until, unwrap_sext,
 };
 
@@ -26,8 +26,8 @@ pub struct InitUnits<Va: VirtualAddress> {
     pub load_dat: Option<Va>,
 }
 
-pub fn active_hidden_units<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> ActiveHiddenUnits<'e> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -160,8 +160,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ActiveHiddenAnalyzer<
     }
 }
 
-pub fn order_issuing<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn order_issuing<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> OrderIssuing<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -260,8 +260,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for OrderIssuingAnaly
     }
 }
 
-pub fn units<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn units<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -329,8 +329,8 @@ impl<'a, 'e, E: ExecutionState<'e>> UnitsAnalyzer<'a, 'e, E> {
 
 }
 
-pub fn init_units<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn init_units<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> InitUnits<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -433,8 +433,8 @@ pub struct UnitCreation<Va: VirtualAddress> {
     pub finish_unit_post: Option<Va>,
 }
 
-pub fn unit_creation<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn unit_creation<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> UnitCreation<E::VirtualAddress> {
     let mut result = UnitCreation {
         create_unit: None,
@@ -580,8 +580,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnaly
     }
 }
 
-pub fn strength<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn strength<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;

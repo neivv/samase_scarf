@@ -3,7 +3,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, Operation};
 
 use crate::{
-    Analysis, OptionExt, read_u32_at, find_bytes, string_refs, find_functions_using_global,
+    AnalysisCtx, OptionExt, read_u32_at, find_bytes, string_refs, find_functions_using_global,
     entry_of_until,
 };
 
@@ -29,10 +29,10 @@ pub fn find_buttonsets<Va: VirtualAddress>(binary: &BinaryFile<Va>) -> Vec<Va> {
     result.into_iter().map(|x| data.virtual_address + x.0).collect()
 }
 
-pub fn find_unit_status_funcs<'exec, E: ExecutionState<'exec>>(
-    binary: &BinaryFile<E::VirtualAddress>,
-    cache: &mut Analysis<'exec, E>,
+pub(crate) fn find_unit_status_funcs<'exec, E: ExecutionState<'exec>>(
+    cache: &mut AnalysisCtx<'_, 'exec, E>,
 ) -> Vec<E::VirtualAddress> {
+    let binary = cache.binary;
     let mut str_refs = string_refs(binary, cache, b"rez\\statdata.bin\0");
     if str_refs.is_empty() {
         str_refs = string_refs(binary, cache, b"statdata.ui");
@@ -64,7 +64,7 @@ pub fn find_unit_status_funcs<'exec, E: ExecutionState<'exec>>(
 /// If the function calls something from an 0xc-sized array, and then has another call
 /// with offset 4, return the array (offset - 4, as the first u32 is unit id)
 fn find_unit_status_func_uses<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
     func: E::VirtualAddress,
 ) -> Vec<E::VirtualAddress> {
     let ctx = analysis.ctx;
@@ -171,8 +171,8 @@ const ORDER_REQ_TABLE_BEGIN: [u8; 0x30] = [
     0x02, 0xFF, 0x7D, 0x00, 0xFF, 0xFF, 0x06, 0x00,
 ];
 
-pub fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
     signature: &[u8],
 ) -> Vec<(E::VirtualAddress, u32)> {
     use std::cmp::Ordering;
@@ -199,8 +199,8 @@ pub fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
     result
 }
 
-pub fn find_requirement_tables<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn find_requirement_tables<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> RequirementTables<E::VirtualAddress> {
     RequirementTables {
         units: find_requirement_table_refs(analysis, &UNIT_REQ_TABLE_BEGIN[..]),

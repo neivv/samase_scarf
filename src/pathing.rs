@@ -2,7 +2,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operand, Operation, DestOperand};
 
-use crate::{Analysis, ArgCache, OptionExt, single_result_assign};
+use crate::{AnalysisCtx, ArgCache, OptionExt, single_result_assign};
 
 #[derive(Clone, Debug)]
 pub struct RegionRelated<'e, Va: VirtualAddress> {
@@ -19,8 +19,8 @@ impl<'e, Va: VirtualAddress> RegionRelated<'e, Va> {
     }
 }
 
-pub fn regions<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn regions<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> RegionRelated<'e, E::VirtualAddress> {
     let mut result = RegionRelated {
         get_region: None,
@@ -169,8 +169,8 @@ impl<'a, 'e, E: ExecutionState<'e>> RegionsAnalyzer<'a, 'e, E> {
     }
 }
 
-pub fn pathing<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn pathing<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;

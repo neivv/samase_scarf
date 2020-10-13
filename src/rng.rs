@@ -6,7 +6,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, Operation, Operand, MemAccessSize, DestOperand};
 
 use crate::{
-    Analysis, ArgCache, DatType, OptionExt, find_functions_using_global, single_result_assign,
+    AnalysisCtx, ArgCache, DatType, OptionExt, find_functions_using_global, single_result_assign,
     if_callable_const, EntryOf, entry_of_until,
 };
 
@@ -16,8 +16,8 @@ pub struct Rng<'e> {
     pub seed: Option<Operand<'e>>,
 }
 
-pub fn rng<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn rng<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Rc<Rng<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;

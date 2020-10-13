@@ -3,7 +3,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, Register};
 
-use crate::{Analysis, EntryOf};
+use crate::{AnalysisCtx, EntryOf};
 
 pub struct Eud<'e> {
     pub address: u32,
@@ -39,8 +39,8 @@ fn if_arithmetic_add_or_sub_const<'e>(val: Operand<'e>) -> Option<(Operand<'e>, 
     }
 }
 
-pub fn eud_table<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn eud_table<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> EudTable<'e> {
     fn finish_euds(result: &mut EudTable) {
         result.euds.retain(|x| x.operand.if_constant() != Some(0));

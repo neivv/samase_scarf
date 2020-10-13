@@ -8,7 +8,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{MemAccess, Register};
 
 use crate::{
-    ArgCache, Analysis, OptionExt, single_result_assign, entry_of_until, EntryOf, string_refs,
+    ArgCache, AnalysisCtx, OptionExt, single_result_assign, entry_of_until, EntryOf, string_refs,
 };
 
 pub struct Sprites<'e, Va: VirtualAddress> {
@@ -51,8 +51,8 @@ enum FindSpritesState {
     CreateLone_Post,
 }
 
-pub fn sprites<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn sprites<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Sprites<'e, E::VirtualAddress> {
     let mut result = Sprites {
         sprite_hlines: None,
@@ -786,8 +786,8 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RequiredReturnAddress<'e
     }
 }
 
-pub fn fow_sprites<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn fow_sprites<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> FowSprites<'e> {
     // step_orders calls a function that loops through
     // lone sprites, followed by a loop through fow sprites.
@@ -1030,8 +1030,8 @@ impl<'e, E: ExecutionState<'e>> FowSpriteAnalyzer<'e, E> {
     }
 }
 
-pub fn init_sprites<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn init_sprites<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> InitSprites<'e, E::VirtualAddress> {
     let mut result = InitSprites {
         init_sprites: None,

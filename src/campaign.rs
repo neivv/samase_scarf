@@ -1,7 +1,7 @@
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operand};
 
-use crate::Analysis;
+use crate::AnalysisCtx;
 
 static ZERG_CAMPAIGN_SIGNATURE: &[u8] = &[
     0x20, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -17,8 +17,8 @@ static TERRAN_CAMPAIGN_SIGNATURE: &[u8] = &[
     0x0c, 0x00, 0x04, 0x00, 0x06, 0x00, 0x01, 0x00,
 ];
 
-pub fn campaigns<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn campaigns<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     // The campaign array is ordered by race, so zerg maps are in first pointer.
     // Check that second pointer is terran maps to avoid false positives.

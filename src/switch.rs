@@ -3,7 +3,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, BinarySection, Operation, Operand};
 
 use crate::{
-    Analysis, EntryOf, EntryOfResult, SwitchTable, OptionExt,
+    AnalysisCtx, EntryOf, EntryOfResult, SwitchTable, OptionExt,
     entry_of_until, find_functions_using_global,
 };
 
@@ -23,8 +23,8 @@ impl<Va: VirtualAddress> CompleteSwitch<Va> {
 }
 
 /// Also returns entry of the switch function
-pub fn full_switch_info<'exec, E: ExecutionState<'exec>>(
-    analysis: &mut Analysis<'exec, E>,
+pub(crate) fn full_switch_info<'exec, E: ExecutionState<'exec>>(
+    analysis: &mut AnalysisCtx<'_, 'exec, E>,
     switch: &SwitchTable<E::VirtualAddress>,
 ) -> Option<(CompleteSwitch<E::VirtualAddress>, E::VirtualAddress)> {
     let users = find_functions_using_global(analysis, switch.address);
@@ -45,7 +45,7 @@ pub fn full_switch_info<'exec, E: ExecutionState<'exec>>(
 }
 
 fn full_switch_info_in_function<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
     switch: &SwitchTable<E::VirtualAddress>,
     entry: E::VirtualAddress,
     use_address: E::VirtualAddress,

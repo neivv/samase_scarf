@@ -6,7 +6,7 @@ use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation, Rva};
 use scarf::operand::{OperandCtx, Register};
 
 use crate::{
-    Analysis, ArgCache, EntryOf, EntryOfResult, find_callers, entry_of_until, unwrap_sext,
+    AnalysisCtx, ArgCache, EntryOf, EntryOfResult, find_callers, entry_of_until, unwrap_sext,
     single_result_assign, OptionExt, DatType, find_functions_using_global,
     if_arithmetic_eq_neq,
 };
@@ -39,7 +39,7 @@ pub struct MiscClientSide<'e> {
 
 // Candidates are either a global ref with Some(global), or a call with None
 fn game_screen_rclick_inner<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
     candidates: &[(E::VirtualAddress, Option<E::VirtualAddress>)],
 ) -> ResultOrEntries<(E::VirtualAddress, Operand<'e>), E::VirtualAddress> {
     let binary = analysis.binary;
@@ -205,8 +205,8 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
 }
 
 // Candidates are either a global ref with Some(global), or a call with None
-pub fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
-    analysis: &mut Analysis<'a, E>,
+pub(crate) fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
+    analysis: &mut AnalysisCtx<'_, 'a, E>,
 ) -> Option<E::VirtualAddress> {
     let game_screen_rclick = analysis.game_screen_rclick().game_screen_rclick?;
     struct Analyzer<'a, 'b, E: ExecutionState<'a>> {
@@ -275,8 +275,8 @@ fn if_f32_div<'e>(operand: Operand<'e>) -> Option<(Operand<'e>, Operand<'e>)> {
     }
 }
 
-pub fn game_coord_conversion<'a, E: ExecutionState<'a>>(
-    analysis: &mut Analysis<'a, E>,
+pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
+    analysis: &mut AnalysisCtx<'_, 'a, E>,
 ) -> GameCoordConversion<'a> {
     let mut result = GameCoordConversion::default();
     let game_screen_rclick = match analysis.game_screen_rclick().game_screen_rclick {
@@ -415,8 +415,8 @@ pub fn game_coord_conversion<'a, E: ExecutionState<'a>>(
     result
 }
 
-pub fn game_screen_rclick<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn game_screen_rclick<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> GameScreenRClick<'e, E::VirtualAddress> {
     let binary = analysis.binary;
 
@@ -459,8 +459,8 @@ pub fn game_screen_rclick<'e, E: ExecutionState<'e>>(
     }
 }
 
-pub fn misc_clientside<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn misc_clientside<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> MiscClientSide<'e> {
     let mut result = MiscClientSide {
         is_paused: None,

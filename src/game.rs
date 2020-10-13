@@ -3,7 +3,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, OperandCtx, Operand, DestOperand, Operation, MemAccessSize};
 
 use crate::{
-    Analysis, OptionExt, find_functions_using_global, find_callers, EntryOf,
+    AnalysisCtx, OptionExt, find_functions_using_global, find_callers, EntryOf,
     single_result_assign, if_callable_const, entry_of_until, ArgCache,
 };
 
@@ -26,8 +26,8 @@ pub struct Limits<'e, Va: VirtualAddress> {
     pub smem_free: Option<Va>,
 }
 
-pub fn step_objects<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     // step_objects calls enable_rng(1) at start and enable_rng(0) at end,
@@ -159,7 +159,7 @@ impl<'a, 'e, E: ExecutionState<'e>> IsStepObjects<'a, 'e, E> {
 }
 
 fn is_branchless_leaf<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
     addr: E::VirtualAddress,
 ) -> bool {
     struct Analyzer<'e, E: ExecutionState<'e>> {
@@ -288,8 +288,8 @@ impl VisionStepState {
     }
 }
 
-pub fn game<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn game<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let step_objects = analysis.step_objects()?;
     let binary = analysis.binary;
@@ -376,8 +376,8 @@ fn game_detect_check<'e>(ctx: OperandCtx<'e>, val: Operand<'e>) -> Option<Operan
         }).next()
 }
 
-pub fn limits<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn limits<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Limits<'e, E::VirtualAddress> {
     let mut result = Limits {
         set_limits: None,

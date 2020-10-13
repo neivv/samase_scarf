@@ -8,7 +8,7 @@ use crate::{entry_of_until, EntryOf, OptionExt, OperandExt, find_functions_using
 use super::{DatPatchContext, DatPatch, GrpTexturePatch, reloc_address_of_instruction};
 
 pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
-    dat_ctx: &mut DatPatchContext<'a, 'e, E>,
+    dat_ctx: &mut DatPatchContext<'a, '_, 'e, E>,
 ) -> Option<()> {
     // Hook any indexing of wirefram/grpwire/tranwire grp/ddsgrps
     // so that they can be indexed by using .dat value instead of plain unit id
@@ -114,9 +114,9 @@ enum GrpType {
     DdsGrpSet,
 }
 
-struct GrpIndexAnalyzer<'a, 'b, 'e, E: ExecutionState<'e>> {
+struct GrpIndexAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     ref_addr: E::VirtualAddress,
-    dat_ctx: &'a mut DatPatchContext<'b, 'e, E>,
+    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
     checked_refs: &'a mut FxHashSet<E::VirtualAddress>,
     functions_returning_grp: &'a FxHashMap<E::VirtualAddress, GrpType>,
     grp_operands: &'a FxHashMap<OperandHashByAddress<'e>, GrpType>,
@@ -132,8 +132,8 @@ struct GrpIndexAnalyzer<'a, 'b, 'e, E: ExecutionState<'e>> {
     inline_this: Operand<'e>,
 }
 
-impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    GrpIndexAnalyzer<'a, 'b, 'e, E>
+impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    GrpIndexAnalyzer<'a, 'b, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;

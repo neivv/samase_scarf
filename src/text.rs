@@ -2,7 +2,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{DestOperand, Operand, BinaryFile, BinarySection, Operation};
 
-use crate::{Analysis, ArgCache, entry_of_until, EntryOf, OptionExt, single_result_assign};
+use crate::{AnalysisCtx, ArgCache, entry_of_until, EntryOf, OptionExt, single_result_assign};
 
 #[derive(Clone)]
 pub struct FontRender<Va: VirtualAddress> {
@@ -11,8 +11,8 @@ pub struct FontRender<Va: VirtualAddress> {
     pub ttf_render_sdf: Option<Va>,
 }
 
-pub fn fonts<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn fonts<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -138,8 +138,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FontsAnalyzer<'a, 'e
     }
 }
 
-pub fn font_render<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn font_render<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> FontRender<E::VirtualAddress> {
     let mut result = FontRender {
         font_cache_render_ascii: None,
@@ -414,8 +414,8 @@ impl<'a, 'e, E: ExecutionState<'e>> TtfCacheCharacterAnalyzer<'a, 'e, E> {
     }
 }
 
-pub fn ttf_malloc<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn ttf_malloc<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let ttf_render_sdf = analysis.ttf_render_sdf()?;
     let binary = analysis.binary;

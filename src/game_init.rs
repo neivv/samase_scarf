@@ -3,7 +3,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 
 use crate::{
-    Analysis, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, OperandExt,
+    AnalysisCtx, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, OperandExt,
     find_callers, string_refs, if_arithmetic_eq_neq, single_result_assign,
 };
 
@@ -77,8 +77,8 @@ impl<'e, Va: VirtualAddress> Default for SelectMapEntry<'e, Va> {
     }
 }
 
-pub fn play_smk<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn play_smk<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -155,8 +155,8 @@ fn is_arg1(operand: Operand<'_>) -> bool {
         .is_some()
 }
 
-pub fn game_init<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> GameInit<'e, E::VirtualAddress> {
     let mut result = GameInit {
         sc_main: None,
@@ -362,8 +362,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
     }
 }
 
-pub fn init_map_from_path<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<InitMapFromPath<E::VirtualAddress>> {
     // init_map_from_path calls another function
     // that calls chk validation function.
@@ -515,8 +515,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsInitMapFromPath
     }
 }
 
-pub fn choose_snp<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     // Search for vtable of AVSelectConnectionScreen, whose event handler (Fn vtable + 0x18)
     // with arg1 == 9 calls a child function doing
@@ -677,8 +677,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindChooseSnp<'a,
     }
 }
 
-pub fn single_player_start<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn single_player_start<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> SinglePlayerStart<'e, E::VirtualAddress> {
     let mut result = SinglePlayerStart::default();
     let choose_snp = match analysis.choose_snp() {
@@ -914,8 +914,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-pub fn select_map_entry<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn select_map_entry<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> SelectMapEntry<'e, E::VirtualAddress> {
     let mut result = SelectMapEntry::default();
     let start = analysis.single_player_start();
@@ -1027,8 +1027,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSelectMapEntr
     }
 }
 
-pub fn load_images<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn load_images<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     // First operation of load_images is to call
     // func("scripts\\iscript.bin", 0, &mut iscript_bin_size, "", 0)
@@ -1098,8 +1098,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsLoadImages<'a, 
     }
 }
 
-pub fn images_loaded<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn images_loaded<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> ImagesLoaded<'e, E::VirtualAddress> {
     let mut result = ImagesLoaded {
         images_loaded: None,
@@ -1253,8 +1253,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindImagesLoaded<'e, 
     }
 }
 
-pub fn local_player_name<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn local_player_name<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     #[allow(bad_style)]
     let VA_SIZE: u32 = E::VirtualAddress::SIZE;
@@ -1370,8 +1370,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheckLocalPlayerName<
     }
 }
 
-pub fn init_game_network<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn init_game_network<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let single_player_start = analysis.single_player_start();
     let local_storm_player = single_player_start.local_storm_player_id?;
@@ -1453,8 +1453,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitGameNetwork<'
     }
 }
 
-pub fn lobby_state<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn lobby_state<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -1526,8 +1526,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLobbyState<'e, E>
     }
 }
 
-pub fn init_game<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn init_game<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> InitGame<'e, E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -1615,8 +1615,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for InitGameAnalyzer<
     }
 }
 
-pub fn create_game_dialog_vtbl_on_multiplayer_create<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn create_game_dialog_vtbl_on_multiplayer_create<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<usize> {
     struct Analyzer<'a, 'e, E: ExecutionState<'e>> {
         arg_cache: &'a ArgCache<'e, E>,
@@ -1665,8 +1665,8 @@ pub fn create_game_dialog_vtbl_on_multiplayer_create<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-pub fn join_game<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn join_game<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let local_storm_id = analysis.single_player_start().local_storm_player_id
         .and_then(|x| x.if_memory())
@@ -1739,8 +1739,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsJoinGame<'a, 'e
 }
 
 
-pub fn snet_initialize_provider<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn snet_initialize_provider<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let choose_snp = analysis.choose_snp()?;
     let binary = analysis.binary;
@@ -1786,8 +1786,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSnetInitProvi
     }
 }
 
-pub fn chk_init_players<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn chk_init_players<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -1861,8 +1861,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindChkInitPlayer<'e,
     }
 }
 
-pub fn original_chk_player_types<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn original_chk_player_types<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;

@@ -4,7 +4,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
 use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 
 use crate::{
-    Analysis, ArgCache, EntryOf, EntryOfResult, OptionExt, if_callable_const, find_callers,
+    AnalysisCtx, ArgCache, EntryOf, EntryOfResult, OptionExt, if_callable_const, find_callers,
     entry_of_until, single_result_assign, find_bytes, read_u32_at, if_arithmetic_eq_neq,
 };
 
@@ -32,8 +32,8 @@ pub struct StepNetwork<'e, Va: VirtualAddressTrait> {
     pub network_ready: Option<Operand<'e>>,
 }
 
-pub fn print_text<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     struct Analyzer<'e, E: ExecutionState<'e>> {
         arg1: Operand<'e>,
@@ -93,8 +93,8 @@ pub fn print_text<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-pub fn command_lengths<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn command_lengths<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Vec<u32> {
     let rdata = analysis.binary.section(b".rdata\0\0").unwrap();
     let needle = [
@@ -151,8 +151,8 @@ pub fn command_lengths<'e, E: ExecutionState<'e>>(
     result
 }
 
-pub fn send_command<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn send_command<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let firegraft = analysis.firegraft_addresses();
 
@@ -226,8 +226,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'
     }
 }
 
-pub fn process_commands<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn process_commands<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> ProcessCommands<'e, E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -346,8 +346,8 @@ fn op_is_fully_defined(op: Operand<'_>) -> bool {
     })
 }
 
-pub fn command_user<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn command_user<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -429,8 +429,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CommandUserAnalyzer<'
     }
 }
 
-pub fn selections<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn selections<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Selections<'e> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -558,8 +558,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SelectionsAnalyze
     }
 }
 
-pub fn is_replay<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn is_replay<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -662,8 +662,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyzer<'e, 
     }
 }
 
-pub fn step_network<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn step_network<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> StepNetwork<'e, E::VirtualAddress> {
     let mut result = StepNetwork {
         step_network: None,

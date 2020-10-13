@@ -3,7 +3,7 @@ use scarf::analysis::{self, FuncAnalysis, AnalysisState,Cfg, Control};
 use scarf::operand::OperandCtx;
 
 use crate::{
-    Analysis, OptionExt, find_callers, entry_of_until, single_result_assign, EntryOf, ArgCache,
+    AnalysisCtx, OptionExt, find_callers, entry_of_until, single_result_assign, EntryOf, ArgCache,
 };
 use crate::switch::{full_switch_info};
 
@@ -208,14 +208,14 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
     }
 }
 
-pub fn find_order_nuke_track<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>
+pub(crate) fn find_order_nuke_track<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>
 ) -> Option<E::VirtualAddress> {
     find_order_function(analysis, 0x81)
 }
 
-pub fn find_order_function<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
     order: u32,
 ) -> Option<E::VirtualAddress> {
     // Just take the last call when [ecx+4d] has been set to correct order.
@@ -305,7 +305,7 @@ pub fn find_order_function<'e, E: ExecutionState<'e>>(
 }
 
 fn step_order_hook_info<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
     func_entry: E::VirtualAddress,
 ) -> Option<StepOrderHiddenHook<'e, E::VirtualAddress>> {
     /// Finds `cmp order, 0xb0` jump that is the first thing done in step_order_hidden,
@@ -413,8 +413,8 @@ fn skip_past_calls<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-pub fn step_order<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn step_order<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let order_issuing = analysis.order_issuing();
     let binary = analysis.binary;
@@ -453,15 +453,15 @@ pub fn step_order<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct IsStepOrder<'a, 'e, E: ExecutionState<'e>> {
+struct IsStepOrder<'a, 'acx, 'e, E: ExecutionState<'e>> {
     ok: bool,
     call_found: bool,
     caller: E::VirtualAddress,
     switches: &'a [crate::SwitchTable<E::VirtualAddress>],
-    analysis: &'a mut Analysis<'e, E>,
+    analysis: &'a mut AnalysisCtx<'acx, 'e, E>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'a, 'acx, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -495,8 +495,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'a, 'e, 
     }
 }
 
-pub fn step_order_hidden<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn step_order_hidden<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Vec<StepOrderHiddenHook<'e, E::VirtualAddress>> {
     let switches = analysis.switch_tables();
 
@@ -530,8 +530,8 @@ pub fn step_order_hidden<'e, E: ExecutionState<'e>>(
     result
 }
 
-pub fn step_secondary_order<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn step_secondary_order<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Vec<SecondaryOrderHook<'e, E::VirtualAddress>> {
     let binary = analysis.binary;
     let funcs = analysis.functions();
@@ -655,8 +655,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
     }
 }
 
-pub fn do_attack<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn do_attack<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<DoAttack<'e, E::VirtualAddress>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;

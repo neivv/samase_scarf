@@ -3,7 +3,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
 use scarf::operand::{Operand};
 use scarf::{BinaryFile, BinarySection, DestOperand, Operation};
 
-use crate::{Analysis, ArgCache, if_callable_const};
+use crate::{AnalysisCtx, ArgCache, if_callable_const};
 
 struct FindLoadDat<'a, 'e, E: ExecutionState<'e>> {
     result: Vec<(E::VirtualAddress, E::VirtualAddress)>,
@@ -30,8 +30,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLoadDat<'a, '
 }
 
 /// Return (Vec<(call_ins_address, call_dest)>, errors)
-pub fn find_load_dat_fn<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn find_load_dat_fn<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
     parent: E::VirtualAddress,
     string_address: E::VirtualAddress,
 ) -> Vec<(E::VirtualAddress, E::VirtualAddress)> {
@@ -64,7 +64,7 @@ struct OpenFileFnIntermediate<Va: VirtualAddressTrait> {
 }
 
 fn find_open_file_fn<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     load_dat_fn: E::VirtualAddress,
 ) -> Vec<E::VirtualAddress> {
@@ -192,8 +192,8 @@ fn find_name_arg<'e, A: analysis::Analyzer<'e>>(
     }).next()
 }
 
-pub fn open_file<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn open_file<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Vec<E::VirtualAddress> {
     let binary = analysis.binary;
     let str_refs = crate::string_refs(binary, analysis, b"arr\\units.");

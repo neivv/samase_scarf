@@ -7,7 +7,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::analysis::{self, Control, FuncAnalysis};
 
 use crate::add_terms::collect_arith_add_terms;
-use crate::{Analysis, ArgCache, EntryOf, OptionExt, entry_of_until, single_result_assign};
+use crate::{AnalysisCtx, ArgCache, EntryOf, OptionExt, entry_of_until, single_result_assign};
 
 #[derive(Clone)]
 pub struct PrismShaders<Va: VirtualAddress> {
@@ -55,8 +55,8 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DrawImageEntryCheck<'e, 
     }
 }
 
-pub fn draw_image<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn draw_image<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let switch_tables = analysis.switch_tables();
     // Switch table for drawfunc-specific code.
@@ -102,14 +102,14 @@ pub fn draw_image<'e, E: ExecutionState<'e>>(
     result
 }
 
-pub fn renderer_vtables<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn renderer_vtables<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Vec<E::VirtualAddress> {
     crate::vtables::vtables(analysis, b".?AVRenderer@@\0")
 }
 
-pub fn prism_shaders<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn prism_shaders<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> PrismShaders<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;

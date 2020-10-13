@@ -3,7 +3,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{ArithOpType, BinaryFile, DestOperand, Operand, Operation};
 
 use crate::{
-    Analysis, ArgCache, DatType, entry_of_until, EntryOf, find_functions_using_global,
+    AnalysisCtx, ArgCache, DatType, entry_of_until, EntryOf, find_functions_using_global,
     single_result_assign, OperandExt,
 };
 
@@ -13,8 +13,8 @@ pub struct CheckUnitRequirements<'e, Va: VirtualAddress> {
     pub requirement_error: Operand<'e>,
 }
 
-pub fn check_unit_requirements<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn check_unit_requirements<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<CheckUnitRequirements<'e, E::VirtualAddress>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -114,8 +114,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitReqsAnalyzer<
     }
 }
 
-pub fn check_dat_requirements<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn check_dat_requirements<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -189,8 +189,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for DatReqsAnalyzer<'
     }
 }
 
-pub fn cheat_flags<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn cheat_flags<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;

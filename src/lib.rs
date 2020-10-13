@@ -132,6 +132,13 @@ impl<T: Clone> Default for Cached<T> {
 pub struct AnalysisX86<'e>(pub Analysis<'e, scarf::ExecutionStateX86<'e>>);
 
 pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
+    cache: AnalysisCache<'e, E>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    ctx: scarf::OperandCtx<'e>,
+    arg_cache: ArgCache<'e, E>,
+}
+
+struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     relocs: Cached<Rc<Vec<E::VirtualAddress>>>,
     relocs_with_values: Cached<Rc<Vec<RelocValues<E::VirtualAddress>>>>,
     functions: Cached<Rc<Vec<E::VirtualAddress>>>,
@@ -234,9 +241,13 @@ pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     original_chk_player_types: Cached<Option<Operand<'e>>>,
     give_ai: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
+}
+
+pub(crate) struct AnalysisCtx<'b, 'e, E: ExecutionStateTrait<'e>> {
+    cache: &'b mut AnalysisCache<'e, E>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
-    arg_cache: ArgCache<'e, E>,
+    arg_cache: &'b ArgCache<'e, E>,
 }
 
 struct ArgCache<'e, E: ExecutionStateTrait<'e>> {
@@ -405,107 +416,109 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         ctx: scarf::OperandCtx<'e>,
     ) -> Analysis<'e, E> {
         Analysis {
-            relocs: Default::default(),
-            relocs_with_values: Default::default(),
-            functions: Default::default(),
-            functions_with_callers: Default::default(),
-            switch_tables: Default::default(),
-            open_file: Default::default(),
-            firegraft_addresses: Default::default(),
-            aiscript_hook: Default::default(),
-            game: Default::default(),
-            rng: Default::default(),
-            step_objects: Default::default(),
-            player_ai: Default::default(),
-            regions: Default::default(),
-            pathing: Default::default(),
-            active_hidden_units: Default::default(),
-            order_issuing: Default::default(),
-            process_commands: Default::default(),
-            command_lengths: Default::default(),
-            command_user: Default::default(),
-            selections: Default::default(),
-            is_replay: Default::default(),
-            process_lobby_commands: Default::default(),
-            send_command: Default::default(),
-            print_text: Default::default(),
-            step_order: Default::default(),
-            step_order_hidden: Default::default(),
-            step_secondary_order: Default::default(),
-            init_units: Default::default(),
-            units: Default::default(),
-            game_screen_rclick: Default::default(),
-            init_game: Default::default(),
-            first_ai_script: Default::default(),
-            first_guard_ai: Default::default(),
-            player_ai_towns: Default::default(),
-            step_iscript: Default::default(),
-            sprites: Default::default(),
-            eud: Default::default(),
-            map_tile_flags: Default::default(),
-            players: Default::default(),
-            draw_image: Default::default(),
-            renderer_vtables: Default::default(),
-            local_player_id: Default::default(),
-            bullet_creation: Default::default(),
-            net_players: Default::default(),
-            play_smk: Default::default(),
-            game_init: Default::default(),
-            add_overlay_iscript: Default::default(),
-            campaigns: Default::default(),
-            run_dialog: Default::default(),
-            ai_update_attack_target: Default::default(),
-            is_outside_game_screen: Default::default(),
-            game_coord_conversion: Default::default(),
-            fow_sprites: Default::default(),
-            init_map_from_path: Default::default(),
-            choose_snp: Default::default(),
-            single_player_start: Default::default(),
-            select_map_entry: Default::default(),
-            load_images: Default::default(),
-            images_loaded: Default::default(),
-            local_player_name: Default::default(),
-            step_network: Default::default(),
-            init_game_network: Default::default(),
-            snp_definitions: Default::default(),
-            lobby_state: Default::default(),
-            init_storm_networking: Default::default(),
-            draw_cursor_marker: Default::default(),
-            misc_clientside: Default::default(),
-            spawn_dialog: Default::default(),
-            unit_creation: Default::default(),
-            fonts: Default::default(),
-            init_sprites: Default::default(),
-            sprite_serialization: Default::default(),
-            limits: Default::default(),
-            font_render: Default::default(),
-            ttf_malloc: Default::default(),
-            create_game_dialog_vtbl_on_multiplayer_create: Default::default(),
-            tooltip_related: Default::default(),
-            draw_graphic_layers: Default::default(),
-            prism_shaders: Default::default(),
-            ai_attack_prepare: Default::default(),
-            ai_step_region: Default::default(),
-            join_game: Default::default(),
-            dat_patches: Default::default(),
-            snet_initialize_provider: Default::default(),
-            do_attack: Default::default(),
-            button_ddsgrps: Default::default(),
-            mouse_xy: Default::default(),
-            status_screen_mode: Default::default(),
-            check_unit_requirements: Default::default(),
-            check_dat_requirements: Default::default(),
-            cheat_flags: Default::default(),
-            unit_strength: Default::default(),
-            multi_wireframes: Default::default(),
-            wirefram_ddsgrp: Default::default(),
-            run_triggers: Default::default(),
-            trigger_unit_count_caches: Default::default(),
-            snet_handle_packets: Default::default(),
-            chk_init_players: Default::default(),
-            original_chk_player_types: Default::default(),
-            give_ai: Default::default(),
-            dat_tables: DatTables::new(),
+            cache: AnalysisCache {
+                relocs: Default::default(),
+                relocs_with_values: Default::default(),
+                functions: Default::default(),
+                functions_with_callers: Default::default(),
+                switch_tables: Default::default(),
+                open_file: Default::default(),
+                firegraft_addresses: Default::default(),
+                aiscript_hook: Default::default(),
+                game: Default::default(),
+                rng: Default::default(),
+                step_objects: Default::default(),
+                player_ai: Default::default(),
+                regions: Default::default(),
+                pathing: Default::default(),
+                active_hidden_units: Default::default(),
+                order_issuing: Default::default(),
+                process_commands: Default::default(),
+                command_lengths: Default::default(),
+                command_user: Default::default(),
+                selections: Default::default(),
+                is_replay: Default::default(),
+                process_lobby_commands: Default::default(),
+                send_command: Default::default(),
+                print_text: Default::default(),
+                step_order: Default::default(),
+                step_order_hidden: Default::default(),
+                step_secondary_order: Default::default(),
+                init_units: Default::default(),
+                units: Default::default(),
+                game_screen_rclick: Default::default(),
+                init_game: Default::default(),
+                first_ai_script: Default::default(),
+                first_guard_ai: Default::default(),
+                player_ai_towns: Default::default(),
+                step_iscript: Default::default(),
+                sprites: Default::default(),
+                eud: Default::default(),
+                map_tile_flags: Default::default(),
+                players: Default::default(),
+                draw_image: Default::default(),
+                renderer_vtables: Default::default(),
+                local_player_id: Default::default(),
+                bullet_creation: Default::default(),
+                net_players: Default::default(),
+                play_smk: Default::default(),
+                game_init: Default::default(),
+                add_overlay_iscript: Default::default(),
+                campaigns: Default::default(),
+                run_dialog: Default::default(),
+                ai_update_attack_target: Default::default(),
+                is_outside_game_screen: Default::default(),
+                game_coord_conversion: Default::default(),
+                fow_sprites: Default::default(),
+                init_map_from_path: Default::default(),
+                choose_snp: Default::default(),
+                single_player_start: Default::default(),
+                select_map_entry: Default::default(),
+                load_images: Default::default(),
+                images_loaded: Default::default(),
+                local_player_name: Default::default(),
+                step_network: Default::default(),
+                init_game_network: Default::default(),
+                snp_definitions: Default::default(),
+                lobby_state: Default::default(),
+                init_storm_networking: Default::default(),
+                draw_cursor_marker: Default::default(),
+                misc_clientside: Default::default(),
+                spawn_dialog: Default::default(),
+                unit_creation: Default::default(),
+                fonts: Default::default(),
+                init_sprites: Default::default(),
+                sprite_serialization: Default::default(),
+                limits: Default::default(),
+                font_render: Default::default(),
+                ttf_malloc: Default::default(),
+                create_game_dialog_vtbl_on_multiplayer_create: Default::default(),
+                tooltip_related: Default::default(),
+                draw_graphic_layers: Default::default(),
+                prism_shaders: Default::default(),
+                ai_attack_prepare: Default::default(),
+                ai_step_region: Default::default(),
+                join_game: Default::default(),
+                dat_patches: Default::default(),
+                snet_initialize_provider: Default::default(),
+                do_attack: Default::default(),
+                button_ddsgrps: Default::default(),
+                mouse_xy: Default::default(),
+                status_screen_mode: Default::default(),
+                check_unit_requirements: Default::default(),
+                check_dat_requirements: Default::default(),
+                cheat_flags: Default::default(),
+                unit_strength: Default::default(),
+                multi_wireframes: Default::default(),
+                wirefram_ddsgrp: Default::default(),
+                run_triggers: Default::default(),
+                trigger_unit_count_caches: Default::default(),
+                snet_handle_packets: Default::default(),
+                chk_init_players: Default::default(),
+                original_chk_player_types: Default::default(),
+                give_ai: Default::default(),
+                dat_tables: DatTables::new(),
+            },
             binary,
             ctx,
             arg_cache: ArgCache::new(ctx),
@@ -516,1050 +529,534 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         address.as_u64() & 0xf == 0
     }
 
-    fn functions(&mut self) -> Rc<Vec<E::VirtualAddress>> {
-        let binary = self.binary;
-        let relocs = self.relocs();
-        self.functions.get_or_insert_with(|| {
-            let mut functions = scarf::analysis::find_functions::<E>(binary, &relocs);
-            functions.retain(|&fun| Analysis::<E>::is_valid_function(fun));
-
-            // Add functions which immediately jump to another
-            let text = binary.section(b".text\0\0\0").unwrap();
-            let text_end = text.virtual_address + text.virtual_size;
-            let mut extra_funcs = Vec::with_capacity(64);
-            for &func in &functions {
-                let relative = func.as_u64().wrapping_sub(text.virtual_address.as_u64()) as usize;
-                if let Some(&byte) = text.data.get(relative) {
-                    if byte == 0xe9 {
-                        if let Some(offset) = (&text.data[relative + 1..]).read_u32::<LE>().ok() {
-                            let dest = func.as_u64()
-                                .wrapping_add(5)
-                                .wrapping_add(offset as i32 as i64 as u64);
-                            let dest = E::VirtualAddress::from_u64(dest);
-                            if dest >= text.virtual_address && dest <= text_end {
-                                if let Err(index) = functions.binary_search(&dest) {
-                                    extra_funcs.push((dest, index));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // Insert functions without having to memmove every entry more than once
-            extra_funcs.sort_unstable_by_key(|x| x.0);
-            extra_funcs.dedup_by_key(|x| x.0);
-            let mut end_pos = functions.len();
-            functions.resize_with(
-                functions.len() + extra_funcs.len(),
-                || E::VirtualAddress::from_u64(0),
-            );
-            for (i, &(val, index)) in extra_funcs.iter().enumerate().rev() {
-                functions.copy_within(index..end_pos, index + i + 1);
-                functions[index + i] = val;
-                end_pos = index;
-            }
-            Rc::new(functions)
-        }).clone()
-    }
-
-    // TODO Should share search w/ self.functions
-    fn functions_with_callers(&mut self) -> Rc<Vec<FuncCallPair<E::VirtualAddress>>> {
-        let binary = self.binary;
-        self.functions_with_callers.get_or_insert_with(|| {
-            let mut functions = scarf::analysis::find_functions_with_callers::<E>(binary);
-            functions.retain(|fun| Analysis::<E>::is_valid_function(fun.callee));
-            Rc::new(functions)
-        }).clone()
-    }
-
-    fn relocs(&mut self) -> Rc<Vec<E::VirtualAddress>> {
-        let relocs = match self.relocs.is_none() {
-            true => match scarf::analysis::find_relocs::<E>(&self.binary) {
-                Ok(s) => s,
-                Err(e) => {
-                    debug!("Error getting relocs: {}", e);
-                    Vec::new()
-                }
-            },
-            false => Vec::new(),
+    /// Entry point for any analysis calls.
+    /// Creates AnalysisCtx from self that is used across actual analysis functions.
+    fn enter<'b, F: FnOnce(&mut AnalysisCtx<'b, 'e, E>) -> R, R>(
+        &'b mut self,
+        func: F,
+    ) -> R {
+        let mut ctx = AnalysisCtx {
+            cache: &mut self.cache,
+            binary: self.binary,
+            ctx: self.ctx,
+            arg_cache: &self.arg_cache,
         };
-        self.relocs.get_or_insert_with(|| {
-            Rc::new(relocs)
-        }).clone()
-    }
-
-    fn relocs_with_values(&mut self) -> Rc<Vec<RelocValues<E::VirtualAddress>>> {
-        let result = match self.relocs_with_values.is_none() {
-            true => {
-                let relocs = self.relocs();
-                match scarf::analysis::relocs_with_values(&self.binary, &relocs) {
-                    Ok(o) => o,
-                    Err(e) => {
-                        debug!("Error getting relocs with values: {}", e);
-                        Vec::new()
-                    }
-                }
-            }
-            false => Vec::new(),
-        };
-        self.relocs_with_values.get_or_insert_with(|| {
-            Rc::new(result)
-        }).clone()
+        let ret = func(&mut ctx);
+        ret
     }
 
     pub fn firegraft_addresses(&mut self) -> Rc<FiregraftAddresses<E::VirtualAddress>> {
-        if let Some(cached) = self.firegraft_addresses.cached() {
-            return cached;
-        }
-        let buttonsets = firegraft::find_buttonsets(&self.binary);
-        let status_funcs = firegraft::find_unit_status_funcs(&self.binary, self);
-        let reqs = firegraft::find_requirement_tables(self);
-        let result = Rc::new(FiregraftAddresses {
-            buttonsets,
-            requirement_table_refs: reqs,
-            unit_status_funcs: status_funcs,
-        });
-        self.firegraft_addresses.cache(&result);
-        result
-    }
-
-    // Sorted by switch address
-    fn switch_tables(&mut self) -> Rc<Vec<SwitchTable<E::VirtualAddress>>> {
-        let binary = self.binary;
-        let relocs = self.relocs();
-        self.switch_tables.get_or_insert_with(|| {
-            let text = binary.section(b".text\0\0\0").unwrap();
-            let switches = scarf::analysis::find_switch_tables(binary, &relocs);
-            let mut table_start_index = 0;
-            let mut previous_address = E::VirtualAddress::from_u64(!0);
-            let mut result = Vec::new();
-            for i in 0..switches.len() {
-                let jump = &switches[i];
-                if jump.address != previous_address + 4 {
-                    if i - table_start_index > 2 {
-                        let cases =
-                            switches[table_start_index..i].iter().map(|x| x.callee).collect();
-                        result.push(SwitchTable {
-                            address: switches[table_start_index].address,
-                            cases,
-                        });
-                    }
-                    table_start_index = i;
-                }
-                previous_address = jump.address;
-            }
-
-            result.retain(|s| {
-                // There's microsoft directx libraries embedded with large switches for
-                // displaying error etc names, luckily their compiler produces optimized ones
-                // which are just
-                //  mov eax, text
-                //  jmp ret
-                // Why they couldn't just use a string array is beyond me :l
-                // There are some BW ones that this catches as well, but they aren't relevant
-                // at least atm. Hopefully I'll remember this filter if things change.
-                !s.cases.iter().take(6).all(|&case| {
-                    let case_relative = (case.as_u64() - text.virtual_address.as_u64()) as usize;
-                    text.data.get(case_relative..).and_then(|case_ins| {
-                        let first = *case_ins.get(0)?;
-                        let second = *case_ins.get(5)?;
-                        Some(first == 0xb8 && (second == 0xe9 || second == 0xeb))
-                    }).unwrap_or(false)
-                })
-            });
-            result.sort_unstable_by_key(|x| x.address);
-            Rc::new(result)
-        }).clone()
-    }
-
-    /// Returns address and dat table struct size
-    fn dat_virtual_address(
-        &mut self,
-        ty: DatType,
-    ) -> Option<(E::VirtualAddress, u32)> {
-        let dat = self.dat(ty);
-        let result = dat.iter()
-            .filter_map(|x| x.address.if_constant().map(|y| (y, x.entry_size)))
-            .next()
-            .map(|(addr, size)| (E::VirtualAddress::from_u64(addr), size));
-        result
+        self.enter(|x| x.firegraft_addresses())
     }
 
     pub fn dat(&mut self, ty: DatType) -> Option<DatTablePtr<'e>> {
-        let filename = {
-            let (field, filename) = self.dat_tables.field(ty);
-            if let Some(ref f) = *field {
-                return f.clone();
-            }
-            filename
-        };
-        let result = dat::dat_table(self, filename);
-        let (field, _) = self.dat_tables.field(ty);
-        *field = Some(result.clone());
-        result
+        self.enter(|x| x.dat(ty))
     }
 
     pub fn file_hook(&mut self) -> Rc<Vec<E::VirtualAddress>> {
-        if let Some(cached) = self.open_file.cached() {
-            return cached;
-        }
-        let result = Rc::new(file::open_file(self));
-        self.open_file.cache(&result);
-        result
+        self.enter(|x| x.file_hook())
     }
 
     pub fn rng(&mut self) -> Rc<Rng<'e>> {
-        if let Some(cached) = self.rng.cached() {
-            return cached;
-        }
-        let result = rng::rng(self);
-        self.rng.cache(&result);
-        result
+        self.enter(|x| x.rng())
     }
 
     pub fn step_objects(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.step_objects.cached() {
-            return cached;
-        }
-        let result = game::step_objects(self);
-        self.step_objects.cache(&result);
-        result
+        self.enter(|x| x.step_objects())
     }
 
     pub fn game(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.game.cached() {
-            return cached;
-        }
-        let result = game::game(self);
-        self.game.cache(&result);
-        result
+        self.enter(|x| x.game())
     }
 
     pub fn aiscript_hook(&mut self) -> Rc<Option<AiScriptHook<'e, E::VirtualAddress>>> {
-        if let Some(cached) = self.aiscript_hook.cached() {
-            return cached;
-        }
-        let result = Rc::new(ai::aiscript_hook(self));
-        self.aiscript_hook.cache(&result);
-        result
+        self.enter(|x| x.aiscript_hook())
     }
 
     pub fn regions(&mut self) -> Rc<RegionRelated<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.regions.cached() {
-            return cached;
-        }
-        let result = pathing::regions(self);
-        let result = Rc::new(result);
-        self.regions.cache(&result);
-        result
+        self.enter(|x| x.regions())
     }
 
     pub fn pathing(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.pathing.cached() {
-            return cached;
-        }
-
-        let result = pathing::pathing(self);
-        self.pathing.cache(&result);
-        result
+        self.enter(|x| x.pathing())
     }
 
     pub fn active_hidden_units(&mut self) -> Rc<ActiveHiddenUnits<'e>> {
-        if let Some(cached) = self.active_hidden_units.cached() {
-            return cached;
-        }
-        let result = Rc::new(units::active_hidden_units(self));
-        self.active_hidden_units.cache(&result);
-        result
+        self.enter(|x| x.active_hidden_units())
     }
 
     pub fn order_issuing(&mut self) -> Rc<OrderIssuing<E::VirtualAddress>> {
-        if let Some(cached) = self.order_issuing.cached() {
-            return cached;
-        }
-
-        let result = Rc::new(units::order_issuing(self));
-        self.order_issuing.cache(&result);
-        result
+        self.enter(|x| x.order_issuing())
     }
 
     pub fn process_commands(&mut self) -> Rc<ProcessCommands<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.process_commands.cached() {
-            return cached;
-        }
-        let result = Rc::new(commands::process_commands(self));
-        self.process_commands.cache(&result);
-        result
+        self.enter(|x| x.process_commands())
     }
 
     pub fn command_user(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.command_user.cached() {
-            return cached;
-        }
-
-        let result = commands::command_user(self);
-        self.command_user.cache(&result);
-        result
+        self.enter(|x| x.command_user())
     }
 
-    // May return an overly long array
+    /// May return an overly long array
     pub fn command_lengths(&mut self) -> Rc<Vec<u32>> {
-        if let Some(cached) = self.command_lengths.cached() {
-            return cached;
-        }
-
-        let result = commands::command_lengths(self);
-        let result = Rc::new(result);
-        self.command_lengths.cache(&result);
-        result
+        self.enter(|x| x.command_lengths())
     }
 
     pub fn selections(&mut self) -> Rc<Selections<'e>> {
-        if let Some(cached) = self.selections.cached() {
-            return cached;
-        }
-
-        let result = commands::selections(self);
-        let result = Rc::new(result);
-        self.selections.cache(&result);
-        result
+        self.enter(|x| x.selections())
     }
 
     pub fn is_replay(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.is_replay.cached() {
-            return cached;
-        }
-
-        let result = commands::is_replay(self);
-        self.is_replay.cache(&result);
-        result
-    }
-
-    fn process_lobby_commands_switch(&mut self) ->
-        Option<(CompleteSwitch<E::VirtualAddress>, E::VirtualAddress)>
-    {
-        if let Some(cached) = self.process_lobby_commands.cached() {
-            return cached;
-        }
-        let mut result = None;
-        let switch_tables = self.switch_tables();
-        let switches = switch_tables.iter().filter(|switch| {
-            switch.cases.len() >= 0x10 && switch.cases.len() < 0x20
-        });
-        for switch in switches {
-            let val = full_switch_info(self, switch)
-                .and_then(|(switch, entry)| {
-                    let ok = switch.cases.windows(0x34).enumerate().any(|(_, win)| {
-                        let first = win[0];
-                        let default = win[1];
-                        let last = win[0x33];
-                        first != last && last != default && first != default &&
-                            (&win[2..0x33]).iter().all(|&x| x == default)
-                    });
-                    if ok {
-                        Some((switch, entry))
-                    } else {
-                        None
-                    }
-                });
-            if single_result_assign(val, &mut result) {
-                break;
-            }
-        }
-        self.process_lobby_commands.cache(&result);
-        result
+        self.enter(|x| x.is_replay())
     }
 
     pub fn process_lobby_commands(&mut self) -> Option<E::VirtualAddress> {
-        self.process_lobby_commands_switch().map(|x| x.1)
+        self.enter(|x| x.process_lobby_commands())
     }
 
     pub fn send_command(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.send_command.cached() {
-            return cached;
-        }
-        let result = commands::send_command(self);
-        self.send_command.cache(&result);
-        result
+        self.enter(|x| x.send_command())
     }
 
     pub fn print_text(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.print_text.cached() {
-            return cached;
-        }
-        let result = commands::print_text(self);
-        self.print_text.cache(&result);
-        result
-    }
-
-    fn init_map_from_path_vars(&mut self) -> Option<InitMapFromPath<E::VirtualAddress>> {
-        if let Some(cached) = self.init_map_from_path.cached() {
-            return cached;
-        }
-        let result = game_init::init_map_from_path(self);
-        self.init_map_from_path.cache(&result);
-        result
+        self.enter(|x| x.print_text())
     }
 
     pub fn init_map_from_path(&mut self) -> Option<E::VirtualAddress> {
-        self.init_map_from_path_vars().map(|x| x.init_map_from_path)
+        self.enter(|x| x.init_map_from_path())
     }
 
     pub fn choose_snp(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.choose_snp.cached() {
-            return cached;
-        }
-        let result = game_init::choose_snp(self);
-        self.choose_snp.cache(&result);
-        result
+        self.enter(|x| x.choose_snp())
     }
 
     pub fn renderer_vtables(&mut self) -> Rc<Vec<E::VirtualAddress>> {
-        if let Some(cached) = self.renderer_vtables.cached() {
-            return cached;
-        }
-        let result = Rc::new(renderer::renderer_vtables(self));
-        self.renderer_vtables.cache(&result);
-        result
+        self.enter(|x| x.renderer_vtables())
     }
 
     pub fn vtables(&mut self) -> Vec<E::VirtualAddress> {
-        self.vtables_for_class(b".?AV")
+        self.enter(|x| x.vtables())
     }
 
     pub fn vtables_for_class(&mut self, name: &[u8]) -> Vec<E::VirtualAddress> {
-        let mut vtables = vtables::vtables(self, name);
-        vtables.sort_unstable();
-        vtables.dedup();
-        vtables
+        self.enter(|x| x.vtables_for_class(name))
     }
 
     pub fn single_player_start(&mut self) -> Rc<SinglePlayerStart<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.single_player_start.cached() {
-            return cached;
-        }
-        let result = Rc::new(game_init::single_player_start(self));
-        self.single_player_start.cache(&result);
-        result
+        self.enter(|x| x.single_player_start())
     }
 
     pub fn local_player_id(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.local_player_id.cached() {
-            return cached;
-        }
-        let result = players::local_player_id(self);
-        self.local_player_id.cache(&result);
-        result
+        self.enter(|x| x.local_player_id())
     }
 
     pub fn game_screen_rclick(&mut self) -> Rc<GameScreenRClick<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.game_screen_rclick.cached() {
-            return cached;
-        }
-
-        let result = Rc::new(clientside::game_screen_rclick(self));
-        self.game_screen_rclick.cache(&result);
-        result
+        self.enter(|x| x.game_screen_rclick())
     }
 
     pub fn select_map_entry(&mut self) -> Rc<SelectMapEntry<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.select_map_entry.cached() {
-            return cached;
-        }
-        let result = Rc::new(game_init::select_map_entry(self));
-        self.select_map_entry.cache(&result);
-        result
+        self.enter(|x| x.select_map_entry())
     }
 
     pub fn load_images(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.load_images.cached() {
-            return cached;
-        }
-        let result = game_init::load_images(self);
-        self.load_images.cache(&result);
-        result
+        self.enter(|x| x.load_images())
     }
 
     pub fn images_loaded(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.images_loaded.cached() {
-            return cached.images_loaded;
-        }
-        let result = game_init::images_loaded(self);
-        self.images_loaded.cache(&result);
-        result.images_loaded
+        self.enter(|x| x.images_loaded())
     }
 
     pub fn init_real_time_lighting(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.images_loaded.cached() {
-            return cached.init_real_time_lighting;
-        }
-        let result = game_init::images_loaded(self);
-        self.images_loaded.cache(&result);
-        result.init_real_time_lighting
+        self.enter(|x| x.init_real_time_lighting())
     }
 
     pub fn local_player_name(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.local_player_name.cached() {
-            return cached;
-        }
-        let result = game_init::local_player_name(self);
-        self.local_player_name.cache(&result);
-        result
+        self.enter(|x| x.local_player_name())
     }
 
     pub fn step_network(&mut self) -> Rc<StepNetwork<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.step_network.cached() {
-            return cached;
-        }
-        let result = Rc::new(commands::step_network(self));
-        self.step_network.cache(&result);
-        result
+        self.enter(|x| x.step_network())
     }
 
     pub fn init_game_network(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.init_game_network.cached() {
-            return cached;
-        }
-        let result = game_init::init_game_network(self);
-        self.init_game_network.cache(&result);
-        result
+        self.enter(|x| x.init_game_network())
     }
 
     pub fn snp_definitions(&mut self) -> Option<SnpDefinitions<'e>> {
-        if let Some(cached) = self.snp_definitions.cached() {
-            return cached;
-        }
-        let result = network::snp_definitions(self);
-        self.snp_definitions.cache(&result);
-        result
+        self.enter(|x| x.snp_definitions())
     }
 
     pub fn lobby_state(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.lobby_state.cached() {
-            return cached;
-        }
-        let result = game_init::lobby_state(self);
-        self.lobby_state.cache(&result);
-        result
+        self.enter(|x| x.lobby_state())
     }
 
     pub fn init_storm_networking(&mut self) -> Rc<InitStormNetworking<E::VirtualAddress>> {
-        if let Some(cached) = self.init_storm_networking.cached() {
-            return cached;
-        }
-        let result = Rc::new(network::init_storm_networking(self));
-        self.init_storm_networking.cache(&result);
-        result
+        self.enter(|x| x.init_storm_networking())
     }
 
     pub fn step_order(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.step_order.cached() {
-            return cached;
-        }
-        let result = step_order::step_order(self);
-        self.step_order.cache(&result);
-        result
+        self.enter(|x| x.step_order())
     }
 
     pub fn step_order_hidden(&mut self) ->
         Rc<Vec<step_order::StepOrderHiddenHook<'e, E::VirtualAddress>>>
     {
-        if let Some(cached) = self.step_order_hidden.cached() {
-            return cached;
-        }
-        let result = step_order::step_order_hidden(self);
-        let result = Rc::new(result);
-        self.step_order_hidden.cache(&result);
-        result
+        self.enter(|x| x.step_order_hidden())
     }
 
     pub fn step_secondary_order(&mut self) ->
         Rc<Vec<step_order::SecondaryOrderHook<'e, E::VirtualAddress>>>
     {
-        if let Some(cached) = self.step_secondary_order.cached() {
-            return cached;
-        }
-        let result = step_order::step_secondary_order(self);
-        let result = Rc::new(result);
-        self.step_secondary_order.cache(&result);
-        result
+        self.enter(|x| x.step_secondary_order())
     }
 
     pub fn step_iscript(&mut self) -> Rc<StepIscript<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.step_iscript.cached() {
-            return cached;
-        }
-        let result = iscript::step_iscript(self);
-        let result = Rc::new(result);
-        self.step_iscript.cache(&result);
-        result
+        self.enter(|x| x.step_iscript())
     }
 
     pub fn add_overlay_iscript(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.add_overlay_iscript.cached() {
-            return cached;
-        }
-        let result = iscript::add_overlay_iscript(self);
-        self.add_overlay_iscript.cache(&result);
-        result
+        self.enter(|x| x.add_overlay_iscript())
     }
 
     pub fn draw_cursor_marker(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.draw_cursor_marker.cached() {
-            return cached;
-        }
-        let result = iscript::draw_cursor_marker(self);
-        self.draw_cursor_marker.cache(&result);
-        result
+        self.enter(|x| x.draw_cursor_marker())
     }
 
     pub fn play_smk(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.play_smk.cached() {
-            return cached;
-        }
-        let result = game_init::play_smk(self);
-        self.play_smk.cache(&result);
-        result
+        self.enter(|x| x.play_smk())
     }
 
     pub fn game_init(&mut self) -> Rc<GameInit<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.game_init.cached() {
-            return cached;
-        }
-        let result = game_init::game_init(self);
-        let result = Rc::new(result);
-        self.game_init.cache(&result);
-        result
+        self.enter(|x| x.game_init())
     }
 
     pub fn misc_clientside(&mut self) -> Rc<MiscClientSide<'e>> {
-        if let Some(cached) = self.misc_clientside.cached() {
-            return cached;
-        }
-        let result = clientside::misc_clientside(self);
-        let result = Rc::new(result);
-        self.misc_clientside.cache(&result);
-        result
-    }
-
-    fn init_units_related(&mut self) -> InitUnits<E::VirtualAddress> {
-        if let Some(cached) = self.init_units.cached() {
-            return cached;
-        }
-        let result = units::init_units(self);
-        self.init_units.cache(&result);
-        result
+        self.enter(|x| x.misc_clientside())
     }
 
     pub fn init_units(&mut self) -> Option<E::VirtualAddress> {
-        self.init_units_related().init_units
+        self.enter(|x| x.init_units_related().init_units)
     }
 
     pub fn load_dat(&mut self) -> Option<E::VirtualAddress> {
-        self.init_units_related().load_dat
+        self.enter(|x| x.load_dat())
     }
 
     pub fn units(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.units.cached() {
-            return cached;
-        }
-
-        let result = units::units(self);
-        self.units.cache(&result);
-        result
+        self.enter(|x| x.units())
     }
 
     pub fn first_ai_script(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.first_ai_script.cached() {
-            return cached;
-        }
-
-        let result = ai::first_ai_script(self);
-        self.first_ai_script.cache(&result);
-        result
+        self.enter(|x| x.first_ai_script())
     }
 
     pub fn first_guard_ai(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.first_guard_ai.cached() {
-            return cached;
-        }
-
-        let result = ai::first_guard_ai(self);
-        self.first_guard_ai.cache(&result);
-        result
+        self.enter(|x| x.first_guard_ai())
     }
 
     pub fn player_ai_towns(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.player_ai_towns.cached() {
-            return cached;
-        }
-
-        let result = ai::player_ai_towns(self);
-        self.player_ai_towns.cache(&result);
-        result
+        self.enter(|x| x.player_ai_towns())
     }
 
     pub fn player_ai(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.player_ai.cached() {
-            return cached;
-        }
-        let result = ai::player_ai(self);
-        self.player_ai.cache(&result);
-        result
+        self.enter(|x| x.player_ai())
     }
 
     pub fn init_game(&mut self) -> Rc<InitGame<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.init_game.cached() {
-            return cached;
-        }
-        let result = Rc::new(game_init::init_game(self));
-        self.init_game.cache(&result);
-        result
+        self.enter(|x| x.init_game())
     }
 
     pub fn sprites(&mut self) -> Rc<Sprites<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.sprites.cached() {
-            return cached;
-        }
-        let result = sprites::sprites(self);
-        let result = Rc::new(result);
-        self.sprites.cache(&result);
-        result
+        self.enter(|x| x.sprites())
     }
 
     pub fn eud_table(&mut self) -> Rc<EudTable<'e>> {
-        if let Some(cached) = self.eud.cached() {
-            return cached;
-        }
-        let result = eud::eud_table(self);
-        let result = Rc::new(result);
-        self.eud.cache(&result);
-        result
+        self.enter(|x| x.eud_table())
     }
 
     pub fn map_tile_flags(&mut self) -> Rc<MapTileFlags<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.map_tile_flags.cached() {
-            return cached;
-        }
-        let result = Rc::new(map::map_tile_flags(self));
-        self.map_tile_flags.cache(&result);
-        result
+        self.enter(|x| x.map_tile_flags())
     }
 
     pub fn players(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.players.cached() {
-            return cached;
-        }
-        let result = players::players(self);
-        self.players.cache(&result);
-        result
+        self.enter(|x| x.players())
     }
 
     pub fn draw_image(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.draw_image.cached() {
-            return cached;
-        }
-        let result = renderer::draw_image(self);
-        self.draw_image.cache(&result);
-        result
+        self.enter(|x| x.draw_image())
     }
 
     pub fn bullet_creation(&mut self) -> Rc<BulletCreation<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.bullet_creation.cached() {
-            return cached;
-        }
-        let result = bullets::bullet_creation(self);
-        let result = Rc::new(result);
-        self.bullet_creation.cache(&result);
-        result
+        self.enter(|x| x.bullet_creation())
     }
 
     pub fn net_players(&mut self) -> Rc<NetPlayers<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.net_players.cached() {
-            return cached;
-        }
-        let result = players::net_players(self);
-        let result = Rc::new(result);
-        self.net_players.cache(&result);
-        result
+        self.enter(|x| x.net_players())
     }
 
     pub fn campaigns(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.campaigns.cached() {
-            return cached;
-        }
-        let result = campaign::campaigns(self);
-        self.campaigns.cache(&result);
-        result
+        self.enter(|x| x.campaigns())
     }
 
     pub fn run_dialog(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.run_dialog.cached() {
-            return cached;
-        }
-        let result = dialog::run_dialog(self);
-        self.run_dialog.cache(&result);
-        result
+        self.enter(|x| x.run_dialog())
     }
 
     pub fn ai_update_attack_target(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.ai_update_attack_target.cached() {
-            return cached;
-        }
-        let result = ai::ai_update_attack_target(self);
-        self.ai_update_attack_target.cache(&result);
-        result
+        self.enter(|x| x.ai_update_attack_target())
     }
 
     pub fn is_outside_game_screen(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.is_outside_game_screen.cached() {
-            return cached;
-        }
-        let result = clientside::is_outside_game_screen(self);
-        self.is_outside_game_screen.cache(&result);
-        result
+        self.enter(|x| x.is_outside_game_screen())
     }
 
     pub fn game_coord_conversion(&mut self) -> Rc<GameCoordConversion<'e>> {
-        if let Some(cached) = self.game_coord_conversion.cached() {
-            return cached;
-        }
-        let result = clientside::game_coord_conversion(self);
-        let result = Rc::new(result);
-        self.game_coord_conversion.cache(&result);
-        result
+        self.enter(|x| x.game_coord_conversion())
     }
 
     pub fn fow_sprites(&mut self) -> Rc<FowSprites<'e>> {
-        if let Some(cached) = self.fow_sprites.cached() {
-            return cached;
-        }
-        let result = sprites::fow_sprites(self);
-        let result = Rc::new(result);
-        self.fow_sprites.cache(&result);
-        result
+        self.enter(|x| x.fow_sprites())
     }
 
     pub fn spawn_dialog(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.spawn_dialog.cached() {
-            return cached;
-        }
-        let result = dialog::spawn_dialog(self);
-        self.spawn_dialog.cache(&result);
-        result
+        self.enter(|x| x.spawn_dialog())
     }
 
     pub fn unit_creation(&mut self) -> Rc<UnitCreation<E::VirtualAddress>> {
-        if let Some(cached) = self.unit_creation.cached() {
-            return cached;
-        }
-        let result = Rc::new(units::unit_creation(self));
-        self.unit_creation.cache(&result);
-        result
+        self.enter(|x| x.unit_creation())
     }
 
     pub fn fonts(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.fonts.cached() {
-            return cached;
-        }
-        let result = text::fonts(self);
-        self.fonts.cache(&result);
-        result
-    }
-
-    fn init_sprites_etc(&mut self) -> InitSprites<'e, E::VirtualAddress> {
-        if let Some(cached) = self.init_sprites.cached() {
-            return cached;
-        }
-        let result = sprites::init_sprites(self);
-        self.init_sprites.cache(&result);
-        result
+        self.enter(|x| x.fonts())
     }
 
     pub fn init_sprites(&mut self) -> Option<E::VirtualAddress> {
-        self.init_sprites_etc().init_sprites
+        self.enter(|x| x.init_sprites())
     }
 
     pub fn sprite_array(&mut self) -> Option<(Operand<'e>, u32)> {
-        self.init_sprites_etc().sprites
-    }
-
-    fn sprite_serialization(&mut self) -> SpriteSerialization<E::VirtualAddress> {
-        if let Some(cached) = self.sprite_serialization.cached() {
-            return cached;
-        }
-        let result = save::sprite_serialization(self);
-        self.sprite_serialization.cache(&result);
-        result
+        self.enter(|x| x.sprite_array())
     }
 
     pub fn serialize_sprites(&mut self) -> Option<E::VirtualAddress> {
-        self.sprite_serialization().serialize_sprites
+        self.enter(|x| x.serialize_sprites())
     }
 
     pub fn deserialize_sprites(&mut self) -> Option<E::VirtualAddress> {
-        self.sprite_serialization().deserialize_sprites
+        self.enter(|x| x.deserialize_sprites())
     }
 
     pub fn limits(&mut self) -> Rc<Limits<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.limits.cached() {
-            return cached;
-        }
-        let result = Rc::new(game::limits(self));
-        self.limits.cache(&result);
-        result
-    }
-
-    fn font_render(&mut self) -> FontRender<E::VirtualAddress> {
-        if let Some(cached) = self.font_render.cached() {
-            return cached;
-        }
-        let result = text::font_render(self);
-        self.font_render.cache(&result);
-        result
+        self.enter(|x| x.limits())
     }
 
     pub fn font_cache_render_ascii(&mut self) -> Option<E::VirtualAddress> {
-        self.font_render().font_cache_render_ascii
+        self.enter(|x| x.font_cache_render_ascii())
     }
 
     pub fn ttf_cache_character(&mut self) -> Option<E::VirtualAddress> {
-        self.font_render().ttf_cache_character
+        self.enter(|x| x.ttf_cache_character())
     }
 
     pub fn ttf_render_sdf(&mut self) -> Option<E::VirtualAddress> {
-        self.font_render().ttf_render_sdf
+        self.enter(|x| x.ttf_render_sdf())
     }
 
     /// Memory allocation function that at least TTF code uses.
     ///
     /// (Should be Win32 HeapAlloc with a specific heap)
     pub fn ttf_malloc(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.ttf_malloc.cached() {
-            return cached;
-        }
-        let result = text::ttf_malloc(self);
-        self.ttf_malloc.cache(&result);
-        result
+        self.enter(|x| x.ttf_malloc())
     }
 
     /// Offset to CreateGameScreen.OnMultiplayerGameCreate in the dialog's vtable
     pub fn create_game_dialog_vtbl_on_multiplayer_create(&mut self) -> Option<usize> {
-        if let Some(cached) = self.create_game_dialog_vtbl_on_multiplayer_create.cached() {
-            return cached;
-        }
-        let result = game_init::create_game_dialog_vtbl_on_multiplayer_create(self);
-        self.create_game_dialog_vtbl_on_multiplayer_create.cache(&result);
-        result
-    }
-
-    fn tooltip_related(&mut self) -> TooltipRelated<'e, E::VirtualAddress> {
-        if let Some(cached) = self.tooltip_related.cached() {
-            return cached;
-        }
-        let result = dialog::tooltip_related(self);
-        self.tooltip_related.cache(&result);
-        result
+        self.enter(|x| x.create_game_dialog_vtbl_on_multiplayer_create())
     }
 
     pub fn tooltip_draw_func(&mut self) -> Option<Operand<'e>> {
-        self.tooltip_related().tooltip_draw_func
+        self.enter(|x| x.tooltip_draw_func())
     }
 
     pub fn current_tooltip_ctrl(&mut self) -> Option<Operand<'e>> {
-        self.tooltip_related().current_tooltip_ctrl
+        self.enter(|x| x.current_tooltip_ctrl())
     }
 
     pub fn layout_draw_text(&mut self) -> Option<E::VirtualAddress> {
-        self.tooltip_related().layout_draw_text
+        self.enter(|x| x.layout_draw_text())
     }
 
     pub fn graphic_layers(&mut self) -> Option<Operand<'e>> {
-        self.tooltip_related().graphic_layers
+        self.enter(|x| x.graphic_layers())
     }
 
     pub fn draw_f10_menu_tooltip(&mut self) -> Option<E::VirtualAddress> {
-        self.tooltip_related().draw_f10_menu_tooltip
+        self.enter(|x| x.draw_f10_menu_tooltip())
     }
 
     pub fn draw_tooltip_layer(&mut self) -> Option<E::VirtualAddress> {
-        self.tooltip_related().draw_tooltip_layer
+        self.enter(|x| x.draw_tooltip_layer())
     }
 
     pub fn draw_graphic_layers(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.draw_graphic_layers.cached() {
-            return cached;
-        }
-        let result = dialog::draw_graphic_layers(self);
-        self.draw_graphic_layers.cache(&result);
-        result
-    }
-
-    fn prism_shaders(&mut self) -> PrismShaders<E::VirtualAddress> {
-        if let Some(cached) = self.prism_shaders.cached() {
-            return cached;
-        }
-        let result = renderer::prism_shaders(self);
-        self.prism_shaders.cache(&result);
-        result
+        self.enter(|x| x.draw_graphic_layers())
     }
 
     pub fn prism_vertex_shaders(&mut self) -> Rc<Vec<E::VirtualAddress>> {
-        self.prism_shaders().vertex_shaders
+        self.enter(|x| x.prism_vertex_shaders())
     }
 
     pub fn prism_pixel_shaders(&mut self) -> Rc<Vec<E::VirtualAddress>> {
-        self.prism_shaders().pixel_shaders
+        self.enter(|x| x.prism_pixel_shaders())
     }
 
     pub fn ai_attack_prepare(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.ai_attack_prepare.cached() {
-            return cached;
-        }
-        let result = ai::attack_prepare(self);
-        self.ai_attack_prepare.cache(&result);
-        result
+        self.enter(|x| x.ai_attack_prepare())
     }
 
     pub fn ai_step_region(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.ai_step_region.cached() {
-            return cached;
-        }
-        let result = ai::step_region(self);
-        self.ai_step_region.cache(&result);
-        result
+        self.enter(|x| x.ai_step_region())
     }
 
     pub fn join_game(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.join_game.cached() {
-            return cached;
-        }
-        let result = game_init::join_game(self);
-        self.join_game.cache(&result);
-        result
+        self.enter(|x| x.join_game())
     }
 
     pub fn snet_initialize_provider(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.snet_initialize_provider.cached() {
-            return cached;
-        }
-        let result = game_init::snet_initialize_provider(self);
-        self.snet_initialize_provider.cache(&result);
-        result
+        self.enter(|x| x.snet_initialize_provider())
     }
 
     pub fn set_status_screen_tooltip(&mut self) -> Option<E::VirtualAddress> {
-        self.dat_patches()?.set_status_screen_tooltip
+        self.enter(|x| x.set_status_screen_tooltip())
     }
 
     pub fn dat_patches(&mut self) -> Option<Rc<DatPatches<'e, E::VirtualAddress>>> {
-        if let Some(cached) = self.dat_patches.cached() {
-            return cached;
-        }
-        let result = dat::dat_patches(self).map(|x| Rc::new(x));
-        self.dat_patches.cache(&result);
-        result
+        self.enter(|x| x.dat_patches())
+    }
 
+    pub fn do_attack(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.do_attack())
+    }
+
+    pub fn do_attack_main(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.do_attack_main())
+    }
+
+    pub fn last_bullet_spawner(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.last_bullet_spawner())
+    }
+
+    pub fn smem_alloc(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.smem_alloc())
+    }
+
+    pub fn smem_free(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.smem_free())
+    }
+
+    pub fn cmdicons_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.cmdicons_ddsgrp())
+    }
+
+    pub fn cmdbtns_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.cmdbtns_ddsgrp())
+    }
+
+    pub fn mouse_xy(&mut self) -> MouseXy<'e, E::VirtualAddress> {
+        self.enter(|x| x.mouse_xy())
+    }
+
+    pub fn status_screen_mode(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.status_screen_mode())
+    }
+
+    pub fn check_unit_requirements(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.check_unit_requirements())
+    }
+
+    pub fn check_dat_requirements(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.check_dat_requirements())
+    }
+
+    pub fn dat_requirement_error(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.dat_requirement_error())
+    }
+
+    pub fn cheat_flags(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.cheat_flags())
+    }
+
+    pub fn unit_strength(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.unit_strength())
+    }
+
+    pub fn grpwire_grp(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.grpwire_grp())
+    }
+
+    pub fn grpwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.grpwire_ddsgrp())
+    }
+
+    pub fn tranwire_grp(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.tranwire_grp())
+    }
+
+    pub fn tranwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.tranwire_ddsgrp())
+    }
+
+    pub fn status_screen(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.status_screen())
+    }
+
+    pub fn status_screen_event_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.status_screen_event_handler())
+    }
+
+    /// Note: Struct that contains { grp, sd_ddsgrp, hd_ddsgrp }
+    pub fn wirefram_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.wirefram_ddsgrp())
+    }
+
+    pub fn init_status_screen(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.init_status_screen())
+    }
+
+    pub fn trigger_conditions(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.trigger_conditions())
+    }
+
+    pub fn trigger_actions(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.trigger_actions())
+    }
+
+    pub fn trigger_completed_units_cache(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.trigger_completed_units_cache())
+    }
+
+    pub fn trigger_all_units_cache(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.trigger_all_units_cache())
+    }
+
+    pub fn snet_send_packets(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.snet_send_packets())
+    }
+
+    pub fn snet_recv_packets(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.snet_recv_packets())
+    }
+
+    pub fn chk_init_players(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.chk_init_players())
+    }
+
+    pub fn original_chk_player_types(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.original_chk_player_types())
+    }
+
+    pub fn give_ai(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.give_ai())
     }
 
     /// Mainly for tests/dump
@@ -1651,114 +1148,1157 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             grp_texture_hooks,
         })
     }
+}
 
-    fn do_attack_struct(&mut self) -> Option<step_order::DoAttack<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.do_attack.cached() {
+impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
+    fn functions(&mut self) -> Rc<Vec<E::VirtualAddress>> {
+        let binary = self.binary;
+        let relocs = self.relocs();
+        self.cache.functions.get_or_insert_with(|| {
+            let mut functions = scarf::analysis::find_functions::<E>(binary, &relocs);
+            functions.retain(|&fun| Analysis::<E>::is_valid_function(fun));
+
+            // Add functions which immediately jump to another
+            let text = binary.section(b".text\0\0\0").unwrap();
+            let text_end = text.virtual_address + text.virtual_size;
+            let mut extra_funcs = Vec::with_capacity(64);
+            for &func in &functions {
+                let relative = func.as_u64().wrapping_sub(text.virtual_address.as_u64()) as usize;
+                if let Some(&byte) = text.data.get(relative) {
+                    if byte == 0xe9 {
+                        if let Some(offset) = (&text.data[relative + 1..]).read_u32::<LE>().ok() {
+                            let dest = func.as_u64()
+                                .wrapping_add(5)
+                                .wrapping_add(offset as i32 as i64 as u64);
+                            let dest = E::VirtualAddress::from_u64(dest);
+                            if dest >= text.virtual_address && dest <= text_end {
+                                if let Err(index) = functions.binary_search(&dest) {
+                                    extra_funcs.push((dest, index));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Insert functions without having to memmove every entry more than once
+            extra_funcs.sort_unstable_by_key(|x| x.0);
+            extra_funcs.dedup_by_key(|x| x.0);
+            let mut end_pos = functions.len();
+            functions.resize_with(
+                functions.len() + extra_funcs.len(),
+                || E::VirtualAddress::from_u64(0),
+            );
+            for (i, &(val, index)) in extra_funcs.iter().enumerate().rev() {
+                functions.copy_within(index..end_pos, index + i + 1);
+                functions[index + i] = val;
+                end_pos = index;
+            }
+            Rc::new(functions)
+        }).clone()
+    }
+
+    fn relocs_with_values(&mut self) -> Rc<Vec<RelocValues<E::VirtualAddress>>> {
+        let result = match self.cache.relocs_with_values.is_none() {
+            true => {
+                let relocs = self.relocs();
+                match scarf::analysis::relocs_with_values(self.binary, &relocs) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        debug!("Error getting relocs with values: {}", e);
+                        Vec::new()
+                    }
+                }
+            }
+            false => Vec::new(),
+        };
+        self.cache.relocs_with_values.get_or_insert_with(|| {
+            Rc::new(result)
+        }).clone()
+    }
+
+    fn relocs(&mut self) -> Rc<Vec<E::VirtualAddress>> {
+        let relocs = match self.cache.relocs.is_none() {
+            true => match scarf::analysis::find_relocs::<E>(self.binary) {
+                Ok(s) => s,
+                Err(e) => {
+                    debug!("Error getting relocs: {}", e);
+                    Vec::new()
+                }
+            },
+            false => Vec::new(),
+        };
+        self.cache.relocs.get_or_insert_with(|| {
+            Rc::new(relocs)
+        }).clone()
+    }
+
+    // TODO Should share search w/ self.functions
+    fn functions_with_callers(&mut self) -> Rc<Vec<FuncCallPair<E::VirtualAddress>>> {
+        let binary = self.binary;
+        self.cache.functions_with_callers.get_or_insert_with(|| {
+            let mut functions = scarf::analysis::find_functions_with_callers::<E>(binary);
+            functions.retain(|fun| Analysis::<E>::is_valid_function(fun.callee));
+            Rc::new(functions)
+        }).clone()
+    }
+
+    fn firegraft_addresses(&mut self) -> Rc<FiregraftAddresses<E::VirtualAddress>> {
+        if let Some(cached) = self.cache.firegraft_addresses.cached() {
             return cached;
         }
-        let result = step_order::do_attack(self);
-        self.do_attack.cache(&result);
+        let buttonsets = firegraft::find_buttonsets(self.binary);
+        let status_funcs = firegraft::find_unit_status_funcs(self);
+        let reqs = firegraft::find_requirement_tables(self);
+        let result = Rc::new(FiregraftAddresses {
+            buttonsets,
+            requirement_table_refs: reqs,
+            unit_status_funcs: status_funcs,
+        });
+        self.cache.firegraft_addresses.cache(&result);
         result
     }
 
-    pub fn do_attack(&mut self) -> Option<E::VirtualAddress> {
+    // Sorted by switch address
+    fn switch_tables(&mut self) -> Rc<Vec<SwitchTable<E::VirtualAddress>>> {
+        let binary = self.binary;
+        let relocs = self.relocs();
+        self.cache.switch_tables.get_or_insert_with(|| {
+            let text = binary.section(b".text\0\0\0").unwrap();
+            let switches = scarf::analysis::find_switch_tables(binary, &relocs);
+            let mut table_start_index = 0;
+            let mut previous_address = E::VirtualAddress::from_u64(!0);
+            let mut result = Vec::new();
+            for i in 0..switches.len() {
+                let jump = &switches[i];
+                if jump.address != previous_address + 4 {
+                    if i - table_start_index > 2 {
+                        let cases =
+                            switches[table_start_index..i].iter().map(|x| x.callee).collect();
+                        result.push(SwitchTable {
+                            address: switches[table_start_index].address,
+                            cases,
+                        });
+                    }
+                    table_start_index = i;
+                }
+                previous_address = jump.address;
+            }
+
+            result.retain(|s| {
+                // There's microsoft directx libraries embedded with large switches for
+                // displaying error etc names, luckily their compiler produces optimized ones
+                // which are just
+                //  mov eax, text
+                //  jmp ret
+                // Why they couldn't just use a string array is beyond me :l
+                // There are some BW ones that this catches as well, but they aren't relevant
+                // at least atm. Hopefully I'll remember this filter if things change.
+                !s.cases.iter().take(6).all(|&case| {
+                    let case_relative = (case.as_u64() - text.virtual_address.as_u64()) as usize;
+                    text.data.get(case_relative..).and_then(|case_ins| {
+                        let first = *case_ins.get(0)?;
+                        let second = *case_ins.get(5)?;
+                        Some(first == 0xb8 && (second == 0xe9 || second == 0xeb))
+                    }).unwrap_or(false)
+                })
+            });
+            result.sort_unstable_by_key(|x| x.address);
+            Rc::new(result)
+        }).clone()
+    }
+
+    /// Returns address and dat table struct size
+    fn dat_virtual_address(
+        &mut self,
+        ty: DatType,
+    ) -> Option<(E::VirtualAddress, u32)> {
+        let dat = self.dat(ty);
+        let result = dat.iter()
+            .filter_map(|x| x.address.if_constant().map(|y| (y, x.entry_size)))
+            .next()
+            .map(|(addr, size)| (E::VirtualAddress::from_u64(addr), size));
+        result
+    }
+
+    fn dat(&mut self, ty: DatType) -> Option<DatTablePtr<'e>> {
+        let filename = {
+            let (field, filename) = self.cache.dat_tables.field(ty);
+            if let Some(ref f) = *field {
+                return f.clone();
+            }
+            filename
+        };
+        let result = dat::dat_table(self, filename);
+        let (field, _) = self.cache.dat_tables.field(ty);
+        *field = Some(result.clone());
+        result
+    }
+
+    fn file_hook(&mut self) -> Rc<Vec<E::VirtualAddress>> {
+        if let Some(cached) = self.cache.open_file.cached() {
+            return cached;
+        }
+        let result = Rc::new(file::open_file(self));
+        self.cache.open_file.cache(&result);
+        result
+    }
+
+    fn rng(&mut self) -> Rc<Rng<'e>> {
+        if let Some(cached) = self.cache.rng.cached() {
+            return cached;
+        }
+        let result = rng::rng(self);
+        self.cache.rng.cache(&result);
+        result
+    }
+
+    fn step_objects(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.step_objects.cached() {
+            return cached;
+        }
+        let result = game::step_objects(self);
+        self.cache.step_objects.cache(&result);
+        result
+    }
+
+    fn game(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.game.cached() {
+            return cached;
+        }
+        let result = game::game(self);
+        self.cache.game.cache(&result);
+        result
+    }
+
+    fn aiscript_hook(&mut self) -> Rc<Option<AiScriptHook<'e, E::VirtualAddress>>> {
+        if let Some(cached) = self.cache.aiscript_hook.cached() {
+            return cached;
+        }
+        let result = Rc::new(ai::aiscript_hook(self));
+        self.cache.aiscript_hook.cache(&result);
+        result
+    }
+
+    fn regions(&mut self) -> Rc<RegionRelated<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.regions.cached() {
+            return cached;
+        }
+        let result = pathing::regions(self);
+        let result = Rc::new(result);
+        self.cache.regions.cache(&result);
+        result
+    }
+
+    fn pathing(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.pathing.cached() {
+            return cached;
+        }
+
+        let result = pathing::pathing(self);
+        self.cache.pathing.cache(&result);
+        result
+    }
+
+    fn active_hidden_units(&mut self) -> Rc<ActiveHiddenUnits<'e>> {
+        if let Some(cached) = self.cache.active_hidden_units.cached() {
+            return cached;
+        }
+        let result = Rc::new(units::active_hidden_units(self));
+        self.cache.active_hidden_units.cache(&result);
+        result
+    }
+
+    fn order_issuing(&mut self) -> Rc<OrderIssuing<E::VirtualAddress>> {
+        if let Some(cached) = self.cache.order_issuing.cached() {
+            return cached;
+        }
+
+        let result = Rc::new(units::order_issuing(self));
+        self.cache.order_issuing.cache(&result);
+        result
+    }
+
+    fn process_commands(&mut self) -> Rc<ProcessCommands<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.process_commands.cached() {
+            return cached;
+        }
+        let result = Rc::new(commands::process_commands(self));
+        self.cache.process_commands.cache(&result);
+        result
+    }
+
+    fn command_user(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.command_user.cached() {
+            return cached;
+        }
+
+        let result = commands::command_user(self);
+        self.cache.command_user.cache(&result);
+        result
+    }
+
+    fn command_lengths(&mut self) -> Rc<Vec<u32>> {
+        if let Some(cached) = self.cache.command_lengths.cached() {
+            return cached;
+        }
+
+        let result = commands::command_lengths(self);
+        let result = Rc::new(result);
+        self.cache.command_lengths.cache(&result);
+        result
+    }
+
+    fn selections(&mut self) -> Rc<Selections<'e>> {
+        if let Some(cached) = self.cache.selections.cached() {
+            return cached;
+        }
+
+        let result = commands::selections(self);
+        let result = Rc::new(result);
+        self.cache.selections.cache(&result);
+        result
+    }
+
+    fn is_replay(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.is_replay.cached() {
+            return cached;
+        }
+
+        let result = commands::is_replay(self);
+        self.cache.is_replay.cache(&result);
+        result
+    }
+
+    fn process_lobby_commands_switch(&mut self) ->
+        Option<(CompleteSwitch<E::VirtualAddress>, E::VirtualAddress)>
+    {
+        if let Some(cached) = self.cache.process_lobby_commands.cached() {
+            return cached;
+        }
+        let mut result = None;
+        let switch_tables = self.switch_tables();
+        let switches = switch_tables.iter().filter(|switch| {
+            switch.cases.len() >= 0x10 && switch.cases.len() < 0x20
+        });
+        for switch in switches {
+            let val = full_switch_info(self, switch)
+                .and_then(|(switch, entry)| {
+                    let ok = switch.cases.windows(0x34).enumerate().any(|(_, win)| {
+                        let first = win[0];
+                        let default = win[1];
+                        let last = win[0x33];
+                        first != last && last != default && first != default &&
+                            (&win[2..0x33]).iter().all(|&x| x == default)
+                    });
+                    if ok {
+                        Some((switch, entry))
+                    } else {
+                        None
+                    }
+                });
+            if single_result_assign(val, &mut result) {
+                break;
+            }
+        }
+        self.cache.process_lobby_commands.cache(&result);
+        result
+    }
+
+    fn process_lobby_commands(&mut self) -> Option<E::VirtualAddress> {
+        self.process_lobby_commands_switch().map(|x| x.1)
+    }
+
+    fn send_command(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.send_command.cached() {
+            return cached;
+        }
+        let result = commands::send_command(self);
+        self.cache.send_command.cache(&result);
+        result
+    }
+
+    fn print_text(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.print_text.cached() {
+            return cached;
+        }
+        let result = commands::print_text(self);
+        self.cache.print_text.cache(&result);
+        result
+    }
+
+    fn init_map_from_path_vars(&mut self) -> Option<InitMapFromPath<E::VirtualAddress>> {
+        if let Some(cached) = self.cache.init_map_from_path.cached() {
+            return cached;
+        }
+        let result = game_init::init_map_from_path(self);
+        self.cache.init_map_from_path.cache(&result);
+        result
+    }
+
+    fn init_map_from_path(&mut self) -> Option<E::VirtualAddress> {
+        self.init_map_from_path_vars().map(|x| x.init_map_from_path)
+    }
+
+    fn choose_snp(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.choose_snp.cached() {
+            return cached;
+        }
+        let result = game_init::choose_snp(self);
+        self.cache.choose_snp.cache(&result);
+        result
+    }
+
+    fn renderer_vtables(&mut self) -> Rc<Vec<E::VirtualAddress>> {
+        if let Some(cached) = self.cache.renderer_vtables.cached() {
+            return cached;
+        }
+        let result = Rc::new(renderer::renderer_vtables(self));
+        self.cache.renderer_vtables.cache(&result);
+        result
+    }
+
+    fn vtables(&mut self) -> Vec<E::VirtualAddress> {
+        self.vtables_for_class(b".?AV")
+    }
+
+    fn vtables_for_class(&mut self, name: &[u8]) -> Vec<E::VirtualAddress> {
+        let mut vtables = vtables::vtables(self, name);
+        vtables.sort_unstable();
+        vtables.dedup();
+        vtables
+    }
+
+    fn single_player_start(&mut self) -> Rc<SinglePlayerStart<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.single_player_start.cached() {
+            return cached;
+        }
+        let result = Rc::new(game_init::single_player_start(self));
+        self.cache.single_player_start.cache(&result);
+        result
+    }
+
+    fn local_player_id(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.local_player_id.cached() {
+            return cached;
+        }
+        let result = players::local_player_id(self);
+        self.cache.local_player_id.cache(&result);
+        result
+    }
+
+    fn game_screen_rclick(&mut self) -> Rc<GameScreenRClick<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.game_screen_rclick.cached() {
+            return cached;
+        }
+
+        let result = Rc::new(clientside::game_screen_rclick(self));
+        self.cache.game_screen_rclick.cache(&result);
+        result
+    }
+
+    fn select_map_entry(&mut self) -> Rc<SelectMapEntry<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.select_map_entry.cached() {
+            return cached;
+        }
+        let result = Rc::new(game_init::select_map_entry(self));
+        self.cache.select_map_entry.cache(&result);
+        result
+    }
+
+    fn load_images(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.load_images.cached() {
+            return cached;
+        }
+        let result = game_init::load_images(self);
+        self.cache.load_images.cache(&result);
+        result
+    }
+
+    fn images_loaded(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.images_loaded.cached() {
+            return cached.images_loaded;
+        }
+        let result = game_init::images_loaded(self);
+        self.cache.images_loaded.cache(&result);
+        result.images_loaded
+    }
+
+    fn init_real_time_lighting(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.images_loaded.cached() {
+            return cached.init_real_time_lighting;
+        }
+        let result = game_init::images_loaded(self);
+        self.cache.images_loaded.cache(&result);
+        result.init_real_time_lighting
+    }
+
+    fn local_player_name(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.local_player_name.cached() {
+            return cached;
+        }
+        let result = game_init::local_player_name(self);
+        self.cache.local_player_name.cache(&result);
+        result
+    }
+
+    fn step_network(&mut self) -> Rc<StepNetwork<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.step_network.cached() {
+            return cached;
+        }
+        let result = Rc::new(commands::step_network(self));
+        self.cache.step_network.cache(&result);
+        result
+    }
+
+    fn init_game_network(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.init_game_network.cached() {
+            return cached;
+        }
+        let result = game_init::init_game_network(self);
+        self.cache.init_game_network.cache(&result);
+        result
+    }
+
+    fn snp_definitions(&mut self) -> Option<SnpDefinitions<'e>> {
+        if let Some(cached) = self.cache.snp_definitions.cached() {
+            return cached;
+        }
+        let result = network::snp_definitions(self);
+        self.cache.snp_definitions.cache(&result);
+        result
+    }
+
+    fn lobby_state(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.lobby_state.cached() {
+            return cached;
+        }
+        let result = game_init::lobby_state(self);
+        self.cache.lobby_state.cache(&result);
+        result
+    }
+
+    fn init_storm_networking(&mut self) -> Rc<InitStormNetworking<E::VirtualAddress>> {
+        if let Some(cached) = self.cache.init_storm_networking.cached() {
+            return cached;
+        }
+        let result = Rc::new(network::init_storm_networking(self));
+        self.cache.init_storm_networking.cache(&result);
+        result
+    }
+
+    fn step_order(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.step_order.cached() {
+            return cached;
+        }
+        let result = step_order::step_order(self);
+        self.cache.step_order.cache(&result);
+        result
+    }
+
+    fn step_order_hidden(&mut self) ->
+        Rc<Vec<step_order::StepOrderHiddenHook<'e, E::VirtualAddress>>>
+    {
+        if let Some(cached) = self.cache.step_order_hidden.cached() {
+            return cached;
+        }
+        let result = step_order::step_order_hidden(self);
+        let result = Rc::new(result);
+        self.cache.step_order_hidden.cache(&result);
+        result
+    }
+
+    fn step_secondary_order(&mut self) ->
+        Rc<Vec<step_order::SecondaryOrderHook<'e, E::VirtualAddress>>>
+    {
+        if let Some(cached) = self.cache.step_secondary_order.cached() {
+            return cached;
+        }
+        let result = step_order::step_secondary_order(self);
+        let result = Rc::new(result);
+        self.cache.step_secondary_order.cache(&result);
+        result
+    }
+
+    fn step_iscript(&mut self) -> Rc<StepIscript<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.step_iscript.cached() {
+            return cached;
+        }
+        let result = iscript::step_iscript(self);
+        let result = Rc::new(result);
+        self.cache.step_iscript.cache(&result);
+        result
+    }
+
+    fn add_overlay_iscript(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.add_overlay_iscript.cached() {
+            return cached;
+        }
+        let result = iscript::add_overlay_iscript(self);
+        self.cache.add_overlay_iscript.cache(&result);
+        result
+    }
+
+    fn draw_cursor_marker(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.draw_cursor_marker.cached() {
+            return cached;
+        }
+        let result = iscript::draw_cursor_marker(self);
+        self.cache.draw_cursor_marker.cache(&result);
+        result
+    }
+
+    fn play_smk(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.play_smk.cached() {
+            return cached;
+        }
+        let result = game_init::play_smk(self);
+        self.cache.play_smk.cache(&result);
+        result
+    }
+
+    fn game_init(&mut self) -> Rc<GameInit<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.game_init.cached() {
+            return cached;
+        }
+        let result = game_init::game_init(self);
+        let result = Rc::new(result);
+        self.cache.game_init.cache(&result);
+        result
+    }
+
+    fn misc_clientside(&mut self) -> Rc<MiscClientSide<'e>> {
+        if let Some(cached) = self.cache.misc_clientside.cached() {
+            return cached;
+        }
+        let result = clientside::misc_clientside(self);
+        let result = Rc::new(result);
+        self.cache.misc_clientside.cache(&result);
+        result
+    }
+
+    fn init_units_related(&mut self) -> InitUnits<E::VirtualAddress> {
+        if let Some(cached) = self.cache.init_units.cached() {
+            return cached;
+        }
+        let result = units::init_units(self);
+        self.cache.init_units.cache(&result);
+        result
+    }
+
+    fn init_units(&mut self) -> Option<E::VirtualAddress> {
+        self.init_units_related().init_units
+    }
+
+    fn load_dat(&mut self) -> Option<E::VirtualAddress> {
+        self.init_units_related().load_dat
+    }
+
+    fn units(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.units.cached() {
+            return cached;
+        }
+
+        let result = units::units(self);
+        self.cache.units.cache(&result);
+        result
+    }
+
+    fn first_ai_script(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.first_ai_script.cached() {
+            return cached;
+        }
+
+        let result = ai::first_ai_script(self);
+        self.cache.first_ai_script.cache(&result);
+        result
+    }
+
+    fn first_guard_ai(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.first_guard_ai.cached() {
+            return cached;
+        }
+
+        let result = ai::first_guard_ai(self);
+        self.cache.first_guard_ai.cache(&result);
+        result
+    }
+
+    fn player_ai_towns(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.player_ai_towns.cached() {
+            return cached;
+        }
+
+        let result = ai::player_ai_towns(self);
+        self.cache.player_ai_towns.cache(&result);
+        result
+    }
+
+    fn player_ai(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.player_ai.cached() {
+            return cached;
+        }
+        let result = ai::player_ai(self);
+        self.cache.player_ai.cache(&result);
+        result
+    }
+
+    fn init_game(&mut self) -> Rc<InitGame<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.init_game.cached() {
+            return cached;
+        }
+        let result = Rc::new(game_init::init_game(self));
+        self.cache.init_game.cache(&result);
+        result
+    }
+
+    fn sprites(&mut self) -> Rc<Sprites<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.sprites.cached() {
+            return cached;
+        }
+        let result = sprites::sprites(self);
+        let result = Rc::new(result);
+        self.cache.sprites.cache(&result);
+        result
+    }
+
+    fn eud_table(&mut self) -> Rc<EudTable<'e>> {
+        if let Some(cached) = self.cache.eud.cached() {
+            return cached;
+        }
+        let result = eud::eud_table(self);
+        let result = Rc::new(result);
+        self.cache.eud.cache(&result);
+        result
+    }
+
+    fn map_tile_flags(&mut self) -> Rc<MapTileFlags<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.map_tile_flags.cached() {
+            return cached;
+        }
+        let result = Rc::new(map::map_tile_flags(self));
+        self.cache.map_tile_flags.cache(&result);
+        result
+    }
+
+    fn players(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.players.cached() {
+            return cached;
+        }
+        let result = players::players(self);
+        self.cache.players.cache(&result);
+        result
+    }
+
+    fn draw_image(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.draw_image.cached() {
+            return cached;
+        }
+        let result = renderer::draw_image(self);
+        self.cache.draw_image.cache(&result);
+        result
+    }
+
+    fn bullet_creation(&mut self) -> Rc<BulletCreation<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.bullet_creation.cached() {
+            return cached;
+        }
+        let result = bullets::bullet_creation(self);
+        let result = Rc::new(result);
+        self.cache.bullet_creation.cache(&result);
+        result
+    }
+
+    fn net_players(&mut self) -> Rc<NetPlayers<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.net_players.cached() {
+            return cached;
+        }
+        let result = players::net_players(self);
+        let result = Rc::new(result);
+        self.cache.net_players.cache(&result);
+        result
+    }
+
+    fn campaigns(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.campaigns.cached() {
+            return cached;
+        }
+        let result = campaign::campaigns(self);
+        self.cache.campaigns.cache(&result);
+        result
+    }
+
+    fn run_dialog(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.run_dialog.cached() {
+            return cached;
+        }
+        let result = dialog::run_dialog(self);
+        self.cache.run_dialog.cache(&result);
+        result
+    }
+
+    fn ai_update_attack_target(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.ai_update_attack_target.cached() {
+            return cached;
+        }
+        let result = ai::ai_update_attack_target(self);
+        self.cache.ai_update_attack_target.cache(&result);
+        result
+    }
+
+    fn is_outside_game_screen(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.is_outside_game_screen.cached() {
+            return cached;
+        }
+        let result = clientside::is_outside_game_screen(self);
+        self.cache.is_outside_game_screen.cache(&result);
+        result
+    }
+
+    fn game_coord_conversion(&mut self) -> Rc<GameCoordConversion<'e>> {
+        if let Some(cached) = self.cache.game_coord_conversion.cached() {
+            return cached;
+        }
+        let result = clientside::game_coord_conversion(self);
+        let result = Rc::new(result);
+        self.cache.game_coord_conversion.cache(&result);
+        result
+    }
+
+    fn fow_sprites(&mut self) -> Rc<FowSprites<'e>> {
+        if let Some(cached) = self.cache.fow_sprites.cached() {
+            return cached;
+        }
+        let result = sprites::fow_sprites(self);
+        let result = Rc::new(result);
+        self.cache.fow_sprites.cache(&result);
+        result
+    }
+
+    fn spawn_dialog(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.spawn_dialog.cached() {
+            return cached;
+        }
+        let result = dialog::spawn_dialog(self);
+        self.cache.spawn_dialog.cache(&result);
+        result
+    }
+
+    fn unit_creation(&mut self) -> Rc<UnitCreation<E::VirtualAddress>> {
+        if let Some(cached) = self.cache.unit_creation.cached() {
+            return cached;
+        }
+        let result = Rc::new(units::unit_creation(self));
+        self.cache.unit_creation.cache(&result);
+        result
+    }
+
+    fn fonts(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.fonts.cached() {
+            return cached;
+        }
+        let result = text::fonts(self);
+        self.cache.fonts.cache(&result);
+        result
+    }
+
+    fn init_sprites_etc(&mut self) -> InitSprites<'e, E::VirtualAddress> {
+        if let Some(cached) = self.cache.init_sprites.cached() {
+            return cached;
+        }
+        let result = sprites::init_sprites(self);
+        self.cache.init_sprites.cache(&result);
+        result
+    }
+
+    fn init_sprites(&mut self) -> Option<E::VirtualAddress> {
+        self.init_sprites_etc().init_sprites
+    }
+
+    fn sprite_array(&mut self) -> Option<(Operand<'e>, u32)> {
+        self.init_sprites_etc().sprites
+    }
+
+    fn sprite_serialization(&mut self) -> SpriteSerialization<E::VirtualAddress> {
+        if let Some(cached) = self.cache.sprite_serialization.cached() {
+            return cached;
+        }
+        let result = save::sprite_serialization(self);
+        self.cache.sprite_serialization.cache(&result);
+        result
+    }
+
+    fn serialize_sprites(&mut self) -> Option<E::VirtualAddress> {
+        self.sprite_serialization().serialize_sprites
+    }
+
+    fn deserialize_sprites(&mut self) -> Option<E::VirtualAddress> {
+        self.sprite_serialization().deserialize_sprites
+    }
+
+    fn limits(&mut self) -> Rc<Limits<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.limits.cached() {
+            return cached;
+        }
+        let result = Rc::new(game::limits(self));
+        self.cache.limits.cache(&result);
+        result
+    }
+
+    fn font_render(&mut self) -> FontRender<E::VirtualAddress> {
+        if let Some(cached) = self.cache.font_render.cached() {
+            return cached;
+        }
+        let result = text::font_render(self);
+        self.cache.font_render.cache(&result);
+        result
+    }
+
+    fn font_cache_render_ascii(&mut self) -> Option<E::VirtualAddress> {
+        self.font_render().font_cache_render_ascii
+    }
+
+    fn ttf_cache_character(&mut self) -> Option<E::VirtualAddress> {
+        self.font_render().ttf_cache_character
+    }
+
+    fn ttf_render_sdf(&mut self) -> Option<E::VirtualAddress> {
+        self.font_render().ttf_render_sdf
+    }
+
+    fn ttf_malloc(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.ttf_malloc.cached() {
+            return cached;
+        }
+        let result = text::ttf_malloc(self);
+        self.cache.ttf_malloc.cache(&result);
+        result
+    }
+
+    fn create_game_dialog_vtbl_on_multiplayer_create(&mut self) -> Option<usize> {
+        if let Some(cached) = self.cache.create_game_dialog_vtbl_on_multiplayer_create.cached() {
+            return cached;
+        }
+        let result = game_init::create_game_dialog_vtbl_on_multiplayer_create(self);
+        self.cache.create_game_dialog_vtbl_on_multiplayer_create.cache(&result);
+        result
+    }
+
+    fn tooltip_related(&mut self) -> TooltipRelated<'e, E::VirtualAddress> {
+        if let Some(cached) = self.cache.tooltip_related.cached() {
+            return cached;
+        }
+        let result = dialog::tooltip_related(self);
+        self.cache.tooltip_related.cache(&result);
+        result
+    }
+
+    fn tooltip_draw_func(&mut self) -> Option<Operand<'e>> {
+        self.tooltip_related().tooltip_draw_func
+    }
+
+    fn current_tooltip_ctrl(&mut self) -> Option<Operand<'e>> {
+        self.tooltip_related().current_tooltip_ctrl
+    }
+
+    fn layout_draw_text(&mut self) -> Option<E::VirtualAddress> {
+        self.tooltip_related().layout_draw_text
+    }
+
+    fn graphic_layers(&mut self) -> Option<Operand<'e>> {
+        self.tooltip_related().graphic_layers
+    }
+
+    fn draw_f10_menu_tooltip(&mut self) -> Option<E::VirtualAddress> {
+        self.tooltip_related().draw_f10_menu_tooltip
+    }
+
+    fn draw_tooltip_layer(&mut self) -> Option<E::VirtualAddress> {
+        self.tooltip_related().draw_tooltip_layer
+    }
+
+    fn draw_graphic_layers(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.draw_graphic_layers.cached() {
+            return cached;
+        }
+        let result = dialog::draw_graphic_layers(self);
+        self.cache.draw_graphic_layers.cache(&result);
+        result
+    }
+
+    fn prism_shaders(&mut self) -> PrismShaders<E::VirtualAddress> {
+        if let Some(cached) = self.cache.prism_shaders.cached() {
+            return cached;
+        }
+        let result = renderer::prism_shaders(self);
+        self.cache.prism_shaders.cache(&result);
+        result
+    }
+
+    fn prism_vertex_shaders(&mut self) -> Rc<Vec<E::VirtualAddress>> {
+        self.prism_shaders().vertex_shaders
+    }
+
+    fn prism_pixel_shaders(&mut self) -> Rc<Vec<E::VirtualAddress>> {
+        self.prism_shaders().pixel_shaders
+    }
+
+    fn ai_attack_prepare(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.ai_attack_prepare.cached() {
+            return cached;
+        }
+        let result = ai::attack_prepare(self);
+        self.cache.ai_attack_prepare.cache(&result);
+        result
+    }
+
+    fn ai_step_region(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.ai_step_region.cached() {
+            return cached;
+        }
+        let result = ai::step_region(self);
+        self.cache.ai_step_region.cache(&result);
+        result
+    }
+
+    fn join_game(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.join_game.cached() {
+            return cached;
+        }
+        let result = game_init::join_game(self);
+        self.cache.join_game.cache(&result);
+        result
+    }
+
+    fn snet_initialize_provider(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.snet_initialize_provider.cached() {
+            return cached;
+        }
+        let result = game_init::snet_initialize_provider(self);
+        self.cache.snet_initialize_provider.cache(&result);
+        result
+    }
+
+    fn set_status_screen_tooltip(&mut self) -> Option<E::VirtualAddress> {
+        self.dat_patches()?.set_status_screen_tooltip
+    }
+
+    fn dat_patches(&mut self) -> Option<Rc<DatPatches<'e, E::VirtualAddress>>> {
+        if let Some(cached) = self.cache.dat_patches.cached() {
+            return cached;
+        }
+        let result = dat::dat_patches(self).map(|x| Rc::new(x));
+        self.cache.dat_patches.cache(&result);
+        result
+
+    }
+
+    fn do_attack_struct(&mut self) -> Option<step_order::DoAttack<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.cache.do_attack.cached() {
+            return cached;
+        }
+        let result = step_order::do_attack(self);
+        self.cache.do_attack.cache(&result);
+        result
+    }
+
+    fn do_attack(&mut self) -> Option<E::VirtualAddress> {
         self.do_attack_struct().map(|x| x.do_attack)
     }
 
-    pub fn do_attack_main(&mut self) -> Option<E::VirtualAddress> {
+    fn do_attack_main(&mut self) -> Option<E::VirtualAddress> {
         self.do_attack_struct().map(|x| x.do_attack_main)
     }
 
-    pub fn last_bullet_spawner(&mut self) -> Option<Operand<'e>> {
+    fn last_bullet_spawner(&mut self) -> Option<Operand<'e>> {
         self.do_attack_struct().map(|x| x.last_bullet_spawner)
     }
 
-    pub fn smem_alloc(&mut self) -> Option<E::VirtualAddress> {
+    fn smem_alloc(&mut self) -> Option<E::VirtualAddress> {
         self.limits().smem_alloc
     }
 
-    pub fn smem_free(&mut self) -> Option<E::VirtualAddress> {
+    fn smem_free(&mut self) -> Option<E::VirtualAddress> {
         self.limits().smem_free
     }
 
     fn button_ddsgrps(&mut self) -> dialog::ButtonDdsgrps<'e> {
-        if let Some(cached) = self.button_ddsgrps.cached() {
+        if let Some(cached) = self.cache.button_ddsgrps.cached() {
             return cached;
         }
         let result = dialog::button_ddsgrps(self);
-        self.button_ddsgrps.cache(&result);
+        self.cache.button_ddsgrps.cache(&result);
         result
     }
 
-    pub fn cmdicons_ddsgrp(&mut self) -> Option<Operand<'e>> {
+    fn cmdicons_ddsgrp(&mut self) -> Option<Operand<'e>> {
         self.button_ddsgrps().cmdicons
     }
 
-    pub fn cmdbtns_ddsgrp(&mut self) -> Option<Operand<'e>> {
+    fn cmdbtns_ddsgrp(&mut self) -> Option<Operand<'e>> {
         self.button_ddsgrps().cmdbtns
     }
 
-    pub fn mouse_xy(&mut self) -> MouseXy<'e, E::VirtualAddress> {
-        if let Some(cached) = self.mouse_xy.cached() {
+    fn mouse_xy(&mut self) -> MouseXy<'e, E::VirtualAddress> {
+        if let Some(cached) = self.cache.mouse_xy.cached() {
             return cached;
         }
         let result = dialog::mouse_xy(self);
-        self.mouse_xy.cache(&result);
+        self.cache.mouse_xy.cache(&result);
         result
     }
 
-    pub fn status_screen_mode(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.status_screen_mode.cached() {
+    fn status_screen_mode(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.status_screen_mode.cached() {
             return cached;
         }
         let result = dialog::status_screen_mode(self);
-        self.status_screen_mode.cache(&result);
+        self.cache.status_screen_mode.cache(&result);
         result
     }
 
     fn check_unit_reqs_struct(
         &mut self,
     ) -> Option<requirements::CheckUnitRequirements<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.check_unit_requirements.cached() {
+        if let Some(cached) = self.cache.check_unit_requirements.cached() {
             return cached;
         }
         let result = requirements::check_unit_requirements(self);
-        self.check_unit_requirements.cache(&result);
+        self.cache.check_unit_requirements.cache(&result);
         result
     }
 
-    pub fn check_unit_requirements(&mut self) -> Option<E::VirtualAddress> {
+    fn check_unit_requirements(&mut self) -> Option<E::VirtualAddress> {
         self.check_unit_reqs_struct().map(|x| x.check_unit_requirements)
     }
 
-    pub fn check_dat_requirements(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.check_dat_requirements.cached() {
+    fn check_dat_requirements(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.check_dat_requirements.cached() {
             return cached;
         }
         let result = requirements::check_dat_requirements(self);
-        self.check_dat_requirements.cache(&result);
+        self.cache.check_dat_requirements.cache(&result);
         result
     }
 
-    pub fn dat_requirement_error(&mut self) -> Option<Operand<'e>> {
+    fn dat_requirement_error(&mut self) -> Option<Operand<'e>> {
         self.check_unit_reqs_struct().map(|x| x.requirement_error)
     }
 
-    pub fn cheat_flags(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.cheat_flags.cached() {
+    fn cheat_flags(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.cheat_flags.cached() {
             return cached;
         }
         let result = requirements::cheat_flags(self);
-        self.cheat_flags.cache(&result);
+        self.cache.cheat_flags.cache(&result);
         result
     }
 
-    pub fn unit_strength(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.unit_strength.cached() {
+    fn unit_strength(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.unit_strength.cached() {
             return cached;
         }
         let result = units::strength(self);
-        self.unit_strength.cache(&result);
+        self.cache.unit_strength.cache(&result);
         result
     }
 
@@ -1766,127 +2306,126 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     /// (Fits multiple in status screen)
     /// Also relevant mostly for SD, HD always uses wirefram.ddsgrp for the drawing.
     fn multi_wireframes(&mut self) -> MultiWireframes<'e, E::VirtualAddress> {
-        if let Some(cached) = self.multi_wireframes.cached() {
+        if let Some(cached) = self.cache.multi_wireframes.cached() {
             return cached;
         }
         let result = dialog::multi_wireframes(self);
-        self.multi_wireframes.cache(&result);
+        self.cache.multi_wireframes.cache(&result);
         result
     }
 
-    pub fn grpwire_grp(&mut self) -> Option<Operand<'e>> {
+    fn grpwire_grp(&mut self) -> Option<Operand<'e>> {
         self.multi_wireframes().grpwire_grp
     }
 
-    pub fn grpwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
+    fn grpwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
         self.multi_wireframes().grpwire_ddsgrp
     }
 
-    pub fn tranwire_grp(&mut self) -> Option<Operand<'e>> {
+    fn tranwire_grp(&mut self) -> Option<Operand<'e>> {
         self.multi_wireframes().tranwire_grp
     }
 
-    pub fn tranwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
+    fn tranwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
         self.multi_wireframes().tranwire_ddsgrp
     }
 
-    pub fn status_screen(&mut self) -> Option<Operand<'e>> {
+    fn status_screen(&mut self) -> Option<Operand<'e>> {
         self.multi_wireframes().status_screen
     }
 
-    pub fn status_screen_event_handler(&mut self) -> Option<E::VirtualAddress> {
+    fn status_screen_event_handler(&mut self) -> Option<E::VirtualAddress> {
         self.multi_wireframes().status_screen_event_handler
     }
 
-    /// Note: Struct that contains { grp, sd_ddsgrp, hd_ddsgrp }
-    pub fn wirefram_ddsgrp(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.wirefram_ddsgrp.cached() {
+    fn wirefram_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.wirefram_ddsgrp.cached() {
             return cached;
         }
         let result = dialog::wirefram_ddsgrp(self);
-        self.wirefram_ddsgrp.cache(&result);
+        self.cache.wirefram_ddsgrp.cache(&result);
         result
     }
 
-    pub fn init_status_screen(&mut self) -> Option<E::VirtualAddress> {
+    fn init_status_screen(&mut self) -> Option<E::VirtualAddress> {
         self.multi_wireframes().init_status_screen
     }
 
     fn run_triggers(&mut self) -> RunTriggers<E::VirtualAddress> {
-        if let Some(cached) = self.run_triggers.cached() {
+        if let Some(cached) = self.cache.run_triggers.cached() {
             return cached;
         }
         let result = map::run_triggers(self);
-        self.run_triggers.cache(&result);
+        self.cache.run_triggers.cache(&result);
         result
     }
 
-    pub fn trigger_conditions(&mut self) -> Option<E::VirtualAddress> {
+    fn trigger_conditions(&mut self) -> Option<E::VirtualAddress> {
         self.run_triggers().conditions
     }
 
-    pub fn trigger_actions(&mut self) -> Option<E::VirtualAddress> {
+    fn trigger_actions(&mut self) -> Option<E::VirtualAddress> {
         self.run_triggers().actions
     }
 
     fn trigger_unit_count_caches(&mut self) -> TriggerUnitCountCaches<'e> {
-        if let Some(cached) = self.trigger_unit_count_caches.cached() {
+        if let Some(cached) = self.cache.trigger_unit_count_caches.cached() {
             return cached;
         }
         let result = map::trigger_unit_count_caches(self);
-        self.trigger_unit_count_caches.cache(&result);
+        self.cache.trigger_unit_count_caches.cache(&result);
         result
     }
 
-    pub fn trigger_completed_units_cache(&mut self) -> Option<Operand<'e>> {
+    fn trigger_completed_units_cache(&mut self) -> Option<Operand<'e>> {
         self.trigger_unit_count_caches().completed_units
     }
 
-    pub fn trigger_all_units_cache(&mut self) -> Option<Operand<'e>> {
+    fn trigger_all_units_cache(&mut self) -> Option<Operand<'e>> {
         self.trigger_unit_count_caches().all_units
     }
 
     fn snet_handle_packets(&mut self) -> SnetHandlePackets<E::VirtualAddress> {
-        if let Some(cached) = self.snet_handle_packets.cached() {
+        if let Some(cached) = self.cache.snet_handle_packets.cached() {
             return cached;
         }
         let result = network::snet_handle_packets(self);
-        self.snet_handle_packets.cache(&result);
+        self.cache.snet_handle_packets.cache(&result);
         result
     }
 
-    pub fn snet_send_packets(&mut self) -> Option<E::VirtualAddress> {
+    fn snet_send_packets(&mut self) -> Option<E::VirtualAddress> {
         self.snet_handle_packets().send_packets
     }
 
-    pub fn snet_recv_packets(&mut self) -> Option<E::VirtualAddress> {
+    fn snet_recv_packets(&mut self) -> Option<E::VirtualAddress> {
         self.snet_handle_packets().recv_packets
     }
 
-    pub fn chk_init_players(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.chk_init_players.cached() {
+    fn chk_init_players(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.chk_init_players.cached() {
             return cached;
         }
         let result = game_init::chk_init_players(self);
-        self.chk_init_players.cache(&result);
+        self.cache.chk_init_players.cache(&result);
         result
     }
 
-    pub fn original_chk_player_types(&mut self) -> Option<Operand<'e>> {
-        if let Some(cached) = self.original_chk_player_types.cached() {
+    fn original_chk_player_types(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.original_chk_player_types.cached() {
             return cached;
         }
         let result = game_init::original_chk_player_types(self);
-        self.original_chk_player_types.cache(&result);
+        self.cache.original_chk_player_types.cache(&result);
         result
     }
 
-    pub fn give_ai(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.give_ai.cached() {
+    fn give_ai(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.give_ai.cached() {
             return cached;
         }
         let result = ai::give_ai(self);
-        self.give_ai.cache(&result);
+        self.cache.give_ai.cache(&result);
         result
     }
 }
@@ -2499,9 +3038,9 @@ pub struct GlobalRefs<Va: VirtualAddressTrait> {
     pub func_entry: Va,
 }
 
-pub fn string_refs<'e, E: ExecutionStateTrait<'e>>(
+fn string_refs<'e, E: ExecutionStateTrait<'e>>(
     binary: &BinaryFile<E::VirtualAddress>,
-    cache: &mut Analysis<'e, E>,
+    cache: &mut AnalysisCtx<'_, 'e, E>,
     string: &[u8],
 ) -> Vec<StringRefs<E::VirtualAddress>> {
     let rdata = binary.section(b".rdata\0\0").unwrap();
@@ -2524,7 +3063,7 @@ pub fn string_refs<'e, E: ExecutionStateTrait<'e>>(
 }
 
 fn find_callers<'exec, E: ExecutionStateTrait<'exec>>(
-    cache: &mut Analysis<'exec, E>,
+    cache: &mut AnalysisCtx<'_, 'exec, E>,
     func_entry: E::VirtualAddress,
 ) -> Vec<E::VirtualAddress> {
     use std::cmp::Ordering;
@@ -2623,7 +3162,7 @@ fn entry_of<Va: VirtualAddressTrait>(funcs: &[Va], func: Va) -> Va {
 }
 
 fn find_functions_using_global<'exec, E: ExecutionStateTrait<'exec>>(
-    cache: &mut Analysis<'exec, E>,
+    cache: &mut AnalysisCtx<'_, 'exec, E>,
     addr: E::VirtualAddress,
 ) -> Vec<GlobalRefs<E::VirtualAddress>> {
     use std::cmp::Ordering;

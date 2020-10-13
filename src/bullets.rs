@@ -4,7 +4,7 @@ use scarf::{MemAccessSize, Operand, Operation, DestOperand};
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{Analysis, ArgCache, OptionExt};
+use crate::{AnalysisCtx, ArgCache, OptionExt};
 
 pub struct BulletCreation<'e, Va: VirtualAddress> {
     pub first_active_bullet: Option<Operand<'e>>,
@@ -246,8 +246,8 @@ impl<'e, E: ExecutionState<'e>> FindBulletLists<'e, E> {
     }
 }
 
-pub fn bullet_creation<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> BulletCreation<'e, E::VirtualAddress> {
     let mut result = BulletCreation {
         first_active_bullet: None,

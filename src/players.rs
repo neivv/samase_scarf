@@ -5,7 +5,7 @@ use scarf::operand::{MemAccess, MemAccessSize, Register};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::add_terms::collect_arith_add_terms;
-use crate::{Analysis, ArgCache};
+use crate::{AnalysisCtx, ArgCache};
 use crate::OptionExt;
 
 pub struct NetPlayers<'e, Va: VirtualAddress> {
@@ -129,8 +129,8 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayersAnalyzer<'e, E> {
     }
 }
 
-pub fn players<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn players<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
@@ -158,8 +158,8 @@ pub fn players<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-pub fn local_player_id<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     #[derive(Copy, Clone)]
     enum State {
@@ -472,8 +472,8 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CollectReturnValues<'e, 
     }
 }
 
-pub fn net_players<'e, E: ExecutionState<'e>>(
-    analysis: &mut Analysis<'e, E>,
+pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> NetPlayers<'e, E::VirtualAddress> {
     let mut result = NetPlayers {
         net_players: None,
