@@ -5,7 +5,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use crate::add_terms::collect_arith_add_terms;
 use crate::{
     ArgCache, AnalysisCtx, single_result_assign, entry_of_until, EntryOf,
-    find_functions_using_global,
+    find_functions_using_global, bumpvec_with_capacity,
 };
 
 #[derive(Clone)]
@@ -45,6 +45,7 @@ pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
 
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let functions = analysis.functions();
 
     let sprite_array_address = sprite_array.if_constant()
@@ -57,7 +58,7 @@ pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
     // Note: Globals were sorted and deduped by func_entry, but
     // it turned out to miss something sometimes, so rely on the checked
     // vec instead to avoid duplicate work.
-    let mut checked = Vec::with_capacity(globals.len());
+    let mut checked = bumpvec_with_capacity(globals.len(), bump);
     checked.push(Rva((init_sprites.as_u64() - binary.base.as_u64()) as u32));
     let map_height_tiles = ctx.mem16(ctx.add_const(game, 0xe6));
     let last_y_hline = ctx.add(
@@ -83,6 +84,7 @@ pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
                 map_height_tiles,
                 sprite_size,
                 arg_cache,
+                bump,
                 first_branch: true,
                 had_file_call: false,
             };
@@ -122,6 +124,7 @@ struct SpriteSerializationAnalysis<'a, 'e, E: ExecutionState<'e>> {
     map_height_tiles: Operand<'e>,
     sprite_size: u32,
     arg_cache: &'a ArgCache<'e, E>,
+    bump: &'a bumpalo::Bump,
     first_branch: bool,
     had_file_call: bool,
 }
@@ -157,7 +160,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 let value = ctrl.resolve(value);
                 let dest = ctrl.resolve(mem.address);
                 if dest == self.last_y_hline {
-                    if let Some(mut terms) = collect_arith_add_terms(value) {
+                    if let Some(mut terms) = collect_arith_add_terms(value, self.bump) {
                         let ok = terms.remove_one(|op, _neg| {
                             op.if_arithmetic_mul()
                                 .filter(|(_, r)| {
@@ -201,7 +204,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
 impl<'a, 'e, E: ExecutionState<'e>> SpriteSerializationAnalysis<'a, 'e, E>
 {
     fn is_stack_temp_hlines(&self, addr: Operand<'e>) -> bool {
-        collect_arith_add_terms(addr)
+        collect_arith_add_terms(addr, self.bump)
             .as_mut()
             .map(|terms| {
                 let ok = terms.remove_one(|op, _neg| {

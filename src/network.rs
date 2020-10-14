@@ -33,8 +33,9 @@ pub(crate) fn snp_definitions<'e, E: ExecutionState<'e>>(
     // BNAU should be followed by UDPA
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let data = binary.section(b".data\0\0\0").unwrap();
-    let results = find_bytes(&data.data, &[0x55, 0x41, 0x4e, 0x42]);
+    let results = find_bytes(bump, &data.data, &[0x55, 0x41, 0x4e, 0x42]);
     let mut result = None;
     for rva in results {
         let address = data.virtual_address + rva.0;

@@ -48,6 +48,8 @@ pub mod dat;
 
 use std::rc::Rc;
 
+use bumpalo::collections::Vec as BumpVec;
+use bumpalo::Bump;
 use byteorder::{ReadBytesExt, LE};
 
 use scarf::{BinaryFile, Operand, Rva};
@@ -137,6 +139,7 @@ pub struct AnalysisX86<'e>(pub Analysis<'e, scarf::ExecutionStateX86<'e>>);
 pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
+    bump: Bump,
     arg_cache: ArgCache<'e, E>,
     cache: AnalysisCache<'e, E>,
 }
@@ -251,6 +254,7 @@ pub(crate) struct AnalysisCtx<'b, 'e, E: ExecutionStateTrait<'e>> {
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
     arg_cache: &'b ArgCache<'e, E>,
+    bump: &'b Bump,
 }
 
 struct ArgCache<'e, E: ExecutionStateTrait<'e>> {
@@ -524,6 +528,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             },
             binary,
             ctx,
+            bump: Bump::new(),
             arg_cache: ArgCache::new(ctx),
         }
     }
@@ -534,8 +539,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     /// Entry point for any analysis calls.
     /// Creates AnalysisCtx from self that is used across actual analysis functions.
-    fn enter<'b, F: FnOnce(&mut AnalysisCtx<'b, 'e, E>) -> R, R>(
-        &'b mut self,
+    fn enter<F: for<'b> FnOnce(&mut AnalysisCtx<'b, 'e, E>) -> R, R>(
+        &mut self,
         func: F,
     ) -> R {
         let mut ctx = AnalysisCtx {
@@ -543,8 +548,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             binary: self.binary,
             ctx: self.ctx,
             arg_cache: &self.arg_cache,
+            bump: &self.bump,
         };
         let ret = func(&mut ctx);
+        self.bump.reset();
         ret
     }
 
@@ -1249,7 +1256,7 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
         if let Some(cached) = self.cache.firegraft_addresses.cached() {
             return cached;
         }
-        let buttonsets = firegraft::find_buttonsets(self.binary);
+        let buttonsets = firegraft::find_buttonsets(self);
         let status_funcs = firegraft::find_unit_status_funcs(self);
         let reqs = firegraft::find_requirement_tables(self);
         let result = Rc::new(FiregraftAddresses {
@@ -3041,44 +3048,47 @@ pub struct GlobalRefs<Va: VirtualAddressTrait> {
     pub func_entry: Va,
 }
 
-fn string_refs<'e, E: ExecutionStateTrait<'e>>(
-    binary: &BinaryFile<E::VirtualAddress>,
-    cache: &mut AnalysisCtx<'_, 'e, E>,
+fn string_refs<'acx, 'e, E: ExecutionStateTrait<'e>>(
+    cache: &mut AnalysisCtx<'acx, 'e, E>,
     string: &[u8],
-) -> Vec<StringRefs<E::VirtualAddress>> {
+) -> BumpVec<'acx, StringRefs<E::VirtualAddress>> {
+    let binary = cache.binary;
     let rdata = binary.section(b".rdata\0\0").unwrap();
-    let str_ref_addrs = find_strings_casei(&rdata.data, string);
+    let bump = cache.bump;
+    let str_ref_addrs = find_strings_casei(bump, &rdata.data, string);
     // (Use rva, string rva)
-    let code_addresses = str_ref_addrs.into_iter().flat_map(|str_rva| {
-        let addr = rdata.virtual_address + str_rva.0;
-        let ptr_refs = find_functions_using_global(cache, addr);
-        ptr_refs.into_iter().map(move |x| (x.use_address, x.func_entry, str_rva))
-    }).collect::<Vec<_>>();
-    // (Func addr, string address)
-    // Takes just the first func above the string use rva
-    code_addresses.iter().map(|&(code_va, func_entry, str_rva)| {
-        StringRefs {
-            use_address: code_va,
-            func_entry,
-            string_address: rdata.virtual_address + str_rva.0,
-        }
-    }).collect()
+    let rdata_base = rdata.virtual_address;
+    let result = str_ref_addrs
+        .into_iter()
+        .flat_map(|str_rva| {
+            let addr = rdata_base + str_rva.0;
+            let ptr_refs = find_functions_using_global(cache, addr);
+            ptr_refs.into_iter().map(move |x| (x.use_address, x.func_entry, str_rva))
+        })
+        .map(|(code_va, func_entry, str_rva)| {
+            StringRefs {
+                use_address: code_va,
+                func_entry,
+                string_address: rdata_base + str_rva.0,
+            }
+        });
+    BumpVec::from_iter_in(result, bump)
 }
 
-fn find_callers<'exec, E: ExecutionStateTrait<'exec>>(
-    cache: &mut AnalysisCtx<'_, 'exec, E>,
+fn find_callers<'acx, 'exec, E: ExecutionStateTrait<'exec>>(
+    cache: &mut AnalysisCtx<'acx, 'exec, E>,
     func_entry: E::VirtualAddress,
-) -> Vec<E::VirtualAddress> {
+) -> BumpVec<'acx, E::VirtualAddress> {
     use std::cmp::Ordering;
     let callers = cache.functions_with_callers();
     let lower_bound = callers.binary_search_by(|x| match x.callee >= func_entry {
         true => Ordering::Greater,
         false => Ordering::Less,
     }).unwrap_err();
-    (&callers[lower_bound..]).iter()
+    let result = (&callers[lower_bound..]).iter()
         .take_while(|&x| x.callee == func_entry)
-        .map(|x| x.caller)
-        .collect()
+        .map(|x| x.caller);
+    BumpVec::from_iter_in(result, cache.bump)
 }
 
 pub enum EntryOf<R> {
@@ -3164,10 +3174,10 @@ fn entry_of<Va: VirtualAddressTrait>(funcs: &[Va], func: Va) -> Va {
     funcs[index.saturating_sub(1)]
 }
 
-fn find_functions_using_global<'exec, E: ExecutionStateTrait<'exec>>(
-    cache: &mut AnalysisCtx<'_, 'exec, E>,
+fn find_functions_using_global<'acx, 'exec, E: ExecutionStateTrait<'exec>>(
+    cache: &mut AnalysisCtx<'acx, 'exec, E>,
     addr: E::VirtualAddress,
-) -> Vec<GlobalRefs<E::VirtualAddress>> {
+) -> BumpVec<'acx, GlobalRefs<E::VirtualAddress>> {
     use std::cmp::Ordering;
 
     let relocs = cache.relocs_with_values();
@@ -3184,9 +3194,8 @@ fn find_functions_using_global<'exec, E: ExecutionStateTrait<'exec>>(
                 use_address: x.address,
                 func_entry: functions[index.saturating_sub(1)],
             }
-        })
-        .collect();
-    result
+        });
+    BumpVec::from_iter_in(result, cache.bump)
 }
 
 fn read_u32_at<Va: VirtualAddressTrait>(section: &BinarySection<Va>, offset: Rva) -> Option<u32> {
@@ -3197,26 +3206,38 @@ fn read_u32_at<Va: VirtualAddressTrait>(section: &BinarySection<Va>, offset: Rva
 /// Returns any matching strings as Rvas.
 ///
 /// Remember to null-terminate strings if needed =)
-fn find_strings_casei(mut data: &[u8], needle: &[u8]) -> Vec<Rva> {
-    let mut ret = vec![];
-    let mut offset = 0;
+fn find_strings_casei<'a>(bump: &'a Bump, mut data: &[u8], needle: &[u8]) -> BumpVec<'a, Rva> {
+    let mut ret = BumpVec::new_in(bump);
+    let mut offset = 0usize;
     let first = needle[0];
     while data.len() >= needle.len() {
         let result = match first {
-            x if x >= b'a' && x <= b'z' => memchr::memchr2(x, x - b'a' + b'A', data),
-            x if x >= b'A' && x <= b'Z' => memchr::memchr2(x, x - b'A' + b'a', data),
+            x if x >= b'a' && x <= b'z' => {
+                memchr::memchr2(x, x.wrapping_sub(b'a').wrapping_add(b'A'), data)
+            }
+            x if x >= b'A' && x <= b'Z' => {
+                memchr::memchr2(x, x.wrapping_sub(b'A').wrapping_add(b'a'), data)
+            }
             x => memchr::memchr(x, data),
         };
         match result {
             Some(pos) => {
-                if pos + needle.len() > data.len() {
+                let end = pos.wrapping_add(needle.len());
+                if end > data.len() {
                     break;
                 }
-                if needle.eq_ignore_ascii_case(&data[pos..pos + needle.len()]) {
-                    ret.push(Rva((offset + pos) as u32));
+                let compare = match data.get(pos..end) {
+                    Some(s) => s,
+                    None => break,
+                };
+                if needle.eq_ignore_ascii_case(compare) {
+                    ret.push(Rva((offset.wrapping_add(pos)) as u32));
                 }
-                offset += pos + 1;
-                data = &data[pos + 1..];
+                offset = offset.wrapping_add(pos).wrapping_add(1);
+                data = match data.get(pos.wrapping_add(1)..) {
+                    Some(s) => s,
+                    None => break,
+                };
             }
             None => break,
         }
@@ -3224,13 +3245,17 @@ fn find_strings_casei(mut data: &[u8], needle: &[u8]) -> Vec<Rva> {
     ret
 }
 
-fn find_address_refs<Va: VirtualAddressTrait>(data: &[u8], addr: Va) -> Vec<Rva> {
+fn find_address_refs<'a, Va: VirtualAddressTrait>(
+    bump: &'a Bump,
+    data: &[u8],
+    addr: Va,
+) -> BumpVec<'a, Rva> {
     let mut result = if Va::SIZE == 4 {
         let bytes = (addr.as_u64() as u32).to_le_bytes();
-        find_bytes(data, &bytes[..])
+        find_bytes(bump, data, &bytes[..])
     } else {
         let bytes = addr.as_u64().to_le_bytes();
-        find_bytes(data, &bytes[..])
+        find_bytes(bump, data, &bytes[..])
     };
     // Filter out if align is less than 4.
     // 64-bit bw can have 4-aligned pointers.
@@ -3238,10 +3263,10 @@ fn find_address_refs<Va: VirtualAddressTrait>(data: &[u8], addr: Va) -> Vec<Rva>
     result
 }
 
-fn find_bytes(mut data: &[u8], needle: &[u8]) -> Vec<Rva> {
+fn find_bytes<'a>(bump: &'a Bump, mut data: &[u8], needle: &[u8]) -> BumpVec<'a, Rva> {
     use memmem::{TwoWaySearcher, Searcher};
 
-    let mut ret = vec![];
+    let mut ret = BumpVec::new_in(bump);
     let mut pos = 0;
     let searcher = TwoWaySearcher::new(needle);
     while let Some(index) = searcher.search_in(data) {
@@ -3446,4 +3471,12 @@ impl<'e> OperandExt<'e> for Operand<'e> {
             Some(l)
         }
     }
+}
+
+// This is slightly better for binary size than BumpVec::with_capcity_in,
+// as bumpalo is otherwise pretty bad with monomorphizing
+fn bumpvec_with_capacity<T>(cap: usize, bump: &Bump) -> BumpVec<'_, T> {
+    let mut vec = BumpVec::new_in(bump);
+    vec.reserve(cap);
+    vec
 }

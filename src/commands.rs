@@ -1,3 +1,5 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::{BinaryFile, DestOperand, Operand, OperandType, Operation};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
@@ -6,6 +8,7 @@ use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 use crate::{
     AnalysisCtx, ArgCache, EntryOf, EntryOfResult, OptionExt, if_callable_const, find_callers,
     entry_of_until, single_result_assign, find_bytes, read_u32_at, if_arithmetic_eq_neq,
+    bumpvec_with_capacity,
 };
 
 #[derive(Clone, Debug)]
@@ -97,7 +100,7 @@ pub(crate) fn command_lengths<'e, E: ExecutionState<'e>>(
     analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Vec<u32> {
     let rdata = analysis.binary.section(b".rdata\0\0").unwrap();
-    let needle = [
+    static NEEDLE: &[u8] = &[
         0xff, 0xff, 0xff, 0xff,
         0xff, 0xff, 0xff, 0xff,
         0xff, 0xff, 0xff, 0xff,
@@ -124,10 +127,11 @@ pub(crate) fn command_lengths<'e, E: ExecutionState<'e>>(
         0xff, 0xff, 0xff, 0xff,
         0x1, 0, 0, 0,
     ];
-    let results = find_bytes(&rdata.data, &needle[..]);
+    let bump = analysis.bump;
+    let results = find_bytes(bump, &rdata.data, NEEDLE);
     test_assert_eq!(results.len(), 1);
     let mut result = results.first().map(|&start| {
-        let mut pos = needle.len() as u32;
+        let mut pos = NEEDLE.len() as u32;
         loop {
             let len = read_u32_at(&rdata, start + pos).unwrap_or_else(|| !1);
             if len != !0 && len > 0x200 {
@@ -231,10 +235,12 @@ pub(crate) fn process_commands<'e, E: ExecutionState<'e>>(
 ) -> ProcessCommands<'e, E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
 
-    let switches = analysis.switch_tables().iter().filter(|switch| {
+    let switch_tables = analysis.switch_tables();
+    let switches = switch_tables.iter().filter(|switch| {
         switch.cases.len() >= 0x38 && switch.cases.len() < 0x60
     }).filter_map(|switch| {
         crate::switch::full_switch_info(analysis, switch).and_then(|(mut switch, entry)| {
@@ -258,13 +264,14 @@ pub(crate) fn process_commands<'e, E: ExecutionState<'e>>(
                 None => None,
             }
         })
-    }).collect::<Vec<_>>();
+    });
+    let switches = BumpVec::from_iter_in(switches, bump);
     let switches = switches.into_iter().flat_map(|(switch, process_commands)| {
         let switch = &switch;
-        let mut callers = find_callers(analysis, process_commands)
+        let callers = find_callers(analysis, process_commands)
             .into_iter()
-            .map(move |caller| (switch.clone(), caller, process_commands))
-            .collect::<Vec<_>>();
+            .map(move |caller| (switch.clone(), caller, process_commands));
+        let mut callers = BumpVec::from_iter_in(callers, bump);
         callers.sort_unstable();
         callers.dedup();
         callers
@@ -434,6 +441,7 @@ pub(crate) fn selections<'e, E: ExecutionState<'e>>(
 ) -> Selections<'e> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
 
     let process_commands = analysis.process_commands();
     let mut result = Selections {
@@ -451,7 +459,7 @@ pub(crate) fn selections<'e, E: ExecutionState<'e>>(
     let mut analyzer = SelectionsAnalyzer::<E> {
         sel_state: SelectionState::Start,
         result: &mut result,
-        checked_calls: Vec::new(),
+        checked_calls: bumpvec_with_capacity(8, bump),
         inline_depth: 0,
     };
     analysis.analyze(&mut analyzer);
@@ -463,14 +471,16 @@ enum SelectionState<'e> {
     LimitJumped(Operand<'e>),
 }
 
-struct SelectionsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct SelectionsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut Selections<'e>,
     sel_state: SelectionState<'e>,
-    checked_calls: Vec<E::VirtualAddress>,
+    checked_calls: BumpVec<'acx, E::VirtualAddress>,
     inline_depth: u8,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SelectionsAnalyzer<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    SelectionsAnalyzer<'a, 'acx, 'e, E>
+{
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -563,6 +573,7 @@ pub(crate) fn is_replay<'e, E: ExecutionState<'e>>(
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
 
     let process_commands = analysis.process_commands();
     let command = process_commands.switch.as_ref()
@@ -579,7 +590,7 @@ pub(crate) fn is_replay<'e, E: ExecutionState<'e>>(
     };
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, command, exec_state, state);
     let mut analyzer = IsReplayAnalyzer::<E> {
-        checked_calls: Vec::new(),
+        checked_calls: bumpvec_with_capacity(8, bump),
         result: None,
         inline_depth: 0,
     };
@@ -587,9 +598,9 @@ pub(crate) fn is_replay<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-struct IsReplayAnalyzer<'e, E: ExecutionState<'e>> {
+struct IsReplayAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     result: Option<Operand<'e>>,
-    checked_calls: Vec<E::VirtualAddress>,
+    checked_calls: BumpVec<'acx, E::VirtualAddress>,
     inline_depth: u8,
 }
 
@@ -606,7 +617,7 @@ impl<'e> analysis::AnalysisState for IsReplayState<'e> {
     }
 }
 
-impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyzer<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyzer<'acx, 'e, E> {
     type State = IsReplayState<'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -680,6 +691,7 @@ pub(crate) fn step_network<'e, E: ExecutionState<'e>>(
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
     // step_network calls process_lobby_commands 2~3 frames deep
@@ -687,10 +699,10 @@ pub(crate) fn step_network<'e, E: ExecutionState<'e>>(
     // menu_screen_id == MENU_SCREEN_EXIT (0x21 currently, but allow matching higher constants,
     // 1.16.1 had 0x19)
     let mut repeat_limit = 3;
-    let mut entries = vec![process_lobby_commands];
+    let mut entries = bumpalo::vec![in bump; process_lobby_commands];
     'outer: while repeat_limit > 0 {
         repeat_limit -= 1;
-        let mut new_entries = Vec::new();
+        let mut new_entries = bumpvec_with_capacity(8, bump);
         for child in entries {
             let callers = find_callers(analysis, child);
             for caller in callers {

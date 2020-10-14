@@ -1,5 +1,6 @@
 use std::convert::TryInto;
 
+use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashMap;
 
 use scarf::{MemAccessSize, Operand, Operation, DestOperand, Rva, BinaryFile, OperandCtx};
@@ -9,6 +10,7 @@ use scarf::operand::{MemAccess, Register};
 
 use crate::{
     ArgCache, AnalysisCtx, OptionExt, single_result_assign, entry_of_until, EntryOf, string_refs,
+    bumpvec_with_capacity,
 };
 
 pub struct Sprites<'e, Va: VirtualAddress> {
@@ -73,6 +75,7 @@ pub(crate) fn sprites<'e, E: ExecutionState<'e>>(
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let arg_cache = analysis.arg_cache;
     let mut analyzer = SpriteAnalyzer::<E> {
         state: FindSpritesState::NukeTrack,
@@ -80,7 +83,7 @@ pub(crate) fn sprites<'e, E: ExecutionState<'e>>(
         lone_active: Default::default(),
         sprites_free: Default::default(),
         hlines: Default::default(),
-        last_ptr_candidates: Vec::new(),
+        last_ptr_candidates: BumpVec::new_in(bump),
         active_list_candidate_branches: Default::default(),
         is_checking_active_list_candidate: None,
         active_list_candidate_head: None,
@@ -88,7 +91,7 @@ pub(crate) fn sprites<'e, E: ExecutionState<'e>>(
         ecx: ctx.register(1),
         create_lone_sprite: None,
         function_to_custom_map: FxHashMap::with_capacity_and_hasher(16, Default::default()),
-        custom_to_function_map: Vec::with_capacity(16),
+        custom_to_function_map: bumpvec_with_capacity(16, bump),
         sprite_x_position: None,
         sprite_y_position: None,
         binary,
@@ -134,7 +137,7 @@ impl<'e> IncompleteList<'e> {
     }
 }
 
-struct SpriteAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct SpriteAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     state: FindSpritesState,
     lone_free: IncompleteList<'e>,
     lone_active: IncompleteList<'e>,
@@ -143,7 +146,7 @@ struct SpriteAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     // Since last ptr for free lists (removing) is detected as
     // *last = (*first).prev
     // If this pattern is seen before first is confirmed, store (first, last) here.
-    last_ptr_candidates: Vec<(Operand<'e>, Operand<'e>)>,
+    last_ptr_candidates: BumpVec<'acx, (Operand<'e>, Operand<'e>)>,
     // Adding to active sprites is detected as
     // if (*first_active == null) {
     //     *first_active = *first_free;
@@ -158,11 +161,11 @@ struct SpriteAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     create_lone_sprite: Option<E::VirtualAddress>,
     // Dest, arg1, arg2 if Mem32[x] where the resolved value is a constant
     function_to_custom_map: FxHashMap<(Rva, Option<u64>, Option<u64>), u32>,
-    custom_to_function_map: Vec<ChildFunctionFormula<'e>>,
+    custom_to_function_map: BumpVec<'acx, ChildFunctionFormula<'e>>,
     sprite_x_position: Option<(Operand<'e>, u32, MemAccessSize)>,
     sprite_y_position: Option<(Operand<'e>, u32, MemAccessSize)>,
     binary: &'e BinaryFile<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
+    arg_cache: &'acx ArgCache<'e, E>,
     ctx: OperandCtx<'e>,
 }
 
@@ -795,6 +798,7 @@ pub(crate) fn fow_sprites<'e, E: ExecutionState<'e>>(
     // so can get all 4 pointers from that.
     let ctx = analysis.ctx;
     let binary = analysis.binary;
+    let bump = analysis.bump;
     let mut result = FowSprites::default();
     let step_objects = match analysis.step_objects() {
         Some(s) => s,
@@ -811,7 +815,7 @@ pub(crate) fn fow_sprites<'e, E: ExecutionState<'e>>(
         first_lone,
         free: Default::default(),
         active: Default::default(),
-        last_ptr_candidates: Vec::new(),
+        last_ptr_candidates: BumpVec::new_in(bump),
         free_list_candidate_branches: Default::default(),
         is_checking_free_list_candidate: None,
         free_list_candidate_head: None,
@@ -841,13 +845,13 @@ enum FowSpritesState {
     StepLoneSpritesFound,
 }
 
-struct FowSpriteAnalyzer<'e, E: ExecutionState<'e>> {
+struct FowSpriteAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     state: FowSpritesState,
     inline_depth: u8,
     free: IncompleteList<'e>,
     active: IncompleteList<'e>,
     // Explanation for these is at SpriteAnalyzer
-    last_ptr_candidates: Vec<(Operand<'e>, Operand<'e>)>,
+    last_ptr_candidates: BumpVec<'acx, (Operand<'e>, Operand<'e>)>,
     free_list_candidate_branches: FxHashMap<E::VirtualAddress, Operand<'e>>,
     is_checking_free_list_candidate: Option<Operand<'e>>,
     free_list_candidate_head: Option<Operand<'e>>,
@@ -856,7 +860,7 @@ struct FowSpriteAnalyzer<'e, E: ExecutionState<'e>> {
     first_lone: Operand<'e>,
 }
 
-impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<'acx, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -1017,7 +1021,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<'e, E>
     }
 }
 
-impl<'e, E: ExecutionState<'e>> FowSpriteAnalyzer<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> FowSpriteAnalyzer<'acx, 'e, E> {
     fn last_ptr_first_known(&self, first: Operand<'e>) -> Option<Operand<'e>> {
         self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1.clone())
     }
@@ -1048,8 +1052,9 @@ pub(crate) fn init_sprites<'e, E: ExecutionState<'e>>(
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let functions = analysis.functions();
-    let str_refs = string_refs(binary, analysis, b"arr\\sprites.dat\0");
+    let str_refs = string_refs(analysis, b"arr\\sprites.dat\0");
     let arg_cache = analysis.arg_cache;
     for str_ref in str_refs {
         let val = entry_of_until(binary, &functions, str_ref.use_address, |entry| {
@@ -1062,7 +1067,7 @@ pub(crate) fn init_sprites<'e, E: ExecutionState<'e>>(
                 first_free_sprite,
                 last_free_sprite,
                 arg_cache,
-                array_candidates: Vec::new(),
+                array_candidates: BumpVec::new_in(bump),
             };
             analysis.analyze(&mut analyzer);
             if analyzer.str_ref_found {
@@ -1085,18 +1090,20 @@ pub(crate) fn init_sprites<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct InitSpritesAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct InitSpritesAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut InitSprites<'e, E::VirtualAddress>,
     inlining: bool,
     use_address: E::VirtualAddress,
     str_ref_found: bool,
     first_free_sprite: Operand<'e>,
     last_free_sprite: Operand<'e>,
-    arg_cache: &'a ArgCache<'e, E>,
-    array_candidates: Vec<(Operand<'e>, Operand<'e>)>,
+    arg_cache: &'acx ArgCache<'e, E>,
+    array_candidates: BumpVec<'acx, (Operand<'e>, Operand<'e>)>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for InitSpritesAnalyzer<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    InitSpritesAnalyzer<'a, 'acx, 'e, E>
+{
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {

@@ -1,10 +1,14 @@
+use bumpalo::collections::Vec as BumpVec;
 use fxhash::{FxHashSet, FxHashMap};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{OperandHashByAddress};
 use scarf::{DestOperand, Operand, Operation};
 
-use crate::{entry_of_until, EntryOf, OptionExt, OperandExt, find_functions_using_global};
+use crate::{
+    entry_of_until, EntryOf, OptionExt, OperandExt, find_functions_using_global,
+    bumpvec_with_capacity,
+};
 use super::{DatPatchContext, DatPatch, GrpTexturePatch, reloc_address_of_instruction};
 
 pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
@@ -16,6 +20,7 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
     let analysis = &mut dat_ctx.analysis;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let functions = analysis.functions();
     let text = dat_ctx.text;
     let text_end = text.virtual_address + text.virtual_size;
@@ -36,7 +41,7 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
         (ctx.custom(2), GrpType::DdsGrpSet),
     ];
     let mut grp_operands = FxHashMap::with_capacity_and_hasher(16, Default::default());
-    let mut refs_to_check = Vec::new();
+    let mut refs_to_check = bumpvec_with_capacity(8, bump);
     for &(oper, grp) in &grp_op_inputs {
         grp_operands.insert(oper.hash_by_address(), grp);
         let addr = oper.if_constant()
@@ -59,7 +64,7 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
         }
     }
     // Functions that are known to refer the grps but aren't relevant
-    let mut bad_functions = Vec::with_capacity(4);
+    let mut bad_functions = bumpvec_with_capacity(4, bump);
     bad_functions.push(analysis.init_status_screen()?);
     let status_screen = analysis.status_screen()?;
     while let Some(ref_addr) = refs_to_check.pop() {
@@ -123,7 +128,7 @@ struct GrpIndexAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     returns_grp: Option<GrpType>,
     entry_of: EntryOf<()>,
     first_branch: bool,
-    bad_functions: &'a mut Vec<E::VirtualAddress>,
+    bad_functions: &'a mut BumpVec<'acx, E::VirtualAddress>,
     status_screen: Operand<'e>,
     entry: E::VirtualAddress,
     inlining: bool,

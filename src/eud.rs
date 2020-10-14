@@ -1,9 +1,11 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::{BinaryFile, Operand, OperandCtx, Operation, DestOperand, OperandType};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, Register};
 
-use crate::{AnalysisCtx, EntryOf};
+use crate::{AnalysisCtx, EntryOf, bumpvec_with_capacity};
 
 pub struct Eud<'e> {
     pub address: u32,
@@ -49,7 +51,8 @@ pub(crate) fn eud_table<'e, E: ExecutionState<'e>>(
 
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let mut const_refs = Vec::with_capacity(EUD_ADDRS.len() * 2);
+    let bump = analysis.bump;
+    let mut const_refs = bumpvec_with_capacity(EUD_ADDRS.len() * 2, bump);
     for &addr in EUD_ADDRS {
         find_const_refs_in_code(binary, addr, &mut const_refs);
     }
@@ -385,7 +388,7 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
 fn find_const_refs_in_code<Va: VirtualAddress>(
     binary: &BinaryFile<Va>,
     value: u32,
-    out: &mut Vec<Va>,
+    out: &mut BumpVec<'_, Va>,
 ) {
     use memmem::{TwoWaySearcher, Searcher};
 

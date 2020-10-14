@@ -1,3 +1,5 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operand};
 
@@ -24,12 +26,14 @@ pub(crate) fn campaigns<'e, E: ExecutionState<'e>>(
     // Check that second pointer is terran maps to avoid false positives.
     let rdata = analysis.binary.section(b".rdata\0\0").unwrap();
     let data = analysis.binary.section(b".data\0\0\0").unwrap();
-    let zerg_campaign_refs = crate::find_bytes(&rdata.data, ZERG_CAMPAIGN_SIGNATURE);
+    let bump = analysis.bump;
+    let zerg_campaign_refs = crate::find_bytes(bump, &rdata.data, ZERG_CAMPAIGN_SIGNATURE);
     let va_size = <E::VirtualAddress as VirtualAddress>::SIZE;
     let candidates = zerg_campaign_refs.iter().flat_map(|&zref| {
         let address = rdata.virtual_address + zref.0;
-        crate::find_address_refs(&data.data, address)
-    }).collect::<Vec<_>>();
+        crate::find_address_refs(bump, &data.data, address)
+    });
+    let candidates = BumpVec::from_iter_in(candidates, bump);
     let result = candidates.iter()
         .map(|&rva| data.virtual_address + rva.0)
         .filter(|&address| {

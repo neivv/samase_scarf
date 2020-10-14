@@ -19,6 +19,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cff77d8686867eceff3105329d4698d96c2391c176d5d03adc90c7389162b5b8"
 
 [[package]]
+name = "bumpalo"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e8c087f005730276d1096a652e92a8bacee2e2472bcc9715a74d2bec38b5820"
+
+[[package]]
 name = "byteorder"
 version = "1.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -98,6 +104,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec",
+ "bumpalo",
  "byteorder",
  "fern",
  "fxhash",
@@ -107,7 +114,6 @@ dependencies = [
  "memmem",
  "scarf",
  "scopeguard",
- "smallvec",
  "winapi",
 ]
 

@@ -140,10 +140,12 @@ pub(crate) fn prism_shaders<'e, E: ExecutionState<'e>>(
             break;
         }
         let arg_cache = analysis.arg_cache;
+        let bump = analysis.bump;
         let mut analyzer = FindPrismShaders::<E> {
             vertex: Vec::new(),
             pixel: Vec::new(),
             arg_cache,
+            bump,
             inline_depth: 0,
             binary,
         };
@@ -163,6 +165,7 @@ struct FindPrismShaders<'a, 'e, E: ExecutionState<'e>> {
     vertex: Vec<E::VirtualAddress>,
     pixel: Vec<E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
+    bump: &'a bumpalo::Bump,
     binary: &'e BinaryFile<E::VirtualAddress>,
     inline_depth: u8,
 }
@@ -268,7 +271,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FindPrismShaders<'a, 'e, E> {
             Some(s) => s,
             None => return,
         };
-        let mut terms = match collect_arith_add_terms(addr) {
+        let mut terms = match collect_arith_add_terms(addr, self.bump) {
             Some(s) => s,
             None => return,
         };

@@ -1,3 +1,4 @@
+use bumpalo::collections::Vec as BumpVec;
 use fxhash::{FxHashSet, FxHashMap};
 
 use scarf::analysis::{self, Control, FuncAnalysis};
@@ -13,9 +14,9 @@ use super::{
     FunctionHookContext,
 };
 
-pub(crate) fn dat_game_analysis<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
-    required_stable_addresses: &mut RequiredStableAddressesMap<E::VirtualAddress>,
+pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'acx, 'e, E>,
+    required_stable_addresses: &mut RequiredStableAddressesMap<'acx, E::VirtualAddress>,
     result: &mut DatPatches<'e, E::VirtualAddress>,
 ) -> Option<()> {
     let ctx = analysis.ctx;
@@ -114,10 +115,11 @@ pub struct GameContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
     fn do_analysis(
         &mut self,
-        required_stable_addresses: &mut RequiredStableAddressesMap<E::VirtualAddress>,
+        required_stable_addresses: &mut RequiredStableAddressesMap<'acx, E::VirtualAddress>,
     ) {
         let binary = self.analysis.binary;
         let ctx = self.analysis.ctx;
+        let bump = self.analysis.bump;
         let functions = self.analysis.functions();
         let mut function_ends = FxHashMap::with_capacity_and_hasher(64, Default::default());
         while let Some(game_ref_addr) = self.unchecked_refs.iter().cloned().next() {
@@ -132,7 +134,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
                         other_globals: false,
                         required_stable_addresses: rsa,
                         switch_table: E::VirtualAddress::from_u64(0),
-                        patch_indices: Vec::new(),
+                        patch_indices: BumpVec::new_in(bump),
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
@@ -169,10 +171,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
 
     fn other_global_analysis(
         &mut self,
-        required_stable_addresses: &mut RequiredStableAddressesMap<E::VirtualAddress>,
+        required_stable_addresses: &mut RequiredStableAddressesMap<'acx, E::VirtualAddress>,
     ) {
         let binary = self.analysis.binary;
         let ctx = self.analysis.ctx;
+        let bump = self.analysis.bump;
         let functions = self.analysis.functions();
         while let Some(ref_addr) = self.unchecked_refs.iter().cloned().next() {
             let result = entry_of_until(binary, &functions, ref_addr, |entry| {
@@ -186,7 +189,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
                         other_globals: true,
                         required_stable_addresses: rsa,
                         switch_table: E::VirtualAddress::from_u64(0),
-                        patch_indices: Vec::new(),
+                        patch_indices: BumpVec::new_in(bump),
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
@@ -213,9 +216,9 @@ pub struct GameAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     // Optimization to avoid some work before first game address ref
     game_ref_seen: bool,
     other_globals: bool,
-    required_stable_addresses: &'a mut RequiredStableAddresses<E::VirtualAddress>,
+    required_stable_addresses: &'a mut RequiredStableAddresses<'acx, E::VirtualAddress>,
     switch_table: E::VirtualAddress,
-    patch_indices: Vec<usize>,
+    patch_indices: BumpVec<'acx, usize>,
 }
 
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
@@ -435,7 +438,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         ctrl: &mut Control<'e, '_, '_, Self>,
         addr: Operand<'e>,
     ) {
-        let mut terms = match crate::add_terms::collect_arith_add_terms(addr) {
+        let bump = self.game_ctx.analysis.bump;
+        let mut terms = match crate::add_terms::collect_arith_add_terms(addr, bump) {
             Some(s) => s,
             None => return,
         };

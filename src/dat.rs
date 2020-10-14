@@ -9,6 +9,8 @@ use std::hash::Hash;
 use std::mem;
 use std::rc::Rc;
 
+use bumpalo::collections::Vec as BumpVec;
+use bumpalo::Bump;
 use byteorder::{ByteOrder, LittleEndian};
 use fxhash::{FxHashMap, FxHashSet};
 use lde::Isa;
@@ -20,7 +22,7 @@ use scarf::{BinaryFile, BinarySection, DestOperand, Operand, OperandCtx, Operati
 
 use crate::{
     ArgCache, AnalysisCtx, EntryOf, StringRefs, DatType, entry_of_until, single_result_assign,
-    string_refs, if_callable_const, OperandExt, OptionExt,
+    string_refs, if_callable_const, OperandExt, OptionExt, bumpvec_with_capacity,
 };
 use crate::range_list::RangeList;
 
@@ -165,7 +167,7 @@ pub(crate) fn dat_table<'e, E: ExecutionState<'e>>(
 ) -> Option<DatTablePtr<'e>> {
     let binary = analysis.binary;
     let functions = analysis.functions();
-    let str_refs = string_refs(binary, analysis, filename.as_bytes());
+    let str_refs = string_refs(analysis, filename.as_bytes());
 
     let mut result = None;
     'outer: for str_ref in &str_refs {
@@ -326,17 +328,17 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     // That's preferred over patching callers to widen the retval on their own side, as
     // then they don't need to worry about the function returning a wider value, e.g.
     // having get_ground_weapon patched to return u16 eventually.
-    funcs_needing_retval_patch: Vec<Rva>,
+    funcs_needing_retval_patch: BumpVec<'acx, Rva>,
     funcs_added_for_retval_patch: FxHashSet<Rva>,
     // Funcs that returned u8 and any of their callers now need to patched to widen the
     // return value
-    u8_funcs: Vec<Rva>,
+    u8_funcs: BumpVec<'acx, Rva>,
     // First unhandled rva in u8_funcs
     u8_funcs_pos: usize,
     operand_to_u8_op: FxHashMap<OperandHashByAddress<'e>, Option<U8Operand>>,
     analysis: &'a mut AnalysisCtx<'acx, 'e, E>,
     patched_addresses: FxHashSet<E::VirtualAddress>,
-    analyzed_functions: FxHashMap<Rva, Box<DatFuncAnalysisState<'e, E>>>,
+    analyzed_functions: FxHashMap<Rva, Box<DatFuncAnalysisState<'acx, 'e, E>>>,
     /// Maps array address patch -> index in result vector.
     /// Meant to solve conflicts where an address technically is inside one array but
     /// in reality is `array[unit_id - first_index]`
@@ -347,7 +349,7 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     /// needs to be widened, func_arg_widen_queue is functions whose callers need to be
     /// analyzed.
     func_arg_widen_requests: FxHashMap<E::VirtualAddress, [Option<DatType>; 8]>,
-    func_arg_widen_queue: Vec<E::VirtualAddress>,
+    func_arg_widen_queue: BumpVec<'acx, E::VirtualAddress>,
     /// Which callers of function that needs arg widening have been handled.
     found_func_arg_widen_refs: FxHashSet<E::VirtualAddress>,
     /// Expected to have 1 entry for weapons
@@ -358,50 +360,53 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     /// Set during analysis, contains refs but isn't fully analyzed.
     /// Maybe dumb to special case this
     update_status_screen_tooltip: E::VirtualAddress,
-    required_stable_addresses: RequiredStableAddressesMap<E::VirtualAddress>,
+    required_stable_addresses: RequiredStableAddressesMap<'acx, E::VirtualAddress>,
 }
 
-pub(crate) struct RequiredStableAddressesMap<Va: VirtualAddress> {
-    map: FxHashMap<Rva, RequiredStableAddresses<Va>>,
+pub(crate) struct RequiredStableAddressesMap<'acx, Va: VirtualAddress> {
+    map: FxHashMap<Rva, RequiredStableAddresses<'acx, Va>>,
+    bump: &'acx Bump,
 }
 
-pub(crate) struct RequiredStableAddresses<Va: VirtualAddress> {
-    list: RangeList<Rva, IsJumpDest>,
+pub(crate) struct RequiredStableAddresses<'acx, Va: VirtualAddress> {
+    list: RangeList<'acx, Rva, IsJumpDest>,
     phantom: std::marker::PhantomData<*const Va>,
 }
 
-impl<Va: VirtualAddress> RequiredStableAddressesMap<Va> {
-    pub fn with_capacity(cap: usize) -> RequiredStableAddressesMap<Va> {
+impl<'acx, Va: VirtualAddress> RequiredStableAddressesMap<'acx, Va> {
+    pub fn with_capacity(cap: usize, bump: &'acx Bump) -> RequiredStableAddressesMap<Va> {
         RequiredStableAddressesMap {
             map: FxHashMap::with_capacity_and_hasher(cap, Default::default()),
+            bump,
         }
     }
 
-    pub fn get(&mut self, rva: Rva) -> &mut RequiredStableAddresses<Va> {
+    pub fn get(&mut self, rva: Rva) -> &mut RequiredStableAddresses<'acx, Va> {
+        let bump = self.bump;
         self.map.entry(rva)
             .or_insert_with(|| RequiredStableAddresses {
-                list: RangeList::with_capacity(64),
+                list: RangeList::with_capacity(64, bump),
                 phantom: Default::default(),
             })
     }
 
-    pub fn take(&mut self, rva: Rva) -> RequiredStableAddresses<Va> {
+    pub fn take(&mut self, rva: Rva) -> RequiredStableAddresses<'acx, Va> {
         match self.map.entry(rva) {
             Entry::Occupied(e) => e.remove(),
             Entry::Vacant(_) => RequiredStableAddresses {
-                list: RangeList::with_capacity(64),
+                list: RangeList::with_capacity(64, self.bump),
                 phantom: Default::default(),
             },
         }
     }
 
-    pub fn add_back(&mut self, rva: Rva, list: RequiredStableAddresses<Va>) {
+    pub fn add_back(&mut self, rva: Rva, list: RequiredStableAddresses<'acx, Va>) {
         let had_any = self.map.insert(rva, list).is_some();
         debug_assert!(!had_any);
     }
 }
 
-impl<Va: VirtualAddress> RequiredStableAddresses<Va> {
+impl<'acx, Va: VirtualAddress> RequiredStableAddresses<'acx, Va> {
     pub fn try_add(
         &mut self,
         binary: &BinaryFile<Va>,
@@ -510,13 +515,14 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
 
         let text = analysis.binary.section(b".text\0\0\0").unwrap();
         let step_iscript = analysis.step_iscript().step_fn?;
+        let bump = analysis.bump;
         Some(DatPatchContext {
             array_lookup: FxHashMap::with_capacity_and_hasher(128, Default::default()),
             operand_to_u8_op: FxHashMap::with_capacity_and_hasher(2048, Default::default()),
-            funcs_needing_retval_patch: Vec::with_capacity(16),
+            funcs_needing_retval_patch: bumpvec_with_capacity(16, bump),
             funcs_added_for_retval_patch:
                 FxHashSet::with_capacity_and_hasher(16, Default::default()),
-            u8_funcs: Vec::with_capacity(16),
+            u8_funcs: bumpvec_with_capacity(16, bump),
             u8_funcs_pos: 0,
             unchecked_refs: FxHashSet::with_capacity_and_hasher(1024, Default::default()),
             units: dat_table(0x36),
@@ -538,14 +544,14 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             patched_addresses: FxHashSet::with_capacity_and_hasher(64, Default::default()),
             analyzed_functions: FxHashMap::with_capacity_and_hasher(64, Default::default()),
             func_arg_widen_requests: FxHashMap::with_capacity_and_hasher(32, Default::default()),
-            func_arg_widen_queue: Vec::with_capacity(32),
+            func_arg_widen_queue: bumpvec_with_capacity(32, bump),
             found_func_arg_widen_refs:
                 FxHashSet::with_capacity_and_hasher(128, Default::default()),
             step_iscript,
             unknown_global_u8_mem: FxHashMap::with_capacity_and_hasher(4, Default::default()),
             array_address_patches: FxHashMap::with_capacity_and_hasher(256, Default::default()),
             update_status_screen_tooltip: E::VirtualAddress::from_u64(0),
-            required_stable_addresses: RequiredStableAddressesMap::with_capacity(1024),
+            required_stable_addresses: RequiredStableAddressesMap::with_capacity(1024, bump),
         })
     }
 
@@ -872,7 +878,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             let mut analyzer =
                 DatReferringFuncAnalysis::rebuild(self, self.text, &mut rsa, state, mode);
             analyzer.generate_stack_size_patches();
-            let pending_hooks = mem::replace(&mut analyzer.state.pending_hooks, Vec::new());
+            let pending_hooks = mem::replace(
+                &mut analyzer.state.pending_hooks,
+                BumpVec::new_in(self.analysis.bump),
+            );
             if !pending_hooks.is_empty() {
                 let binary = self.binary;
                 let mut hook_ctx = FunctionHookContext::<E> {
@@ -973,12 +982,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
 
 struct DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
-    state: Box<DatFuncAnalysisState<'e, E>>,
+    state: Box<DatFuncAnalysisState<'acx, 'e, E>>,
     ref_address: E::VirtualAddress,
     needed_stack_params: [Option<DatType>; 16],
     needed_func_results: FxHashSet<u32>,
     needed_cfg_analysis:
-        Vec<(E::VirtualAddress, E::VirtualAddress, Option<Operand<'e>>, DatType)>,
+        BumpVec<'acx, (E::VirtualAddress, E::VirtualAddress, Option<Operand<'e>>, DatType)>,
     result: EntryOf<()>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     text: &'e BinarySection<E::VirtualAddress>,
@@ -991,7 +1000,7 @@ struct DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     /// patch/hook already, or they are a jump destination.
     /// (Jump destinations can be patched over if the patch starts at the start
     /// of the range)
-    required_stable_addresses: &'a mut RequiredStableAddresses<E::VirtualAddress>,
+    required_stable_addresses: &'a mut RequiredStableAddresses<'acx, E::VirtualAddress>,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash)]
@@ -1001,14 +1010,14 @@ enum DatFuncAnalysisMode {
 }
 
 /// State that can be saved away while other analysises are ran
-struct DatFuncAnalysisState<'e, E: ExecutionState<'e>> {
+struct DatFuncAnalysisState<'acx, 'e, E: ExecutionState<'e>> {
     // Eax from calls is written as Custom(index_to_calls_vec)
     // to distinguish them from undefs that come from state merges
-    calls: Vec<Rva>,
+    calls: BumpVec<'acx, Rva>,
     calls_reverse_lookup: FxHashMap<Rva, u32>,
     next_cfg_custom_id: u32,
-    u8_instruction_lists: InstructionLists<U8Operand>,
-    stack_size_tracker: stack_analysis::StackSizeTracker<'e, E>,
+    u8_instruction_lists: InstructionLists<'acx, U8Operand>,
+    stack_size_tracker: stack_analysis::StackSizeTracker<'acx, 'e, E>,
     /// Buffer hooks after all other patches to be sure that we don't add a longjump
     /// hook which prevents another patch.
     ///
@@ -1016,10 +1025,10 @@ struct DatFuncAnalysisState<'e, E: ExecutionState<'e>> {
     /// taking one while asking for a hook could end up taking an address
     /// that would need to be hooked.
     /// So buffer 2step hooks and do them last.
-    pending_hooks: Vec<(E::VirtualAddress, u32, u8, u8)>,
+    pending_hooks: BumpVec<'acx, (E::VirtualAddress, u32, u8, u8)>,
 }
 
-impl<'e, E: ExecutionState<'e>> DatFuncAnalysisState<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> DatFuncAnalysisState<'acx, 'e, E> {
     fn has_called_func(&self, rva: Rva) -> bool {
         self.calls_reverse_lookup.contains_key(&rva)
     }
@@ -1033,10 +1042,10 @@ pub(crate) enum IsJumpDest {
 
 /// More or less equivalent to HashMap<Key, Vec<Rva>>,
 /// but allocates only a single Vec.
-struct InstructionLists<Key: Hash + Eq> {
+struct InstructionLists<'acx, Key: Hash + Eq> {
     heads: FxHashMap<Key, usize>,
     /// usize is link to the next operand, or !0 if end of list
-    store: Vec<(Rva, usize)>,
+    store: BumpVec<'acx, (Rva, usize)>,
     /// Avoid adding same Rva to the list twice
     used_addresses: FxHashSet<Rva>,
 }
@@ -1305,18 +1314,19 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     pub fn new(
         dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
         text: &'e BinarySection<E::VirtualAddress>,
-        required_stable_addresses: &'a mut RequiredStableAddresses<E::VirtualAddress>,
+        required_stable_addresses: &'a mut RequiredStableAddresses<'acx, E::VirtualAddress>,
         entry: E::VirtualAddress,
         ref_address: E::VirtualAddress,
         mode: DatFuncAnalysisMode,
     ) -> DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E> {
         let binary = dat_ctx.binary;
+        let bump = dat_ctx.analysis.bump;
         DatReferringFuncAnalysis {
             dat_ctx,
             ref_address,
             needed_stack_params: [None; 16],
             needed_func_results: Default::default(),
-            needed_cfg_analysis: Default::default(),
+            needed_cfg_analysis: BumpVec::new_in(bump),
             result: EntryOf::Retry,
             binary,
             text,
@@ -1327,12 +1337,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             mode,
             required_stable_addresses,
             state: Box::new(DatFuncAnalysisState {
-                calls: Vec::with_capacity(64),
+                calls: bumpvec_with_capacity(64, bump),
                 calls_reverse_lookup:
                     FxHashMap::with_capacity_and_hasher(64, Default::default()),
                 u8_instruction_lists: InstructionLists {
                     heads: FxHashMap::with_capacity_and_hasher(32, Default::default()),
-                    store: Vec::with_capacity(128),
+                    store: bumpvec_with_capacity(128, bump),
                     used_addresses:
                         FxHashSet::with_capacity_and_hasher(64, Default::default()),
                 },
@@ -1340,8 +1350,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 stack_size_tracker: stack_analysis::StackSizeTracker::new(
                     entry,
                     binary,
+                    bump,
                 ),
-                pending_hooks: Vec::new(),
+                pending_hooks: bumpvec_with_capacity(8, bump),
             }),
         }
     }
@@ -1349,17 +1360,18 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     pub fn rebuild(
         dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
         text: &'e BinarySection<E::VirtualAddress>,
-        required_stable_addresses: &'a mut RequiredStableAddresses<E::VirtualAddress>,
-        state: Box<DatFuncAnalysisState<'e, E>>,
+        required_stable_addresses: &'a mut RequiredStableAddresses<'acx, E::VirtualAddress>,
+        state: Box<DatFuncAnalysisState<'acx, 'e, E>>,
         mode: DatFuncAnalysisMode,
     ) -> DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E> {
         let binary = dat_ctx.binary;
+        let bump = dat_ctx.analysis.bump;
         DatReferringFuncAnalysis {
             dat_ctx,
             ref_address: E::VirtualAddress::from_u64(0),
             needed_stack_params: [None; 16],
             needed_func_results: Default::default(),
-            needed_cfg_analysis: Default::default(),
+            needed_cfg_analysis: BumpVec::new_in(bump),
             result: EntryOf::Retry,
             binary,
             text,
@@ -1792,10 +1804,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             self.dat_ctx.update_status_screen_tooltip = self.entry;
             return;
         }
-        let needed_cfg_analysis = mem::replace(&mut self.needed_cfg_analysis, Vec::new());
+        let bump = self.dat_ctx.analysis.bump;
+        let needed_cfg_analysis = mem::replace(
+            &mut self.needed_cfg_analysis,
+            BumpVec::new_in(bump),
+        );
         if !needed_cfg_analysis.is_empty() {
             let (mut cfg, _) = analysis.finish();
-            let mut checked_addresses = Vec::with_capacity(needed_cfg_analysis.len());
+            let mut checked_addresses = bumpvec_with_capacity(needed_cfg_analysis.len(), bump);
             let predecessors = cfg.predecessors();
             for (branch_start, address, op, dat) in needed_cfg_analysis {
                 if !checked_addresses.contains(&address) {
@@ -1809,13 +1825,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
 
     fn generate_noncfg_patches(&mut self) {
         let binary = self.binary;
+        let bump = self.dat_ctx.analysis.bump;
         let needed_stack_params = self.needed_stack_params;
         let needed_func_results = mem::replace(&mut self.needed_func_results, Default::default());
         let u8_instruction_lists = mem::replace(
             &mut self.state.u8_instruction_lists,
             InstructionLists {
                 heads: Default::default(),
-                store: Default::default(),
+                store: BumpVec::new_in(bump),
                 used_addresses: Default::default(),
             },
         );
@@ -1853,6 +1870,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         // of multiple branches.
         let binary = self.binary;
         let ctx = self.dat_ctx.analysis.ctx;
+        let bump = self.dat_ctx.analysis.bump;
         // This may(?) infloop under certain conditions, so have a hard limit of
         // branches to go through before quitting.
         let mut limit = 64;
@@ -1861,12 +1879,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             final_address,
             needed_operand,
             resolved_dest_address: None,
-            unchecked_branches: Vec::with_capacity(32),
+            unchecked_branches: bumpvec_with_capacity(32, bump),
             added_unchecked_branches: FxHashSet::with_capacity_and_hasher(32, Default::default()),
             parent: self,
             instruction_lists: InstructionLists {
                 heads: FxHashMap::with_capacity_and_hasher(32, Default::default()),
-                store: Vec::with_capacity(128),
+                store: bumpvec_with_capacity(128, bump),
                 used_addresses:
                     FxHashSet::with_capacity_and_hasher(64, Default::default()),
             },
@@ -2240,9 +2258,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     }
 
     fn generate_stack_size_patches(&mut self) {
+        let bump = self.dat_ctx.analysis.bump;
         let mut stack_size_tracker = mem::replace(
             &mut self.state.stack_size_tracker,
-            stack_analysis::StackSizeTracker::empty(self.binary),
+            stack_analysis::StackSizeTracker::empty(self.binary, bump),
         );
         stack_size_tracker.generate_patches(|addr, patch, skip| {
             if !self.dat_ctx.patched_addresses.insert(addr) {
@@ -2295,13 +2314,13 @@ struct CfgAnalyzer<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> {
     needed_operand: Option<Operand<'e>>,
     resolved_dest_address: Option<Operand<'e>>,
     unchecked_branches:
-        Vec<(E::VirtualAddress, Operand<'e>, E::VirtualAddress, Option<Operand<'e>>)>,
+        BumpVec<'acx, (E::VirtualAddress, Operand<'e>, E::VirtualAddress, Option<Operand<'e>>)>,
     added_unchecked_branches:
         FxHashSet<(E::VirtualAddress, OperandHashByAddress<'e>, E::VirtualAddress)>,
     parent: &'a mut DatReferringFuncAnalysis<'b, 'c, 'acx, 'e, E>,
     cfg: &'a Cfg<'e, E, analysis::DefaultState>,
     predecessors: &'a scarf::cfg::Predecessors,
-    instruction_lists: InstructionLists<OperandHashByAddress<'e>>,
+    instruction_lists: InstructionLists<'acx, OperandHashByAddress<'e>>,
     assigning_instruction: Option<E::VirtualAddress>,
     // Tells if the current branch needs to be reanalyzed with a different operand & end
     rerun_branch: Option<(E::VirtualAddress, Operand<'e>, E::VirtualAddress)>,
@@ -2565,7 +2584,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
     }
 }
 
-impl<Key: Hash + Eq> InstructionLists<Key> {
+impl<'acx, Key: Hash + Eq> InstructionLists<'acx, Key> {
     fn clear(&mut self) {
         self.heads.clear();
         self.store.clear();
@@ -2603,9 +2622,9 @@ impl<Key: Hash + Eq> InstructionLists<Key> {
     }
 }
 
-struct U8InstructionListsIter<'a, K: Hash + Eq>(&'a InstructionLists<K>, usize);
+struct U8InstructionListsIter<'acx, 'a, K: Hash + Eq>(&'a InstructionLists<'acx, K>, usize);
 
-impl<'a, K: Hash + Eq> Iterator for U8InstructionListsIter<'a, K> {
+impl<'acx, 'a, K: Hash + Eq> Iterator for U8InstructionListsIter<'acx, 'a, K> {
     type Item = Rva;
     fn next(&mut self) -> Option<Self::Item> {
         if self.1 == !0 {
@@ -2622,7 +2641,7 @@ struct RecognizeDatPatchFunc<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     flags: u8,
     inlining: bool,
     inline_ok: bool,
-    returns: Vec<Operand<'e>>,
+    returns: BumpVec<'acx, Operand<'e>>,
     dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
 }
 
@@ -2714,12 +2733,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> RecognizeDatPatchFunc<'a, 'b, 'acx
     fn new(
         dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
     ) -> RecognizeDatPatchFunc<'a, 'b, 'acx, 'e, E> {
+        let bump = dat_ctx.analysis.bump;
         RecognizeDatPatchFunc {
             flags: 0,
             dat_ctx,
             inlining: false,
             inline_ok: false,
-            returns: Vec::new(),
+            returns: BumpVec::new_in(bump),
         }
     }
 
@@ -2885,13 +2905,13 @@ fn instruction_length<Va: VirtualAddress>(binary: &BinaryFile<Va>, address: Va) 
 }
 
 /// Data required to build hooks for a function
-struct FunctionHookContext<'a, 'e, E: ExecutionState<'e>> {
+struct FunctionHookContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut DatPatches<'e, E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
-    required_stable_addresses: &'a mut RequiredStableAddresses<E::VirtualAddress>,
+    required_stable_addresses: &'a mut RequiredStableAddresses<'acx, E::VirtualAddress>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'acx, 'e, E> {
     fn add_warning(&mut self, msg: String) {
         warn!("{}", msg);
     }
@@ -2899,7 +2919,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'e, E> {
     /// Creates patches from pending hooks and adds them to result.
     fn process_pending_hooks(
         &mut self,
-        mut pending_hooks: Vec<(E::VirtualAddress, u32, u8, u8)>,
+        mut pending_hooks: BumpVec<'_, (E::VirtualAddress, u32, u8, u8)>,
     ) {
         pending_hooks.sort_unstable_by_key(|x| x.0);
         let binary = self.binary;

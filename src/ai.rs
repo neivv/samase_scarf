@@ -1,4 +1,5 @@
 use arrayvec::ArrayVec;
+use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashSet;
 use scarf::{
     DestOperand, Operand, Operation, MemAccessSize, OperandCtx, OperandType, BinaryFile, Rva,
@@ -550,6 +551,7 @@ pub(crate) fn first_guard_ai<'e, E: ExecutionState<'e>>(
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
 
     // There's a function referring build times and looping through all guard ais,
     // guard ais are the first memaccess
@@ -558,12 +560,14 @@ pub(crate) fn first_guard_ai<'e, E: ExecutionState<'e>>(
         let units_dat = analysis.dat_virtual_address(DatType::Units);
         units_dat.and_then(|(dat, dat_table_size)| {
             binary.read_address(dat + 0x2a * dat_table_size).ok().map(|times| {
-                find_functions_using_global(analysis, times)
-                    .into_iter()
-                    .map(|global_ref| global_ref.use_address)
-                    .collect::<Vec<_>>()
+                BumpVec::from_iter_in(
+                    find_functions_using_global(analysis, times)
+                        .into_iter()
+                        .map(|global_ref| global_ref.use_address),
+                    bump,
+                )
             })
-        }).unwrap_or_else(|| Vec::new())
+        }).unwrap_or_else(|| BumpVec::new_in(bump))
     };
     let mut result = None;
     // Since the guard ai should be first memaccess, and there are several unrelated

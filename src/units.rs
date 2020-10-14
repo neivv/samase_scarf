@@ -1,10 +1,12 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation};
 
 use crate::{
     AnalysisCtx, DatType, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
-    find_functions_using_global, entry_of_until, unwrap_sext,
+    find_functions_using_global, entry_of_until, unwrap_sext, bumpvec_with_capacity,
 };
 
 #[derive(Clone, Debug)]
@@ -31,6 +33,7 @@ pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
 ) -> ActiveHiddenUnits<'e> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let functions = analysis.functions();
     // There's a function which accesses orders_dat_use_weapon_targeting, and loops through
     // both active and hidden units.
@@ -39,12 +42,12 @@ pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
         let orders_dat = analysis.dat_virtual_address(DatType::Orders);
         orders_dat.and_then(|(dat, dat_table_size)| {
             binary.read_address(dat + 1 * dat_table_size).ok().map(|weapon_orders| {
-                find_functions_using_global(analysis, weapon_orders)
+                let funcs = find_functions_using_global(analysis, weapon_orders)
                     .into_iter()
-                    .map(|x| (weapon_orders, x))
-                    .collect::<Vec<_>>()
+                    .map(|x| (weapon_orders, x));
+                BumpVec::from_iter_in(funcs, bump)
             })
-        }).unwrap_or_else(|| Vec::new())
+        }).unwrap_or_else(|| BumpVec::new_in(bump))
     };
     weapon_order_refs.sort_unstable_by_key(|x| x.1.func_entry);
     weapon_order_refs.dedup_by_key(|x| x.1.func_entry);
@@ -53,7 +56,7 @@ pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
         let val = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             let mut analyzer = ActiveHiddenAnalyzer::<E> {
-                candidates: Vec::new(),
+                candidates: bumpvec_with_capacity(8, bump),
                 inlining: None,
                 memref_found: false,
                 memref_address: global_addr,
@@ -92,9 +95,9 @@ pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
     }
 }
 
-struct ActiveHiddenAnalyzer<'e, E: ExecutionState<'e>> {
+struct ActiveHiddenAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     /// To sort correctly with inlining, store (call ins address, ins address)
-    candidates: Vec<((E::VirtualAddress, E::VirtualAddress), Operand<'e>)>,
+    candidates: BumpVec<'acx, ((E::VirtualAddress, E::VirtualAddress), Operand<'e>)>,
     /// call instruction address
     inlining: Option<E::VirtualAddress>,
     memref_found: bool,
@@ -115,7 +118,9 @@ fn check_active_hidden_cond<'e>(condition: Operand<'e>) -> Option<Operand<'e>> {
         })
 }
 
-impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ActiveHiddenAnalyzer<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    ActiveHiddenAnalyzer<'acx, 'e, E>
+{
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -165,6 +170,7 @@ pub(crate) fn order_issuing<'e, E: ExecutionState<'e>>(
 ) -> OrderIssuing<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     // Search for units_dat_idle_order[arbiter] to find Order_CloakingNearbyUnits
 
     let mut arbiter_idle_orders = {
@@ -173,12 +179,12 @@ pub(crate) fn order_issuing<'e, E: ExecutionState<'e>>(
             binary.read_address(dat + 0xe * dat_table_size).ok().map(|idle_orders| {
                 let address = idle_orders + 0x47;
                 let order = ctx.mem8(ctx.constant(address.as_u64()));
-                find_functions_using_global(analysis, address)
+                let funcs = find_functions_using_global(analysis, address)
                     .into_iter()
-                    .map(move |global_ref| (global_ref, order.clone()))
-                    .collect::<Vec<_>>()
+                    .map(move |global_ref| (global_ref, order.clone()));
+                BumpVec::from_iter_in(funcs, bump)
             })
-        }).unwrap_or_else(|| Vec::new())
+        }).unwrap_or_else(|| BumpVec::new_in(bump))
     };
     arbiter_idle_orders.sort_unstable_by_key(|x| (x.0.func_entry, x.1.clone()));
     arbiter_idle_orders.dedup_by_key(|x| (x.0.func_entry, x.1.clone()));
@@ -188,7 +194,7 @@ pub(crate) fn order_issuing<'e, E: ExecutionState<'e>>(
         let order_init_arbiter = global_ref.func_entry;
         let mut analysis = FuncAnalysis::new(binary, ctx, order_init_arbiter);
         let mut analyzer = OrderIssuingAnalyzer {
-            func_results: Vec::new(),
+            func_results: bumpvec_with_capacity(8, bump),
             inlining: false,
             order,
             arg_cache,
@@ -211,7 +217,7 @@ pub(crate) fn order_issuing<'e, E: ExecutionState<'e>>(
 }
 
 struct OrderIssuingAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    func_results: Vec<E::VirtualAddress>,
+    func_results: BumpVec<'a, E::VirtualAddress>,
     inlining: bool,
     order: Operand<'e>,
     arg_cache: &'a ArgCache<'e, E>,
@@ -334,6 +340,7 @@ pub(crate) fn init_units<'e, E: ExecutionState<'e>>(
 ) -> InitUnits<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
 
     let mut result = InitUnits {
         init_units: None,
@@ -348,15 +355,17 @@ pub(crate) fn init_units<'e, E: ExecutionState<'e>>(
         Some(s) => s,
         None => return result,
     };
-    let mut order_refs = Vec::new();
+    let mut order_refs = BumpVec::new_in(bump);
     {
         let mut arr = [(&orders, &mut order_refs)];
         for &mut (ref dat, ref mut out) in &mut arr {
-            **out = dat.address.iter()
-                .filter_map(|x| x.if_constant())
-                .flat_map(|x| {
-                    find_functions_using_global(analysis, E::VirtualAddress::from_u64(x))
-                }).collect::<Vec<_>>()
+            out.extend(
+                dat.address.iter()
+                    .filter_map(|x| x.if_constant())
+                    .flat_map(|x| {
+                        find_functions_using_global(analysis, E::VirtualAddress::from_u64(x))
+                    })
+            );
         }
     }
 
@@ -403,7 +412,7 @@ pub(crate) fn init_units<'e, E: ExecutionState<'e>>(
     }
 
     let arg_cache = analysis.arg_cache;
-    let mut checked = Vec::with_capacity(4);
+    let mut checked = bumpvec_with_capacity(8, bump);
     for order_ref in &order_refs {
         if checked.iter().any(|&x| x == order_ref.func_entry) {
             continue;

@@ -1,10 +1,12 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, OperandCtx, Operand, DestOperand, Operation, MemAccessSize};
 
 use crate::{
     AnalysisCtx, OptionExt, find_functions_using_global, find_callers, EntryOf,
-    single_result_assign, if_callable_const, entry_of_until, ArgCache,
+    single_result_assign, if_callable_const, entry_of_until, ArgCache, bumpvec_with_capacity,
 };
 
 #[derive(Clone)]
@@ -30,6 +32,7 @@ pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
     analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
+    let bump = analysis.bump;
     // step_objects calls enable_rng(1) at start and enable_rng(0) at end,
     // detect both inlined writes (though untested, welp) and calls
     // Detect step_objects itself by searching for code that writes both
@@ -37,7 +40,7 @@ pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
     let rng = analysis.rng();
     let rng_enable = rng.enable.as_ref()?;
     // Use addresses of RNG or call location addresses of RNG set func
-    let mut rng_refs = Vec::with_capacity(16);
+    let mut rng_refs = bumpvec_with_capacity(16, bump);
     for part in rng_enable.iter_no_mem_addr() {
         if let Some(enable_addr) = part.if_memory().and_then(|x| x.address.if_constant()) {
             let enable_addr = E::VirtualAddress::from_u64(enable_addr);
@@ -53,12 +56,13 @@ pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
     }
     rng_refs.sort_unstable();
     rng_refs.dedup();
-    let mut checked_vision_funcs = Vec::new();
+    // Binary size trickery as sbumpalo is somewhat bad with generic bloat
+    let mut checked_vision_funcs = bumpvec_with_capacity(8, bump);
     let mut result = None;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
     let ctx = analysis.ctx;
-    let mut checked_functions = Vec::with_capacity(8);
+    let mut checked_functions = bumpvec_with_capacity(8, bump);
     'outer: for &first_candidate_only in &[true, false] {
         for &addr in &rng_refs {
             let res = entry_of_until(binary, funcs, addr, |entry| {
@@ -91,9 +95,9 @@ pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct IsStepObjects<'a, 'e, E: ExecutionState<'e>> {
+struct IsStepObjects<'a, 'acx, 'e, E: ExecutionState<'e>> {
     vision_state: VisionStepState,
-    checked_vision_funcs: &'a mut Vec<(E::VirtualAddress, bool)>,
+    checked_vision_funcs: &'a mut BumpVec<'acx, (E::VirtualAddress, bool)>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: OperandCtx<'e>,
     result: EntryOf<()>,
@@ -104,7 +108,9 @@ struct IsStepObjects<'a, 'e, E: ExecutionState<'e>> {
     rng_ref_seen: bool,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepObjects<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    IsStepObjects<'a, 'acx, 'e, E>
+{
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -146,7 +152,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepObjects<'a,
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> IsStepObjects<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> IsStepObjects<'a, 'acx, 'e, E> {
     fn check_rng_ref(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         if !self.rng_ref_seen {
             let ok = self.rng_ref_address >= ctrl.address() &&
@@ -393,19 +399,21 @@ pub(crate) fn limits<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let arg_cache = analysis.arg_cache;
+    let bump = analysis.bump;
 
     let mut analysis = FuncAnalysis::new(binary, ctx, game_loop);
     let mut analyzer = FindSetLimits::<E> {
         result: &mut result,
         arg_cache,
-        game_loop_set_local_u32s: Vec::with_capacity(0x20),
+        game_loop_set_local_u32s: bumpvec_with_capacity(0x8, bump),
+        bump,
         binary,
     };
     analysis.analyze(&mut analyzer);
     result
 }
 
-struct FindSetLimits<'a, 'e, E: ExecutionState<'e>> {
+struct FindSetLimits<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut Limits<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     // Bits describing if a stack local has been written
@@ -419,13 +427,20 @@ struct FindSetLimits<'a, 'e, E: ExecutionState<'e>> {
     // bit = (offset & 0x1f) / 4
     // Used to check that set_limits should contain stack local with
     // 7 u32s written
-    game_loop_set_local_u32s: Vec<u8>,
+    //
+    // sizeof 8 struct to allow generic func deduplication
+    game_loop_set_local_u32s: BumpVec<'acx, U8Chunk>,
+    bump: &'acx bumpalo::Bump,
     binary: &'e BinaryFile<E::VirtualAddress>,
 }
 
-struct SetLimitsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+#[repr(align(4))]
+#[derive(Copy, Clone)]
+struct U8Chunk([u8; 8]);
+
+struct SetLimitsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut Limits<'e, E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
+    arg_cache: &'acx ArgCache<'e, E>,
     inline_depth: u8,
     inlining_object_subfunc: bool,
     // Set once inside Vec::resize, for finding SMemAlloc and SMemFree
@@ -438,10 +453,12 @@ struct SetLimitsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     // at set_limits (inline_depth == 0)
     // We want to behave as if global_limits was only assigned arg1, so keep any
     // global arg1 stores saved and force-reapply them on function calls
-    depth_0_arg1_global_stores: Vec<(Operand<'e>, Operand<'e>)>,
+    depth_0_arg1_global_stores: BumpVec<'acx, (Operand<'e>, Operand<'e>)>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetLimits<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    FindSetLimits<'a, 'acx, 'e, E>
+{
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -486,7 +503,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetLimits<'a,
                             inlining_object_subfunc: false,
                             check_malloc_free: false,
                             redo_check_malloc_free: false,
-                            depth_0_arg1_global_stores: Vec::with_capacity(0x10),
+                            depth_0_arg1_global_stores: bumpvec_with_capacity(0x10, self.bump),
                         };
                         analysis.analyze(&mut analyzer);
                         let ok = self.result.arrays.iter().take(4).all(|x| !x.is_empty()) &&
@@ -524,13 +541,13 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetLimits<'a,
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> FindSetLimits<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> FindSetLimits<'a, 'acx, 'e, E> {
     fn is_local_u32_set(&self, offset: u32) -> bool {
-        let index = offset / 8;
+        let index = (offset / 8) as usize;
         let bit = offset & 7;
         self.game_loop_set_local_u32s
-            .get(index as usize)
-            .cloned()
+            .get(index >> 3)
+            .map(|x| x.0[index & 7])
             .map(|bits| bits & (1 << bit) != 0)
             .unwrap_or(false)
     }
@@ -538,14 +555,16 @@ impl<'a, 'e, E: ExecutionState<'e>> FindSetLimits<'a, 'e, E> {
     fn set_local_u32(&mut self, offset: u32) {
         let index = (offset / 8) as usize;
         let bit = offset & 7;
-        if self.game_loop_set_local_u32s.len() <= index {
-            self.game_loop_set_local_u32s.resize(index + 1, 0u8);
+        if self.game_loop_set_local_u32s.len() <= (index >> 3) {
+            self.game_loop_set_local_u32s.resize((index >> 3) + 1, U8Chunk([0u8; 8]));
         }
-        self.game_loop_set_local_u32s[index] |= 1 << bit;
+        self.game_loop_set_local_u32s[(index >> 3)].0[index & 7] |= 1 << bit;
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetLimitsAnalyzer<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    SetLimitsAnalyzer<'a, 'acx, 'e, E>
+{
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -690,7 +709,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetLimitsAnalyzer
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> SetLimitsAnalyzer<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> SetLimitsAnalyzer<'a, 'acx, 'e, E> {
     fn arg1_off(&self, val: Operand<'e>) -> Option<(u32, u32, u32)> {
         Some(val)
             .map(|val| {

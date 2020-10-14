@@ -1,8 +1,13 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{DestOperand, Operand, BinaryFile, BinarySection, Operation};
 
-use crate::{AnalysisCtx, ArgCache, entry_of_until, EntryOf, OptionExt, single_result_assign};
+use crate::{
+    AnalysisCtx, ArgCache, entry_of_until, EntryOf, OptionExt, single_result_assign,
+    bumpvec_with_capacity,
+};
 
 #[derive(Clone)]
 pub struct FontRender<Va: VirtualAddress> {
@@ -16,15 +21,17 @@ pub(crate) fn fonts<'e, E: ExecutionState<'e>>(
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
 
     let rdata = binary.section(b".rdata\0\0").unwrap();
-    let font_string_rvas = crate::find_bytes(&rdata.data, b"font16x");
+    let font_string_rvas = crate::find_bytes(bump, &rdata.data, b"font16x");
 
     let candidates = font_string_rvas.iter().flat_map(|&font| {
         crate::find_functions_using_global(analysis, rdata.virtual_address + font.0)
-    }).collect::<Vec<_>>();
+    });
+    let candidates = BumpVec::from_iter_in(candidates, bump);
 
     // Search for code that does
     // fonts[0] = Func("font8")
@@ -40,7 +47,7 @@ pub(crate) fn fonts<'e, E: ExecutionState<'e>>(
             let mut analyzer = FontsAnalyzer::<E> {
                 result: EntryOf::Retry,
                 use_address,
-                candidates: Vec::new(),
+                candidates: BumpVec::new_in(bump),
                 arg_cache,
                 rdata,
             };
@@ -58,7 +65,7 @@ pub(crate) fn fonts<'e, E: ExecutionState<'e>>(
 struct FontsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: EntryOf<Operand<'e>>,
     use_address: E::VirtualAddress,
-    candidates: Vec<FontsCandidate<'e>>,
+    candidates: BumpVec<'a, FontsCandidate<'e>>,
     arg_cache: &'a ArgCache<'e, E>,
     rdata: &'e BinarySection<E::VirtualAddress>,
 }
@@ -158,15 +165,17 @@ pub(crate) fn font_render<'e, E: ExecutionState<'e>>(
     // that function's child function calls ttf_render_sdf, with certain known args.
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
 
     let rdata = binary.section(b".rdata\0\0").unwrap();
-    let font_string_rvas = crate::find_bytes(&rdata.data, b"shadowOffset");
+    let font_string_rvas = crate::find_bytes(bump, &rdata.data, b"shadowOffset");
 
     let ttf_init_candidates = font_string_rvas.iter().flat_map(|&font| {
         crate::find_functions_using_global(analysis, rdata.virtual_address + font.0)
-    }).collect::<Vec<_>>();
+    });
+    let ttf_init_candidates = BumpVec::from_iter_in(ttf_init_candidates, bump);
     let arg_cache = analysis.arg_cache;
     for ttf_init in ttf_init_candidates {
         let use_address = ttf_init.use_address;
@@ -178,7 +187,8 @@ pub(crate) fn font_render<'e, E: ExecutionState<'e>>(
                 entry_of: EntryOf::Retry,
                 binary,
                 fonts,
-                checked_functions: Vec::with_capacity(16),
+                checked_functions: bumpvec_with_capacity(16, bump),
+                bump,
             };
             let exec = E::initial_state(ctx, binary);
             let state = FindCacheRenderAsciiState {
@@ -195,14 +205,15 @@ pub(crate) fn font_render<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct FindCacheRenderAscii<'a, 'e, E: ExecutionState<'e>> {
+struct FindCacheRenderAscii<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut FontRender<E::VirtualAddress>,
     entry_of: EntryOf<()>,
     use_address: E::VirtualAddress,
-    arg_cache: &'a ArgCache<'e, E>,
+    arg_cache: &'acx ArgCache<'e, E>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     fonts: Operand<'e>,
-    checked_functions: Vec<E::VirtualAddress>,
+    checked_functions: BumpVec<'acx, E::VirtualAddress>,
+    bump: &'acx bumpalo::Bump,
 }
 
 #[derive(Copy, Clone)]
@@ -216,7 +227,9 @@ impl analysis::AnalysisState for FindCacheRenderAsciiState {
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCacheRenderAscii<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    FindCacheRenderAscii<'a, 'acx, 'e, E>
+{
     type State = FindCacheRenderAsciiState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -250,7 +263,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCacheRenderAscii
                             let mut analyzer = IsCacheRenderAscii::<E> {
                                 result: self.result,
                                 arg_cache: self.arg_cache,
-                                ok_calls: Vec::new(),
+                                ok_calls: BumpVec::new_in(self.bump),
                                 binary,
                             };
                             let exec = E::initial_state(ctx, binary);
@@ -274,10 +287,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCacheRenderAscii
     }
 }
 
-struct IsCacheRenderAscii<'a, 'e, E: ExecutionState<'e>> {
+struct IsCacheRenderAscii<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut FontRender<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
-    ok_calls: Vec<E::VirtualAddress>,
+    arg_cache: &'acx ArgCache<'e, E>,
+    ok_calls: BumpVec<'acx, E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
 }
 
@@ -294,7 +307,9 @@ impl<Va: VirtualAddress> analysis::AnalysisState for IsCacheRenderAsciiState<Va>
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsCacheRenderAscii<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    IsCacheRenderAscii<'a, 'acx, 'e, E>
+{
     type State = IsCacheRenderAsciiState<E::VirtualAddress>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {

@@ -1,3 +1,4 @@
+use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashMap;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
@@ -11,10 +12,10 @@ use crate::{
     if_arithmetic_eq_neq,
 };
 
-pub enum ResultOrEntries<T, Va: VirtualAddress> {
+pub enum ResultOrEntries<'acx, T, Va: VirtualAddress> {
     Result(T),
     /// "not ok", but have entries of the functions for further analysis.
-    Entries(Vec<Va>),
+    Entries(BumpVec<'acx, Va>),
 }
 
 #[derive(Default)]
@@ -38,16 +39,17 @@ pub struct MiscClientSide<'e> {
 }
 
 // Candidates are either a global ref with Some(global), or a call with None
-fn game_screen_rclick_inner<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'acx, 'e, E>,
     candidates: &[(E::VirtualAddress, Option<E::VirtualAddress>)],
-) -> ResultOrEntries<(E::VirtualAddress, Operand<'e>), E::VirtualAddress> {
+) -> ResultOrEntries<'acx, (E::VirtualAddress, Operand<'e>), E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let funcs = &analysis.functions();
 
     let mut result: Option<(E::VirtualAddress, Operand<'e>)> = None;
-    let mut entries = Vec::new();
+    let mut entries = BumpVec::new_in(bump);
     for &(middle_of_func, global_addr) in candidates {
         let res = entry_of_until(binary, funcs, middle_of_func, |entry| {
             let mut analyzer = GameScreenRClickAnalyzer::<E> {
@@ -419,6 +421,7 @@ pub(crate) fn game_screen_rclick<'e, E: ExecutionState<'e>>(
     analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> GameScreenRClick<'e, E::VirtualAddress> {
     let binary = analysis.binary;
+    let bump = analysis.bump;
 
     // units_dat_rlick_order is accessed by get_rclick_order,
     // which is called/inlined by show_rclick_error_if_needed,
@@ -431,17 +434,20 @@ pub(crate) fn game_screen_rclick<'e, E: ExecutionState<'e>>(
         binary.read_u32(dat + 0x1c * dat_table_size).ok()
     }).map(|rclick_order| {
         let addr = E::VirtualAddress::from_u64(rclick_order as u64);
-        find_functions_using_global(analysis, addr)
-            .into_iter()
-            .map(|x| (x.use_address, Some(addr)))
-            .collect::<Vec<_>>()
-    }).unwrap_or_else(|| Vec::new());
+        BumpVec::from_iter_in(
+            find_functions_using_global(analysis, addr)
+                .into_iter()
+                .map(|x| (x.use_address, Some(addr))),
+            bump,
+        )
+    }).unwrap_or_else(|| BumpVec::new_in(bump));
     let result = game_screen_rclick_inner(analysis, &uses);
     let result = match result {
         ResultOrEntries::Entries(entries) => {
             let callers = entries.iter().flat_map(|&f| {
                 find_callers(analysis, f).into_iter().map(|x| (x, None))
-            }).collect::<Vec<_>>();
+            });
+            let callers = BumpVec::from_iter_in(callers, bump);
             game_screen_rclick_inner(analysis, &callers)
         }
         ResultOrEntries::Result(o) => ResultOrEntries::Result(o),

@@ -1,3 +1,5 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use std::convert::TryInto;
 
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
@@ -5,7 +7,10 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{MemAccess, MemAccessSize};
 use scarf::{BinaryFile, DestOperand, Operation, Operand, OperandCtx};
 
-use crate::{AnalysisCtx, ArgCache, EntryOf, OperandExt, single_result_assign, StringRefs};
+use crate::{
+    AnalysisCtx, ArgCache, EntryOf, OperandExt, single_result_assign, StringRefs,
+    bumpvec_with_capacity,
+};
 
 #[derive(Clone)]
 pub struct TooltipRelated<'e, Va: VirtualAddress> {
@@ -63,9 +68,9 @@ pub(crate) fn run_dialog<'a, E: ExecutionState<'a>>(
 
     let binary = analysis.binary;
     let funcs = analysis.functions();
-    let mut str_refs = crate::string_refs(binary, analysis, b"rez\\glucmpgn");
+    let mut str_refs = crate::string_refs(analysis, b"rez\\glucmpgn");
     if str_refs.is_empty() {
-        str_refs = crate::string_refs(binary, analysis, b"glucmpgn.ui");
+        str_refs = crate::string_refs(analysis, b"glucmpgn.ui");
     }
     let args = analysis.arg_cache;
     let mut result = None;
@@ -374,9 +379,9 @@ pub(crate) fn spawn_dialog<'a, E: ExecutionState<'a>>(
 
     let binary = analysis.binary;
     let funcs = analysis.functions();
-    let mut str_refs = crate::string_refs(binary, analysis, b"rez\\statlb");
+    let mut str_refs = crate::string_refs(analysis, b"rez\\statlb");
     if str_refs.is_empty() {
-        str_refs = crate::string_refs(binary, analysis, b"statlb.ui");
+        str_refs = crate::string_refs(analysis, b"statlb.ui");
     }
     let args = analysis.arg_cache;
     let mut result = None;
@@ -436,9 +441,9 @@ pub(crate) fn tooltip_related<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     let funcs = analysis.functions();
-    let mut str_refs = crate::string_refs(binary, analysis, b"rez\\stat_f10");
+    let mut str_refs = crate::string_refs(analysis, b"rez\\stat_f10");
     if str_refs.is_empty() {
-        str_refs = crate::string_refs(binary, analysis, b"stat_f10.ui");
+        str_refs = crate::string_refs(analysis, b"stat_f10.ui");
     }
     for str_ref in &str_refs {
         crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
@@ -942,6 +947,7 @@ pub(crate) fn mouse_xy<'e, E: ExecutionState<'e>>(
 ) -> MouseXy<'e, E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
+    let bump = analysis.bump;
 
     let mut result = MouseXy {
         x_var: None,
@@ -962,20 +968,22 @@ pub(crate) fn mouse_xy<'e, E: ExecutionState<'e>>(
         result: &mut result,
         inline_depth: 0,
         arg_cache,
-        funcs: Vec::with_capacity(32),
+        funcs: bumpvec_with_capacity(32, bump),
     };
     analysis.analyze(&mut analyzer);
     result
 }
 
-struct MouseXyAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct MouseXyAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut MouseXy<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
-    funcs: Vec<E::VirtualAddress>,
+    funcs: BumpVec<'acx, E::VirtualAddress>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MouseXyAnalyzer<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    MouseXyAnalyzer<'a, 'acx, 'e, E>
+{
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -1103,7 +1111,7 @@ pub(crate) fn multi_wireframes<'e, E: ExecutionState<'e>>(
         Some(s) => s,
         None => return result,
     };
-    let str_refs = crate::string_refs(binary, analysis, b"unit\\wirefram\\tranwire");
+    let str_refs = crate::string_refs(analysis, b"unit\\wirefram\\tranwire");
     let arg_cache = analysis.arg_cache;
     for str_ref in &str_refs {
         let res = crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {

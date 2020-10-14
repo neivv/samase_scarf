@@ -1,14 +1,22 @@
 //! A data structure that maps ranges to values,
 //! preventing insertion of overlapping ranges.
 
-pub struct RangeList<Key: Ord + Copy + Clone, Val> {
-    ranges: Vec<(Key, Key, Val)>,
+use bumpalo::collections::Vec as BumpVec;
+
+use crate::bumpvec_with_capacity;
+
+// Val having Copy + Clone isn't necessary for this list's functionality,
+// but it is used to make sure that it doesn't have a destructor, as BumpVec
+// doesn't call them.
+// (Could just impl Drop for RangeList but not necessary now)
+pub struct RangeList<'acx, Key: Ord + Copy + Clone, Val: Copy + Clone> {
+    ranges: BumpVec<'acx, (Key, Key, Val)>,
 }
 
-impl<Key: Ord + Copy + Clone, Val> RangeList<Key, Val> {
-    pub fn with_capacity(cap: usize) -> RangeList<Key, Val> {
+impl<'acx, Key: Ord + Copy + Clone, Val: Copy + Clone> RangeList<'acx, Key, Val> {
+    pub fn with_capacity(cap: usize, bump: &'acx bumpalo::Bump) -> RangeList<'acx, Key, Val> {
         RangeList {
-            ranges: Vec::with_capacity(cap),
+            ranges: bumpvec_with_capacity(cap, bump),
         }
     }
 

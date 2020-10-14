@@ -1,10 +1,11 @@
+use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashMap;
 
 use scarf::{MemAccessSize, Operand, Operation, DestOperand};
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{AnalysisCtx, ArgCache, OptionExt};
+use crate::{AnalysisCtx, ArgCache, OptionExt, bumpvec_with_capacity};
 
 pub struct BulletCreation<'e, Va: VirtualAddress> {
     pub first_active_bullet: Option<Operand<'e>>,
@@ -106,7 +107,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a,
     }
 }
 
-struct FindBulletLists<'e, E: ExecutionState<'e>> {
+struct FindBulletLists<'acx, 'e, E: ExecutionState<'e>> {
     is_inlining: bool,
     // first active, first_free
     active_bullets: Option<(Operand<'e>, Operand<'e>)>,
@@ -119,10 +120,10 @@ struct FindBulletLists<'e, E: ExecutionState<'e>> {
     // Since last ptr for free lists (removing) is detected as
     // *last = (*first).prev
     // If this pattern is seen before first is confirmed, store (first, last) here.
-    last_ptr_candidates: Vec<(Operand<'e>, Operand<'e>)>,
+    last_ptr_candidates: BumpVec<'acx, (Operand<'e>, Operand<'e>)>,
 }
 
-impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'acx, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -233,7 +234,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'e, E> {
     }
 }
 
-impl<'e, E: ExecutionState<'e>> FindBulletLists<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> FindBulletLists<'acx, 'e, E> {
     fn last_ptr_first_known(&self, first: Operand<'e>) -> Option<Operand<'e>> {
         self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1.clone())
     }
@@ -263,6 +264,7 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let word_size = E::VirtualAddress::SIZE;
     let useweapon = match binary.read_address(iscript_switch + 0x28 * word_size) {
         Ok(o) => o,
@@ -297,7 +299,7 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
             is_checking_active_list_candidate: None,
             active_list_candidate_head: None,
             active_list_candidate_tail: None,
-            last_ptr_candidates: Vec::new(),
+            last_ptr_candidates: bumpvec_with_capacity(8, bump),
             active_list_candidate_branches: FxHashMap::default(),
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, create_bullet);

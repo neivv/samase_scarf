@@ -1,8 +1,10 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
 
-use crate::{DatType, OperandExt, entry_of_until, EntryOf};
+use crate::{DatType, OperandExt, entry_of_until, EntryOf, bumpvec_with_capacity};
 use super::{DatPatchContext, DatArrayPatch, reloc_address_of_instruction};
 
 pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
@@ -15,6 +17,7 @@ pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
 
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let mut analyzer = InitUnitsAnalyzer {
         dat_ctx,
         load_dat,
@@ -23,7 +26,7 @@ pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
             binary.read_address(units_dat + field_size * 0x26).ok()? + 0xe4 * 8,
         state: InitUnitsState::WireframeArray,
         inline_depth: 0,
-        checked_funcs: Vec::with_capacity(32),
+        checked_funcs: bumpvec_with_capacity(32, bump),
         binary,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, init_units);
@@ -39,7 +42,7 @@ pub struct InitUnitsAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     units_dat_dimensionbox_end: E::VirtualAddress,
     state: InitUnitsState<'e>,
     inline_depth: u8,
-    checked_funcs: Vec<E::VirtualAddress>,
+    checked_funcs: BumpVec<'acx, E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
 }
 

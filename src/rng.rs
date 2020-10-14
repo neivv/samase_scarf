@@ -1,6 +1,8 @@
 use std::mem;
 use std::rc::Rc;
 
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::analysis::{self, FuncAnalysis, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, Operation, Operand, MemAccessSize, DestOperand};
@@ -21,6 +23,7 @@ pub(crate) fn rng<'e, E: ExecutionState<'e>>(
 ) -> Rc<Rng<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     // Find the rng from searching the code that checks if unit spawn direction == 0x20 and
     // random direction
 
@@ -30,7 +33,7 @@ pub(crate) fn rng<'e, E: ExecutionState<'e>>(
             binary.read_address(dat + 5 * dat_table_size).ok().map(|spawn_directions| {
                 find_functions_using_global(analysis, spawn_directions)
             })
-        }).unwrap_or_else(|| Vec::new())
+        }).unwrap_or_else(|| BumpVec::new_in(bump))
     };
     spawn_direction_refs.sort_unstable_by_key(|x| x.func_entry);
     spawn_direction_refs.dedup_by_key(|x| x.func_entry);
@@ -42,10 +45,11 @@ pub(crate) fn rng<'e, E: ExecutionState<'e>>(
         let val = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             let mut analyzer = FindRng {
-                jump_conds: Vec::new(),
+                jump_conds: BumpVec::new_in(bump),
                 result: EntryOf::Retry,
                 no_jump_cond: None,
                 arg_cache,
+                bump,
                 is_inlining: false,
                 binary,
                 use_address: global_ref.use_address,
@@ -72,9 +76,10 @@ pub(crate) fn rng<'e, E: ExecutionState<'e>>(
 
 struct FindRng<'a, 'e, E: ExecutionState<'e>> {
     arg_cache: &'a ArgCache<'e, E>,
+    bump: &'a bumpalo::Bump,
     result: EntryOf<(Operand<'e>, Operand<'e>)>,
     no_jump_cond: Option<Operand<'e>>,
-    jump_conds: Vec<(E::VirtualAddress, Operand<'e>)>,
+    jump_conds: BumpVec<'a, (E::VirtualAddress, Operand<'e>)>,
     is_inlining: bool,
     binary: &'e BinaryFile<E::VirtualAddress>,
     use_address: E::VirtualAddress,
@@ -98,7 +103,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
                     let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                     if arg1.if_constant() == Some(0x24) {
                         if !self.is_inlining {
-                            let jump_conds = mem::replace(&mut self.jump_conds, Vec::new());
+                            let jump_conds =
+                                mem::replace(&mut self.jump_conds, BumpVec::new_in(self.bump));
                             self.is_inlining = true;
                             ctrl.analyze_with_current_state(self, dest);
                             self.is_inlining = false;

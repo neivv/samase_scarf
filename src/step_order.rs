@@ -1,9 +1,12 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation};
 use scarf::analysis::{self, FuncAnalysis, AnalysisState,Cfg, Control};
 use scarf::operand::OperandCtx;
 
 use crate::{
     AnalysisCtx, OptionExt, find_callers, entry_of_until, single_result_assign, EntryOf, ArgCache,
+    bumpvec_with_capacity,
 };
 use crate::switch::{full_switch_info};
 
@@ -418,6 +421,7 @@ pub(crate) fn step_order<'e, E: ExecutionState<'e>>(
 ) -> Option<E::VirtualAddress> {
     let order_issuing = analysis.order_issuing();
     let binary = analysis.binary;
+    let bump = analysis.bump;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
     let ctx = analysis.ctx;
@@ -425,7 +429,8 @@ pub(crate) fn step_order<'e, E: ExecutionState<'e>>(
 
     let init_arbiter_callers = order_issuing.order_init_arbiter.iter().flat_map(|&o| {
         find_callers(analysis, o)
-    }).collect::<Vec<_>>();
+    });
+    let init_arbiter_callers = BumpVec::from_iter_in(init_arbiter_callers, bump);
     let mut result = None;
     for caller in init_arbiter_callers {
         let val = entry_of_until(binary, funcs, caller, |entry| {
@@ -499,6 +504,7 @@ pub(crate) fn step_order_hidden<'e, E: ExecutionState<'e>>(
     analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Vec<StepOrderHiddenHook<'e, E::VirtualAddress>> {
     let switches = analysis.switch_tables();
+    let bump = analysis.bump;
 
     let result = switches.iter().filter_map(|switch| {
         if switch.cases.len() < 11 || switch.cases.len() > 12 {
@@ -523,7 +529,8 @@ pub(crate) fn step_order_hidden<'e, E: ExecutionState<'e>>(
         })
     }).map(|(_, entry)| {
         entry
-    }).collect::<Vec<_>>();
+    });
+    let result = BumpVec::from_iter_in(result, bump);
     let result = result.iter().filter_map(|&addr| {
         step_order_hook_info(analysis, addr)
     }).collect();
@@ -536,14 +543,15 @@ pub(crate) fn step_secondary_order<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let funcs = analysis.functions();
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
 
     let step_order = analysis.step_order();
-    let mut callers = step_order.iter()
-        .flat_map(|&x| find_callers(analysis, x))
-        .collect::<Vec<_>>();
+    let callers = step_order.iter()
+        .flat_map(|&x| find_callers(analysis, x));
+    let mut callers = BumpVec::from_iter_in(callers, bump);
     callers.sort_unstable();
     callers.dedup();
-    let mut checked_funcs = Vec::new();
+    let mut checked_funcs = bumpvec_with_capacity(8, bump);
     let result = callers.into_iter().filter_map(|caller| {
         entry_of_until(binary, &funcs, caller, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -585,19 +593,19 @@ pub(crate) fn step_secondary_order<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct StepSecondaryOrderAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct StepSecondaryOrderAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: Option<SecondaryOrderHook<'e, E::VirtualAddress>>,
     pre_result: Option<(E::VirtualAddress, Operand<'e>)>,
     call_found: bool,
     inlining: bool,
     caller: E::VirtualAddress,
-    checked_funcs: &'a mut Vec<E::VirtualAddress>,
+    checked_funcs: &'a mut BumpVec<'acx, E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: OperandCtx<'e>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
-    StepSecondaryOrderAnalyzer<'a, 'e, E>
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    StepSecondaryOrderAnalyzer<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;

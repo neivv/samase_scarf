@@ -1,3 +1,5 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
 use scarf::operand::{Operand};
@@ -5,10 +7,10 @@ use scarf::{BinaryFile, BinarySection, DestOperand, Operation};
 
 use crate::{AnalysisCtx, ArgCache, if_callable_const};
 
-struct FindLoadDat<'a, 'e, E: ExecutionState<'e>> {
-    result: Vec<(E::VirtualAddress, E::VirtualAddress)>,
+struct FindLoadDat<'acx, 'e, E: ExecutionState<'e>> {
+    result: BumpVec<'acx, (E::VirtualAddress, E::VirtualAddress)>,
     string_address: E::VirtualAddress,
-    arg_cache: &'a ArgCache<'e, E>,
+    arg_cache: &'acx ArgCache<'e, E>,
     binary: &'e BinaryFile<E::VirtualAddress>,
 }
 
@@ -30,17 +32,18 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLoadDat<'a, '
 }
 
 /// Return (Vec<(call_ins_address, call_dest)>, errors)
-pub(crate) fn find_load_dat_fn<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+pub(crate) fn find_load_dat_fn<'acx, 'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'acx, 'e, E>,
     parent: E::VirtualAddress,
     string_address: E::VirtualAddress,
-) -> Vec<(E::VirtualAddress, E::VirtualAddress)> {
+) -> BumpVec<'acx, (E::VirtualAddress, E::VirtualAddress)> {
     let arg_cache = analysis.arg_cache;
     let ctx = analysis.ctx;
     let binary = analysis.binary;
+    let bump = analysis.bump;
     let mut analysis: FuncAnalysis<'_, E, _> = FuncAnalysis::new(binary, ctx, parent);
     let mut analyzer = FindLoadDat {
-        result: Vec::new(),
+        result: BumpVec::new_in(bump),
         string_address,
         arg_cache,
         binary,
@@ -63,20 +66,21 @@ struct OpenFileFnIntermediate<Va: VirtualAddressTrait> {
     filename_arg: Arg,
 }
 
-fn find_open_file_fn<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'acx, 'e, E>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     load_dat_fn: E::VirtualAddress,
-) -> Vec<E::VirtualAddress> {
+) -> BumpVec<'acx, E::VirtualAddress> {
     let arg_cache = analysis.arg_cache;
     let rdata = binary.section(b".rdata\0\0").unwrap();
     let ctx = analysis.ctx;
-    let mut functions = vec![OpenFileFnIntermediate {
+    let bump = analysis.bump;
+    let mut functions = bumpalo::vec![in bump; OpenFileFnIntermediate {
         address: load_dat_fn,
         filename_arg: Arg::Stack(0),
     }];
-    let mut checked_functions = Vec::new();
-    let mut result = Vec::new();
+    let mut checked_functions = BumpVec::new_in(bump);
+    let mut result = BumpVec::new_in(bump);
 
     while let Some(func) = functions.pop() {
         if checked_functions.iter().any(|&x| x == func.address) {
@@ -107,17 +111,19 @@ fn find_open_file_fn<'e, E: ExecutionState<'e>>(
         };
         analysis.analyze(&mut analyzer);
 
-        struct Analyzer<'a, 'e, E: ExecutionState<'e>> {
-            functions: &'a mut Vec<OpenFileFnIntermediate<E::VirtualAddress>>,
+        struct Analyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+            functions: &'a mut BumpVec<'acx, OpenFileFnIntermediate<E::VirtualAddress>>,
             filename_arg: Arg,
             ok: bool,
             arg1_store: Operand<'e>,
             binary: &'e BinaryFile<E::VirtualAddress>,
             rdata: &'e BinarySection<E::VirtualAddress>,
-            arg_cache: &'a ArgCache<'e, E>,
+            arg_cache: &'acx ArgCache<'e, E>,
             inlining: bool,
         };
-        impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for Analyzer<'a, 'e, E> {
+        impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+            Analyzer<'a, 'acx, 'e, E>
+        {
             type State = analysis::DefaultState;
             type Exec = E;
             fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -196,20 +202,23 @@ pub(crate) fn open_file<'e, E: ExecutionState<'e>>(
     analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Vec<E::VirtualAddress> {
     let binary = analysis.binary;
-    let str_refs = crate::string_refs(binary, analysis, b"arr\\units.");
+    let bump = analysis.bump;
+    let str_refs = crate::string_refs(analysis, b"arr\\units.");
 
-    let mut load_dat_fns = str_refs.iter().flat_map(|str_ref| {
-        let func = str_ref.func_entry;
-        let result = find_load_dat_fn(analysis, func, str_ref.string_address);
-        result.into_iter().map(|x| x.1)
-    }).collect::<Vec<_>>();
+    let mut load_dat_fns = BumpVec::new_in(bump);
+    load_dat_fns.extend(
+        str_refs.iter().flat_map(|str_ref| {
+            let func = str_ref.func_entry;
+            let result = find_load_dat_fn(analysis, func, str_ref.string_address);
+            result.into_iter().map(|x| x.1)
+        })
+    );
     if load_dat_fns.is_empty() {
         return Vec::new();
     }
     load_dat_fns.sort_unstable();
     load_dat_fns.dedup();
-    let open_file_fns = load_dat_fns.iter().flat_map(|&addr| {
+    load_dat_fns.iter().flat_map(|&addr| {
         find_open_file_fn(analysis, binary, addr)
-    }).collect::<Vec<_>>();
-    open_file_fns
+    }).collect()
 }

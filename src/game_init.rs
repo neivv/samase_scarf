@@ -1,3 +1,5 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::{DestOperand, Operand, OperandCtx, Operation, BinaryFile};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
@@ -5,6 +7,7 @@ use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 use crate::{
     AnalysisCtx, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, OperandExt,
     find_callers, string_refs, if_arithmetic_eq_neq, single_result_assign,
+    bumpvec_with_capacity,
 };
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -82,20 +85,23 @@ pub(crate) fn play_smk<'e, E: ExecutionState<'e>>(
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
 
     // Find ref for char *smk_filenames[0x1c]; smk_filenames[0] == "smk\\blizzard.webm"
     let rdata = binary.section(b".rdata\0\0")?;
     let data = binary.section(b".data\0\0\0")?;
-    let str_ref_addrs = crate::find_strings_casei(&rdata.data, b"smk\\blizzard.");
+    let str_ref_addrs = crate::find_strings_casei(bump, &rdata.data, b"smk\\blizzard.");
 
     let data_rvas = str_ref_addrs.iter().flat_map(|&str_rva| {
-        crate::find_address_refs(&data.data, rdata.virtual_address + str_rva.0)
-    }).collect::<Vec<_>>();
+        crate::find_address_refs(bump, &data.data, rdata.virtual_address + str_rva.0)
+    });
+    let data_rvas = BumpVec::from_iter_in(data_rvas, bump);
     let global_refs = data_rvas.iter().flat_map(|&rva| {
         crate::find_functions_using_global(analysis, data.virtual_address + rva.0)
-    }).collect::<Vec<_>>();
+    });
+    let global_refs = BumpVec::from_iter_in(global_refs, bump);
 
     let mut result = None;
     for global in global_refs {
@@ -172,7 +178,8 @@ pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
         Some(s) => s,
         None => return result,
     };
-    let mut game_pointers = Vec::with_capacity(4);
+    let bump = analysis.bump;
+    let mut game_pointers = bumpvec_with_capacity(4, bump);
     collect_game_pointers(game, &mut game_pointers);
     // The main loop function (sc_main) calls play_smk a few times after initialization
     // but before main load.
@@ -218,7 +225,7 @@ pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
     result
 }
 
-fn collect_game_pointers<'e>(operand: Operand<'e>, out: &mut Vec<Operand<'e>>) {
+fn collect_game_pointers<'e>(operand: Operand<'e>, out: &mut BumpVec<'_, Operand<'e>>) {
     match operand.ty() {
         OperandType::Memory(mem) => out.push(mem.address),
         OperandType::Arithmetic(arith) if arith.ty == ArithOpType::Xor => {
@@ -379,8 +386,9 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
         b"SPRP",
     ];
     let binary = analysis.binary;
+    let bump = analysis.bump;
     let rdata = binary.section(b".rdata\0\0")?;
-    let mut chk_data = crate::find_bytes(&rdata.data, &chk_validated_sections[0][..]);
+    let mut chk_data = crate::find_bytes(bump, &rdata.data, &chk_validated_sections[0][..]);
     chk_data.retain(|&rva| {
         if rva.0 & 3 != 0 {
             return false;
@@ -399,21 +407,24 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
     });
     let section_refs = chk_data.into_iter().flat_map(|rva| {
         let address = rdata.virtual_address + rva.0;
-        crate::find_address_refs(&rdata.data, address)
+        crate::find_address_refs(bump, &rdata.data, address)
             .into_iter()
             .map(move |x| (rva, x))
-    }).collect::<Vec<_>>();
+    });
+    let section_refs = BumpVec::from_iter_in(section_refs, bump);
     let chk_validating_funcs = section_refs.into_iter().flat_map(|(chk_funcs_rva, rva)| {
         let address = rdata.virtual_address + rva.0;
         crate::find_functions_using_global(analysis, address)
             .into_iter()
             .map(move |x| (chk_funcs_rva, x))
-    }).collect::<Vec<_>>();
-    let mut call_points = chk_validating_funcs.into_iter().flat_map(|(chk_funcs_rva, f)| {
+    });
+    let chk_validating_funcs = BumpVec::from_iter_in(chk_validating_funcs, bump);
+    let call_points = chk_validating_funcs.into_iter().flat_map(|(chk_funcs_rva, f)| {
         crate::find_callers(analysis, f.func_entry)
             .into_iter()
             .map(move |x| (chk_funcs_rva, x))
-    }).collect::<Vec<_>>();
+    });
+    let mut call_points = BumpVec::from_iter_in(call_points, bump);
     call_points.sort_unstable_by_key(|x| x.1);
     call_points.dedup_by_key(|x| x.1);
 
@@ -933,14 +944,15 @@ pub(crate) fn select_map_entry<'e, E: ExecutionState<'e>>(
     let funcs = analysis.functions();
     let funcs = &funcs[..];
     let arg_cache = analysis.arg_cache;
+    let bump = analysis.bump;
     for caller in callers {
         entry_of_until(binary, funcs, caller, |entry| {
             let mut analyzer = FindSelectMapEntry::<E> {
                 arg_cache,
                 first_branch: true,
                 arg3_write_seen: false,
-                mem_byte_conds: Vec::new(),
-                mem_bytes_written: Vec::new(),
+                mem_byte_conds: bumpvec_with_capacity(8, bump),
+                mem_bytes_written: bumpvec_with_capacity(8, bump),
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             analysis.analyze(&mut analyzer);
@@ -967,14 +979,14 @@ pub(crate) fn select_map_entry<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct FindSelectMapEntry<'a, 'e, E: ExecutionState<'e>> {
+struct FindSelectMapEntry<'acx, 'e, E: ExecutionState<'e>> {
     first_branch: bool,
     arg3_write_seen: bool,
-    arg_cache: &'a ArgCache<'e, E>,
+    arg_cache: &'acx ArgCache<'e, E>,
     // Don't accept Mem8[x] == 0 condition if the same location gets written.
     // (Filters out assert-once globals)
-    mem_byte_conds: Vec<(E::VirtualAddress, Operand<'e>)>,
-    mem_bytes_written: Vec<Operand<'e>>,
+    mem_byte_conds: BumpVec<'acx, (E::VirtualAddress, Operand<'e>)>,
+    mem_bytes_written: BumpVec<'acx, Operand<'e>>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSelectMapEntry<'a, 'e, E>
@@ -1036,7 +1048,7 @@ pub(crate) fn load_images<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
-    let str_refs = string_refs(binary, analysis, b"scripts\\iscript.bin\0");
+    let str_refs = string_refs(analysis, b"scripts\\iscript.bin\0");
     let mut result = None;
     for string in str_refs {
         let new = entry_of_until(binary, funcs, string.use_address, |entry| {
@@ -1111,6 +1123,7 @@ pub(crate) fn images_loaded<'e, E: ExecutionState<'e>>(
     };
     let ctx = analysis.ctx;
     let binary = analysis.binary;
+    let bump = analysis.bump;
     let funcs = analysis.functions();
     let funcs = &funcs[..];
     let callers = crate::find_callers(analysis, load_images);
@@ -1119,7 +1132,7 @@ pub(crate) fn images_loaded<'e, E: ExecutionState<'e>>(
             let mut analyzer = FindImagesLoaded::<E> {
                 result: EntryOf::Retry,
                 load_images,
-                conditions: Vec::new(),
+                conditions: bumpvec_with_capacity(8, bump),
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             analysis.analyze(&mut analyzer);
@@ -1207,13 +1220,13 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingRtl<'
     }
 }
 
-struct FindImagesLoaded<'e, E: ExecutionState<'e>> {
+struct FindImagesLoaded<'acx, 'e, E: ExecutionState<'e>> {
     result: EntryOf<(Operand<'e>, E::VirtualAddress)>,
     load_images: E::VirtualAddress,
-    conditions: Vec<(E::VirtualAddress, Operand<'e>, E::VirtualAddress)>,
+    conditions: BumpVec<'acx, (E::VirtualAddress, Operand<'e>, E::VirtualAddress)>,
 }
 
-impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindImagesLoaded<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindImagesLoaded<'acx, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -1262,8 +1275,9 @@ pub(crate) fn local_player_name<'e, E: ExecutionState<'e>>(
     let mut vtables = crate::vtables::vtables(analysis, b".?AVCreateGameScreen@glues@@\0");
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let relocs = analysis.relocs();
-    let mut vtable_lengths = vtables.iter().map(|&addr| {
+    let vtable_lengths = vtables.iter().map(|&addr| {
         let reloc_pos = match relocs.binary_search(&addr) {
             Ok(o) => o,
             Err(_) => return 0,
@@ -1277,7 +1291,8 @@ pub(crate) fn local_player_name<'e, E: ExecutionState<'e>>(
             }
         }
         len as u32
-    }).collect::<Vec<_>>();
+    });
+    let mut vtable_lengths = BumpVec::from_iter_in(vtable_lengths, bump);
     for i in (0..vtables.len()).rev() {
         if vtable_lengths[i] < 0x30 {
             vtable_lengths.swap_remove(i);
@@ -1285,7 +1300,7 @@ pub(crate) fn local_player_name<'e, E: ExecutionState<'e>>(
         }
     }
     let highest_length = vtable_lengths.iter().max()?;
-    let mut acceptable_funcs = Vec::with_capacity(0x20);
+    let mut acceptable_funcs = bumpvec_with_capacity(0x20, bump);
     // The get_player_name function is same for all others than bnet create game screen
     'outer: for index in 0x30..(highest_length + 1) {
         let pos = match vtable_lengths.iter().position(|&len| len >= index) {
@@ -1531,6 +1546,7 @@ pub(crate) fn init_game<'e, E: ExecutionState<'e>>(
 ) -> InitGame<'e, E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
 
     let mut result = InitGame {
         loaded_save: None,
@@ -1544,7 +1560,8 @@ pub(crate) fn init_game<'e, E: ExecutionState<'e>>(
 
     let callers = find_callers(analysis, init_units);
     for call in callers {
-        let mut invalid_handle_cmps: Vec<(E::VirtualAddress, _)> = Vec::new();
+        let mut invalid_handle_cmps: BumpVec<'_, (E::VirtualAddress, _)> =
+            bumpvec_with_capacity(8, bump);
         let val = entry_of_until(binary, &functions, call, |entry| {
             invalid_handle_cmps.clear();
             let mut analyzer = InitGameAnalyzer::<E> {
@@ -1566,13 +1583,15 @@ pub(crate) fn init_game<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct InitGameAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    invalid_handle_cmps: &'a mut Vec<(E::VirtualAddress, Operand<'e>)>,
+struct InitGameAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    invalid_handle_cmps: &'a mut BumpVec<'acx, (E::VirtualAddress, Operand<'e>)>,
     result: EntryOf<Operand<'e>>,
     init_units: E::VirtualAddress,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for InitGameAnalyzer<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    InitGameAnalyzer<'a, 'acx, 'e, E>
+{
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {

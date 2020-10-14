@@ -1,47 +1,50 @@
 use std::convert::TryFrom;
 
+use bumpalo::collections::Vec as BumpVec;
 use byteorder::{ByteOrder, LittleEndian};
 
 use scarf::analysis::{self, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, Operation, Operand};
 
-pub struct StackSizeTracker<'e, E: ExecutionState<'e>> {
-    stack_allocs: Vec<(i32, E::VirtualAddress)>,
+pub struct StackSizeTracker<'acx, 'e, E: ExecutionState<'e>> {
+    stack_allocs: BumpVec<'acx, (i32, E::VirtualAddress)>,
     entry: E::VirtualAddress,
     binary: &'e BinaryFile<E::VirtualAddress>,
     alloc_size: u32,
     // Resolved value of esp *after* the stack allocation is done (Before other smaller pushes)
     init_esp: Option<Operand<'e>>,
     // Negative ebp offset -> alloc_size - index * 4
-    remaps: Vec<u32>,
+    remaps: BumpVec<'acx, u32>,
 }
 
-impl<'e, E: ExecutionState<'e>> StackSizeTracker<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
     pub fn new(
         entry: E::VirtualAddress,
         binary: &'e BinaryFile<E::VirtualAddress>,
-    ) -> StackSizeTracker<'e, E> {
+        bump: &'acx bumpalo::Bump,
+    ) -> StackSizeTracker<'acx, 'e, E> {
         StackSizeTracker {
-            stack_allocs: Vec::new(),
+            stack_allocs: BumpVec::new_in(bump),
             entry,
             binary,
             alloc_size: 0,
             init_esp: None,
-            remaps: Vec::new(),
+            remaps: BumpVec::new_in(bump),
         }
     }
 
     pub fn empty(
         binary: &'e BinaryFile<E::VirtualAddress>,
-    ) -> StackSizeTracker<'e, E> {
+        bump: &'acx bumpalo::Bump,
+    ) -> StackSizeTracker<'acx, 'e, E> {
         StackSizeTracker {
-            stack_allocs: Vec::new(),
+            stack_allocs: BumpVec::new_in(bump),
             entry: E::VirtualAddress::from_u64(0),
             binary,
             alloc_size: 0,
             init_esp: None,
-            remaps: Vec::new(),
+            remaps: BumpVec::new_in(bump),
         }
     }
 

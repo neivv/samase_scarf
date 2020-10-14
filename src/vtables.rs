@@ -1,4 +1,4 @@
-use smallvec::SmallVec;
+use bumpalo::collections::Vec as BumpVec;
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
@@ -19,6 +19,7 @@ pub(crate) fn vtables<'e, E: ExecutionState<'e>>(
     // -> addr + 8 == b".?AVRenderer" (Base class info, in .data instead of .rdata)
     let relocs = analysis.relocs_with_values();
     let data = analysis.binary.section(b".data\0\0\0").unwrap();
+    let bump = analysis.bump;
     let base_class_info = relocs.iter().filter_map(|reloc| {
         if reloc.address >= data.virtual_address {
             let offset = ((reloc.address.as_u64() - data.virtual_address.as_u64()) + 8) as usize;
@@ -28,13 +29,16 @@ pub(crate) fn vtables<'e, E: ExecutionState<'e>>(
             }
         }
         None
-    }).collect::<SmallVec<[E::VirtualAddress; 4]>>();
+    });
+    let base_class_info = BumpVec::from_iter_in(base_class_info, bump);
     let idk_indirection = base_class_info.into_iter().flat_map(|addr| {
         bsearch_equal_slice(&relocs, addr, |x| x.value).map(|x| x.address)
-    }).collect::<SmallVec<[E::VirtualAddress; 4]>>();
+    });
+    let idk_indirection = BumpVec::from_iter_in(idk_indirection, bump);
     let inheritance_list = idk_indirection.into_iter().flat_map(|addr| {
         bsearch_equal_slice(&relocs, addr, |x| x.value).map(|x| x.address)
-    }).collect::<SmallVec<[E::VirtualAddress; 4]>>();
+    });
+    let inheritance_list = BumpVec::from_iter_in(inheritance_list, bump);
     let inheritance_info = inheritance_list.into_iter().filter_map(|addr| {
         let lower_bound = upper_bound(&relocs, &addr, |x| x.value).saturating_sub(1);
         let reloc = relocs.get(lower_bound)?;
@@ -48,7 +52,8 @@ pub(crate) fn vtables<'e, E: ExecutionState<'e>>(
         } else {
             None
         }
-    }).collect::<SmallVec<[E::VirtualAddress; 4]>>();
+    });
+    let inheritance_info = BumpVec::from_iter_in(inheritance_info, bump);
     let rtti_info = inheritance_info.into_iter().flat_map(|addr| {
         bsearch_equal_slice(&relocs, addr, |x| x.value)
             .filter_map(|x| {
@@ -60,7 +65,8 @@ pub(crate) fn vtables<'e, E: ExecutionState<'e>>(
                     .ok()
                     .map(|_| address)
             })
-    }).collect::<SmallVec<[E::VirtualAddress; 8]>>();
+    });
+    let rtti_info = BumpVec::from_iter_in(rtti_info, bump);
     let vtables = rtti_info.into_iter().flat_map(|addr| {
         bsearch_equal_slice(&relocs, addr, |x| x.value).map(|x| x.address + 0x4)
     }).collect();

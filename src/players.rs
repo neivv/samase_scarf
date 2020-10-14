@@ -1,3 +1,5 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
 use scarf::operand::{MemAccess, MemAccessSize, Register};
@@ -5,8 +7,7 @@ use scarf::operand::{MemAccess, MemAccessSize, Register};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::add_terms::collect_arith_add_terms;
-use crate::{AnalysisCtx, ArgCache};
-use crate::OptionExt;
+use crate::{AnalysisCtx, ArgCache, OptionExt, bumpvec_with_capacity};
 
 pub struct NetPlayers<'e, Va: VirtualAddress> {
     // Array, struct size
@@ -29,14 +30,15 @@ impl AnalysisState for PlayersState {
     }
 }
 
-struct PlayersAnalyzer<'e, E: ExecutionState<'e>> {
+struct PlayersAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     result: Option<Operand<'e>>,
     in_child_func: bool,
     child_func_state: Option<PlayersState>,
+    bump: &'acx bumpalo::Bump,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
-impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayersAnalyzer<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayersAnalyzer<'acx, 'e, E> {
     type State = PlayersState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -67,7 +69,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayersAnalyzer<'e, E> {
                                 })
                         })
                         .and_then(|x| x.if_mem8())
-                        .and_then(|addr| collect_arith_add_terms(addr))
+                        .and_then(|addr| collect_arith_add_terms(addr, self.bump))
                         .filter(|terms| terms.constant >= 8)
                         .and_then(|mut terms| {
                             let ok = terms.remove_one(|x, negate| {
@@ -134,6 +136,7 @@ pub(crate) fn players<'e, E: ExecutionState<'e>>(
 ) -> Option<Operand<'e>> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
+    let bump = analysis.bump;
     let aiscript = analysis.aiscript_hook();
     let aiscript = (*aiscript).as_ref()?;
     let word_size = E::VirtualAddress::SIZE;
@@ -144,6 +147,7 @@ pub(crate) fn players<'e, E: ExecutionState<'e>>(
         in_child_func: false,
         child_func_state: None,
         phantom: Default::default(),
+        bump,
     };
 
     let exec_state = E::initial_state(ctx, binary);
@@ -338,13 +342,14 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindInitNetPlayer<'a
     }
 }
 
-struct FindNetPlayerArr<'e, E: ExecutionState<'e>> {
+struct FindNetPlayerArr<'acx, 'e, E: ExecutionState<'e>> {
     result: Option<(Operand<'e>, usize)>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     delay_eax_move: Option<Operand<'e>>,
+    bump: &'acx bumpalo::Bump,
 }
 
-impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'acx, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -380,7 +385,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'e, E> 
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
                     let ctx = ctrl.ctx();
-                    let mut analyzer = CollectReturnValues::<'e, E>::new();
+                    let mut analyzer = CollectReturnValues::<E>::new(self.bump);
                     ctrl.analyze_with_current_state(&mut analyzer, dest);
                     if !analyzer.return_values.is_empty() {
                         if let Some((base, mul, other)) = base_mul(analyzer.return_values[0]) {
@@ -446,21 +451,21 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'e, E> 
     }
 }
 
-struct CollectReturnValues<'e, E: ExecutionState<'e>> {
-    return_values: Vec<Operand<'e>>,
+struct CollectReturnValues<'acx, 'e, E: ExecutionState<'e>> {
+    return_values: BumpVec<'acx, Operand<'e>>,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
-impl<'e, E: ExecutionState<'e>> CollectReturnValues<'e, E> {
-    fn new() -> CollectReturnValues<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> CollectReturnValues<'acx, 'e, E> {
+    fn new(bump: &'acx bumpalo::Bump) -> CollectReturnValues<'acx, 'e, E> {
         CollectReturnValues {
-            return_values: Vec::with_capacity(4),
+            return_values: bumpvec_with_capacity(4, bump),
             phantom: Default::default(),
         }
     }
 }
 
-impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CollectReturnValues<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CollectReturnValues<'acx, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -489,6 +494,7 @@ pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = analysis.bump;
     let mut analyzer = FindInitNetPlayer {
         result: None,
         arg_cache: analysis.arg_cache,
@@ -502,6 +508,7 @@ pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
             result: None,
             binary,
             delay_eax_move: None,
+            bump,
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, init_net_player);
         analysis.analyze(&mut analyzer);
