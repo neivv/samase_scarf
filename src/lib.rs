@@ -3153,8 +3153,7 @@ fn entry_of_until_with_limit<'a, Va: VirtualAddressTrait, R, F>(
 ) -> EntryOfResult<R, Va>
 where F: FnMut(Va) -> EntryOf<R>
 {
-    let entry = entry_of(funcs, caller);
-    let (start, end) = first_definite_entry(binary, entry, funcs, limit);
+    let (start, end) = first_definite_entry(binary, caller, funcs, limit);
     for &entry in funcs.iter().take(end).skip(start) {
         match cb(entry) {
             EntryOf::Ok(s) => return EntryOfResult::Ok(entry, s),
@@ -3162,16 +3161,8 @@ where F: FnMut(Va) -> EntryOf<R>
             EntryOf::Retry => (),
         }
     }
-    debug!("entry_of_until limit reached for caller {:?} {:?}", caller, start..end);
+    //debug!("entry_of_until limit reached for caller {:?} {:?}", caller, start..end);
     EntryOfResult::None
-}
-
-fn entry_of<Va: VirtualAddressTrait>(funcs: &[Va], func: Va) -> Va {
-    let index = funcs.binary_search_by(|&x| match x <= func {
-        true => std::cmp::Ordering::Less,
-        false => std::cmp::Ordering::Greater,
-    }).unwrap_or_else(|e| e);
-    funcs[index.saturating_sub(1)]
 }
 
 fn find_functions_using_global<'acx, 'exec, E: ExecutionStateTrait<'exec>>(
