@@ -266,7 +266,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> ButtonUseAnalyzer<'a, 'b, 'acx, 'e
         let bytes = match self.binary.slice_from_address(address, 0x18) {
             Ok(o) => o,
             Err(_) => {
-                self.dat_ctx.add_warning(format!("Can't widen instruction @ {:?}", address));
+                dat_warn!(self.dat_ctx, "Can't widen instruction @ {:?}", address);
                 return;
             }
         };
@@ -275,7 +275,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> ButtonUseAnalyzer<'a, 'b, 'acx, 'e
             [0x0f, 0xb6, ..] => {
                 self.dat_ctx.add_replace_patch(address + 1, &[0xb7]);
             }
-            _ => self.dat_ctx.add_warning(format!("Can't widen instruction @ {:?}", address)),
+            _ => dat_warn!(self.dat_ctx, "Can't widen instruction @ {:?}", address),
         }
     }
 }

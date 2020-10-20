@@ -275,10 +275,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let to = E::VirtualAddress::from_u64(to);
                     let binary = self.binary;
                     if let Err(e) = self.required_stable_addresses.add_jump_dest(binary, to) {
-                        self.add_warning(format!(
-                            "Overlapping stable addresses {:?} for jump {:?} -> {:?}",
+                        dat_warn!(
+                            self, "Overlapping stable addresses {:?} for jump {:?} -> {:?}",
                             e, ctrl.address(), to,
-                        ));
+                        );
                     }
                 }
                 // A bit hacky fix to register switch table locations to prevent certain
@@ -347,10 +347,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             ctrl.address(),
                             ctrl.current_instruction_end(),
                         ) {
-                            self.add_warning(format!(
-                                "Can't add stable address for patch @ {:?}, conflict {:?}",
+                            dat_warn!(
+                                self, "Can't add stable address for patch @ {:?}, conflict {:?}",
                                 ctrl.address(), e,
-                            ));
+                            );
                         }
                     }
                 }
@@ -370,6 +370,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 }
 
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> {
+    #[cfg(any(debug_assertions, test_assertions))]
     fn add_warning(&mut self, msg: String) {
         warn!("{}", msg);
     }
@@ -581,7 +582,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         {
             (Some(a), Some(b)) => (a, b),
             _ => {
-                self.add_warning(format!("Unable to find operands for player/upgrade"));
+                dat_warn!(self, "Unable to find operands for player/upgrade");
                 return;
             }
         };
@@ -636,7 +637,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         {
             (Some(a), Some(b)) => (a, b),
             _ => {
-                self.add_warning(format!("Unable to find operands for player/upgrade"));
+                dat_warn!(self, "Unable to find operands for player/upgrade");
                 return;
             }
         };
@@ -668,7 +669,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         {
             Some(s) => s,
             None => {
-                self.add_warning(format!("Couldn't split tech index {}", index));
+                dat_warn!(self, "Couldn't split tech index {}", index);
                 return;
             }
         };
@@ -677,7 +678,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         {
             (Some(a), Some(b)) => (a, b),
             _ => {
-                self.add_warning(format!("Unable to find operands for player/tech"));
+                dat_warn!(self, "Unable to find operands for player/tech");
                 return;
             }
         };
@@ -731,7 +732,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         let (player, id) = match (self.unresolve(ctrl, player), self.unresolve(ctrl, id)) {
             (Some(a), Some(b)) => (a, b),
             _ => {
-                self.add_warning(format!("Unable to find operands for player/id"));
+                dat_warn!(self, "Unable to find operands for player/id");
                 return;
             }
         };
@@ -838,7 +839,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                 if let Some(index_unres) = self.unresolve(ctrl, index) {
                     player_id_from_index(index_unres)
                 } else {
-                    self.add_warning(format!("Unable to find operands for player/id"));
+                    dat_warn!(self, "Unable to find operands for player/id");
                     return;
                 }
             }
@@ -926,7 +927,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                     );
                     (unit_id, is_ground)
                 } else {
-                    self.add_warning(format!("Unable to find operands for is_ground/id"));
+                    dat_warn!(self, "Unable to find operands for is_ground/id");
                     return;
                 }
             }
@@ -941,12 +942,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                     );
                     (unit_id, is_ground)
                 } else {
-                    self.add_warning(format!("Unable to find operands for is_ground/id"));
+                    dat_warn!(self, "Unable to find operands for is_ground/id");
                     return;
                 }
             }
             _ => {
-                self.add_warning(format!("Unable to find operands for is_ground/id"));
+                dat_warn!(self, "Unable to find operands for is_ground/id");
                 return;
             }
         };
@@ -996,7 +997,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                     );
                     (unit_id, player)
                 } else {
-                    self.add_warning(format!("Unable to find operands for player/id"));
+                    dat_warn!(self, "Unable to find operands for player/id");
                     return;
                 }
             }
@@ -1008,12 +1009,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                     );
                     (unit_id, player)
                 } else {
-                    self.add_warning(format!("Unable to find operands for player/id"));
+                    dat_warn!(self, "Unable to find operands for player/id");
                     return;
                 }
             }
             _ => {
-                self.add_warning(format!("Unable to find operands for player/id"));
+                dat_warn!(self, "Unable to find operands for player/id");
                 return;
             }
         };
@@ -1035,7 +1036,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         let index = match self.unresolve(ctrl, index) {
             Some(a) => a,
             _ => {
-                self.add_warning(format!("Unable to find operands for player/id"));
+                dat_warn!(self, "Unable to find operands for player/id");
                 return;
             }
         };

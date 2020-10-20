@@ -48,6 +48,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
         }
     }
 
+    #[cfg(any(debug_assertions, test_assertions))]
     fn add_warning(&self, msg: String) {
         warn!("{}", msg);
     }
@@ -140,7 +141,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
         let orig_alloc_amt = match self.stack_allocs.get(0) {
             Some(s) => s.0,
             None => {
-                self.add_warning(format!("Had no stack allocs in {:?}", self.entry));
+                dat_warn!(self, "Had no stack allocs in {:?}", self.entry);
                 return;
             }
         };
@@ -157,7 +158,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
         let bytes = match self.binary.slice_from_address(address, 0x18) {
             Ok(o) => o,
             Err(_) => {
-                self.add_warning(format!("Can't widen instruction @ {:?}", address));
+                dat_warn!(self, "Can't widen instruction @ {:?}", address);
                 return;
             }
         };
@@ -176,7 +177,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                 self.add_esp_add(address, 3, 0i32.wrapping_sub(new_alloc), add_result);
             }
             _ => {
-                self.add_warning(format!("Can't widen instruction @ {:?}", address));
+                dat_warn!(self, "Can't widen instruction @ {:?}", address);
             }
         }
     }

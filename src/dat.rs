@@ -1,3 +1,24 @@
+// Compile warnings out in release, but leave them for debug.
+// Tests will also ideally use them at some point to verify they
+// don't regress.
+//
+// $self can be anything that has add_warning(&self, String) method.
+#[cfg(any(debug_assertions, test_assertions))]
+macro_rules! dat_warn {
+    ($self:expr, $($rest:tt)*) => {
+        $self.add_warning(format!($($rest)*))
+    }
+}
+
+#[cfg(not(any(debug_assertions, test_assertions)))]
+macro_rules! dat_warn {
+    ($self:expr, $($rest:tt)*) => {
+        if false {
+            let _ = format_args!($($rest)*);
+        }
+    }
+}
+
 mod game;
 mod units;
 mod stack_analysis;
@@ -292,11 +313,10 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         units::button_use_analysis(dat_ctx, buttons)?;
     }
     if dat_ctx.unknown_global_u8_mem.len() != 1 {
-        let msg = format!(
-            "Expected to have 1 unknown global u8 memory, got {:?}",
+        dat_warn!(
+            dat_ctx, "Expected to have 1 unknown global u8 memory, got {:?}",
             dat_ctx.unknown_global_u8_mem,
         );
-        dat_ctx.add_warning(msg);
     }
     game::dat_game_analysis(
         &mut dat_ctx.analysis,
@@ -555,6 +575,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         })
     }
 
+    #[cfg(any(debug_assertions, test_assertions))]
     fn add_warning(&mut self, msg: String) {
         warn!("{}", msg);
     }
@@ -651,10 +672,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                     // Overlap, if the offset isn't 0 it's likely 0 entry
                     // for an array whose start_index isn't 0
                     if byte_offset == 0 {
-                        self.add_warning( format!(
-                            "Conflict with dat global refs @ {:?}  {:?}:{:x}",
+                        dat_warn!(
+                            self, "Conflict with dat global refs @ {:?}  {:?}:{:x}",
                             address, dat, field_id,
-                        ));
+                        );
                     }
                     continue;
                 }
@@ -912,7 +933,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                     self.u8_funcs.push(rva);
                 }
             } else {
-                self.add_warning(format!("Cannot recognize function @ {:?}", address));
+                dat_warn!(self, "Cannot recognize function @ {:?}", address);
             }
         }
     }
@@ -1205,8 +1226,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let to = E::VirtualAddress::from_u64(to);
                     let binary = self.binary;
                     if let Err(e) = self.required_stable_addresses.add_jump_dest(binary, to) {
-                        self.add_warning(
-                            format!("Overlapping stable addresses {:?} for jump to {:?}", e, to),
+                        dat_warn!(
+                            self, "Overlapping stable addresses {:?} for jump to {:?}", e, to,
                         );
                     }
                 }
@@ -1385,6 +1406,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         }
     }
 
+    #[cfg(any(debug_assertions, test_assertions))]
     fn add_warning(&mut self, msg: String) {
         self.dat_ctx.add_warning(msg);
     }
@@ -1398,9 +1420,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         match self.try_add_required_stable_address_for_patch(start, end) {
             Ok(()) => (),
             Err(e) => {
-                let warn =
-                    format!("Required stable address overlap: {:?} vs {:?}", e, (start, end));
-                self.dat_ctx.add_warning(warn);
+                dat_warn!(self, "Required stable address overlap: {:?} vs {:?}", e, (start, end));
             }
         }
     }
@@ -1578,8 +1598,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         match self.reached_widen_value_main(ctrl, value, dat) {
             Ok(o) => o,
             Err(()) => {
-                self.add_warning(
-                    format!("Unknown {:?} dat offset @ {:?}: {}", dat, ctrl.address(), value),
+                dat_warn!(
+                    self, "Unknown {:?} dat offset @ {:?}: {}", dat, ctrl.address(), value,
                 );
                 None
             }
@@ -1904,8 +1924,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             analyzer.unchecked_branches.pop()
         {
             if limit == 0 {
-                self.add_warning(
-                    format!("CFG analysis of {:?} / {:?} took too long", orig_branch, orig_final),
+                dat_warn!(
+                    self, "CFG analysis of {:?} / {:?} took too long", orig_branch, orig_final,
                 );
                 break;
             }
@@ -1929,7 +1949,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         let bytes = match self.binary.slice_from_address(address, 0x10) {
             Ok(o) => o,
             Err(_) => {
-                self.add_warning(format!("Can't uncond @ {:?}", address));
+                dat_warn!(self, "Can't uncond @ {:?}", address);
                 return;
             }
         };
@@ -1946,7 +1966,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         } else if matches!(bytes[0], 0x70 ..= 0x7f) {
             self.add_patch(address, &[0x70 + cond_id, bytes[1]], 2);
         } else {
-            self.add_warning(format!("Can't uncond @ {:?}", address));
+            dat_warn!(self, "Can't uncond @ {:?}", address);
         }
     }
 
@@ -1958,7 +1978,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         let bytes = match self.binary.slice_from_address(address, 0x10) {
             Ok(o) => o,
             Err(_) => {
-                self.add_warning(format!("Can't uncond @ {:?}", address));
+                dat_warn!(self, "Can't uncond @ {:?}", address);
                 return;
             }
         };
@@ -1969,7 +1989,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         } else if matches!(bytes[0], 0x70 ..= 0x7f) {
             self.add_patch(address, &[0xeb, bytes[1]], 2);
         } else {
-            self.add_warning(format!("Can't uncond @ {:?}", address));
+            dat_warn!(self, "Can't uncond @ {:?}", address);
         }
     }
 
@@ -1999,7 +2019,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         let bytes = match self.binary.slice_from_address(address, 0x18) {
             Ok(o) => o,
             Err(_) => {
-                self.add_warning(format!("Can't widen instruction @ {:?}", address));
+                dat_warn!(self, "Can't widen instruction @ {:?}", address);
                 return;
             }
         };
@@ -2133,7 +2153,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
             // Hoping that u16 is fine
             [0x66, ..] => (),
-            _ => self.add_warning(format!("Can't widen instruction @ {:?}", address)),
+            _ => dat_warn!(self, "Can't widen instruction @ {:?}", address),
         }
     }
 
@@ -2267,7 +2287,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             if !self.dat_ctx.patched_addresses.insert(addr) {
                 // This shouldn't happen, it would likely mean that two stack_size_trackers
                 // which may give different allocation mappings had ran.
-                self.add_warning(format!("Patch conflict for stack size @ {:?}", addr));
+                dat_warn!(self, "Patch conflict for stack size @ {:?}", addr);
                 return;
             }
             if skip == patch.len() {
@@ -2912,6 +2932,7 @@ struct FunctionHookContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
 }
 
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'acx, 'e, E> {
+    #[cfg(any(debug_assertions, test_assertions))]
     fn add_warning(&mut self, msg: String) {
         warn!("{}", msg);
     }
@@ -2965,7 +2986,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'acx, 'e, E> {
                 }
             }
             if !can_hook_at_all {
-                self.add_warning(format!("Can't hook @ {:?}", address));
+                dat_warn!(self, "Can't hook @ {:?}", address);
             } else if needs_short_jump {
                 // Keep the pending hook for a second loop, move it to start of the vec
                 pending_hooks[short_jump_hooks] = pending_hooks[i];
@@ -2993,7 +3014,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'acx, 'e, E> {
             let space = match self.find_short_jump_hook_space(address) {
                 Some(s) => s,
                 None => {
-                    self.add_warning(format!("Can't find shortjmp space for {:?}", address));
+                    dat_warn!(self, "Can't find shortjmp space for {:?}", address);
                     continue;
                 }
             };
@@ -3048,9 +3069,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'acx, 'e, E> {
         match self.try_add_required_stable_address_for_patch(start, end) {
             Ok(()) => (),
             Err(e) => {
-                let warn =
-                    format!("Required stable address overlap: {:?} vs {:?}", e, (start, end));
-                self.add_warning(warn);
+                dat_warn!(self, "Required stable address overlap: {:?} vs {:?}", e, (start, end));
             }
         }
     }

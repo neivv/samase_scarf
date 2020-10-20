@@ -295,17 +295,16 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let base = match super::unresolve(ctx, ctrl.exec_state(), base) {
                         Some(s) => s,
                         None => {
-                            self.dat_ctx.add_warning(
-                                format!("Can't unresolve ddsgrp texture op {}", base)
-                            );
+                            dat_warn!(self.dat_ctx, "Can't unresolve ddsgrp texture op {}", base);
                             return;
                         }
                     };
                     let index = match super::unresolve(ctx, ctrl.exec_state(), index) {
                         Some(s) => s,
                         None => {
-                            self.dat_ctx.add_warning(
-                                format!("Can't unresolve ddsgrp texture op {}", index)
+                            dat_warn!(
+                                self.dat_ctx, "Can't unresolve ddsgrp texture op {}",
+                                index,
                             );
                             return;
                         }
