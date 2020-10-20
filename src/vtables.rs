@@ -18,7 +18,7 @@ pub(crate) fn vtables<'e, E: ExecutionState<'e>>(
     // -> Mem32[addr] (?? Indirection)
     // -> addr + 8 == b".?AVRenderer" (Base class info, in .data instead of .rdata)
     let relocs = analysis.relocs_with_values();
-    let data = analysis.binary.section(b".data\0\0\0").unwrap();
+    let data = analysis.binary_sections.data;
     let bump = analysis.bump;
     let base_class_info = relocs.iter().filter_map(|reloc| {
         if reloc.address >= data.virtual_address {

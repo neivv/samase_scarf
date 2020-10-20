@@ -21,7 +21,7 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
 ) -> Option<()> {
     let ctx = analysis.ctx;
     let relocs = analysis.relocs_with_values();
-    let text = analysis.binary.section(b".text\0\0\0").unwrap();
+    let text = analysis.binary_sections.text;
     let text_end = text.virtual_address + text.virtual_size;
     let game = analysis.game()?;
     let unit_strength = analysis.unit_strength()?;

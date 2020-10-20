@@ -24,8 +24,8 @@ pub(crate) fn campaigns<'e, E: ExecutionState<'e>>(
 ) -> Option<Operand<'e>> {
     // The campaign array is ordered by race, so zerg maps are in first pointer.
     // Check that second pointer is terran maps to avoid false positives.
-    let rdata = analysis.binary.section(b".rdata\0\0").unwrap();
-    let data = analysis.binary.section(b".data\0\0\0").unwrap();
+    let rdata = analysis.binary_sections.rdata;
+    let data = analysis.binary_sections.data;
     let bump = analysis.bump;
     let zerg_campaign_refs = crate::find_bytes(bump, &rdata.data, ZERG_CAMPAIGN_SIGNATURE);
     let va_size = <E::VirtualAddress as VirtualAddress>::SIZE;

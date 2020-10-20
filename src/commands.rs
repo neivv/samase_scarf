@@ -99,7 +99,7 @@ pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
 pub(crate) fn command_lengths<'e, E: ExecutionState<'e>>(
     analysis: &mut AnalysisCtx<'_, 'e, E>,
 ) -> Vec<u32> {
-    let rdata = analysis.binary.section(b".rdata\0\0").unwrap();
+    let rdata = analysis.binary_sections.rdata;
     static NEEDLE: &[u8] = &[
         0xff, 0xff, 0xff, 0xff,
         0xff, 0xff, 0xff, 0xff,

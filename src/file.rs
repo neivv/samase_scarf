@@ -72,7 +72,7 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
     load_dat_fn: E::VirtualAddress,
 ) -> BumpVec<'acx, E::VirtualAddress> {
     let arg_cache = analysis.arg_cache;
-    let rdata = binary.section(b".rdata\0\0").unwrap();
+    let rdata = analysis.binary_sections.rdata;
     let ctx = analysis.ctx;
     let bump = analysis.bump;
     let mut functions = bumpalo::vec![in bump; OpenFileFnIntermediate {

@@ -52,11 +52,12 @@ fn full_switch_info_in_function<'e, E: ExecutionState<'e>>(
 ) -> EntryOf<CompleteSwitch<E::VirtualAddress>> {
 
     let binary = analysis.binary;
+    let text = analysis.binary_sections.text;
     let ctx = analysis.ctx;
     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
     let mut analyzer: FullSwitchInfo<E> = FullSwitchInfo {
         result: EntryOf::Retry,
-        text: binary.section(b".text\0\0\0").unwrap(),
+        text,
         switch,
         binary,
         use_address,

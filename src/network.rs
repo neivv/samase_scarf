@@ -34,7 +34,7 @@ pub(crate) fn snp_definitions<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let bump = analysis.bump;
-    let data = binary.section(b".data\0\0\0").unwrap();
+    let data = analysis.binary_sections.data;
     let results = find_bytes(bump, &data.data, &[0x55, 0x41, 0x4e, 0x42]);
     let mut result = None;
     for rva in results {
@@ -70,7 +70,7 @@ pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
     // init_storm_networking calls load_snp_list(&[fnptr, fnptr], 1)
     let vtables = crate::vtables::vtables(analysis, b".?AVSelectConnectionScreen@glues@@\0");
     let binary = analysis.binary;
-    let text = binary.section(b".text\0\0\0").unwrap();
+    let text = analysis.binary_sections.text;
     let ctx = analysis.ctx;
     let arg_cache = analysis.arg_cache;
     for vtable in vtables {

@@ -513,7 +513,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             }
         }
 
-        let text = analysis.binary.section(b".text\0\0\0").unwrap();
+        let text = analysis.binary_sections.text;
         let step_iscript = analysis.step_iscript().step_fn?;
         let bump = analysis.bump;
         Some(DatPatchContext {

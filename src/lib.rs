@@ -137,11 +137,18 @@ pub struct AnalysisX86<'e>(pub Analysis<'e, scarf::ExecutionStateX86<'e>>);
 // in this struct's layout
 #[repr(C)]
 pub struct Analysis<'e, E: ExecutionStateTrait<'e>> {
-    binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: scarf::OperandCtx<'e>,
     bump: Bump,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    binary_sections: BinarySections<'e, E>,
     arg_cache: ArgCache<'e, E>,
     cache: AnalysisCache<'e, E>,
+}
+
+struct BinarySections<'e, E: ExecutionStateTrait<'e>> {
+    text: &'e BinarySection<E::VirtualAddress>,
+    data: &'e BinarySection<E::VirtualAddress>,
+    rdata: &'e BinarySection<E::VirtualAddress>,
 }
 
 struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
@@ -252,6 +259,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
 pub(crate) struct AnalysisCtx<'b, 'e, E: ExecutionStateTrait<'e>> {
     cache: &'b mut AnalysisCache<'e, E>,
     binary: &'e BinaryFile<E::VirtualAddress>,
+    binary_sections: &'b BinarySections<'e, E>,
     ctx: scarf::OperandCtx<'e>,
     arg_cache: &'b ArgCache<'e, E>,
     bump: &'b Bump,
@@ -527,6 +535,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 dat_tables: DatTables::new(),
             },
             binary,
+            binary_sections: BinarySections {
+                rdata: binary.section(b".rdata\0\0").unwrap(),
+                data: binary.section(b".data\0\0\0").unwrap(),
+                text: binary.section(b".text\0\0\0").unwrap(),
+            },
             ctx,
             bump: Bump::new(),
             arg_cache: ArgCache::new(ctx),
@@ -546,6 +559,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         let mut ctx = AnalysisCtx {
             cache: &mut self.cache,
             binary: self.binary,
+            binary_sections: &self.binary_sections,
             ctx: self.ctx,
             arg_cache: &self.arg_cache,
             bump: &self.bump,
@@ -1163,13 +1177,13 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
     fn functions(&mut self) -> Rc<Vec<E::VirtualAddress>> {
         let binary = self.binary;
+        let text = self.binary_sections.text;
         let relocs = self.relocs();
         self.cache.functions.get_or_insert_with(|| {
             let mut functions = scarf::analysis::find_functions::<E>(binary, &relocs);
             functions.retain(|&fun| Analysis::<E>::is_valid_function(fun));
 
             // Add functions which immediately jump to another
-            let text = binary.section(b".text\0\0\0").unwrap();
             let text_end = text.virtual_address + text.virtual_size;
             let mut extra_funcs = Vec::with_capacity(64);
             for &func in &functions {
@@ -1271,9 +1285,9 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
     // Sorted by switch address
     fn switch_tables(&mut self) -> Rc<Vec<SwitchTable<E::VirtualAddress>>> {
         let binary = self.binary;
+        let text = self.binary_sections.text;
         let relocs = self.relocs();
         self.cache.switch_tables.get_or_insert_with(|| {
-            let text = binary.section(b".text\0\0\0").unwrap();
             let switches = scarf::analysis::find_switch_tables(binary, &relocs);
             let mut table_start_index = 0;
             let mut previous_address = E::VirtualAddress::from_u64(!0);
@@ -3052,8 +3066,7 @@ fn string_refs<'acx, 'e, E: ExecutionStateTrait<'e>>(
     cache: &mut AnalysisCtx<'acx, 'e, E>,
     string: &[u8],
 ) -> BumpVec<'acx, StringRefs<E::VirtualAddress>> {
-    let binary = cache.binary;
-    let rdata = binary.section(b".rdata\0\0").unwrap();
+    let rdata = cache.binary_sections.rdata;
     let bump = cache.bump;
     let str_ref_addrs = find_strings_casei(bump, &rdata.data, string);
     // (Use rva, string rva)

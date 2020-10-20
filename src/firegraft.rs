@@ -16,9 +16,8 @@ const BUTTONSET_BUTTON_COUNTS: [u8; 13] = [6, 9, 6, 5, 0, 7, 0, 9, 7, 8, 6, 7, 6
 pub(crate) fn find_buttonsets<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'_, 'e, E>,
 ) -> Vec<E::VirtualAddress> {
-    let binary = analysis.binary;
     let bump = analysis.bump;
-    let data = binary.section(b".data\0\0\0").unwrap();
+    let data = analysis.binary_sections.data;
     let first = [BUTTONSET_BUTTON_COUNTS[0], 0, 0, 0];
     let mut result = find_bytes(bump, &data.data, &first[..]);
     result.retain(|&rva| {
@@ -189,7 +188,7 @@ pub(crate) fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
     use std::cmp::Ordering;
 
     let bump = analysis.bump;
-    let data = analysis.binary.section(b".data\0\0\0").unwrap();
+    let data = analysis.binary_sections.data;
     let table_addresses = find_bytes(bump, &data.data, signature);
     let relocs = analysis.relocs_with_values();
     let mut result = Vec::with_capacity(16);

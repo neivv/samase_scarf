@@ -25,7 +25,7 @@ pub(crate) fn fonts<'e, E: ExecutionState<'e>>(
     let funcs = analysis.functions();
     let funcs = &funcs[..];
 
-    let rdata = binary.section(b".rdata\0\0").unwrap();
+    let rdata = analysis.binary_sections.rdata;
     let font_string_rvas = crate::find_bytes(bump, &rdata.data, b"font16x");
 
     let candidates = font_string_rvas.iter().flat_map(|&font| {
@@ -169,7 +169,7 @@ pub(crate) fn font_render<'e, E: ExecutionState<'e>>(
     let funcs = analysis.functions();
     let funcs = &funcs[..];
 
-    let rdata = binary.section(b".rdata\0\0").unwrap();
+    let rdata = analysis.binary_sections.rdata;
     let font_string_rvas = crate::find_bytes(bump, &rdata.data, b"shadowOffset");
 
     let ttf_init_candidates = font_string_rvas.iter().flat_map(|&font| {
