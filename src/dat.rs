@@ -2016,36 +2016,37 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             return;
         }
 
-        let bytes = match self.binary.slice_from_address(address, 0x18) {
+        let imm_bytes = match self.binary.slice_from_address(address, 0x18) {
             Ok(o) => o,
             Err(_) => {
                 dat_warn!(self, "Can't widen instruction @ {:?}", address);
                 return;
             }
         };
-        let ins_len = lde::X86::ld(bytes) as u8;
-        match *bytes {
+        let ins_len = lde::X86::ld(imm_bytes) as u8;
+        if ins_len >= 16 {
+            dat_warn!(self, "Instruction is too long ({})", ins_len);
+            return;
+        }
+        let imm_bytes = &imm_bytes[..16];
+        let mut bytes = [0x90u8; 16];
+        for i in 0..ins_len {
+            bytes[i as usize] = imm_bytes[i as usize];
+        }
+        match bytes {
             // movzx to mov
             [0x0f, 0xb6, ..] => {
                 if widen_index_size || !is_struct_field_rm(&bytes[1..]) {
-                    let mut patch = [0x90u8; 8];
-                    for i in 0..8 {
-                        patch[i] = bytes[i];
-                    }
-                    patch[0] = 0x90;
-                    patch[1] = 0x8b;
-                    self.add_rm_patch(address, &mut patch, 1, ins_len, ins_len, widen_index_size);
+                    bytes[0] = 0x90;
+                    bytes[1] = 0x8b;
+                    self.add_rm_patch(address, &mut bytes, 1, ins_len, ins_len, widen_index_size);
                 }
             }
             // add rm8, r8; cmp r8, rm8; cmp rm8, r8
             [0x00, ..] | [0x3a, ..] | [0x38, ..] => {
                 if widen_index_size || !is_struct_field_rm(&bytes) {
-                    let mut patch = [0x90u8; 8];
-                    for i in 0..8 {
-                        patch[i] = bytes[i];
-                    }
-                    patch[0] += 1;
-                    self.add_rm_patch(address, &mut patch, 0, ins_len, ins_len, widen_index_size);
+                    bytes[0] += 1;
+                    self.add_rm_patch(address, &mut bytes, 0, ins_len, ins_len, widen_index_size);
                 }
             }
             // cmp al, constant
@@ -2056,15 +2057,11 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
             // arith rm32, constant
             [0x80, ..] => {
-                let mut patch = [0x90; 12];
-                patch[0] = 0x81;
-                for i in 1..ins_len {
-                    patch[i as usize] = bytes[i as usize];
-                }
+                bytes[0] = 0x81;
                 for i in ins_len..(ins_len + 3) {
-                    patch[i as usize] = 0x00;
+                    bytes[i as usize] = 0x00;
                 }
-                self.add_rm_patch(address, &mut patch, 0, ins_len + 3, ins_len, widen_index_size);
+                self.add_rm_patch(address, &mut bytes, 0, ins_len + 3, ins_len, widen_index_size);
             }
             // test rm8, r8
             [0x84, second, ..] => {
@@ -2075,48 +2072,34 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
             // mov r8, rm8, to mov r32, rm32
             [0x8a, ..] => {
-                let mut patch = [0x90; 8];
                 if !widen_index_size && is_struct_field_rm(&bytes) {
                     // Convert to movzx r32, rm8
-                    for i in 0..(ins_len as usize) {
-                        patch[i + 1] = bytes[i];
-                    }
-                    patch[0] = 0x0f;
-                    patch[1] = 0xb6;
-                    self.add_hook(address, ins_len, &patch[..(ins_len as usize + 1)]);
+                    bytes.copy_within(0..15, 1);
+                    bytes[0] = 0x0f;
+                    bytes[1] = 0xb6;
+                    self.add_hook(address, ins_len, &bytes[..(ins_len as usize + 1)]);
                 } else {
-                    for i in 0..8 {
-                        patch[i] = bytes[i];
-                    }
-                    patch[0] = 0x8b;
-                    self.add_rm_patch(address, &mut patch, 0, ins_len, ins_len, widen_index_size);
+                    bytes[0] = 0x8b;
+                    self.add_rm_patch(address, &mut bytes, 0, ins_len, ins_len, widen_index_size);
                 }
             }
             // mov rm8, r8
             [0x88, ..] => {
                 if widen_index_size || !is_struct_field_rm(&bytes) {
-                    let mut patch = [0u8; 8];
-                    for i in 0..8 {
-                        patch[i] = bytes[i];
-                    }
-                    patch[0] = 0x89;
-                    self.add_rm_patch(address, &mut patch, 0, ins_len, ins_len, widen_index_size);
+                    bytes[0] = 0x89;
+                    self.add_rm_patch(address, &mut bytes, 0, ins_len, ins_len, widen_index_size);
                 }
             }
             // mov rm8, const8
             [0xc6, ..] => {
                 if widen_index_size || !is_struct_field_rm(&bytes) {
-                    let mut patch = [0x90; 16];
-                    for i in 0..(ins_len as usize) {
-                        patch[i] = bytes[i];
-                    }
-                    patch[0] = 0xc7;
+                    bytes[0] = 0xc7;
                     for i in ins_len..(ins_len + 3) {
-                        patch[i as usize] = 0x00;
+                        bytes[i as usize] = 0x00;
                     }
                     self.add_rm_patch(
                         address,
-                        &mut patch,
+                        &mut bytes,
                         0,
                         ins_len + 3,
                         ins_len,
@@ -2190,49 +2173,55 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     fn add_rm_patch(
         &mut self,
         address: E::VirtualAddress,
-        patch: &mut [u8],
+        patch: &mut [u8; 16],
         start: usize,
         patch_len: u8,
         ins_len: u8,
         widen_index_size: bool,
     ) {
+        if start > 8 || patch_len >= 16 {
+            return;
+        }
+        let idx_1 = start.wrapping_add(1);
+        let idx_2 = start.wrapping_add(2);
+        let idx_3 = start.wrapping_add(3);
         let widen = widen_index_size &&
-            matches!(patch[start + 1] & 0xc7, 0x80 | 0x81 | 0x82 | 0x83 | 0x85 | 0x86 | 0x87);
+            matches!(patch[idx_1] & 0xc7, 0x80 | 0x81 | 0x82 | 0x83 | 0x85 | 0x86 | 0x87);
         if !widen {
-            let base = patch[start + 1] & 0x7;
-            let variant = (patch[start + 1] & 0xc0) >> 6;
+            let base = patch[idx_1] & 0x7;
+            let variant = (patch[idx_1] & 0xc0) >> 6;
             let mut patch = patch;
             let mut patch_len = patch_len;
             let mut buffer = [0u8; 16];
             // Fix u8 [ebp - x] offset to a newly allocated u32
             if (variant == 1 || variant == 2) && base == 5 {
                 let offset = if variant == 1 {
-                    patch[start + 2] as i8 as i32 as u32
+                    patch[idx_2] as i8 as i32 as u32
                 } else {
-                    LittleEndian::read_u32(&patch[(start + 2)..])
+                    LittleEndian::read_u32(&patch[idx_2..])
                 };
                 if offset as i32 > 0 {
                     // Don't reallocate [ebp + x] arguments, but still align them to 4
                     // The argument slots may be used for temps later, but assuming
                     // that conflicts there are rare enough to not be relevant.
-                    patch[start + 2] &= 0xfc;
+                    patch[idx_2] &= 0xfc;
                 } else {
                     let new_offset = self.state.stack_size_tracker.remap_ebp_offset(offset);
                     if new_offset >= 0xffff_ff80 {
-                        patch[start + 1] = (patch[start + 1] & !0xc0) | 0x40;
-                        patch[start + 2] = new_offset as u8;
+                        patch[idx_1] = (patch[idx_1] & !0xc0) | 0x40;
+                        patch[idx_2] = new_offset as u8;
                     } else {
                         for i in 0..(patch_len as usize) {
                             buffer[i] = patch[i];
                         }
                         if variant == 1 {
-                            for i in ((start + 3)..(patch_len as usize)).rev() {
+                            for i in (idx_3..(patch_len as usize)).rev() {
                                 buffer[i + 3] = buffer[i];
                             }
                         }
-                        buffer[start + 1] = (buffer[start + 1] & !0xc0) | 0x80;
-                        LittleEndian::write_u32(&mut buffer[(start + 2)..], new_offset);
-                        patch = &mut buffer[..];
+                        buffer[idx_1] = (buffer[idx_1] & !0xc0) | 0x80;
+                        LittleEndian::write_u32(&mut buffer[idx_2..], new_offset);
+                        patch = &mut buffer;
                         if variant == 1 {
                             patch_len = patch_len.wrapping_add(3);
                         }
@@ -2240,21 +2229,21 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 }
             }
             if ins_len == patch_len {
-                self.add_patch(address, &patch, ins_len);
+                self.add_patch(address, &patch[..], ins_len);
             } else {
                 self.add_hook(address, ins_len, &patch[..(patch_len as usize)]);
             }
         } else {
             // Widen [reg + base] to [reg * 4 + base]
-            let index_reg = patch[start + 1] & 0x7;
-            let other = patch[start + 1] & 0x38;
+            let index_reg = patch[idx_1] & 0x7;
+            let other = patch[idx_1] & 0x38;
             let mut buf = [0; 16];
-            for i in 0..(start + 1) {
+            for i in 0..(idx_1) {
                 buf[i as usize] = patch[i as usize];
             }
-            buf[start + 1] = 0x4 | other;
-            buf[start + 2] = 0x85 | (index_reg << 3);
-            for i in (start + 3)..(patch_len as usize + 1) {
+            buf[idx_1] = 0x4 | other;
+            buf[idx_2] = 0x85 | (index_reg << 3);
+            for i in idx_3..(patch_len as usize + 1) {
                 buf[i] = patch[i - 1];
             }
             self.add_hook(address, ins_len, &buf[..(patch_len as usize + 1)]);
