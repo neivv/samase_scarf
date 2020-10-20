@@ -356,7 +356,7 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, func_entry);
     analysis.analyze(&mut analyzer);
-    let (mut cfg, _errs) = analysis.finish();
+    let mut cfg = analysis.finish();
 
     let (jump_addr, unit_at_hook) = analyzer.result?;
     cfg.calculate_node_indices();
@@ -570,7 +570,7 @@ pub(crate) fn step_secondary_order<'e, E: ExecutionState<'e>>(
                 return EntryOf::Ok(res);
             }
             if let Some((jump_addr, unit)) = analyzer.pre_result {
-                let (cfg, _) = analysis.finish();
+                let cfg = analysis.finish();
                 let res = step_secondary_order_hook_info(
                     binary,
                     ctx,
@@ -628,7 +628,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         let mut analysis = FuncAnalysis::new(self.binary, self.ctx, dest);
                         analysis.analyze(self);
                         if let Some((jump_addr, unit)) = self.pre_result.take() {
-                            let (cfg, _) = analysis.finish();
+                            let cfg = analysis.finish();
                             self.result = step_secondary_order_hook_info(
                                 self.binary,
                                 self.ctx,

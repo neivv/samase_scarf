@@ -1810,7 +1810,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             BumpVec::new_in(bump),
         );
         if !needed_cfg_analysis.is_empty() {
-            let (mut cfg, _) = analysis.finish();
+            let mut cfg = analysis.finish();
             let mut checked_addresses = bumpvec_with_capacity(needed_cfg_analysis.len(), bump);
             let predecessors = cfg.predecessors();
             for (branch_start, address, op, dat) in needed_cfg_analysis {

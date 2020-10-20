@@ -44,7 +44,7 @@ pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
             binary.read_address(dat + 1 * dat_table_size).ok().map(|weapon_orders| {
                 let funcs = find_functions_using_global(analysis, weapon_orders)
                     .into_iter()
-                    .map(|x| (weapon_orders, x));
+                    .map(move |x| (weapon_orders, x));
                 BumpVec::from_iter_in(funcs, bump)
             })
         }).unwrap_or_else(|| BumpVec::new_in(bump))
@@ -63,8 +63,8 @@ pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
             };
             analysis.analyze(&mut analyzer);
             if analyzer.candidates.len() == 2 {
-                let (a1, unit1) = analyzer.candidates.pop().unwrap();
-                let (a2, unit2) = analyzer.candidates.pop().unwrap();
+                let (a1, unit1) = analyzer.candidates[0];
+                let (a2, unit2) = analyzer.candidates[1];
                 if unit1 != unit2 {
                     if a1 > a2 {
                         return EntryOf::Ok((unit2, unit1));
