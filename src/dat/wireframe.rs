@@ -1,5 +1,4 @@
 use bumpalo::collections::Vec as BumpVec;
-use fxhash::{FxHashSet, FxHashMap};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{OperandHashByAddress};
@@ -9,6 +8,7 @@ use crate::{
     entry_of_until, EntryOf, OptionExt, OperandExt, find_functions_using_global,
     bumpvec_with_capacity,
 };
+use crate::hash_map::{HashMap, HashSet};
 use super::{DatPatchContext, DatPatch, GrpTexturePatch, reloc_address_of_instruction};
 
 pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
@@ -25,9 +25,9 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
     let text = dat_ctx.text;
     let text_end = text.virtual_address + text.virtual_size;
 
-    let mut checked_refs = FxHashSet::with_capacity_and_hasher(16, Default::default());
+    let mut checked_refs = HashSet::with_capacity_and_hasher(16, Default::default());
     // Map func -> returned grp type
-    let mut functions_returning_grp = FxHashMap::with_capacity_and_hasher(8, Default::default());
+    let mut functions_returning_grp = HashMap::with_capacity_and_hasher(8, Default::default());
     // Map operand -> grp type
     let grp_op_inputs = [
         (analysis.grpwire_grp()?, GrpType::Grp),
@@ -40,7 +40,7 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
         (ctx.custom(1), GrpType::DdsGrp),
         (ctx.custom(2), GrpType::DdsGrpSet),
     ];
-    let mut grp_operands = FxHashMap::with_capacity_and_hasher(16, Default::default());
+    let mut grp_operands = HashMap::with_capacity_and_hasher(16, Default::default());
     let mut refs_to_check = bumpvec_with_capacity(8, bump);
     for &(oper, grp) in &grp_op_inputs {
         grp_operands.insert(oper.hash_by_address(), grp);
@@ -122,9 +122,9 @@ enum GrpType {
 struct GrpIndexAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     ref_addr: E::VirtualAddress,
     dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
-    checked_refs: &'a mut FxHashSet<E::VirtualAddress>,
-    functions_returning_grp: &'a FxHashMap<E::VirtualAddress, GrpType>,
-    grp_operands: &'a FxHashMap<OperandHashByAddress<'e>, GrpType>,
+    checked_refs: &'a mut HashSet<E::VirtualAddress>,
+    functions_returning_grp: &'a HashMap<E::VirtualAddress, GrpType>,
+    grp_operands: &'a HashMap<OperandHashByAddress<'e>, GrpType>,
     returns_grp: Option<GrpType>,
     entry_of: EntryOf<()>,
     first_branch: bool,

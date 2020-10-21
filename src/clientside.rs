@@ -1,5 +1,4 @@
 use bumpalo::collections::Vec as BumpVec;
-use fxhash::FxHashMap;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -11,6 +10,7 @@ use crate::{
     single_result_assign, OptionExt, DatType, find_functions_using_global,
     if_arithmetic_eq_neq,
 };
+use crate::hash_map::HashMap;
 
 pub enum ResultOrEntries<'acx, T, Va: VirtualAddress> {
     Result(T),
@@ -594,7 +594,7 @@ struct MiscClientSideAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     vtable_fn_result_op: Operand<'e>,
     is_multiplayer: Operand<'e>,
     scmain_state: Operand<'e>,
-    branch_start_states: FxHashMap<Rva, MiscClientSideAnalyzerState>,
+    branch_start_states: HashMap<Rva, MiscClientSideAnalyzerState>,
     binary: &'a BinaryFile<E::VirtualAddress>,
 }
 

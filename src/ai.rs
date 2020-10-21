@@ -1,6 +1,5 @@
 use arrayvec::ArrayVec;
 use bumpalo::collections::Vec as BumpVec;
-use fxhash::FxHashSet;
 use scarf::{
     DestOperand, Operand, Operation, MemAccessSize, OperandCtx, OperandType, BinaryFile, Rva,
 };
@@ -13,6 +12,7 @@ use crate::{
     ArgCache, OptionExt, OperandExt, single_result_assign, AnalysisCtx,
     find_functions_using_global, entry_of_until, EntryOf, find_callers, DatType,
 };
+use crate::hash_map::HashSet;
 
 fn check_step_ai_scripts<'e, E: ExecutionState<'e>>(
     binary: &'e BinaryFile<E::VirtualAddress>,
@@ -914,7 +914,7 @@ pub(crate) fn step_region<'e, E: ExecutionState<'e>>(
         result: None,
         arg_cache,
         inline_depth: 0,
-        checked_functions: FxHashSet::with_capacity_and_hasher(0x40, Default::default()),
+        checked_functions: HashSet::with_capacity_and_hasher(0x40, Default::default()),
         binary,
         ai_regions,
     };
@@ -926,7 +926,7 @@ struct StepRegionAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
-    checked_functions: FxHashSet<Rva>,
+    checked_functions: HashSet<Rva>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ai_regions: Operand<'e>,
 }

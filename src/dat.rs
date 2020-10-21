@@ -33,7 +33,6 @@ use std::rc::Rc;
 use bumpalo::collections::Vec as BumpVec;
 use bumpalo::Bump;
 use byteorder::{ByteOrder, LittleEndian};
-use fxhash::{FxHashMap, FxHashSet};
 use lde::Isa;
 
 use scarf::analysis::{self, Cfg, Control, FuncAnalysis, RelocValues};
@@ -45,6 +44,7 @@ use crate::{
     ArgCache, AnalysisCtx, EntryOf, StringRefs, DatType, entry_of_until, single_result_assign,
     string_refs, if_callable_const, OperandExt, OptionExt, bumpvec_with_capacity,
 };
+use crate::hash_map::{HashMap, HashSet};
 use crate::range_list::RangeList;
 
 static UNIT_ARRAY_WIDTHS: &[u8] = &[
@@ -314,8 +314,8 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     }
     if dat_ctx.unknown_global_u8_mem.len() != 1 {
         dat_warn!(
-            dat_ctx, "Expected to have 1 unknown global u8 memory, got {:?}",
-            dat_ctx.unknown_global_u8_mem,
+            dat_ctx, "Expected to have 1 unknown global u8 memory, got {}",
+            dat_ctx.unknown_global_u8_mem.len(),
         );
     }
     game::dat_game_analysis(
@@ -332,7 +332,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
 
 pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     relocs: Rc<Vec<RelocValues<E::VirtualAddress>>>,
-    array_lookup: FxHashMap<E::VirtualAddress, (DatType, u8)>,
+    array_lookup: HashMap<E::VirtualAddress, (DatType, u8)>,
     units: DatTable<E::VirtualAddress>,
     weapons: DatTable<E::VirtualAddress>,
     flingy: DatTable<E::VirtualAddress>,
@@ -342,39 +342,39 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     binary: &'e BinaryFile<E::VirtualAddress>,
     text: &'e BinarySection<E::VirtualAddress>,
     result: DatPatches<'e, E::VirtualAddress>,
-    unchecked_refs: FxHashSet<Rva>,
+    unchecked_refs: HashSet<Rva>,
     // Funcs that seem to possibly only return in al need to be patched to widen
     // the return value to entirety of eax.
     // That's preferred over patching callers to widen the retval on their own side, as
     // then they don't need to worry about the function returning a wider value, e.g.
     // having get_ground_weapon patched to return u16 eventually.
     funcs_needing_retval_patch: BumpVec<'acx, Rva>,
-    funcs_added_for_retval_patch: FxHashSet<Rva>,
+    funcs_added_for_retval_patch: HashSet<Rva>,
     // Funcs that returned u8 and any of their callers now need to patched to widen the
     // return value
     u8_funcs: BumpVec<'acx, Rva>,
     // First unhandled rva in u8_funcs
     u8_funcs_pos: usize,
-    operand_to_u8_op: FxHashMap<OperandHashByAddress<'e>, Option<U8Operand>>,
+    operand_to_u8_op: HashMap<OperandHashByAddress<'e>, Option<U8Operand>>,
     analysis: &'a mut AnalysisCtx<'acx, 'e, E>,
-    patched_addresses: FxHashSet<E::VirtualAddress>,
-    analyzed_functions: FxHashMap<Rva, Box<DatFuncAnalysisState<'acx, 'e, E>>>,
+    patched_addresses: HashSet<E::VirtualAddress>,
+    analyzed_functions: HashMap<Rva, Box<DatFuncAnalysisState<'acx, 'e, E>>>,
     /// Maps array address patch -> index in result vector.
     /// Meant to solve conflicts where an address technically is inside one array but
     /// in reality is `array[unit_id - first_index]`
-    array_address_patches: FxHashMap<Rva, usize>,
+    array_address_patches: HashMap<Rva, usize>,
 
     /// Structures for widening variables that are being passed to a function.
     /// func_arg_widen_requests are used during analysis to lookup if a certain insturction
     /// needs to be widened, func_arg_widen_queue is functions whose callers need to be
     /// analyzed.
-    func_arg_widen_requests: FxHashMap<E::VirtualAddress, [Option<DatType>; 8]>,
+    func_arg_widen_requests: HashMap<E::VirtualAddress, [Option<DatType>; 8]>,
     func_arg_widen_queue: BumpVec<'acx, E::VirtualAddress>,
     /// Which callers of function that needs arg widening have been handled.
-    found_func_arg_widen_refs: FxHashSet<E::VirtualAddress>,
+    found_func_arg_widen_refs: HashSet<E::VirtualAddress>,
     /// Expected to have 1 entry for weapons
     /// global address -> code address
-    unknown_global_u8_mem: FxHashMap<E::VirtualAddress, E::VirtualAddress>,
+    unknown_global_u8_mem: HashMap<E::VirtualAddress, E::VirtualAddress>,
 
     step_iscript: E::VirtualAddress,
     /// Set during analysis, contains refs but isn't fully analyzed.
@@ -384,7 +384,7 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
 }
 
 pub(crate) struct RequiredStableAddressesMap<'acx, Va: VirtualAddress> {
-    map: FxHashMap<Rva, RequiredStableAddresses<'acx, Va>>,
+    map: HashMap<Rva, RequiredStableAddresses<'acx, Va>>,
     bump: &'acx Bump,
 }
 
@@ -396,7 +396,7 @@ pub(crate) struct RequiredStableAddresses<'acx, Va: VirtualAddress> {
 impl<'acx, Va: VirtualAddress> RequiredStableAddressesMap<'acx, Va> {
     pub fn with_capacity(cap: usize, bump: &'acx Bump) -> RequiredStableAddressesMap<Va> {
         RequiredStableAddressesMap {
-            map: FxHashMap::with_capacity_and_hasher(cap, Default::default()),
+            map: HashMap::with_capacity_and_hasher(cap, Default::default()),
             bump,
         }
     }
@@ -537,14 +537,14 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         let step_iscript = analysis.step_iscript().step_fn?;
         let bump = analysis.bump;
         Some(DatPatchContext {
-            array_lookup: FxHashMap::with_capacity_and_hasher(128, Default::default()),
-            operand_to_u8_op: FxHashMap::with_capacity_and_hasher(2048, Default::default()),
+            array_lookup: HashMap::with_capacity_and_hasher(128, Default::default()),
+            operand_to_u8_op: HashMap::with_capacity_and_hasher(2048, Default::default()),
             funcs_needing_retval_patch: bumpvec_with_capacity(16, bump),
             funcs_added_for_retval_patch:
-                FxHashSet::with_capacity_and_hasher(16, Default::default()),
+                HashSet::with_capacity_and_hasher(16, Default::default()),
             u8_funcs: bumpvec_with_capacity(16, bump),
             u8_funcs_pos: 0,
-            unchecked_refs: FxHashSet::with_capacity_and_hasher(1024, Default::default()),
+            unchecked_refs: HashSet::with_capacity_and_hasher(1024, Default::default()),
             units: dat_table(0x36),
             weapons: dat_table(0x18),
             flingy: dat_table(0x7),
@@ -561,15 +561,15 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 arrays_in_code_bytes: Vec::with_capacity(64),
                 set_status_screen_tooltip: None,
             },
-            patched_addresses: FxHashSet::with_capacity_and_hasher(64, Default::default()),
-            analyzed_functions: FxHashMap::with_capacity_and_hasher(64, Default::default()),
-            func_arg_widen_requests: FxHashMap::with_capacity_and_hasher(32, Default::default()),
+            patched_addresses: HashSet::with_capacity_and_hasher(64, Default::default()),
+            analyzed_functions: HashMap::with_capacity_and_hasher(64, Default::default()),
+            func_arg_widen_requests: HashMap::with_capacity_and_hasher(32, Default::default()),
             func_arg_widen_queue: bumpvec_with_capacity(32, bump),
             found_func_arg_widen_refs:
-                FxHashSet::with_capacity_and_hasher(128, Default::default()),
+                HashSet::with_capacity_and_hasher(128, Default::default()),
             step_iscript,
-            unknown_global_u8_mem: FxHashMap::with_capacity_and_hasher(4, Default::default()),
-            array_address_patches: FxHashMap::with_capacity_and_hasher(256, Default::default()),
+            unknown_global_u8_mem: HashMap::with_capacity_and_hasher(4, Default::default()),
+            array_address_patches: HashMap::with_capacity_and_hasher(256, Default::default()),
             update_status_screen_tooltip: E::VirtualAddress::from_u64(0),
             required_stable_addresses: RequiredStableAddressesMap::with_capacity(1024, bump),
         })
@@ -806,7 +806,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
     fn add_u8_func_patches(&mut self) {
         let functions = self.analysis.functions();
         let binary = self.binary;
-        let mut checked_funcs = FxHashSet::with_capacity_and_hasher(64, Default::default());
+        let mut checked_funcs = HashSet::with_capacity_and_hasher(64, Default::default());
         for i in self.u8_funcs_pos.. {
             let func_rva = match self.u8_funcs.get(i) {
                 Some(&s) => s,
@@ -1006,7 +1006,7 @@ struct DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     state: Box<DatFuncAnalysisState<'acx, 'e, E>>,
     ref_address: E::VirtualAddress,
     needed_stack_params: [Option<DatType>; 16],
-    needed_func_results: FxHashSet<u32>,
+    needed_func_results: HashSet<u32>,
     needed_cfg_analysis:
         BumpVec<'acx, (E::VirtualAddress, E::VirtualAddress, Option<Operand<'e>>, DatType)>,
     result: EntryOf<()>,
@@ -1035,7 +1035,7 @@ struct DatFuncAnalysisState<'acx, 'e, E: ExecutionState<'e>> {
     // Eax from calls is written as Custom(index_to_calls_vec)
     // to distinguish them from undefs that come from state merges
     calls: BumpVec<'acx, Rva>,
-    calls_reverse_lookup: FxHashMap<Rva, u32>,
+    calls_reverse_lookup: HashMap<Rva, u32>,
     next_cfg_custom_id: u32,
     u8_instruction_lists: InstructionLists<'acx, U8Operand>,
     stack_size_tracker: stack_analysis::StackSizeTracker<'acx, 'e, E>,
@@ -1064,11 +1064,11 @@ pub(crate) enum IsJumpDest {
 /// More or less equivalent to HashMap<Key, Vec<Rva>>,
 /// but allocates only a single Vec.
 struct InstructionLists<'acx, Key: Hash + Eq> {
-    heads: FxHashMap<Key, usize>,
+    heads: HashMap<Key, usize>,
     /// usize is link to the next operand, or !0 if end of list
     store: BumpVec<'acx, (Rva, usize)>,
     /// Avoid adding same Rva to the list twice
-    used_addresses: FxHashSet<Rva>,
+    used_addresses: HashSet<Rva>,
 }
 
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
@@ -1360,12 +1360,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             state: Box::new(DatFuncAnalysisState {
                 calls: bumpvec_with_capacity(64, bump),
                 calls_reverse_lookup:
-                    FxHashMap::with_capacity_and_hasher(64, Default::default()),
+                    HashMap::with_capacity_and_hasher(64, Default::default()),
                 u8_instruction_lists: InstructionLists {
-                    heads: FxHashMap::with_capacity_and_hasher(32, Default::default()),
+                    heads: HashMap::with_capacity_and_hasher(32, Default::default()),
                     store: bumpvec_with_capacity(128, bump),
                     used_addresses:
-                        FxHashSet::with_capacity_and_hasher(64, Default::default()),
+                        HashSet::with_capacity_and_hasher(64, Default::default()),
                 },
                 next_cfg_custom_id: 0,
                 stack_size_tracker: stack_analysis::StackSizeTracker::new(
@@ -1900,13 +1900,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             needed_operand,
             resolved_dest_address: None,
             unchecked_branches: bumpvec_with_capacity(32, bump),
-            added_unchecked_branches: FxHashSet::with_capacity_and_hasher(32, Default::default()),
+            added_unchecked_branches: HashSet::with_capacity_and_hasher(32, Default::default()),
             parent: self,
             instruction_lists: InstructionLists {
-                heads: FxHashMap::with_capacity_and_hasher(32, Default::default()),
+                heads: HashMap::with_capacity_and_hasher(32, Default::default()),
                 store: bumpvec_with_capacity(128, bump),
                 used_addresses:
-                    FxHashSet::with_capacity_and_hasher(64, Default::default()),
+                    HashSet::with_capacity_and_hasher(64, Default::default()),
             },
             cfg,
             predecessors,
@@ -2325,7 +2325,7 @@ struct CfgAnalyzer<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> {
     unchecked_branches:
         BumpVec<'acx, (E::VirtualAddress, Operand<'e>, E::VirtualAddress, Option<Operand<'e>>)>,
     added_unchecked_branches:
-        FxHashSet<(E::VirtualAddress, OperandHashByAddress<'e>, E::VirtualAddress)>,
+        HashSet<(E::VirtualAddress, OperandHashByAddress<'e>, E::VirtualAddress)>,
     parent: &'a mut DatReferringFuncAnalysis<'b, 'c, 'acx, 'e, E>,
     cfg: &'a Cfg<'e, E, analysis::DefaultState>,
     predecessors: &'a scarf::cfg::Predecessors,

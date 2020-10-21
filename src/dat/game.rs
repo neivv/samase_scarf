@@ -1,5 +1,4 @@
 use bumpalo::collections::Vec as BumpVec;
-use fxhash::{FxHashSet, FxHashMap};
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -9,6 +8,7 @@ use scarf::{BinaryFile, DestOperand, Operand, Operation, Rva};
 use crate::{
     AnalysisCtx, EntryOf, entry_of_until, OperandExt, OptionExt,
 };
+use crate::hash_map::{HashSet, HashMap};
 use super::{
     DatPatches, DatPatch, ExtArrayPatch, RequiredStableAddressesMap, RequiredStableAddresses,
     FunctionHookContext,
@@ -38,12 +38,12 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
         .next()?;
     let game_refs = crate::find_functions_using_global(analysis, game_address);
     let mut unchecked_refs =
-        FxHashSet::with_capacity_and_hasher(game_refs.len(), Default::default());
+        HashSet::with_capacity_and_hasher(game_refs.len(), Default::default());
     for global in game_refs {
         unchecked_refs.insert(global.use_address);
     }
     let checked_functions =
-        FxHashSet::with_capacity_and_hasher(unchecked_refs.len(), Default::default());
+        HashSet::with_capacity_and_hasher(unchecked_refs.len(), Default::default());
     let mut game_ctx = GameContext {
         analysis,
         result,
@@ -51,7 +51,7 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
         checked_functions,
         game,
         game_address,
-        patched_addresses: FxHashMap::with_capacity_and_hasher(128, Default::default()),
+        patched_addresses: HashMap::with_capacity_and_hasher(128, Default::default()),
         unit_strength,
         ai_build_limit: ctx.add_const(player_ai, 0x3f0),
         trigger_all_units,
@@ -101,11 +101,11 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
 pub struct GameContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     analysis: &'a mut AnalysisCtx<'acx, 'e, E>,
     result: &'a mut DatPatches<'e, E::VirtualAddress>,
-    unchecked_refs: FxHashSet<E::VirtualAddress>,
-    checked_functions: FxHashSet<E::VirtualAddress>,
+    unchecked_refs: HashSet<E::VirtualAddress>,
+    checked_functions: HashSet<E::VirtualAddress>,
     game: Operand<'e>,
     game_address: E::VirtualAddress,
-    patched_addresses: FxHashMap<E::VirtualAddress, (usize, Operand<'e>)>,
+    patched_addresses: HashMap<E::VirtualAddress, (usize, Operand<'e>)>,
     unit_strength: Operand<'e>,
     ai_build_limit: Operand<'e>,
     trigger_all_units: Operand<'e>,
@@ -121,7 +121,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
         let ctx = self.analysis.ctx;
         let bump = self.analysis.bump;
         let functions = self.analysis.functions();
-        let mut function_ends = FxHashMap::with_capacity_and_hasher(64, Default::default());
+        let mut function_ends = HashMap::with_capacity_and_hasher(64, Default::default());
         while let Some(game_ref_addr) = self.unchecked_refs.iter().cloned().next() {
             let result = entry_of_until(binary, &functions, game_ref_addr, |entry| {
                 if self.checked_functions.insert(entry) {

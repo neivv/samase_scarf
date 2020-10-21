@@ -27,6 +27,7 @@ mod file;
 mod firegraft;
 mod game;
 mod game_init;
+mod hash_map;
 mod iscript;
 mod map;
 mod network;

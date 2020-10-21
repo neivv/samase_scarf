@@ -1,7 +1,6 @@
 use std::convert::TryInto;
 
 use bumpalo::collections::Vec as BumpVec;
-use fxhash::FxHashMap;
 
 use scarf::{MemAccessSize, Operand, Operation, DestOperand, Rva, BinaryFile, OperandCtx};
 use scarf::analysis::{self, Control, FuncAnalysis};
@@ -12,6 +11,7 @@ use crate::{
     ArgCache, AnalysisCtx, OptionExt, single_result_assign, entry_of_until, EntryOf, string_refs,
     bumpvec_with_capacity,
 };
+use crate::hash_map::HashMap;
 
 pub struct Sprites<'e, Va: VirtualAddress> {
     pub sprite_hlines: Option<Operand<'e>>,
@@ -90,7 +90,7 @@ pub(crate) fn sprites<'e, E: ExecutionState<'e>>(
         active_list_candidate_tail: None,
         ecx: ctx.register(1),
         create_lone_sprite: None,
-        function_to_custom_map: FxHashMap::with_capacity_and_hasher(16, Default::default()),
+        function_to_custom_map: HashMap::with_capacity_and_hasher(16, Default::default()),
         custom_to_function_map: bumpvec_with_capacity(16, bump),
         sprite_x_position: None,
         sprite_y_position: None,
@@ -153,14 +153,14 @@ struct SpriteAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     //     *last_active = *first_free;
     // }
     // If detecting such branch, store its address and first_active
-    active_list_candidate_branches: FxHashMap<E::VirtualAddress, Operand<'e>>,
+    active_list_candidate_branches: HashMap<E::VirtualAddress, Operand<'e>>,
     is_checking_active_list_candidate: Option<Operand<'e>>,
     active_list_candidate_head: Option<Operand<'e>>,
     active_list_candidate_tail: Option<Operand<'e>>,
     ecx: Operand<'e>,
     create_lone_sprite: Option<E::VirtualAddress>,
     // Dest, arg1, arg2 if Mem32[x] where the resolved value is a constant
-    function_to_custom_map: FxHashMap<(Rva, Option<u64>, Option<u64>), u32>,
+    function_to_custom_map: HashMap<(Rva, Option<u64>, Option<u64>), u32>,
     custom_to_function_map: BumpVec<'acx, ChildFunctionFormula<'e>>,
     sprite_x_position: Option<(Operand<'e>, u32, MemAccessSize)>,
     sprite_y_position: Option<(Operand<'e>, u32, MemAccessSize)>,
@@ -852,7 +852,7 @@ struct FowSpriteAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     active: IncompleteList<'e>,
     // Explanation for these is at SpriteAnalyzer
     last_ptr_candidates: BumpVec<'acx, (Operand<'e>, Operand<'e>)>,
-    free_list_candidate_branches: FxHashMap<E::VirtualAddress, Operand<'e>>,
+    free_list_candidate_branches: HashMap<E::VirtualAddress, Operand<'e>>,
     is_checking_free_list_candidate: Option<Operand<'e>>,
     free_list_candidate_head: Option<Operand<'e>>,
     free_list_candidate_tail: Option<Operand<'e>>,
