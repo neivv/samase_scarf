@@ -34,6 +34,10 @@ fn main() {
         let ok = arg.to_str()? == "--dat-patches";
         Some(()).filter(|()| ok)
     }).is_some();
+    let do_dump_euds = std::env::args_os().nth(2).and_then(|arg| {
+        let ok = arg.to_str()? == "--dump-euds";
+        Some(()).filter(|()| ok)
+    }).is_some();
 
     let mut binary = scarf::parse(&exe).unwrap();
     let relocs = scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary).unwrap();
@@ -50,6 +54,13 @@ fn main() {
     }
     if do_dump_vtables {
         dump_vtables(&binary, &mut analysis);
+        return;
+    }
+    if do_dump_euds {
+        let euds = analysis.eud_table();
+        for eud in &euds.euds {
+            println!("{:08x}:{:x} = {} ({:08x})", eud.address, eud.size, eud.operand, eud.flags);
+        }
         return;
     }
     if do_dump_dat_patches {
