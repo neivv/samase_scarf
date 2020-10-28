@@ -651,7 +651,15 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         field_size: u8,
         add_unchecked_ref_analysis: bool,
     ) {
-        let start = self.relocs.binary_search_by(|x| match x.value >= array_ptr {
+        let start_ptr = match dat {
+            // There are some 1-indexed unit ids
+            // Ai attack forces refers to flags,
+            // and for some reason armor and only armor is written with -1
+            // pointer with chk unit settings.
+            DatType::Units if matches!(field_id, 0x16 | 0x1b) => array_ptr - field_size as u32,
+            _ => array_ptr,
+        };
+        let start = self.relocs.binary_search_by(|x| match x.value >= start_ptr {
             true => Ordering::Greater,
             false => Ordering::Less,
         }).unwrap_err();
@@ -664,32 +672,61 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             };
             let address = reloc.address;
             let rva = Rva((address.as_u64() - self.binary.base.as_u64()) as u32);
-            let offset_bytes = (reloc.value.as_u64() - array_ptr.as_u64()) as i32;
+            let offset_bytes = (reloc.value.as_u64().wrapping_sub(array_ptr.as_u64())) as i32;
             let offset = (start_index as i32).saturating_add(offset_bytes / field_size as i32);
             let byte_offset = offset_bytes as u32 % field_size as u32;
-            match self.array_address_patches.entry(rva) {
-                Entry::Occupied(_) => {
-                    // Overlap, if the offset isn't 0 it's likely 0 entry
-                    // for an array whose start_index isn't 0
-                    if byte_offset == 0 {
-                        dat_warn!(
-                            self, "Conflict with dat global refs @ {:?}  {:?}:{:x}",
-                            address, dat, field_id,
-                        );
-                    }
-                    continue;
-                }
-                Entry::Vacant(e) => {
-                    e.insert(self.result.patches.len());
-                }
-            }
-            self.result.patches.push(DatPatch::Array(DatArrayPatch {
+            let array_patch = DatPatch::Array(DatArrayPatch {
                 dat,
                 field_id,
                 address,
                 entry: offset,
                 byte_offset,
-            }));
+            });
+            match self.array_address_patches.entry(rva) {
+                Entry::Occupied(e) => {
+                    enum Action {
+                        UseOld,
+                        UseNew,
+                        Warn,
+                    }
+                    // Overlap, if the offset isn't 0 it's likely 0 entry
+                    // for an array whose start_index isn't 0
+                    // Also assume that entry -1 is more correct than something else.
+                    let index = *e.get();
+                    let action = if byte_offset != 0 {
+                        Action::UseOld
+                    } else {
+                        if let DatPatch::Array(ref patch) = self.result.patches[index] {
+                            if offset == -1 && patch.entry != -1 {
+                                Action::UseNew
+                            } else if patch.entry == -1 && offset != -1 {
+                                Action::UseOld
+                            } else {
+                                Action::Warn
+                            }
+                        } else {
+                            Action::Warn
+                        }
+                    };
+                    match action {
+                        Action::UseOld => continue,
+                        Action::Warn => {
+                            dat_warn!(
+                                self, "Conflict with dat global refs @ {:?}  {:?}:{:x}",
+                                address, dat, field_id,
+                            );
+                            continue;
+                        }
+                        Action::UseNew => {
+                            self.result.patches[index] = array_patch;
+                        }
+                    }
+                }
+                Entry::Vacant(e) => {
+                    e.insert(self.result.patches.len());
+                    self.result.patches.push(array_patch);
+                }
+            }
             // Assuming that array ref analysis for hardcoded indices isn't important.
             // (It isn't as of this writing)
             // Adding them as well would require better entry_of results as currently
