@@ -1145,7 +1145,8 @@ fn everything_1236a() {
 
 #[test]
 fn everything_1236b() {
-    test_with_extra_checks(Path::new("1236b.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1236b.exe"), |_ctx, analysis| {
+        assert_eq!(analysis.play_sound().unwrap().0, 0x007b03f0);
     })
 }
 
@@ -1718,6 +1719,7 @@ fn test_nongeneric<'e>(
         "original_chk_player_types",
     );
     assert!(analysis.give_ai().is_some());
+    assert!(analysis.play_sound().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

@@ -38,6 +38,7 @@ mod renderer;
 mod requirements;
 mod rng;
 mod save;
+mod sound;
 mod step_order;
 mod sprites;
 mod switch;
@@ -254,6 +255,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     chk_init_players: Cached<Option<Operand<'e>>>,
     original_chk_player_types: Cached<Option<Operand<'e>>>,
     give_ai: Cached<Option<E::VirtualAddress>>,
+    play_sound: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
 }
 
@@ -533,6 +535,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 chk_init_players: Default::default(),
                 original_chk_player_types: Default::default(),
                 give_ai: Default::default(),
+                play_sound: Default::default(),
                 dat_tables: DatTables::new(),
             },
             binary,
@@ -1082,6 +1085,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn give_ai(&mut self) -> Option<E::VirtualAddress> {
         self.enter(|x| x.give_ai())
+    }
+
+    pub fn play_sound(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.play_sound())
     }
 
     /// Mainly for tests/dump
@@ -2453,6 +2460,15 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
         self.cache.give_ai.cache(&result);
         result
     }
+
+    fn play_sound(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.play_sound.cached() {
+            return cached;
+        }
+        let result = sound::play_sound(self);
+        self.cache.play_sound.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2975,6 +2991,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn give_ai(&mut self) -> Option<VirtualAddress> {
         self.0.give_ai()
+    }
+
+    pub fn play_sound(&mut self) -> Option<VirtualAddress> {
+        self.0.play_sound()
     }
 }
 

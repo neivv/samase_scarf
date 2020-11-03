@@ -534,6 +534,7 @@ fn main() {
         format_op_operand(analysis.original_chk_player_types()),
     );
     println!("give_ai: {:?}", analysis.give_ai());
+    println!("play_sound: {:?}", analysis.play_sound());
 
     let undef = ctx.new_undef();
     println!();
