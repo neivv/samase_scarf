@@ -68,7 +68,7 @@ pub use crate::dat::{
     DatTablePtr, DatPatch, DatPatches, DatArrayPatch, DatEntryCountPatch, DatReplaceFunc
 };
 pub use crate::dialog::{MouseXy, TooltipRelated};
-pub use crate::eud::EudTable;
+pub use crate::eud::{Eud, EudTable};
 pub use crate::firegraft::RequirementTables;
 pub use crate::game::{Limits};
 pub use crate::game_init::{GameInit, InitGame, ImagesLoaded, SinglePlayerStart, SelectMapEntry};

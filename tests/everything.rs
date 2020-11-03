@@ -8,7 +8,7 @@ use std::path::Path;
 use scarf::{Operand, OperandType, VirtualAddress, ExecutionStateX86, OperandContext, OperandCtx};
 use scarf::operand::Register;
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
-use samase_scarf::DatType;
+use samase_scarf::{DatType, Eud};
 
 #[test]
 fn everything_1207() {
@@ -1426,15 +1426,29 @@ fn test_nongeneric<'e>(
             assert_eq!(euds.euds.len(), 0);
         } else {
             assert_eq!(euds.euds.len(), 698);
+            check_euds(binary, &euds.euds, "698_euds.txt");
         }
     } else if minor_version == 22 {
-        if patch_version < 2 {
+        if patch_version < 1 && revision < b'e' {
+            // 1220 to 1220d, added logic for editing race sounds?
             assert_eq!(euds.euds.len(), 698);
+            check_euds(binary, &euds.euds, "698_euds_2.txt");
+        } else if patch_version < 2 {
+            // Status screen marked as uneditable(?) from 1220e to 1221c
+            assert_eq!(euds.euds.len(), 698);
+            check_euds(binary, &euds.euds, "698_euds_3.txt");
         } else {
+            // 1222 =>
             assert_eq!(euds.euds.len(), 705);
+            check_euds(binary, &euds.euds, "705_euds.txt");
         }
     } else {
+        // 1230 =>
+        // Removed keystate (00596A18)
+        // 0068c204, and mouse pos (006cddc4)
+        // They probably are now emulated in a different path not detected by this
         assert_eq!(euds.euds.len(), 702);
+        check_euds(binary, &euds.euds, "702_euds.txt");
     }
 
     let map_tile_flags = analysis.map_tile_flags();
@@ -1796,6 +1810,102 @@ fn check_global_struct<Va: VirtualAddressTrait>(
             addr < data.virtual_address + data.virtual_size,
         "value of {} is invalid: {:x}", name, c,
     );
+}
+
+/// Checks that all euds in `compare_file` (Generated with --dump-euds) exist.
+fn check_euds<Va: VirtualAddressTrait>(
+    binary: &scarf::BinaryFile<Va>,
+    euds: &[Eud],
+    compare_file: &str,
+) {
+    // addr, size, flags
+    fn parse_line(line: &str) -> Option<(u32, u32, u32)> {
+        let mut tokens = line.split_whitespace();
+        let addr_len = tokens.next()?;
+        let addr = addr_len.split(":").nth(0)?;
+        let addr = u32::from_str_radix(addr, 16).ok()?;
+        let len = addr_len.split(":").nth(1).unwrap_or_else(|| panic!("Line {}", line));
+        let len = u32::from_str_radix(len, 16).ok()?;
+        let _ = tokens.next()?;
+        let _ = tokens.next()?;
+        let flags = tokens.next()?;
+        let flags = flags.get(1..(flags.len() - 1))?;
+        let flags = u32::from_str_radix(flags, 16).ok()?;
+        Some((addr, len, flags))
+    }
+
+    let mut ok = true;
+    let data = std::fs::read(&format!("tests/euds/{}", compare_file)).unwrap();
+    let data = String::from_utf8_lossy(&data);
+    for line in data.lines().filter(|x| !x.trim().is_empty()) {
+        let (addr, size, flags) = parse_line(line)
+            .unwrap_or_else(|| panic!("Line {}", line));
+        let start_index = euds.binary_search_by(|x| match x.address < addr {
+            true => std::cmp::Ordering::Less,
+            false => std::cmp::Ordering::Greater,
+        }).unwrap_or_else(|e| e);
+        let index = euds
+            .iter()
+            .skip(start_index)
+            .take_while(|x| x.address == addr)
+            .position(|x| x.size == size)
+            .map(|x| x + start_index);
+        if let Some(idx) = index {
+            let eud = &euds[idx];
+            if eud.flags != flags {
+                println!(
+                    "EUD address {:08x} flags mismatch: got {:08x} expected {:08x}",
+                    addr, eud.flags, flags,
+                );
+                ok = false;
+            }
+            if let Some(c) = eud.operand.if_constant() {
+                let c = Va::from_u64(c);
+                if !has_section_for_addr(binary, c) {
+                    println!("EUD {:08x} operand {} is outside binary bounds", addr, eud.operand);
+                    ok = false;
+                }
+            } else if let Some(mem) = eud.operand.if_memory() {
+                if mem.size.bits() != Va::SIZE * 8 {
+                    println!("EUD {:08x} operand {} is not word-sized mem", addr, eud.operand);
+                    ok = false;
+                }
+                if let Some(mem_address) = mem.address.if_constant() {
+                    let address_ok = binary.read_address(Va::from_u64(mem_address)).ok()
+                        .filter(|&x| has_section_for_addr(binary, x))
+                        .is_some();
+                    if !address_ok {
+                        println!(
+                            "EUD {:08x} operand {} is outside binary bounds",
+                            addr, eud.operand,
+                        );
+                        ok = false;
+                    }
+                } else {
+                    println!("EUD {:08x} operand {} is outside binary bounds", addr, eud.operand);
+                    ok = false;
+                }
+            } else {
+                println!("EUD {:08x} operand {} is unexpected type", addr, eud.operand);
+                ok = false;
+            }
+        } else {
+            println!("EUD address {:08x}:{:x} not found", addr, size);
+            ok = false;
+        }
+    }
+    if !ok {
+        panic!("EUD check failed");
+    }
+}
+
+pub fn has_section_for_addr<Va: VirtualAddressTrait>(
+    binary: &scarf::BinaryFile<Va>,
+    address: Va,
+) -> bool {
+    binary.sections().any(|x| {
+        address >= x.virtual_address && address < (x.virtual_address + x.virtual_size)
+    })
 }
 
 struct PrintLnLog;
