@@ -1147,6 +1147,7 @@ fn everything_1236a() {
 fn everything_1236b() {
     test_with_extra_checks(Path::new("1236b.exe"), |_ctx, analysis| {
         assert_eq!(analysis.play_sound().unwrap().0, 0x007b03f0);
+        assert_eq!(analysis.ai_prepare_moving_to().unwrap().0, 0x005d1d60);
     })
 }
 
@@ -1734,6 +1735,7 @@ fn test_nongeneric<'e>(
     );
     assert!(analysis.give_ai().is_some());
     assert!(analysis.play_sound().is_some());
+    assert!(analysis.ai_prepare_moving_to().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

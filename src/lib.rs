@@ -256,6 +256,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     original_chk_player_types: Cached<Option<Operand<'e>>>,
     give_ai: Cached<Option<E::VirtualAddress>>,
     play_sound: Cached<Option<E::VirtualAddress>>,
+    ai_prepare_moving_to: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
 }
 
@@ -536,6 +537,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 original_chk_player_types: Default::default(),
                 give_ai: Default::default(),
                 play_sound: Default::default(),
+                ai_prepare_moving_to: Default::default(),
                 dat_tables: DatTables::new(),
             },
             binary,
@@ -1089,6 +1091,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn play_sound(&mut self) -> Option<E::VirtualAddress> {
         self.enter(|x| x.play_sound())
+    }
+
+    pub fn ai_prepare_moving_to(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.ai_prepare_moving_to())
     }
 
     /// Mainly for tests/dump
@@ -2469,6 +2475,15 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
         self.cache.play_sound.cache(&result);
         result
     }
+
+    fn ai_prepare_moving_to(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.ai_prepare_moving_to.cached() {
+            return cached;
+        }
+        let result = ai::ai_prepare_moving_to(self);
+        self.cache.ai_prepare_moving_to.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -2995,6 +3010,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn play_sound(&mut self) -> Option<VirtualAddress> {
         self.0.play_sound()
+    }
+
+    pub fn ai_prepare_moving_to(&mut self) -> Option<VirtualAddress> {
+        self.0.ai_prepare_moving_to()
     }
 }
 

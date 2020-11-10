@@ -9,7 +9,7 @@ use scarf::exec_state::{ExecutionState};
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
 use crate::{
-    ArgCache, OptionExt, OperandExt, single_result_assign, AnalysisCtx,
+    ArgCache, OptionExt, OperandExt, single_result_assign, AnalysisCtx, unwrap_sext,
     find_functions_using_global, entry_of_until, EntryOf, find_callers, DatType,
 };
 use crate::hash_map::HashSet;
@@ -1248,6 +1248,145 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GiveAiAnalyzer<'a
             GiveAiState::Stop => {
                 ctrl.end_branch();
             }
+        }
+    }
+}
+
+pub(crate) fn ai_prepare_moving_to<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
+) -> Option<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    // Check for order_move, state 0, target 0
+    // It calls change_move_target_pos(this, x, y), which does
+    // if (this.ai != null) {
+    //   ai_prepare_moving_to(this, x, y);
+    // }
+    let order_move = crate::step_order::find_order_function(analysis, 0x6)?;
+    let arg_cache = analysis.arg_cache;
+    let mut exec_state = E::initial_state(ctx, binary);
+    let order_state = ctx.mem8(
+        ctx.add_const(
+            ctx.register(1),
+            0x4e,
+        ),
+    );
+    let target = ctx.mem32(
+        ctx.add_const(
+            ctx.register(1),
+            0x5c,
+        ),
+    );
+    exec_state.move_to(&DestOperand::from_oper(order_state), ctx.const_0());
+    exec_state.move_to(&DestOperand::from_oper(target), ctx.const_0());
+    let mut analysis =
+        FuncAnalysis::custom_state(binary, ctx, order_move, exec_state, Default::default());
+    let mut analyzer = AiPrepareMovingToAnalyzer {
+        result: None,
+        arg_cache,
+        inline_depth: 0,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct AiPrepareMovingToAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match *op {
+            Operation::Jump { condition, to } => {
+                if self.inline_depth == 255 {
+                    ctrl.end_branch();
+                    return;
+                }
+                // Check for this.ai == null or this.ai != null
+                let condition = ctrl.resolve(condition);
+                let jump_on_null = crate::if_arithmetic_eq_neq(condition)
+                    .and_then(|x| {
+                        Some((x.0, x.1))
+                            .and_either_other(|x| x.if_constant().filter(|&c| c == 0))?
+                            .if_mem32()?
+                            .if_arithmetic_add_const(0x134)?
+                            .if_register()
+                            .filter(|r| r.0 == 1)?;
+                        Some(x.2)
+                    });
+                let jump_on_null = match jump_on_null {
+                    Some(s) => s,
+                    None => return,
+                };
+                let ai_nonzero_branch = match jump_on_null {
+                    true => ctrl.current_instruction_end(),
+                    false => match to.if_constant() {
+                        Some(s) => E::VirtualAddress::from_u64(s),
+                        None => return,
+                    },
+                };
+                let old_inline_depth = self.inline_depth;
+                self.inline_depth = 255;
+                let exec = ctrl.exec_state().clone();
+                let binary = ctrl.binary();
+                let mut analysis = FuncAnalysis::custom_state(
+                    binary,
+                    ctx,
+                    ai_nonzero_branch,
+                    exec,
+                    Default::default(),
+                );
+                analysis.analyze(self);
+                self.inline_depth = old_inline_depth;
+                ctrl.end_analysis();
+            }
+            Operation::Call(dest) if self.inline_depth < 3 || self.inline_depth == 255 => {
+                // Inline to f(this, this.order_target.x, this.order_target.y)
+                let ecx = ctrl.resolve(ctx.register(1));
+                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                if ecx != ctx.register(1) {
+                    return;
+                }
+                let ok = unwrap_sext(arg1).if_mem16()
+                    .and_then(|x| x.if_arithmetic_add_const(0x58))
+                    .filter(|&x| x == ecx)
+                    .is_some();
+                if !ok {
+                    return;
+                }
+                let ok = unwrap_sext(arg2).if_mem16()
+                    .and_then(|x| x.if_arithmetic_add_const(0x5a))
+                    .filter(|&x| x == ecx)
+                    .is_some();
+                if !ok {
+                    return;
+                }
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if self.inline_depth == 255 {
+                        // First matching call on branch where this.ai != null
+                        // is ai_prepare_moving_to
+                        self.result = Some(dest);
+                        ctrl.end_analysis();
+                        return;
+                    } else {
+                        self.inline_depth += 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                        self.inline_depth = self.inline_depth.saturating_sub(1);
+                    }
+                }
+            }
+            _ => (),
         }
     }
 }
