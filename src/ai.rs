@@ -1390,3 +1390,96 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAna
         }
     }
 }
+
+pub(crate) fn ai_transport_reachability_cached_region<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
+) -> Option<Operand<'e>> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let arg_cache = analysis.arg_cache;
+
+    let prepare_moving = analysis.ai_prepare_moving_to()?;
+    let mut analysis = FuncAnalysis::new(binary, ctx, prepare_moving);
+    let mut analyzer = TransportReachabilityAnalyzer {
+        result: None,
+        arg_cache,
+        inline_depth: 0,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct TransportReachabilityAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<Operand<'e>>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    TransportReachabilityAnalyzer<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match *op {
+            Operation::Jump { condition, .. } => {
+                let condition = ctrl.resolve(condition);
+                // Check for unit_region == Mem32[array + player * 4]
+                // (Or maybe it's comparing dest_region?)
+                let result = condition.if_arithmetic_eq()
+                    .and_either(|x| {
+                        x.if_mem32()
+                            .and_then(|x| x.if_arithmetic_add())
+                            .and_either_other(|x| {
+                                x.if_arithmetic_mul_const(4)?
+                                    .if_mem8()?
+                                    .if_arithmetic_add_const(0x4c)?
+                                    .if_register()
+                                    .filter(|r| r.0 == 1)
+                            })
+                    })
+                    .map(|x| x.0);
+                if single_result_assign(result, &mut self.result) {
+                    ctrl.end_analysis();
+                }
+            }
+            Operation::Call(dest) if self.inline_depth < 3 => {
+                // Inline to f(this, this.order_target.x, this.order_target.y)
+                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                let mut do_inline = false;
+                if self.inline_depth == 0 {
+                    // Inline to cdecl f(this, arg1, arg2) at depth 0
+                    // ("ai_are_on_connected_regions")
+                    do_inline = arg1 == ctx.register(1) &&
+                        arg2 == self.arg_cache.on_entry(0) &&
+                        arg3 == self.arg_cache.on_entry(1);
+                }
+                if !do_inline {
+                    // Also inline to f(this.player, unit_region, dest_region)
+                    // ("ai_region_reachable_without_transport")
+                    // Only checking for player now
+                    do_inline = arg1.if_mem8()
+                        .and_then(|x| x.if_arithmetic_add_const(0x4c))
+                        .and_then(|x| x.if_register())
+                        .filter(|r| r.0 == 1)
+                        .is_some();
+                }
+                if do_inline {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        self.inline_depth += 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                        self.inline_depth = self.inline_depth.saturating_sub(1);
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}

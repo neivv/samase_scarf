@@ -1145,9 +1145,13 @@ fn everything_1236a() {
 
 #[test]
 fn everything_1236b() {
-    test_with_extra_checks(Path::new("1236b.exe"), |_ctx, analysis| {
+    test_with_extra_checks(Path::new("1236b.exe"), |ctx, analysis| {
         assert_eq!(analysis.play_sound().unwrap().0, 0x007b03f0);
         assert_eq!(analysis.ai_prepare_moving_to().unwrap().0, 0x005d1d60);
+        assert_eq!(
+            analysis.ai_transport_reachability_cached_region().unwrap(),
+            ctx.constant(0x010237d0),
+        );
     })
 }
 
@@ -1736,6 +1740,11 @@ fn test_nongeneric<'e>(
     assert!(analysis.give_ai().is_some());
     assert!(analysis.play_sound().is_some());
     assert!(analysis.ai_prepare_moving_to().is_some());
+    check_global_struct_opt(
+        analysis.ai_transport_reachability_cached_region(),
+        binary,
+        "ai_transport_reachability_cached_region",
+    );
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

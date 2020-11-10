@@ -536,6 +536,10 @@ fn main() {
     println!("give_ai: {:?}", analysis.give_ai());
     println!("play_sound: {:?}", analysis.play_sound());
     println!("ai_prepare_moving_to: {:?}", analysis.ai_prepare_moving_to());
+    println!(
+        "ai_transport_reachability_cached_region: {}",
+        format_op_operand(analysis.ai_transport_reachability_cached_region()),
+    );
 
     let undef = ctx.new_undef();
     println!();
