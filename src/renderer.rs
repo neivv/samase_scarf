@@ -2,12 +2,15 @@ use std::rc::Rc;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use scarf::{BinaryFile, MemAccessSize, Operand, OperandType, Operation};
+use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, OperandType, Operation};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::analysis::{self, Control, FuncAnalysis};
 
 use crate::add_terms::collect_arith_add_terms;
-use crate::{AnalysisCtx, ArgCache, EntryOf, OptionExt, entry_of_until, single_result_assign};
+use crate::{
+    AnalysisCtx, ArgCache, EntryOf, OptionExt, entry_of_until, single_result_assign,
+    OperandExt,
+};
 
 #[derive(Clone)]
 pub struct PrismShaders<Va: VirtualAddress> {
@@ -346,4 +349,63 @@ fn is_vertex_shader_name<'e, Va: VirtualAddress>(
         }
     }
     false
+}
+
+pub(crate) fn player_unit_skins<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
+) -> Option<Operand<'e>> {
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+    let arg_cache = analysis.arg_cache;
+    let draw_image = analysis.draw_image()?;
+    // Search for a child function of draw_image
+    // thiscall f(player_unit_skins, player, unit_id, image_id)
+    let mut analyzer = PlayerUnitSkins::<E> {
+        arg_cache,
+        result: None,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, draw_image);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct PlayerUnitSkins<'a, 'e, E: ExecutionState<'e>> {
+    arg_cache: &'a ArgCache<'e, E>,
+    result: Option<Operand<'e>>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(_) => {
+                let ctx = ctrl.ctx();
+                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                let ok = ctx.and_const(arg1, 0xff).if_mem8().is_some() &&
+                    arg3.if_mem16()
+                        .and_then(|x| x.if_arithmetic_add_const(8))
+                        .and_then(|x| x.if_register())
+                        .filter(|r| r.0 == 1)
+                        .is_some();
+                if ok {
+                    let ecx = ctrl.resolve(ctx.register(1));
+                    if ecx.if_constant().is_some() || ctrl.if_mem_word(ecx).is_some() {
+                        if single_result_assign(Some(ecx), &mut self.result) {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+                // Assume cdecl calls
+                ctrl.skip_operation();
+                let state = ctrl.exec_state();
+                state.move_to(
+                    &DestOperand::Register64(scarf::operand::Register(0)),
+                    ctx.new_undef(),
+                );
+            }
+            _ => (),
+        }
+    }
 }

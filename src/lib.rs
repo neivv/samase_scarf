@@ -258,6 +258,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     play_sound: Cached<Option<E::VirtualAddress>>,
     ai_prepare_moving_to: Cached<Option<E::VirtualAddress>>,
     ai_transport_reachability_cached_region: Cached<Option<Operand<'e>>>,
+    player_unit_skins: Cached<Option<Operand<'e>>>,
     dat_tables: DatTables<'e>,
 }
 
@@ -540,6 +541,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 play_sound: Default::default(),
                 ai_prepare_moving_to: Default::default(),
                 ai_transport_reachability_cached_region: Default::default(),
+                player_unit_skins: Default::default(),
                 dat_tables: DatTables::new(),
             },
             binary,
@@ -1101,6 +1103,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn ai_transport_reachability_cached_region(&mut self) -> Option<Operand<'e>> {
         self.enter(|x| x.ai_transport_reachability_cached_region())
+    }
+
+    pub fn player_unit_skins(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.player_unit_skins())
     }
 
     /// Mainly for tests/dump
@@ -2499,6 +2505,15 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
         self.cache.ai_transport_reachability_cached_region.cache(&result);
         result
     }
+
+    fn player_unit_skins(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.player_unit_skins.cached() {
+            return cached;
+        }
+        let result = renderer::player_unit_skins(self);
+        self.cache.player_unit_skins.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -3033,6 +3048,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn ai_transport_reachability_cached_region(&mut self) -> Option<Operand<'e>> {
         self.0.ai_transport_reachability_cached_region()
+    }
+
+    pub fn player_unit_skins(&mut self) -> Option<Operand<'e>> {
+        self.0.player_unit_skins()
     }
 }
 

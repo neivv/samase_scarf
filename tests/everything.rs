@@ -613,6 +613,7 @@ fn everything_1230a() {
         let active_hidden = analysis.active_hidden_units();
         assert_eq!(active_hidden.first_active_unit.unwrap(), ctx.mem32(ctx.constant(0xddf144)));
         assert_eq!(active_hidden.first_hidden_unit.unwrap(), ctx.mem32(ctx.constant(0xddf154)));
+        assert_eq!(analysis.player_unit_skins().unwrap(), ctx.constant(0x00fe9b10));
     })
 }
 
@@ -1152,6 +1153,7 @@ fn everything_1236b() {
             analysis.ai_transport_reachability_cached_region().unwrap(),
             ctx.constant(0x010237d0),
         );
+        assert_eq!(analysis.player_unit_skins().unwrap(), ctx.constant(0x011fbb50));
     })
 }
 
@@ -1745,6 +1747,13 @@ fn test_nongeneric<'e>(
         binary,
         "ai_transport_reachability_cached_region",
     );
+    // Became a thing since 1.23.0 (carbot)
+    let skins = analysis.player_unit_skins();
+    if minor_version >= 23 {
+        check_global_struct_opt(skins, binary, "player_unit_skins");
+    } else {
+        assert!(skins.is_none());
+    }
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

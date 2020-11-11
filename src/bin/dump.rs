@@ -540,6 +540,7 @@ fn main() {
         "ai_transport_reachability_cached_region: {}",
         format_op_operand(analysis.ai_transport_reachability_cached_region()),
     );
+    println!("player_unit_skins: {}", format_op_operand(analysis.player_unit_skins()));
 
     let undef = ctx.new_undef();
     println!();
