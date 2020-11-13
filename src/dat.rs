@@ -22,6 +22,7 @@ macro_rules! dat_warn {
 mod game;
 mod units;
 mod stack_analysis;
+mod triggers;
 mod wireframe;
 
 use std::cmp::Ordering;
@@ -326,6 +327,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     units::init_units_analysis(dat_ctx)?;
     units::command_analysis(dat_ctx)?;
     wireframe::grp_index_patches(dat_ctx)?;
+    triggers::trigger_analysis(dat_ctx)?;
     dat_ctx.finish_all_patches();
     Some(mem::replace(&mut dat_ctx.result, DatPatches::empty()))
 }
