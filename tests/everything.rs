@@ -455,12 +455,12 @@ fn everything_1221c() {
         let sprites = analysis.sprites();
         assert_eq!(sprites.sprite_hlines.unwrap(), ctx.constant(0x00e7ccc0));
         assert_eq!(sprites.sprite_hlines_end.unwrap(), ctx.constant(0x00e7d0c0));
-        assert_eq!(sprites.first_free_sprite.unwrap(), ctx.constant(0x00e7c9a0));
-        assert_eq!(sprites.last_free_sprite.unwrap(), ctx.constant(0x00e7c9a4));
-        assert_eq!(sprites.first_lone.unwrap(), ctx.constant(0x00e7d610));
-        assert_eq!(sprites.last_lone.unwrap(), ctx.constant(0x00e7d614));
-        assert_eq!(sprites.first_free_lone.unwrap(), ctx.constant(0x00e7d608));
-        assert_eq!(sprites.last_free_lone.unwrap(), ctx.constant(0x00e7d60c));
+        assert_eq!(sprites.first_free_sprite.unwrap(), ctx.mem32(ctx.constant(0x00e7c9a0)));
+        assert_eq!(sprites.last_free_sprite.unwrap(), ctx.mem32(ctx.constant(0x00e7c9a4)));
+        assert_eq!(sprites.first_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d610)));
+        assert_eq!(sprites.last_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d614)));
+        assert_eq!(sprites.first_free_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d608)));
+        assert_eq!(sprites.last_free_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d60c)));
     })
 }
 
@@ -577,10 +577,10 @@ fn everything_1224c() {
         assert_eq!(iscript.iscript_bin.unwrap(), ctx.mem32(ctx.constant(0xde75c4)));
         assert_eq!(iscript.opcode_check.unwrap(), (VirtualAddress(0x00540A2A), 2));
         let bullets = analysis.bullet_creation();
-        assert_eq!(bullets.first_active_bullet.unwrap(), ctx.constant(0xde60c4));
-        assert_eq!(bullets.last_active_bullet.unwrap(), ctx.constant(0xde60c8));
-        assert_eq!(bullets.first_free_bullet.unwrap(), ctx.constant(0xde6094));
-        assert_eq!(bullets.last_free_bullet.unwrap(), ctx.constant(0xde6098));
+        assert_eq!(bullets.first_active_bullet.unwrap(), ctx.mem32(ctx.constant(0xde60c4)));
+        assert_eq!(bullets.last_active_bullet.unwrap(), ctx.mem32(ctx.constant(0xde60c8)));
+        assert_eq!(bullets.first_free_bullet.unwrap(), ctx.mem32(ctx.constant(0xde6094)));
+        assert_eq!(bullets.last_free_bullet.unwrap(), ctx.mem32(ctx.constant(0xde6098)));
         assert_eq!(bullets.create_bullet.unwrap().0, 0x531f00);
         assert_eq!(bullets.active_iscript_unit.unwrap(), ctx.mem32(ctx.constant(0xde7190)));
 
@@ -708,10 +708,10 @@ fn everything_1231a() {
         let commands = analysis.process_lobby_commands();
         assert_eq!(commands.unwrap().0, 0x00703c50);
         let fow = analysis.fow_sprites();
-        assert_eq!(fow.first_active.unwrap(), ctx.constant(0x0E32110));
-        assert_eq!(fow.last_active.unwrap(), ctx.constant(0x0E32114));
-        assert_eq!(fow.first_free.unwrap(), ctx.constant(0x0E32108));
-        assert_eq!(fow.last_free.unwrap(), ctx.constant(0x0E3210C));
+        assert_eq!(fow.first_active.unwrap(), ctx.mem32(ctx.constant(0x0E32110)));
+        assert_eq!(fow.last_active.unwrap(), ctx.mem32(ctx.constant(0x0E32114)));
+        assert_eq!(fow.first_free.unwrap(), ctx.mem32(ctx.constant(0x0E32108)));
+        assert_eq!(fow.last_free.unwrap(), ctx.mem32(ctx.constant(0x0E3210C)));
 
         let rng = analysis.rng();
         assert_eq!(rng.seed.unwrap(), ctx.mem32(ctx.constant(0x1030770)));
@@ -1380,12 +1380,12 @@ fn test_nongeneric<'e>(
     let sprites = analysis.sprites();
     check_global_struct_opt(sprites.sprite_hlines, binary, "sprite hlines");
     check_global_struct_opt(sprites.sprite_hlines_end, binary, "sprite hlines end");
-    check_global_struct_opt(sprites.first_free_sprite, binary, "first free sprite");
-    check_global_struct_opt(sprites.last_free_sprite, binary, "last free sprite");
-    check_global_struct_opt(sprites.first_lone, binary, "first lone sprite");
-    check_global_struct_opt(sprites.last_lone, binary, "last lone sprite");
-    check_global_struct_opt(sprites.first_free_lone, binary, "first free lone sprite");
-    check_global_struct_opt(sprites.last_free_lone, binary, "first free lone sprite");
+    check_global_opt(sprites.first_free_sprite, binary, "first free sprite");
+    check_global_opt(sprites.last_free_sprite, binary, "last free sprite");
+    check_global_opt(sprites.first_lone, binary, "first lone sprite");
+    check_global_opt(sprites.last_lone, binary, "last lone sprite");
+    check_global_opt(sprites.first_free_lone, binary, "first free lone sprite");
+    check_global_opt(sprites.last_free_lone, binary, "first free lone sprite");
     assert!(sprites.create_lone_sprite.is_some());
     let (x, x_off, x_size) = sprites.sprite_x_position.unwrap();
     let (y, y_off, y_size) = sprites.sprite_y_position.unwrap();
@@ -1482,10 +1482,10 @@ fn test_nongeneric<'e>(
     let local_player_id = analysis.local_player_id();
     check_global(local_player_id.unwrap(), binary, "local_player_id");
     let bullets = analysis.bullet_creation();
-    check_global_struct_opt(bullets.first_free_bullet, binary, "first free bullet");
-    check_global_struct_opt(bullets.last_free_bullet, binary, "last free bullet");
-    check_global_struct_opt(bullets.first_active_bullet, binary, "first active bullet");
-    check_global_struct_opt(bullets.last_active_bullet, binary, "last active bullet");
+    check_global_opt(bullets.first_free_bullet, binary, "first free bullet");
+    check_global_opt(bullets.last_free_bullet, binary, "last free bullet");
+    check_global_opt(bullets.first_active_bullet, binary, "first active bullet");
+    check_global_opt(bullets.last_active_bullet, binary, "last active bullet");
     check_global(bullets.active_iscript_unit.unwrap(), binary, "active iscript unit");
     assert!(bullets.create_bullet.is_some());
 
@@ -1522,10 +1522,10 @@ fn test_nongeneric<'e>(
     check_global(coords.scale.unwrap(), binary, "ui_scale");
 
     let fow = analysis.fow_sprites();
-    check_global_struct_opt(fow.first_active, binary, "first fow sprite");
-    check_global_struct_opt(fow.last_active, binary, "last fow sprite");
-    check_global_struct_opt(fow.first_free, binary, "first free fow sprite");
-    check_global_struct_opt(fow.last_free, binary, "first free fow sprite");
+    check_global_opt(fow.first_active, binary, "first fow sprite");
+    check_global_opt(fow.last_active, binary, "last fow sprite");
+    check_global_opt(fow.first_free, binary, "first free fow sprite");
+    check_global_opt(fow.last_free, binary, "first free fow sprite");
 
     let init_map_from_path = analysis.init_map_from_path();
     assert!(init_map_from_path.is_some());
@@ -1779,6 +1779,17 @@ fn check_game<Va: VirtualAddressTrait>(
         addr >= data.virtual_address && addr < data.virtual_address + data.virtual_size
     }).next().is_some();
     assert!(has_const_mem, "{} didn't have const mem address", name);
+}
+
+fn check_global_opt<Va: VirtualAddressTrait>(
+    op: Option<Operand<'_>>,
+    binary: &scarf::BinaryFile<Va>,
+    name: &str,
+) {
+    let op = op.unwrap_or_else(|| {
+        panic!("{} not found", name);
+    });
+    check_global(op, binary, name);
 }
 
 fn check_global<Va: VirtualAddressTrait>(

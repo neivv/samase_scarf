@@ -279,8 +279,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                 let ctx = ctrl.ctx();
                 // first_free_sprite = (*first_free_sprite).next, e.g.
                 // mov [first_free_sprite], [[first_free_sprite] + 4]
-                let first_sprite_next = ctx.mem32(
-                    ctx.add(ctx.mem32(dest_addr), ctx.const_4()),
+                let first_sprite_next = ctrl.mem_word(
+                    ctx.add_const(ctrl.mem_word(dest_addr), E::VirtualAddress::SIZE as u64),
                 );
                 if value == first_sprite_next {
                     self.set_first_ptr(dest_addr.clone());
@@ -294,10 +294,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                 if let Some(inner) = value.if_mem32().and_then(|x| x.if_mem32()) {
                     if dest_addr.iter().all(|x| x != inner) {
                         if self.is_unpaired_first_ptr(inner) {
-                            self.set_last_ptr(dest_addr.clone());
+                            self.set_last_ptr(dest_addr);
                             return;
                         } else {
-                            self.last_ptr_candidates.push((inner.clone(), dest_addr.clone()));
+                            self.last_ptr_candidates.push((inner, dest_addr));
                         }
                     }
                 }
@@ -317,11 +317,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                         _ => None
                     };
                     if let Some(first_free) = free_list.and_then(|x| x.head) {
-                        if let Some(_) = value.if_mem32().filter(|&x| x == first_free) {
+                        if value == first_free {
                             if dest_addr == head_candidate {
-                                self.active_list_candidate_head = Some(dest_addr.clone());
+                                self.active_list_candidate_head = Some(dest_addr);
                             } else {
-                                self.active_list_candidate_tail = Some(dest_addr.clone());
+                                self.active_list_candidate_tail = Some(dest_addr);
                             }
                         }
                     }
@@ -349,7 +349,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                     }
                     None => return,
                 };
-                if let Some(val) = val.if_mem32() {
+                if let Some(inner) = ctrl.if_mem_word(val) {
                     let addr = match jump_if_null {
                         true => dest_addr,
                         false => ctrl.current_instruction_end(),
@@ -360,7 +360,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                         self.lone_free.head.filter(|&x| x == val).is_some() ||
                         self.sprites_free.head.filter(|&x| x == val).is_some();
                     if !is_free_list_head {
-                        self.active_list_candidate_branches.insert(addr, val.clone());
+                        self.active_list_candidate_branches.insert(addr, inner);
                     }
                 }
             }
@@ -402,8 +402,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                         }
                     }
                     FindSpritesState::CreateLone_Post => {
-                        self.lone_active.head = Some(head);
-                        self.lone_active.tail = Some(tail);
+                        self.lone_active.head = Some(ctrl.mem_word(head));
+                        self.lone_active.tail = Some(ctrl.mem_word(tail));
                         ctrl.end_analysis();
                     }
                     _ => (),
@@ -444,10 +444,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
             },
             None => (dest_addr, 0),
         };
-        let storing_to_sprite = match base.if_memory() {
-            Some(mem) => mem.address == first_free,
-            None => false,
-        };
+        let storing_to_sprite = base == first_free;
         if !storing_to_sprite || offset < 0x10 {
             return;
         }
@@ -573,7 +570,8 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
 
     fn is_list_call(&self, arg1: Operand<'e>, ecx: Operand<'e>) -> bool {
         let word_size = E::VirtualAddress::SIZE as u64;
-        if let Some(addr) = ecx.if_mem32() {
+        if let Some(mem) = ecx.if_memory().filter(|x| x.size == E::WORD_SIZE) {
+            let addr = mem.address;
             // It's remove call if ecx == [arg1], (item == [head])
             if addr == arg1 {
                 return true;
@@ -589,12 +587,12 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
                     .is_some();
             if arg1_ok {
                 if let Some(head) = self.lone_free.head {
-                    if addr == head {
+                    if ecx == head {
                         return true;
                     }
                 }
                 if let Some(head) = self.sprites_free.head {
-                    if addr == head {
+                    if ecx == head {
                         return true;
                     }
                 }
@@ -610,12 +608,18 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
     fn is_unpaired_first_ptr(&self, first: Operand<'e>) -> bool {
         match self.state {
             FindSpritesState::CreateLone => {
-                if let Some(_) = self.lone_free.head.filter(|&x| x == first) {
+                if let Some(_) = self.lone_free.head
+                    .and_then(|x| x.if_memory())
+                    .filter(|x| x.address == first)
+                {
                     return self.lone_free.tail.is_none();
                 }
             }
             FindSpritesState::CreateSprite => {
-                if let Some(_) = self.sprites_free.head.filter(|&x| x == first) {
+                if let Some(_) = self.sprites_free.head
+                    .and_then(|x| x.if_memory())
+                    .filter(|x| x.address == first)
+                {
                     return self.sprites_free.tail.is_none();
                 }
             }
@@ -625,6 +629,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
     }
 
     fn set_first_ptr(&mut self, value: Operand<'e>) {
+        let value = E::operand_mem_word(self.ctx, value);
         if self.lone_free.head.is_none() {
             self.state = FindSpritesState::CreateLone;
             self.lone_free.head = Some(value);
@@ -648,6 +653,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
                 return;
             }
         };
+        let value = E::operand_mem_word(self.ctx, value);
         if let Some(_old) = out {
             test_assert_eq!(*_old, value);
             return;
@@ -871,10 +877,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
             // Ideally the next thing being handled should be fow sprites.
             if let Operation::Move(_, value, None) = *op {
                 let value = ctrl.resolve(value);
-                let is_first_lone = value.if_mem32()
-                    .filter(|&x| x == self.first_lone)
-                    .is_some();
-                if is_first_lone {
+                if value == self.first_lone {
                     self.state = FowSpritesState::StepLoneSpritesFound;
                     self.inline_depth = 0;
                     let ctx = ctrl.ctx();
@@ -903,7 +906,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                         }
                         FowSpritesState::StepLoneSpritesFound => {
                             let ecx = ctrl.resolve(self.ecx);
-                            if ecx.if_mem32().is_none() {
+                            if ctrl.if_mem_word(ecx).is_none() {
                                 return;
                             }
                             self.inline_depth += 1;
@@ -917,7 +920,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                 }
             }
             Operation::Move(DestOperand::Memory(ref mem), value, _) => {
-                if mem.size != MemAccessSize::Mem32 {
+                if mem.size != E::WORD_SIZE {
                     return;
                 }
                 if self.state != FowSpritesState::StepLoneSpritesFound {
@@ -927,15 +930,16 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                 // frees fow sprites while the function SpriteAnalyzer checks allocates sprites
                 let ctx = ctrl.ctx();
                 let dest_addr = ctrl.resolve(mem.address);
+                let dest_value = ctrl.mem_word(dest_addr);
                 let value = ctrl.resolve(value);
                 // first_active_sprite = (*first_active_sprite).next, e.g.
                 // mov [first_active_sprite], [[first_active_sprite] + 4]
-                let first_sprite_next = ctx.mem32(
-                    ctx.add(ctx.mem32(dest_addr), ctx.const_4())
+                let first_sprite_next = ctrl.mem_word(
+                    ctx.add_const(dest_value, E::VirtualAddress::SIZE as u64),
                 );
                 if value == first_sprite_next {
-                    self.active.head = Some(dest_addr);
-                    if let Some(last) = self.last_ptr_first_known(dest_addr) {
+                    self.active.head = Some(dest_value);
+                    if let Some(last) = self.last_ptr_first_known(dest_value) {
                         self.active.tail = Some(last);
                     }
                     return;
@@ -945,10 +949,10 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                 if let Some(inner) = value.if_mem32().and_then(|x| x.if_mem32()) {
                     if dest_addr.iter().all(|x| x != inner) {
                         if self.is_unpaired_first_ptr(inner) {
-                            self.active.tail = Some(dest_addr);
+                            self.active.tail = Some(dest_value);
                             return;
                         } else {
-                            self.last_ptr_candidates.push((inner.clone(), dest_addr));
+                            self.last_ptr_candidates.push((inner, dest_value));
                         }
                     }
                 }
@@ -960,11 +964,11 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                     // }
                     let active_list = &self.active;
                     if let Some(first_active) = active_list.head {
-                        if let Some(_) = value.if_mem32().filter(|&x| x == first_active) {
-                            if dest_addr == head_candidate {
-                                self.free_list_candidate_head = Some(dest_addr);
+                        if value == first_active {
+                            if dest_value == head_candidate {
+                                self.free_list_candidate_head = Some(dest_value);
                             } else {
-                                self.free_list_candidate_tail = Some(dest_addr);
+                                self.free_list_candidate_tail = Some(dest_value);
                             }
                         }
                     }
@@ -991,12 +995,12 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                     }
                     None => return,
                 };
-                if let Some(val) = val.if_mem32() {
+                if ctrl.if_mem_word(val).is_some() {
                     let addr = match jump_if_null {
                         true => dest_addr,
                         false => ctrl.current_instruction_end(),
                     };
-                    self.free_list_candidate_branches.insert(addr, val.clone());
+                    self.free_list_candidate_branches.insert(addr, val);
                 }
             }
             _ => (),
@@ -1005,7 +1009,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
 
     fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         let head_candidate = self.free_list_candidate_branches.get(&ctrl.address());
-        self.is_checking_free_list_candidate = head_candidate.cloned();
+        self.is_checking_free_list_candidate = head_candidate.copied();
     }
 
     fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
@@ -1023,11 +1027,14 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
 
 impl<'acx, 'e, E: ExecutionState<'e>> FowSpriteAnalyzer<'acx, 'e, E> {
     fn last_ptr_first_known(&self, first: Operand<'e>) -> Option<Operand<'e>> {
-        self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1.clone())
+        self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1)
     }
 
     fn is_unpaired_first_ptr(&self, first: Operand<'e>) -> bool {
-        if let Some(_) = self.active.head.filter(|&x| x == first) {
+        if let Some(_) = self.active.head
+            .and_then(|x| x.if_memory())
+            .filter(|x| x.address == first)
+        {
             return self.active.tail.is_none();
         }
         false
@@ -1042,12 +1049,12 @@ pub(crate) fn init_sprites<'e, E: ExecutionState<'e>>(
         sprites: None,
     };
     let sprites = analysis.sprites();
-    let first_free_sprite = match sprites.first_free_sprite {
-        Some(s) => s,
+    let first_free_sprite_addr = match sprites.first_free_sprite.and_then(|x| x.if_memory()) {
+        Some(s) => s.address,
         None => return result,
     };
-    let last_free_sprite = match sprites.last_free_sprite {
-        Some(s) => s,
+    let last_free_sprite_addr = match sprites.last_free_sprite.and_then(|x| x.if_memory()) {
+        Some(s) => s.address,
         None => return result,
     };
     let binary = analysis.binary;
@@ -1064,8 +1071,8 @@ pub(crate) fn init_sprites<'e, E: ExecutionState<'e>>(
                 inlining: false,
                 use_address: str_ref.use_address,
                 str_ref_found: false,
-                first_free_sprite,
-                last_free_sprite,
+                first_free_sprite_addr,
+                last_free_sprite_addr,
                 arg_cache,
                 array_candidates: BumpVec::new_in(bump),
             };
@@ -1095,8 +1102,8 @@ struct InitSpritesAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     inlining: bool,
     use_address: E::VirtualAddress,
     str_ref_found: bool,
-    first_free_sprite: Operand<'e>,
-    last_free_sprite: Operand<'e>,
+    first_free_sprite_addr: Operand<'e>,
+    last_free_sprite_addr: Operand<'e>,
     arg_cache: &'acx ArgCache<'e, E>,
     array_candidates: BumpVec<'acx, (Operand<'e>, Operand<'e>)>,
 }
@@ -1118,7 +1125,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     if let Some(dest) = ctrl.resolve(to).if_constant() {
                         let dest = E::VirtualAddress::from_u64(dest);
                         let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                        let should_inline = arg2 == self.last_free_sprite;
+                        let should_inline = arg2 == self.last_free_sprite_addr;
                         if should_inline {
                             ctrl.analyze_with_current_state(self, dest);
                             if self.result.sprites.is_some() {
@@ -1136,7 +1143,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 let dest_ok = self.array_candidates.iter().any(|&(_, next)| dest == next);
                 if !dest_ok {
                     // Skip over initial [first_free_sprite] = &sprite_array[0]
-                    if dest == self.first_free_sprite {
+                    if dest == self.first_free_sprite_addr {
                         let ctx = ctrl.ctx();
                         let next_value = ctx.add_const(value, E::VirtualAddress::SIZE as u64);
                         self.array_candidates.push((value, next_value));

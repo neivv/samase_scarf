@@ -145,16 +145,17 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
                     return;
                 }
                 let dest_addr = ctrl.resolve(mem.address);
+                let dest_value = ctrl.mem_word(dest_addr);
                 let value = ctrl.resolve(value);
                 let ctx = ctrl.ctx();
                 // first_free_bullet = (*first_free_bullet).next, e.g.
                 // mov [first_free_bullet], [[first_free_bullet] + 4]
-                let first_free_next = ctx.mem32(
-                    ctx.add(ctx.mem32(dest_addr), ctx.const_4())
+                let first_free_next = ctrl.mem_word(
+                    ctx.add_const(dest_value, E::VirtualAddress::SIZE as u64)
                 );
                 if value == first_free_next {
-                    self.first_free = Some(dest_addr);
-                    if let Some(last) = self.last_ptr_first_known(dest_addr) {
+                    self.first_free = Some(dest_value);
+                    if let Some(last) = self.last_ptr_first_known(dest_value) {
                         self.last_free = Some(last);
                     }
                     return;
@@ -164,10 +165,10 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
                 if let Some(inner) = value.if_mem32().and_then(|x| x.if_mem32()) {
                     if dest_addr.iter().all(|x| x != inner) {
                         if self.is_unpaired_first_ptr(inner) {
-                            self.last_free = Some(dest_addr.clone());
+                            self.last_free = Some(dest_value);
                             return;
                         } else {
-                            self.last_ptr_candidates.push((inner.clone(), dest_addr.clone()));
+                            self.last_ptr_candidates.push((inner, dest_value));
                         }
                     }
                 }
@@ -178,11 +179,11 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
                     //     *last_active = *first_free;
                     // }
                     if let Some(first_free) = self.first_free {
-                        if let Some(_) = value.if_mem32().filter(|&x| x == first_free) {
-                            if dest_addr == head_candidate {
-                                self.active_list_candidate_head = Some(dest_addr);
+                        if value == first_free {
+                            if dest_value == head_candidate {
+                                self.active_list_candidate_head = Some(dest_value);
                             } else {
-                                self.active_list_candidate_tail = Some(dest_addr);
+                                self.active_list_candidate_tail = Some(dest_value);
                             }
                         }
                     }
@@ -206,12 +207,12 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
                     }
                     None => return,
                 };
-                if let Some(val) = val.if_mem32() {
+                if ctrl.if_mem_word(val).is_some() {
                     let addr = match jump_if_null {
                         true => dest_addr,
                         false => ctrl.current_instruction_end(),
                     };
-                    self.active_list_candidate_branches.insert(addr, val.clone());
+                    self.active_list_candidate_branches.insert(addr, val);
                 }
             }
             _ => (),
@@ -236,11 +237,14 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
 
 impl<'acx, 'e, E: ExecutionState<'e>> FindBulletLists<'acx, 'e, E> {
     fn last_ptr_first_known(&self, first: Operand<'e>) -> Option<Operand<'e>> {
-        self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1.clone())
+        self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1)
     }
 
     fn is_unpaired_first_ptr(&self, first: Operand<'e>) -> bool {
-        if let Some(_) = self.first_free.filter(|&x| x == first) {
+        if let Some(_) = self.first_free
+            .and_then(|x| x.if_memory())
+            .filter(|x| x.address == first)
+        {
             return self.last_free.is_none();
         }
         false
