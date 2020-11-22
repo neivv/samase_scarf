@@ -542,6 +542,12 @@ fn main() {
     );
     println!("player_unit_skins: {}", format_op_operand(analysis.player_unit_skins()));
 
+    let patch = analysis.replay_minimap_unexplored_fog_patch();
+    println!(
+        "replay_minimap_unexplored_fog_patch: {:x?}",
+        patch.as_ref().map(|x| (x.address, &x.data)),
+    );
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {

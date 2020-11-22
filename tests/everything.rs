@@ -1154,6 +1154,9 @@ fn everything_1236b() {
             ctx.constant(0x010237d0),
         );
         assert_eq!(analysis.player_unit_skins().unwrap(), ctx.constant(0x011fbb50));
+        let patch = analysis.replay_minimap_unexplored_fog_patch().unwrap();
+        assert_eq!(patch.address.0, 0x007423C7);
+        assert_eq!(patch.data, &[0x90, 0x90]);
     })
 }
 
@@ -1754,6 +1757,7 @@ fn test_nongeneric<'e>(
     } else {
         assert!(skins.is_none());
     }
+    assert!(analysis.replay_minimap_unexplored_fog_patch().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

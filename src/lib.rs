@@ -30,6 +30,7 @@ mod game_init;
 mod hash_map;
 mod iscript;
 mod map;
+mod minimap;
 mod network;
 mod pathing;
 mod players;
@@ -103,6 +104,12 @@ pub struct FiregraftAddresses<Va: VirtualAddressTrait> {
     pub buttonsets: Vec<Va>,
     pub requirement_table_refs: RequirementTables<Va>,
     pub unit_status_funcs: Vec<Va>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Patch<Va: VirtualAddressTrait> {
+    pub address: Va,
+    pub data: Vec<u8>,
 }
 
 // Just since option spam for caches is a bit hard to keep track of
@@ -259,6 +266,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     ai_prepare_moving_to: Cached<Option<E::VirtualAddress>>,
     ai_transport_reachability_cached_region: Cached<Option<Operand<'e>>>,
     player_unit_skins: Cached<Option<Operand<'e>>>,
+    replay_minimap_unexplored_fog_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
     dat_tables: DatTables<'e>,
 }
 
@@ -542,6 +550,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 ai_prepare_moving_to: Default::default(),
                 ai_transport_reachability_cached_region: Default::default(),
                 player_unit_skins: Default::default(),
+                replay_minimap_unexplored_fog_patch: Default::default(),
                 dat_tables: DatTables::new(),
             },
             binary,
@@ -1107,6 +1116,14 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn player_unit_skins(&mut self) -> Option<Operand<'e>> {
         self.enter(|x| x.player_unit_skins())
+    }
+
+    /// A patch to show resource fog sprites on minimap in replays even if they're
+    /// in unexplored fog.
+    pub fn replay_minimap_unexplored_fog_patch(
+        &mut self,
+    ) -> Option<Rc<Patch<E::VirtualAddress>>> {
+        self.enter(|x| x.replay_minimap_unexplored_fog_patch())
     }
 
     /// Mainly for tests/dump
@@ -2514,6 +2531,16 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
         self.cache.player_unit_skins.cache(&result);
         result
     }
+
+    fn replay_minimap_unexplored_fog_patch(&mut self) -> Option<Rc<Patch<E::VirtualAddress>>> {
+        if let Some(cached) = self.cache.replay_minimap_unexplored_fog_patch.cached() {
+            return cached;
+        }
+        let result = minimap::unexplored_fog_minimap_patch(self)
+            .map(|x| Rc::new(x));
+        self.cache.replay_minimap_unexplored_fog_patch.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -3052,6 +3079,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn player_unit_skins(&mut self) -> Option<Operand<'e>> {
         self.0.player_unit_skins()
+    }
+
+    pub fn replay_minimap_unexplored_fog_patch(&mut self) -> Option<Rc<Patch<VirtualAddress>>> {
+        self.0.replay_minimap_unexplored_fog_patch()
     }
 }
 
