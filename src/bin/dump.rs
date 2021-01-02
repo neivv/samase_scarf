@@ -547,6 +547,7 @@ fn main() {
         "replay_minimap_unexplored_fog_patch: {:x?}",
         patch.as_ref().map(|x| (x.address, &x.data)),
     );
+    println!("step_replay_commands: {:?}", analysis.step_replay_commands());
 
     let undef = ctx.new_undef();
     println!();

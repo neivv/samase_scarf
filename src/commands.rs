@@ -8,7 +8,7 @@ use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 use crate::{
     AnalysisCtx, ArgCache, EntryOf, EntryOfResult, OptionExt, if_callable_const, find_callers,
     entry_of_until, single_result_assign, find_bytes, read_u32_at, if_arithmetic_eq_neq,
-    bumpvec_with_capacity,
+    bumpvec_with_capacity, OperandExt,
 };
 
 #[derive(Clone, Debug)]
@@ -873,6 +873,80 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwor
                     }
                 }
             }
+        }
+    }
+}
+
+pub(crate) fn step_replay_commands<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
+) -> Option<E::VirtualAddress> {
+    // step_replay_commands calls process_commands, and starts with comparision of global bool
+    // is_ingame and frame count against replay limit.
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let funcs = analysis.functions();
+    let funcs = &funcs[..];
+
+    let process_commands = analysis.process_commands().process_commands?;
+    let game = analysis.game()?;
+
+    let mut result = None;
+    let callers = find_callers(analysis, process_commands);
+    for caller in callers {
+        let new = entry_of_until(binary, funcs, caller, |entry| {
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            let mut analyzer = IsStepReplayCommands::<E> {
+                result: EntryOf::Retry,
+                game,
+                limit: 6,
+                phantom: Default::default(),
+            };
+            analysis.analyze(&mut analyzer);
+            analyzer.result
+        }).into_option_with_entry().map(|x| x.0);
+        if single_result_assign(new, &mut result) {
+            break;
+        }
+    }
+    result
+}
+
+struct IsStepReplayCommands<'e, E: ExecutionState<'e>> {
+    result: EntryOf<()>,
+    game: Operand<'e>,
+    limit: u8,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepReplayCommands<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if matches!(op, Operation::Call(..) | Operation::Jump { .. }) {
+            self.limit = match self.limit.checked_sub(1) {
+                Some(s) => s,
+                None => {
+                    ctrl.end_analysis();
+                    return;
+                }
+            }
+        }
+        match *op {
+            Operation::Jump { condition, .. } => {
+                let condition = ctrl.resolve(condition);
+                let has_frame = condition.iter_no_mem_addr()
+                    .any(|x| {
+                        x.if_mem32()
+                            .and_then(|x| x.if_arithmetic_add_const(0x14c))
+                            .filter(|&x| x == self.game)
+                            .is_some()
+                    });
+                if has_frame {
+                    self.result = EntryOf::Ok(());
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
         }
     }
 }

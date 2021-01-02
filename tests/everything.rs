@@ -1162,7 +1162,8 @@ fn everything_1236b() {
 
 #[test]
 fn everything_1237a() {
-    test_with_extra_checks(Path::new("1237a.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1237a.exe"), |_ctx, analysis| {
+        assert_eq!(analysis.step_replay_commands().unwrap().0, 0x00743750);
     })
 }
 
@@ -1764,6 +1765,7 @@ fn test_nongeneric<'e>(
         assert!(skins.is_none());
     }
     assert!(analysis.replay_minimap_unexplored_fog_patch().is_some());
+    assert!(analysis.step_replay_commands().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

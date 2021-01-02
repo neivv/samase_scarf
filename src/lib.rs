@@ -267,6 +267,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     ai_transport_reachability_cached_region: Cached<Option<Operand<'e>>>,
     player_unit_skins: Cached<Option<Operand<'e>>>,
     replay_minimap_unexplored_fog_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
+    step_replay_commands: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
 }
 
@@ -551,6 +552,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 ai_transport_reachability_cached_region: Default::default(),
                 player_unit_skins: Default::default(),
                 replay_minimap_unexplored_fog_patch: Default::default(),
+                step_replay_commands: Default::default(),
                 dat_tables: DatTables::new(),
             },
             binary,
@@ -1124,6 +1126,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         &mut self,
     ) -> Option<Rc<Patch<E::VirtualAddress>>> {
         self.enter(|x| x.replay_minimap_unexplored_fog_patch())
+    }
+
+    pub fn step_replay_commands(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.step_replay_commands())
     }
 
     /// Mainly for tests/dump
@@ -2541,6 +2547,15 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
         self.cache.replay_minimap_unexplored_fog_patch.cache(&result);
         result
     }
+
+    fn step_replay_commands(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.step_replay_commands.cached() {
+            return cached;
+        }
+        let result = commands::step_replay_commands(self);
+        self.cache.step_replay_commands.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -3083,6 +3098,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn replay_minimap_unexplored_fog_patch(&mut self) -> Option<Rc<Patch<VirtualAddress>>> {
         self.0.replay_minimap_unexplored_fog_patch()
+    }
+
+    pub fn step_replay_commands(&mut self) -> Option<VirtualAddress> {
+        self.0.step_replay_commands()
     }
 }
 
