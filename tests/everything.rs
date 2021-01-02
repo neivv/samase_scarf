@@ -61,6 +61,8 @@ fn everything_1209b() {
         let sel = analysis.select_map_entry();
         assert_eq!(sel.select_map_entry.unwrap().0, 0x008A1ED0);
         assert_eq!(sel.is_multiplayer.unwrap(), ctx.mem8(ctx.constant(0x1036D20)));
+
+        assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x1039e3c)));
     });
 }
 
@@ -442,6 +444,7 @@ fn everything_1221b() {
         assert_eq!(init.0, 0x006F0BB0);
 
         assert_eq!(analysis.chk_init_players().unwrap(), ctx.constant(0x1064330));
+        assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x1064310)));
     })
 }
 
@@ -480,7 +483,8 @@ fn everything_1222b() {
 
 #[test]
 fn everything_1222c() {
-    test_with_extra_checks(Path::new("1222c.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1222c.exe"), |ctx, analysis| {
+        assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x10185d8)));
     })
 }
 
@@ -1162,8 +1166,9 @@ fn everything_1236b() {
 
 #[test]
 fn everything_1237a() {
-    test_with_extra_checks(Path::new("1237a.exe"), |_ctx, analysis| {
+    test_with_extra_checks(Path::new("1237a.exe"), |ctx, analysis| {
         assert_eq!(analysis.step_replay_commands().unwrap().0, 0x00743750);
+        assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x011CF5CC)));
     })
 }
 
@@ -1766,6 +1771,7 @@ fn test_nongeneric<'e>(
     }
     assert!(analysis.replay_minimap_unexplored_fog_patch().is_some());
     assert!(analysis.step_replay_commands().is_some());
+    check_global_opt(analysis.replay_data(), binary, "replay_data");
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

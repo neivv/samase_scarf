@@ -950,3 +950,109 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepReplayCommands<
         }
     }
 }
+
+pub(crate) fn replay_data<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
+) -> Option<Operand<'e>> {
+    // process_commands calls add_to_replay_data(data, len) after its switch,
+    // which immediately checks replay_data.field0 == 0
+    //
+    // Also command length for case 0x15 is 0xb
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let process_commands = analysis.process_commands();
+    let switch = process_commands.switch.as_ref()?;
+    let branch = switch.branch(0x15)?;
+
+    let arg_cache = &analysis.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, branch);
+    let mut analyzer = FindReplayData::<E> {
+        result: None,
+        limit: 6,
+        inline_depth: 0,
+        arg_cache,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct FindReplayData<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<Operand<'e>>,
+    limit: u8,
+    inline_depth: u8,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindReplayData<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) if self.inline_depth == 0 => {
+                if self.limit == 0 {
+                    ctrl.end_analysis();
+                    return;
+                }
+                self.limit -= 1;
+                if ctrl.resolve(self.arg_cache.on_call(1)).if_constant() == Some(0xb) {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        let old_limit = self.limit;
+                        self.inline_depth = 1;
+                        self.limit = 12;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth = 0;
+                        self.limit = old_limit;
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Call(dest) if self.inline_depth == 1 => {
+                // There may be an intermediate function which calls
+                // replay_data->add(player?, data, len)
+                if self.limit == 0 {
+                    ctrl.end_analysis();
+                    return;
+                }
+                self.limit -= 1;
+                if ctrl.resolve(self.arg_cache.on_call(2)).if_constant() == Some(0xb) {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        self.inline_depth += 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth -= 1;
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                } else {
+                    ctrl.end_branch();
+                }
+            }
+            Operation::Call(..) => {
+                ctrl.end_branch();
+            }
+            Operation::Jump { condition, .. } if self.inline_depth != 0 => {
+                if self.limit == 0 {
+                    ctrl.end_analysis();
+                    return;
+                }
+                self.limit -= 1;
+                let condition = ctrl.resolve(condition);
+                let result = if_arithmetic_eq_neq(condition)
+                    .map(|x| (x.0, x.1))
+                    .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
+                    .and_then(|x| x.if_mem32())
+                    .filter(|x| x.if_memory().is_some());
+                if result.is_some() {
+                    self.result = result;
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
+        }
+    }
+}

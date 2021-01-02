@@ -548,6 +548,7 @@ fn main() {
         patch.as_ref().map(|x| (x.address, &x.data)),
     );
     println!("step_replay_commands: {:?}", analysis.step_replay_commands());
+    println!("replay_data: {}", format_op_operand(analysis.replay_data()));
 
     let undef = ctx.new_undef();
     println!();

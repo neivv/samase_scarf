@@ -268,6 +268,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     player_unit_skins: Cached<Option<Operand<'e>>>,
     replay_minimap_unexplored_fog_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
     step_replay_commands: Cached<Option<E::VirtualAddress>>,
+    replay_data: Cached<Option<Operand<'e>>>,
     dat_tables: DatTables<'e>,
 }
 
@@ -553,6 +554,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 player_unit_skins: Default::default(),
                 replay_minimap_unexplored_fog_patch: Default::default(),
                 step_replay_commands: Default::default(),
+                replay_data: Default::default(),
                 dat_tables: DatTables::new(),
             },
             binary,
@@ -1130,6 +1132,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn step_replay_commands(&mut self) -> Option<E::VirtualAddress> {
         self.enter(|x| x.step_replay_commands())
+    }
+
+    pub fn replay_data(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.replay_data())
     }
 
     /// Mainly for tests/dump
@@ -2554,6 +2560,15 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
         }
         let result = commands::step_replay_commands(self);
         self.cache.step_replay_commands.cache(&result);
+        result
+    }
+
+    fn replay_data(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.replay_data.cached() {
+            return cached;
+        }
+        let result = commands::replay_data(self);
+        self.cache.replay_data.cache(&result);
         result
     }
 }
