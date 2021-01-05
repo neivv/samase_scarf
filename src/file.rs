@@ -120,7 +120,7 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
             rdata: &'e BinarySection<E::VirtualAddress>,
             arg_cache: &'acx ArgCache<'e, E>,
             inlining: bool,
-        };
+        }
         impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Analyzer<'a, 'acx, 'e, E>
         {

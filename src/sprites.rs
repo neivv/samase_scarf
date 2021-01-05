@@ -340,7 +340,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                 fn if_arithmetic_eq_zero<'e>(op: Operand<'e>) -> Option<Operand<'e>> {
                     op.if_arithmetic_eq()
                         .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                };
+                }
                 // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
                 let (val, jump_if_null) = match if_arithmetic_eq_zero(condition) {
                     Some(other) => match if_arithmetic_eq_zero(other) {
@@ -986,7 +986,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                 fn if_arithmetic_eq_zero<'e>(op: Operand<'e>) -> Option<Operand<'e>> {
                     op.if_arithmetic_eq()
                         .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                };
+                }
                 // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
                 let (val, jump_if_null) = match if_arithmetic_eq_zero(condition) {
                     Some(other) => match if_arithmetic_eq_zero(other) {
