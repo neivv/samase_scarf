@@ -1013,9 +1013,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                         // Checking for 4500 > Mem32[game.seconds]
                         x.if_arithmetic_gt()
                             .and_either_other(|x| x.if_constant().filter(|&c| c == 4500))
-                            .and_then(|x| x.if_mem32())
-                            .and_then(|x| x.if_arithmetic_add_const(0xe608))
-                            .filter(|&x| x == self.game)
+                            .filter(|&x| is_game_seconds(self.game, x))
                             .is_some()
                     })
                 {
@@ -1544,4 +1542,83 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             _ => (),
         }
     }
+}
+
+pub(crate) fn train_military<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
+) -> Option<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    // ai_spend_money calls ai_train_military after checking game_second >= 10
+    let spend_money = analysis.ai_spend_money()?;
+    let game = analysis.game()?;
+    let exec_state = E::initial_state(ctx, binary);
+    let state = TrainMilitaryState {
+        seconds_checked: false,
+    };
+    let mut analysis = FuncAnalysis::custom_state(binary, ctx, spend_money, exec_state, state);
+    let mut analyzer = TrainMilitaryAnalyzer::<E> {
+        result: None,
+        game,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct TrainMilitaryAnalyzer<'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    game: Operand<'e>,
+}
+
+#[derive(Copy, Clone)]
+struct TrainMilitaryState {
+    seconds_checked: bool,
+}
+
+impl analysis::AnalysisState for TrainMilitaryState {
+    fn merge(&mut self, new: Self) {
+        self.seconds_checked = new.seconds_checked && self.seconds_checked;
+    }
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TrainMilitaryAnalyzer<'e, E> {
+    type State = TrainMilitaryState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Jump { condition, .. } => {
+                if ctrl.user_state().seconds_checked {
+                    ctrl.end_analysis();
+                }
+                let condition = ctrl.resolve(condition);
+                let ok = condition.if_arithmetic_gt()
+                    .and_either_other(|x| x.if_constant().filter(|&c| c == 0xa))
+                    .filter(|&x| is_game_seconds(self.game, x))
+                    .is_some();
+                if ok {
+                    // Skip the jump (TODO: Should ideally also be able to handle
+                    // the case where we only want to follow the jump)
+                    ctrl.skip_operation();
+                    ctrl.user_state().seconds_checked = true;
+                }
+            }
+            Operation::Call(dest) if ctrl.user_state().seconds_checked => {
+                let result = ctrl.resolve_va(dest);
+                if single_result_assign(result, &mut self.result) {
+                    ctrl.end_analysis();
+                } else {
+                    ctrl.end_branch();
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+fn is_game_seconds<'e>(game: Operand<'e>, operand: Operand<'e>) -> bool {
+    operand.if_mem32()
+        .and_then(|x| x.if_arithmetic_add_const(0xe608))
+        .filter(|&x| x == game)
+        .is_some()
 }

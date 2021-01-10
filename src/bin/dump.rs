@@ -551,6 +551,8 @@ fn main() {
     println!("step_replay_commands: {:?}", analysis.step_replay_commands());
     println!("replay_data: {}", format_op_operand(analysis.replay_data()));
 
+    println!("ai_train_military: {:?}", analysis.ai_train_military());
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {

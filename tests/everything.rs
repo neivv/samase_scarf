@@ -446,6 +446,7 @@ fn everything_1221b() {
         assert_eq!(analysis.chk_init_players().unwrap(), ctx.constant(0x1064330));
         assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x1064310)));
         assert_eq!(analysis.ai_spend_money().unwrap().0, 0x005F3E70);
+        assert_eq!(analysis.ai_train_military().unwrap().0, 0x0060FD80);
     })
 }
 
@@ -1172,6 +1173,7 @@ fn everything_1237a() {
         assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x011CF5CC)));
         assert_eq!(analysis.ai_step_region().unwrap().0, 0x0064fc90);
         assert_eq!(analysis.ai_spend_money().unwrap().0, 0x0062f090);
+        assert_eq!(analysis.ai_train_military().unwrap().0, 0x0064e3c0);
     })
 }
 
@@ -1776,6 +1778,8 @@ fn test_nongeneric<'e>(
     assert!(analysis.replay_minimap_unexplored_fog_patch().is_some());
     assert!(analysis.step_replay_commands().is_some());
     check_global_opt(analysis.replay_data(), binary, "replay_data");
+
+    assert!(analysis.ai_train_military().is_some());
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

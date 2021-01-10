@@ -273,6 +273,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     replay_minimap_unexplored_fog_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
     step_replay_commands: Cached<Option<E::VirtualAddress>>,
     replay_data: Cached<Option<Operand<'e>>>,
+    ai_train_military: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
 }
 
@@ -559,6 +560,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 replay_minimap_unexplored_fog_patch: Default::default(),
                 step_replay_commands: Default::default(),
                 replay_data: Default::default(),
+                ai_train_military: Default::default(),
                 dat_tables: DatTables::new(),
             },
             binary,
@@ -1144,6 +1146,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn replay_data(&mut self) -> Option<Operand<'e>> {
         self.enter(|x| x.replay_data())
+    }
+
+    pub fn ai_train_military(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.ai_train_military())
     }
 
     /// Mainly for tests/dump
@@ -2586,6 +2592,15 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
         self.cache.replay_data.cache(&result);
         result
     }
+
+    fn ai_train_military(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.ai_train_military.cached() {
+            return cached;
+        }
+        let result = ai::train_military(self);
+        self.cache.ai_train_military.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -3136,6 +3151,14 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn step_replay_commands(&mut self) -> Option<VirtualAddress> {
         self.0.step_replay_commands()
+    }
+
+    pub fn replay_data(&mut self) -> Option<Operand<'e>> {
+        self.0.replay_data()
+    }
+
+    pub fn ai_train_military(&mut self) -> Option<VirtualAddress> {
+        self.0.ai_train_military()
     }
 }
 
