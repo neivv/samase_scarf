@@ -10,7 +10,7 @@ use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
 use crate::{
     ArgCache, OptionExt, OperandExt, single_result_assign, AnalysisCtx, unwrap_sext,
-    find_functions_using_global, entry_of_until, EntryOf, find_callers, DatType,
+    find_functions_using_global, entry_of_until, EntryOf, find_callers, DatType, ControlExt,
 };
 use crate::hash_map::HashSet;
 
@@ -899,36 +899,62 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnal
     }
 }
 
-pub(crate) fn step_region<'e, E: ExecutionState<'e>>(
+#[derive(Copy, Clone)]
+pub(crate) struct AiStepFrameFuncs<Va: VirtualAddressTrait> {
+    pub ai_step_region: Option<Va>,
+    pub ai_spend_money: Option<Va>,
+}
+
+pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
     analysis: &mut AnalysisCtx<'_, 'e, E>,
-) -> Option<E::VirtualAddress> {
+) -> AiStepFrameFuncs<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let step_objects = analysis.step_objects()?;
-    let ai_regions = analysis.regions().ai_regions?;
+    let mut result = AiStepFrameFuncs {
+        ai_step_region: None,
+        ai_spend_money: None,
+    };
+    let step_objects = match analysis.step_objects() {
+        Some(s) => s,
+        None => return result,
+    };
+    let ai_regions = match analysis.regions().ai_regions {
+        Some(s) => s,
+        None => return result,
+    };
+    let game = match analysis.game() {
+        Some(s) => s,
+        None => return result,
+    };
 
     let arg_cache = analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, step_objects);
     let mut analyzer = StepRegionAnalyzer {
-        result: None,
+        result: &mut result,
         arg_cache,
         inline_depth: 0,
         checked_functions: HashSet::with_capacity_and_hasher(0x40, Default::default()),
         binary,
         ai_regions,
+        game,
+        searching_spend_money: false,
+        game_seconds_checked: false,
     };
     analysis.analyze(&mut analyzer);
-    analyzer.result
+    result
 }
 
 struct StepRegionAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    result: Option<E::VirtualAddress>,
+    result: &'a mut AiStepFrameFuncs<E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
     checked_functions: HashSet<Rva>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ai_regions: Operand<'e>,
+    game: Operand<'e>,
+    searching_spend_money: bool,
+    game_seconds_checked: bool,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyzer<'a, 'e, E> {
@@ -936,10 +962,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
-            Operation::Call(dest) => {
+            Operation::Call(dest) if !self.searching_spend_money => {
                 if self.inline_depth < 3 {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         let relative = dest.as_u64().checked_sub(self.binary.base.as_u64());
                         if let Some(relative) = relative {
                             let rva = Rva(relative as u32);
@@ -949,15 +974,52 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                                 let mut analysis = FuncAnalysis::new(self.binary, ctx, dest);
                                 analysis.analyze(self);
                                 self.inline_depth -= 1;
-                                if let Some(result) = self.result {
+                                if let Some(result) = self.result.ai_step_region {
                                     if result.as_u64() == 0 {
-                                        self.result = Some(dest);
+                                        self.result.ai_step_region = Some(dest);
                                     }
-                                    ctrl.end_analysis();
+                                    // ai_spend_money is expected to be at inline depth 1
+                                    if self.inline_depth > 1 {
+                                        ctrl.end_analysis();
+                                    } else {
+                                        self.searching_spend_money = true;
+                                    }
                                 }
                             }
                         }
                     }
+                }
+            }
+            Operation::Call(dest) if self.searching_spend_money => {
+                if self.game_seconds_checked {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.result.ai_spend_money = Some(dest);
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            Operation::Jump { .. } if self.game_seconds_checked => {
+                // No jumps expected after game second check
+                ctrl.end_analysis();
+            }
+            Operation::Move(DestOperand::Memory(mem), val, None)
+                if self.searching_spend_money && mem.size == MemAccessSize::Mem32 =>
+            {
+                // Search for ai_spend_money by checking for a global store
+                // global = game.seconds < 4500 ? 7 : 0x25
+                let val = ctrl.resolve(val);
+                if val.iter_no_mem_addr()
+                    .any(|x| {
+                        // Checking for 4500 > Mem32[game.seconds]
+                        x.if_arithmetic_gt()
+                            .and_either_other(|x| x.if_constant().filter(|&c| c == 4500))
+                            .and_then(|x| x.if_mem32())
+                            .and_then(|x| x.if_arithmetic_add_const(0xe608))
+                            .filter(|&x| x == self.game)
+                            .is_some()
+                    })
+                {
+                    self.game_seconds_checked = true;
                 }
             }
             Operation::Move(DestOperand::Memory(mem), val, None) => {
@@ -1002,7 +1064,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                         })
                         .is_some();
                     if ok {
-                        self.result = Some(E::VirtualAddress::from_u64(0));
+                        self.result.ai_step_region = Some(E::VirtualAddress::from_u64(0));
                     }
                 }
             }

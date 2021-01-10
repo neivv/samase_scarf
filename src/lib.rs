@@ -124,6 +124,10 @@ impl<T: Clone> Cached<T> {
         self.0.clone()
     }
 
+    pub fn cached_ref(&self) -> Option<&T> {
+        self.0.as_ref()
+    }
+
     pub fn cache(&mut self, val: &T) {
         self.0 = Some(val.clone());
     }
@@ -241,7 +245,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     draw_graphic_layers: Cached<Option<E::VirtualAddress>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
     ai_attack_prepare: Cached<Option<E::VirtualAddress>>,
-    ai_step_region: Cached<Option<E::VirtualAddress>>,
+    ai_step_frame_funcs: Cached<ai::AiStepFrameFuncs<E::VirtualAddress>>,
     join_game: Cached<Option<E::VirtualAddress>>,
     snet_initialize_provider: Cached<Option<E::VirtualAddress>>,
     do_attack: Cached<Option<step_order::DoAttack<'e, E::VirtualAddress>>>,
@@ -528,7 +532,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 draw_graphic_layers: Default::default(),
                 prism_shaders: Default::default(),
                 ai_attack_prepare: Default::default(),
-                ai_step_region: Default::default(),
+                ai_step_frame_funcs: Default::default(),
                 join_game: Default::default(),
                 dat_patches: Default::default(),
                 snet_initialize_provider: Default::default(),
@@ -963,6 +967,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn ai_step_region(&mut self) -> Option<E::VirtualAddress> {
         self.enter(|x| x.ai_step_region())
+    }
+
+    pub fn ai_spend_money(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.ai_spend_money())
     }
 
     pub fn join_game(&mut self) -> Option<E::VirtualAddress> {
@@ -2231,12 +2239,19 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
     }
 
     fn ai_step_region(&mut self) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.cache.ai_step_region.cached() {
-            return cached;
+        self.ai_step_frame_funcs().ai_step_region
+    }
+
+    fn ai_spend_money(&mut self) -> Option<E::VirtualAddress> {
+        self.ai_step_frame_funcs().ai_spend_money
+    }
+
+    fn ai_step_frame_funcs(&mut self) -> &ai::AiStepFrameFuncs<E::VirtualAddress> {
+        if self.cache.ai_step_frame_funcs.cached_ref().is_some() {
+            return self.cache.ai_step_frame_funcs.cached_ref().unwrap();
         }
-        let result = ai::step_region(self);
-        self.cache.ai_step_region.cache(&result);
-        result
+        let result = ai::step_frame_funcs(self);
+        self.cache.ai_step_frame_funcs.get_or_insert_with(|| result)
     }
 
     fn join_game(&mut self) -> Option<E::VirtualAddress> {
@@ -2955,6 +2970,10 @@ impl<'e> AnalysisX86<'e> {
         self.0.ai_step_region()
     }
 
+    pub fn ai_spend_money(&mut self) -> Option<VirtualAddress> {
+        self.0.ai_spend_money()
+    }
+
     pub fn join_game(&mut self) -> Option<VirtualAddress> {
         self.0.join_game()
     }
@@ -3626,4 +3645,19 @@ fn bumpvec_with_capacity<T>(cap: usize, bump: &Bump) -> BumpVec<'_, T> {
     let mut vec = BumpVec::new_in(bump);
     vec.reserve(cap);
     vec
+}
+
+trait ControlExt<'e, E: ExecutionStateTrait<'e>> {
+    fn resolve_va(&mut self, operand: Operand<'e>) -> Option<E::VirtualAddress>;
+}
+
+impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
+    scarf::analysis::Control<'e, 'a, 'b, A>
+{
+    fn resolve_va(&mut self, operand: Operand<'e>) ->
+        Option<<A::Exec as ExecutionStateTrait<'e>>::VirtualAddress>
+    {
+        self.resolve(operand).if_constant()
+            .map(|x| <A::Exec as ExecutionStateTrait<'e>>::VirtualAddress::from_u64(x))
+    }
 }

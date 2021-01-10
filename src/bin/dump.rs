@@ -483,6 +483,7 @@ fn main() {
 
     println!("ai_attack_prepare: {:?}", analysis.ai_attack_prepare());
     println!("ai_step_region: {:?}", analysis.ai_step_region());
+    println!("ai_spend_money: {:?}", analysis.ai_spend_money());
 
     println!("join_game: {:?}", analysis.join_game());
     println!("set_status_screen_tooltip: {:?}", analysis.set_status_screen_tooltip());

@@ -445,6 +445,7 @@ fn everything_1221b() {
 
         assert_eq!(analysis.chk_init_players().unwrap(), ctx.constant(0x1064330));
         assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x1064310)));
+        assert_eq!(analysis.ai_spend_money().unwrap().0, 0x005F3E70);
     })
 }
 
@@ -1169,6 +1170,8 @@ fn everything_1237a() {
     test_with_extra_checks(Path::new("1237a.exe"), |ctx, analysis| {
         assert_eq!(analysis.step_replay_commands().unwrap().0, 0x00743750);
         assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x011CF5CC)));
+        assert_eq!(analysis.ai_step_region().unwrap().0, 0x0064fc90);
+        assert_eq!(analysis.ai_spend_money().unwrap().0, 0x0062f090);
     })
 }
 
@@ -1688,6 +1691,7 @@ fn test_nongeneric<'e>(
 
     assert!(analysis.ai_attack_prepare().is_some());
     assert!(analysis.ai_step_region().is_some());
+    assert!(analysis.ai_spend_money().is_some());
 
     let join_game = analysis.join_game();
     // 1233g refactored join_game/it's arguments heavily from what used to resemble 1161,
