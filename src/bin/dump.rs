@@ -552,6 +552,7 @@ fn main() {
     println!("replay_data: {}", format_op_operand(analysis.replay_data()));
 
     println!("ai_train_military: {:?}", analysis.ai_train_military());
+    println!("ai_add_military_to_region: {:?}", analysis.ai_add_military_to_region());
 
     let undef = ctx.new_undef();
     println!();

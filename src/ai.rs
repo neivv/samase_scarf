@@ -1622,3 +1622,64 @@ fn is_game_seconds<'e>(game: Operand<'e>, operand: Operand<'e>) -> bool {
         .filter(|&x| x == game)
         .is_some()
 }
+
+pub(crate) fn add_military_to_region<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
+) -> Option<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let arg_cache = analysis.arg_cache;
+
+    // Check for call of add_military_to_region(ai_regions[arg1] + 1, unit_id, priority)
+    // Arg1 AiRegion is only one that's easy to check
+    // While there's technically one function in middle of train_military
+    // and add_military_to_region, it seems to always be inlined
+    // (train_attack_force)
+    let train_military = analysis.ai_train_military()?;
+    let ai_regions = analysis.regions().ai_regions?;
+    let mut analysis = FuncAnalysis::new(binary, ctx, train_military);
+    let mut analyzer = AddMilitaryAnalyzer::<E> {
+        result: None,
+        ai_regions,
+        arg_cache,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct AddMilitaryAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    ai_regions: Operand<'e>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddMilitaryAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                let is_region1 = arg1.if_arithmetic_add_const(0x34)
+                    .and_then(|x| ctrl.if_mem_word(x))
+                    .and_then(|x| x.if_arithmetic_add())
+                    .and_either_other(|x| Some(()).filter(|()| x == self.ai_regions))
+                    .and_then(|x| x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into()))
+                    .filter(|&x| x == self.arg_cache.on_entry(0))
+                    .is_some();
+                if !is_region1 {
+                    return;
+                }
+                let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                if arg2.if_mem32().is_none() {
+                    return;
+                }
+                let result = ctrl.resolve_va(dest);
+                if single_result_assign(result, &mut self.result) {
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
+        }
+    }
+}

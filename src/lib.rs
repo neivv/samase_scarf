@@ -274,6 +274,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     step_replay_commands: Cached<Option<E::VirtualAddress>>,
     replay_data: Cached<Option<Operand<'e>>>,
     ai_train_military: Cached<Option<E::VirtualAddress>>,
+    ai_add_military_to_region: Cached<Option<E::VirtualAddress>>,
     dat_tables: DatTables<'e>,
 }
 
@@ -561,6 +562,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 step_replay_commands: Default::default(),
                 replay_data: Default::default(),
                 ai_train_military: Default::default(),
+                ai_add_military_to_region: Default::default(),
                 dat_tables: DatTables::new(),
             },
             binary,
@@ -1150,6 +1152,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn ai_train_military(&mut self) -> Option<E::VirtualAddress> {
         self.enter(|x| x.ai_train_military())
+    }
+
+    pub fn ai_add_military_to_region(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x| x.ai_add_military_to_region())
     }
 
     /// Mainly for tests/dump
@@ -2601,6 +2607,15 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
         self.cache.ai_train_military.cache(&result);
         result
     }
+
+    fn ai_add_military_to_region(&mut self) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.cache.ai_add_military_to_region.cached() {
+            return cached;
+        }
+        let result = ai::add_military_to_region(self);
+        self.cache.ai_add_military_to_region.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -3159,6 +3174,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn ai_train_military(&mut self) -> Option<VirtualAddress> {
         self.0.ai_train_military()
+    }
+
+    pub fn ai_add_military_to_region(&mut self) -> Option<VirtualAddress> {
+        self.0.ai_add_military_to_region()
     }
 }
 
