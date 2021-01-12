@@ -553,6 +553,7 @@ fn main() {
 
     println!("ai_train_military: {:?}", analysis.ai_train_military());
     println!("ai_add_military_to_region: {:?}", analysis.ai_add_military_to_region());
+    println!("vertex_buffer: {}", format_op_operand(analysis.vertex_buffer()));
 
     let undef = ctx.new_undef();
     println!();

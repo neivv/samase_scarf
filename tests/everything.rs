@@ -196,6 +196,8 @@ fn everything_1212() {
         assert_eq!(iscript.step_fn.unwrap().0, 0x0054a250);
         assert_eq!(iscript.script_operand_at_switch.unwrap(), ctx.register(6));
         assert_eq!(iscript.iscript_bin.unwrap(), ctx.mem32(ctx.constant(0xd35994)));
+
+        assert_eq!(analysis.vertex_buffer().unwrap(), ctx.constant(0xceede8));
     });
 }
 
@@ -226,6 +228,8 @@ fn everything_1213() {
         let mouse_xy = analysis.mouse_xy();
         assert_eq!(mouse_xy.x_var.unwrap(), ctx.mem16(ctx.constant(0xea9910)));
         assert_eq!(mouse_xy.y_var.unwrap(), ctx.mem16(ctx.constant(0xea9914)));
+
+        assert_eq!(analysis.vertex_buffer().unwrap(), ctx.constant(0x00c75220));
     })
 }
 
@@ -352,7 +356,8 @@ fn everything_1215i() {
 
 #[test]
 fn everything_1220() {
-    test_with_extra_checks(Path::new("1220.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1220.exe"), |ctx, analysis| {
+        assert_eq!(analysis.vertex_buffer().unwrap(), ctx.constant(0x00d7fa08));
     })
 }
 
@@ -1176,6 +1181,7 @@ fn everything_1237a() {
         assert_eq!(analysis.ai_spend_money().unwrap().0, 0x0062f090);
         assert_eq!(analysis.ai_train_military().unwrap().0, 0x0064e3c0);
         assert_eq!(analysis.ai_add_military_to_region().unwrap().0, 0x0064cf60);
+        assert_eq!(analysis.vertex_buffer().unwrap(), ctx.constant(0x00f5fb18));
     })
 }
 
@@ -1783,6 +1789,14 @@ fn test_nongeneric<'e>(
 
     assert!(analysis.ai_train_military().is_some());
     assert!(analysis.ai_add_military_to_region().is_some());
+    // The vertex buffer funcs / struct layout changed slightly in 1.21.2,
+    // but it's been stable since then.
+    let vertex_buffer = analysis.vertex_buffer();
+    if minor_version >= 22 || (minor_version == 21 && patch_version >= 2) {
+        check_global_struct_opt(vertex_buffer, binary, "vertex_buffer");
+    } else {
+        assert!(vertex_buffer.is_none());
+    }
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

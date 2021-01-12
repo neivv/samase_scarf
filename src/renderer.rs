@@ -9,7 +9,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use crate::add_terms::collect_arith_add_terms;
 use crate::{
     AnalysisCtx, ArgCache, EntryOf, OptionExt, entry_of_until, single_result_assign,
-    OperandExt,
+    OperandExt, ControlExt,
 };
 
 #[derive(Clone)]
@@ -118,14 +118,10 @@ pub(crate) fn prism_shaders<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let vtables = analysis.renderer_vtables();
     let compare = b".?AVPrismRenderer";
-    let prism_renderer_vtable = vtables.iter().filter_map(|&vtable| {
-        let rtti = binary.read_address(vtable - E::VirtualAddress::SIZE).ok()?;
-        let class_info = binary.read_address(rtti + 0xc).ok()?;
-        let relative = class_info.as_u64().checked_sub(binary.base().as_u64())? as u32;
-        let start = relative.checked_add(8)?;
-        let end = start.checked_add(compare.len() as u32)?;
-        let name = binary.slice_from(start..end).ok()?;
-        Some(vtable).filter(|_| name == compare)
+    let prism_renderer_vtable = vtables.iter().copied().filter(|&vtable| {
+        vtable_class_name(binary, vtable)
+            .filter(|name| name.starts_with(compare))
+            .is_some()
     }).next();
     let prism_renderer_vtable = match prism_renderer_vtable {
         Some(s) => s,
@@ -408,4 +404,173 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 
             _ => (),
         }
     }
+}
+
+pub(crate) fn vertex_buffer<'e, E: ExecutionState<'e>>(
+    analysis: &mut AnalysisCtx<'_, 'e, E>,
+) -> Option<Operand<'e>> {
+    // Renderer_Draw (vtable + 0x1c) calls a function that uploads vertex
+    // buffer (vtable + 0x28)
+    // Renderer_Draw(this, draw_commands, width, height)
+    //    upload_vertices_indices_and_sort_order(draw_commands)
+    //      upload_vertices_indices_and_sort_order2(draw_commands)
+    //        upload_vertices_indices(get_vertex_buf())
+    //          Renderer_UploadVerticesIndices(global_renderer, buffer.x48, buffer.x8,
+    //              buffer.x4, buffer.x38, buffer.x34)
+    // Gl renderer is best for finding this function as it calls it pretty much
+    // immediately, but have a fallback for prism renderer.
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let arg_cache = analysis.arg_cache;
+    let vtables = analysis.renderer_vtables();
+    let word_size = E::VirtualAddress::SIZE;
+
+    for &renderer in &[&b".?AVGLRenderer"[..], b".?AVPrismRenderer"] {
+        let vtable = vtables.iter().copied().filter(|&vtable| {
+            vtable_class_name(binary, vtable)
+                .filter(|name| name.starts_with(renderer))
+                .is_some()
+        }).next();
+        let draw = match vtable.and_then(|x| binary.read_address(x + 7 * word_size).ok()) {
+            Some(s) => s,
+            None => continue,
+        };
+        let mut analyzer = FindVertexBuffer::<E> {
+            arg_cache,
+            result: None,
+            get_fn_result: None,
+            inline_depth: 0,
+            checking_get_fn: false,
+            get_fn_ok: false,
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, draw);
+        analysis.analyze(&mut analyzer);
+        if analyzer.result.is_some() {
+            return analyzer.result;
+        }
+    }
+    None
+}
+
+struct FindVertexBuffer<'a, 'e, E: ExecutionState<'e>> {
+    arg_cache: &'a ArgCache<'e, E>,
+    result: Option<Operand<'e>>,
+    get_fn_result: Option<Operand<'e>>,
+    inline_depth: u8,
+    checking_get_fn: bool,
+    get_fn_ok: bool,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindVertexBuffer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if self.get_fn_ok {
+            match *op {
+                Operation::Call(..) | Operation::Jump { .. } => {
+                    self.get_fn_ok = false;
+                    if self.checking_get_fn {
+                        ctrl.end_analysis();
+                    }
+                }
+                Operation::Return(..) => {
+                    let ret = ctrl.resolve(ctx.register(0));
+                    self.get_fn_result = Some(ret);
+                }
+                _ => (),
+            }
+            if self.checking_get_fn {
+                return;
+            }
+        }
+        match *op {
+            Operation::Call(dest) => {
+                let dest = ctrl.resolve(dest);
+                if let Some(dest) = dest.if_constant().map(|x| E::VirtualAddress::from_u64(x)) {
+                    if self.inline_depth < 2 {
+                        // Check for first two funcs which take draw_commands as an arg
+                        if ctrl.resolve(self.arg_cache.on_call(0)) == self.arg_cache.on_entry(0) {
+                            self.inline_depth += 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth -= 1;
+                            if self.result.is_some() {
+                                ctrl.end_analysis();
+                            }
+                            return;
+                        }
+                    }
+                    if self.inline_depth != 0 {
+                        // Check for upload_vertices_indices with this == global
+                        if let Some(_) = ctrl.resolve_va(ctx.register(1)) {
+                            let old = self.inline_depth;
+                            self.inline_depth = 9;
+                            self.get_fn_ok = true;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = old;
+                            if self.result.is_some() {
+                                ctrl.end_analysis();
+                            }
+                            self.check_get_fn_result(ctrl);
+                            return;
+                        }
+                        // Just inline in case it's a get fn
+                        self.get_fn_ok = true;
+                        self.checking_get_fn = true;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.checking_get_fn = false;
+                        self.check_get_fn_result(ctrl);
+                    }
+                } else {
+                    if self.inline_depth != 0 {
+                        // Check for the actual renderer.upload_vertices_indices virtual call
+                        let word_size = E::VirtualAddress::SIZE;
+                        let is_vtable_fn_28 = ctrl.if_mem_word(dest)
+                            .and_then(|x| x.if_arithmetic_add_const(0xa * word_size as u64))
+                            .is_some();
+                        if is_vtable_fn_28 {
+                            let arg2 = ctrl.resolve(self.arg_cache.on_entry(1));
+                            // Arg2 is Mem32[vertex_buf + 4]
+                            let vertex_buf = ctrl.if_mem_word(arg2)
+                                .map(|x| ctx.sub_const(x, word_size as u64));
+                            if let Some(vertex_buf) = vertex_buf {
+                                self.result = Some(vertex_buf);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> FindVertexBuffer<'a, 'e, E> {
+    // Post-processing after inlining a function that may have been simple
+    // `return x` get_fn()
+    fn check_get_fn_result(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if self.get_fn_ok {
+            if let Some(eax) = self.get_fn_result {
+                let state = ctrl.exec_state();
+                state.move_resolved(
+                    &DestOperand::Register64(scarf::operand::Register(0)),
+                    eax,
+                );
+                ctrl.skip_operation();
+            }
+            self.get_fn_ok = false;
+        }
+    }
+}
+
+fn vtable_class_name<Va: VirtualAddress>(binary: &BinaryFile<Va>, vtable: Va) -> Option<&[u8]> {
+    let rtti = binary.read_address(vtable - Va::SIZE).ok()?;
+    let class_info = binary.read_address(rtti + 0xc).ok()?;
+    let start = class_info + 8;
+    let section = binary.section_by_addr(start)?;
+    let section_relative = start.as_u64().wrapping_sub(section.virtual_address.as_u64()) as usize;
+    let slice = section.data.get(section_relative..)?;
+    let end = slice.iter().position(|&x| x == 0)?;
+    slice.get(..end)
 }

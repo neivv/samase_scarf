@@ -275,6 +275,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     replay_data: Cached<Option<Operand<'e>>>,
     ai_train_military: Cached<Option<E::VirtualAddress>>,
     ai_add_military_to_region: Cached<Option<E::VirtualAddress>>,
+    vertex_buffer: Cached<Option<Operand<'e>>>,
     dat_tables: DatTables<'e>,
 }
 
@@ -563,6 +564,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 replay_data: Default::default(),
                 ai_train_military: Default::default(),
                 ai_add_military_to_region: Default::default(),
+                vertex_buffer: Default::default(),
                 dat_tables: DatTables::new(),
             },
             binary,
@@ -1156,6 +1158,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn ai_add_military_to_region(&mut self) -> Option<E::VirtualAddress> {
         self.enter(|x| x.ai_add_military_to_region())
+    }
+
+    /// Renderer's vertex (and index) buffer
+    pub fn vertex_buffer(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x| x.vertex_buffer())
     }
 
     /// Mainly for tests/dump
@@ -2616,6 +2623,15 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
         self.cache.ai_add_military_to_region.cache(&result);
         result
     }
+
+    fn vertex_buffer(&mut self) -> Option<Operand<'e>> {
+        if let Some(cached) = self.cache.vertex_buffer.cached() {
+            return cached;
+        }
+        let result = renderer::vertex_buffer(self);
+        self.cache.vertex_buffer.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -3179,6 +3195,10 @@ impl<'e> AnalysisX86<'e> {
     pub fn ai_add_military_to_region(&mut self) -> Option<VirtualAddress> {
         self.0.ai_add_military_to_region()
     }
+
+    pub fn vertex_buffer(&mut self) -> Option<Operand<'e>> {
+        self.0.vertex_buffer()
+    }
 }
 
 pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
@@ -3700,6 +3720,7 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
         Option<<A::Exec as ExecutionStateTrait<'e>>::VirtualAddress>
     {
         self.resolve(operand).if_constant()
+            .filter(|&va| va >= self.binary().base().as_u64())
             .map(|x| <A::Exec as ExecutionStateTrait<'e>>::VirtualAddress::from_u64(x))
     }
 }
