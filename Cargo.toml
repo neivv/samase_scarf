@@ -31,7 +31,7 @@ arrayvec = "0.5"
 bumpalo = { version = "3.4", features = ["collections"] }
 byteorder = "1.1.0"
 fxhash = "0.2.1"
-lde = { git = "https://github.com/CasualX/lde" }
+lde = { git = "https://github.com/CasualX/lde", rev = "6d8e287075eae41d0c6bae4c2f3a54268e0f8b4a" }
 log = "0.4"
 memchr = "2.0"
 memmem = "0.1.1"
@@ -43,7 +43,7 @@ scopeguard = { version = "1.1", optional = true }
 
 [dependencies.scarf]
 git = "https://github.com/neivv/scarf"
-rev = "30a43f5ece2024e913800e0088196d42bf192107"
+rev = "4277063eb6d92337e332aba9bbc40ddcb0c3dca1"
 
 [dev-dependencies]
 fern = "0.6"
