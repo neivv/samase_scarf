@@ -21,6 +21,7 @@ mod bullets;
 mod campaign;
 mod clientside;
 mod commands;
+mod crt;
 mod dialog;
 mod eud;
 mod file;
@@ -276,6 +277,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     ai_train_military: Cached<Option<E::VirtualAddress>>,
     ai_add_military_to_region: Cached<Option<E::VirtualAddress>>,
     vertex_buffer: Cached<Option<Operand<'e>>>,
+    crt_fastfail: Cached<Rc<Vec<E::VirtualAddress>>>,
     dat_tables: DatTables<'e>,
 }
 
@@ -565,6 +567,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 ai_train_military: Default::default(),
                 ai_add_military_to_region: Default::default(),
                 vertex_buffer: Default::default(),
+                crt_fastfail: Default::default(),
                 dat_tables: DatTables::new(),
             },
             binary,
@@ -1163,6 +1166,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     /// Renderer's vertex (and index) buffer
     pub fn vertex_buffer(&mut self) -> Option<Operand<'e>> {
         self.enter(|x| x.vertex_buffer())
+    }
+
+    pub fn crt_fastfail(&mut self) -> Rc<Vec<E::VirtualAddress>> {
+        self.enter(|x| x.crt_fastfail())
     }
 
     /// Mainly for tests/dump
@@ -2632,6 +2639,15 @@ impl<'b, 'e, E: ExecutionStateTrait<'e>> AnalysisCtx<'b, 'e, E> {
         self.cache.vertex_buffer.cache(&result);
         result
     }
+
+    fn crt_fastfail(&mut self) -> Rc<Vec<E::VirtualAddress>> {
+        if let Some(cached) = self.cache.crt_fastfail.cached() {
+            return cached;
+        }
+        let result = Rc::new(crt::fastfail(self));
+        self.cache.crt_fastfail.cache(&result);
+        result
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -3198,6 +3214,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn vertex_buffer(&mut self) -> Option<Operand<'e>> {
         self.0.vertex_buffer()
+    }
+
+    pub fn crt_fastfail(&mut self) -> Rc<Vec<VirtualAddress>> {
+        self.0.crt_fastfail()
     }
 }
 

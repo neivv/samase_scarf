@@ -555,6 +555,8 @@ fn main() {
     println!("ai_add_military_to_region: {:?}", analysis.ai_add_military_to_region());
     println!("vertex_buffer: {}", format_op_operand(analysis.vertex_buffer()));
 
+    println!("crt_fastfail: {:?}", analysis.crt_fastfail());
+
     let undef = ctx.new_undef();
     println!();
     println!("Undefined count: {}", match *undef.ty() {

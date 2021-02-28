@@ -1193,7 +1193,13 @@ fn everything_1238a() {
 
 #[test]
 fn everything_1238b() {
-    test_with_extra_checks(Path::new("1238b.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1238b.exe"), |_ctx, analysis| {
+        let fastfail = analysis.crt_fastfail();
+        assert!(fastfail.iter().any(|x| x.0 == 0xcca86f));
+        assert!(fastfail.iter().any(|x| x.0 == 0xcca974));
+        assert!(fastfail.iter().any(|x| x.0 == 0xccbb25));
+        assert!(fastfail.iter().any(|x| x.0 == 0xcd749d));
+        assert!(fastfail.iter().any(|x| x.0 == 0xcd8408));
     })
 }
 
@@ -1809,6 +1815,8 @@ fn test_nongeneric<'e>(
     } else {
         assert!(vertex_buffer.is_none());
     }
+
+    assert_eq!(analysis.crt_fastfail().len(), 0x5);
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {
