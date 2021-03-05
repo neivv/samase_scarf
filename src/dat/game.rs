@@ -607,21 +607,20 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         index: Operand<'e>,
     ) {
         let ctx = ctrl.ctx();
-        let (player, upgrade) = match index.if_arithmetic_sub()
-            .and_either(|x| {
-                x.if_arithmetic_add()
-                    .and_either(|y| y.if_arithmetic_lsh_const(4))
-            })
-            .and_then(|((p1, u), p2)| {
-                if p1 == p2 {
-                    Some((p1, u))
-                } else {
-                    None
-                }
-            })
+        // originally index = (upgrade - 2e) + player * f
+        let (player, upgrade) = match index.if_arithmetic_add()
+            .and_either(|x| x.if_arithmetic_mul_const(0xf))
         {
             Some(s) => s,
             None => {
+                if index.if_constant().is_none() && !index.is_undefined() {
+                    // The code below assumes values to be in bounds,
+                    // (e.g. never extended upgrades)
+                    // Undefined check may still let something incorrectly past
+                    // if inlining settings change, but hoping they won't.
+                    dat_warn!(self, "Unable to split player/upgrade");
+                    return;
+                }
                 let divisor = ctx.constant(0xf);
                 let offset = ctx.sub_const(index, 0x2eu32.wrapping_sub(start_index) as u64);
                 let player = ctx.div(offset, divisor);
