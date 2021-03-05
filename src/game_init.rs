@@ -1599,12 +1599,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Jump { condition, .. } => {
                 let cond = ctrl.resolve(condition);
                 let cmp_invalid_handle = cond.iter_no_mem_addr()
-                    .filter_map(|x| x.if_arithmetic_eq())
-                    .filter_map(|(l, r)| {
-                        Operand::either(l, r, |x| x.if_constant())
+                    .filter_map(|x| {
+                        let (l, r) = x.if_arithmetic_eq()?;
+                        r.if_constant().filter(|&c| c as u32 == u32::max_value())?;
+                        Some(l)
                     })
-                    .filter(|&(c, _)| c as u32 == u32::max_value())
-                    .map(|x| x.1.clone())
                     .next();
                 if let Some(h) = cmp_invalid_handle {
                     let address = ctrl.address();
