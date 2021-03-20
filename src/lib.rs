@@ -586,20 +586,24 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         address.as_u64() & 0xf == 0
     }
 
-    /// Entry point for any analysis calls.
-    /// Creates AnalysisCtx from self that is used across actual analysis functions.
-    fn enter<F: for<'b> FnOnce(&mut AnalysisCtx<'b, 'e, E>) -> R, R>(
-        &mut self,
-        func: F,
-    ) -> R {
-        let mut ctx = AnalysisCtx {
+    fn analysis_ctx<'s>(&'s mut self) -> AnalysisCtx<'s, 'e, E> {
+        AnalysisCtx {
             cache: &mut self.cache,
             binary: self.binary,
             binary_sections: &self.binary_sections,
             ctx: self.ctx,
             arg_cache: &self.arg_cache,
             bump: &self.bump,
-        };
+        }
+    }
+
+    /// Entry point for any analysis calls.
+    /// Creates AnalysisCtx from self that is used across actual analysis functions.
+    fn enter<F: for<'b> FnOnce(&mut AnalysisCtx<'b, 'e, E>) -> R, R>(
+        &mut self,
+        func: F,
+    ) -> R {
+        let mut ctx = self.analysis_ctx();
         let ret = func(&mut ctx);
         self.bump.reset();
         ret

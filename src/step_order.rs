@@ -129,7 +129,7 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
                             ctrl.end_analysis();
                         }
                     }
-                    Operation::SetFlags(ref arith, _) => {
+                    Operation::SetFlags(ref arith) => {
                         let op = ctx.eq(arith.left, arith.right);
                         let val = ctrl.resolve(op);
                         if let Some(result) = self.check(val, ctrl) {

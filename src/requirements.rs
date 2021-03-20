@@ -1,6 +1,6 @@
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{ArithOpType, BinaryFile, DestOperand, Operand, Operation};
+use scarf::{BinaryFile, DestOperand, FlagArith, Operand, Operation};
 
 use crate::{
     AnalysisCtx, ArgCache, DatType, entry_of_until, EntryOf, find_functions_using_global,
@@ -217,8 +217,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheatFlagsAnalyzer<'e
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
-            Operation::SetFlags(arith, _size) if self.switch_reached => {
-                if arith.ty == ArithOpType::And {
+            Operation::SetFlags(ref arith) if self.switch_reached => {
+                if arith.ty == FlagArith::And {
                     if ctrl.resolve(arith.right).if_constant() == Some(0x1000) {
                         self.result = Some(ctrl.resolve(arith.left));
                         ctrl.end_analysis();

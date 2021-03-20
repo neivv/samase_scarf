@@ -355,7 +355,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::SetFlags(arith, _size) => {
+            Operation::SetFlags(ref arith) => {
                 if self.game_ref_seen {
                     if let Some(mem) = arith.left.if_memory() {
                         self.check_mem_access(ctrl, mem.address);

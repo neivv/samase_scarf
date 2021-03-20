@@ -834,7 +834,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 } else if let Operation::Special(ref bytes) = op {
                     // (Rep) movs dword
-                    if bytes == &[0xf3, 0xa5] {
+                    if &bytes[..] == &[0xf3, 0xa5] {
                         let len = ctrl.resolve(self.ctx.register_ref(1));
                         let from = ctrl.resolve(self.ctx.register_ref(6));
                         let dest = ctrl.resolve(self.ctx.register_ref(7));
@@ -881,7 +881,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                         Operation::Special(ref bytes) => {
                             // (Rep) movs dword
-                            if bytes == &[0xf3, 0xa5] {
+                            if &bytes[..] == &[0xf3, 0xa5] {
                                 let from = ctrl.resolve(ctx.register(6));
                                 let dest = ctrl.resolve(ctx.register(7));
                                 Some((dest, from))

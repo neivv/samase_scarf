@@ -38,8 +38,11 @@ use lde::Isa;
 
 use scarf::analysis::{self, Cfg, Control, FuncAnalysis, RelocValues};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::operand::{ArithOpType, ArithOperand, MemAccessSize, OperandType, OperandHashByAddress};
-use scarf::{BinaryFile, BinarySection, DestOperand, Operand, OperandCtx, Operation, Rva};
+use scarf::operand::{ArithOpType, MemAccessSize, OperandType, OperandHashByAddress};
+use scarf::{
+    BinaryFile, BinarySection, DestOperand, FlagArith, FlagUpdate, Operand, OperandCtx,
+    Operation, Rva
+};
 
 use crate::{
     ArgCache, AnalysisCtx, EntryOf, StringRefs, DatType, entry_of_until, single_result_assign,
@@ -1207,8 +1210,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::SetFlags(arith, arith_size)
-                if arith.ty == ArithOpType::Sub || arith.ty == ArithOpType::And =>
+            Operation::SetFlags(arith)
+                if arith.ty == FlagArith::Sub || arith.ty == FlagArith::And =>
             {
                 let left = ctrl.resolve(arith.left);
                 let right = ctrl.resolve(arith.right);
@@ -1223,12 +1226,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let right = new_right.unwrap_or(right);
                         ctrl.skip_operation();
                         let state = ctrl.exec_state();
-                        let new_arith = ArithOperand {
+                        let new_arith = FlagUpdate {
                             left,
                             right,
                             ty: arith.ty,
+                            size: arith.size,
                         };
-                        state.set_flags_resolved(&new_arith, arith_size);
+                        state.set_flags_resolved(&new_arith, None);
                     }
                 }
             }
@@ -2448,7 +2452,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::SetFlags(arith, _size) => {
+            Operation::SetFlags(ref arith) => {
                 let left = ctrl.resolve(arith.left);
                 let right = ctrl.resolve(arith.right);
                 self.check_u8_instruction(ctrl, left, arith.left);

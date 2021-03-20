@@ -1,7 +1,6 @@
-use scarf::{DestOperand, Operand, Operation};
+use scarf::{DestOperand, FlagUpdate, FlagArith, Operand, Operation};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::operand::{ArithOpType, ArithOperand};
 
 use crate::{
     AnalysisCtx, ArgCache, EntryOf, OptionExt, OperandExt, entry_of_until_with_limit, find_callers,
@@ -291,9 +290,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
             recurse(op, 24).is_none()
         }
         match *op {
-            Operation::SetFlags(ref arith, size) => {
+            Operation::SetFlags(ref arith) => {
                 // Assume that complex mem addresses are volatile
-                if !self.rng_enabled && arith.ty == ArithOpType::Sub {
+                if !self.rng_enabled && arith.ty == FlagArith::Sub {
                     let left = ctrl.resolve(arith.left);
                     let right = ctrl.resolve(arith.right);
                     if left == right {
@@ -302,12 +301,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                                 ctrl.skip_operation();
                                 let exec_state = ctrl.exec_state();
                                 exec_state.update(&Operation::SetFlags(
-                                    ArithOperand {
+                                    FlagUpdate {
                                         left: arith.left,
                                         right: ctx.new_undef(),
-                                        ty: ArithOpType::Sub,
+                                        ty: FlagArith::Sub,
+                                        size: arith.size,
                                     },
-                                    size,
                                 ));
                             }
                         }
