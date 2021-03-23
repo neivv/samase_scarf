@@ -1229,6 +1229,42 @@ fn test_nongeneric<'e>(
     binary: &'e scarf::BinaryFile<VirtualAddress>,
     analysis: &mut samase_scarf::Analysis<'e, ExecutionStateX86<'e>>,
 ) {
+    for addr in samase_scarf::AddressAnalysis::iter() {
+        use samase_scarf::AddressAnalysis::*;
+        match addr {
+            // special handling
+            JoinGame => continue,
+            _ => (),
+        }
+        let result = analysis.address_analysis(addr);
+        assert!(result.is_some(), "Missing {}", addr.name());
+    }
+    for op in samase_scarf::OperandAnalysis::iter() {
+        use samase_scarf::OperandAnalysis::*;
+        let result = analysis.operand_analysis(op);
+        match op {
+            // special handling
+            Units | PlayerUnitSkins | VertexBuffer => {
+                continue;
+            }
+            Game | Players => {
+                let result = result.unwrap_or_else(|| panic!("Didn't find {}", op.name()));
+                check_game(result, binary, op.name());
+            }
+            Pathing | CommandUser | IsReplay | LocalPlayerId | LobbyState | DrawCursorMarker |
+                FirstAiScript | StatusScreenMode | CheatFlags | ReplayData =>
+            {
+                check_global_opt(result, binary, op.name());
+            }
+            LocalPlayerName | FirstGuardAi | PlayerAiTowns | PlayerAi | Campaigns | Fonts |
+                UnitStrength | WireframDdsgrp | ChkInitPlayers | OriginalChkPlayerTypes |
+                AiTransportReachabilityCachedRegion =>
+            {
+                check_global_struct_opt(result, binary, op.name());
+            }
+            _Last => (),
+        }
+    }
     let results = analysis.file_hook();
     assert_eq!(results.len(), 1);
     let results = analysis.firegraft_addresses();
@@ -1311,21 +1347,11 @@ fn test_nongeneric<'e>(
     check_global(rng.seed.unwrap(), binary, "rng seed");
     check_global(rng.enable.unwrap(), binary, "rng enable");
     assert_ne!(rng.seed.unwrap(), rng.enable.unwrap());
-    let step_objects = analysis.step_objects();
-    assert!(step_objects.is_some());
-    let game = analysis.game();
-    assert!(game.is_some());
-    check_game(game.unwrap(), binary, "game");
-    let player_ai = analysis.player_ai();
-    assert!(player_ai.is_some());
-    check_global_struct(player_ai.unwrap(), binary, "player ai");
     let regions = analysis.regions();
     assert!(regions.get_region.is_some());
     assert!(regions.ai_regions.is_some());
     assert!(regions.change_ai_region_state.is_some());
     check_global_struct(regions.ai_regions.unwrap(), binary, "ai regions");
-    let pathing = analysis.pathing().unwrap();
-    check_global(pathing, binary, "pathing");
 
     let active_hidden_units = analysis.active_hidden_units();
     assert!(active_hidden_units.first_active_unit.is_some());
@@ -1349,25 +1375,13 @@ fn test_nongeneric<'e>(
     assert!(commands.process_commands.is_some());
     assert!(commands.storm_command_user.is_some());
     check_global(commands.storm_command_user.unwrap(), binary, "storm_command_user");
-    let command_user = analysis.command_user().unwrap();
-    check_global(command_user, binary, "command_user");
     let selections = analysis.selections();
     let unique_command_user = selections.unique_command_user.unwrap();
     check_global(unique_command_user, binary, "unique_command_user");
     check_global_struct(selections.selections.unwrap(), binary, "selections");
 
-    let is_replay = analysis.is_replay().unwrap();
-    check_global(is_replay, binary, "is_replay");
-
     let lobby_commands = analysis.process_lobby_commands();
     assert!(lobby_commands.is_some());
-    let send_command = analysis.send_command();
-    assert!(send_command.is_some());
-
-    let print = analysis.print_text();
-    assert!(print.is_some());
-    let step_order = analysis.step_order();
-    assert!(step_order.is_some());
 
     let units_size = analysis.dat(DatType::Units).unwrap().entry_size;
     assert_eq!(analysis.dat(DatType::Weapons).unwrap().entry_size, units_size);
@@ -1407,15 +1421,6 @@ fn test_nongeneric<'e>(
     let rclick = analysis.game_screen_rclick();
     assert!(rclick.game_screen_rclick.is_some());
     check_global_struct(rclick.client_selection.unwrap(), binary, "client selection");
-
-    let first_ai_script = analysis.first_ai_script();
-    check_global(first_ai_script.unwrap(), binary, "first ai script");
-
-    let guard_ai = analysis.first_guard_ai();
-    check_global_struct(guard_ai.unwrap(), binary, "first guard ai");
-
-    let towns = analysis.player_ai_towns();
-    check_global_struct(towns.unwrap(), binary, "towns");
 
     let iscript = analysis.step_iscript();
     assert!(iscript.step_fn.is_some());
@@ -1508,11 +1513,6 @@ fn test_nongeneric<'e>(
     check_global(map_tile_flags.map_tile_flags.unwrap(), binary, "map_tile_flags");
     assert!(map_tile_flags.update_visibility_point.is_some());
 
-    let players = analysis.players();
-    check_game(players.unwrap(), binary, "players");
-
-    let draw = analysis.draw_image();
-    assert!(draw.is_some());
     let vtables = analysis.renderer_vtables();
     let has_prism = (minor_version == 23 && patch_version == 4 && is_ptr) ||
         (minor_version == 23 && patch_version >= 5) ||
@@ -1525,8 +1525,6 @@ fn test_nongeneric<'e>(
         assert_eq!(vtables.len(), 2);
     }
 
-    let local_player_id = analysis.local_player_id();
-    check_global(local_player_id.unwrap(), binary, "local_player_id");
     let bullets = analysis.bullet_creation();
     check_global_opt(bullets.first_free_bullet, binary, "first free bullet");
     check_global_opt(bullets.last_free_bullet, binary, "last free bullet");
@@ -1540,27 +1538,15 @@ fn test_nongeneric<'e>(
     check_global_struct(players, binary, "net players");
     assert_eq!(size, 0x68, "sizeof NetPlayer");
     assert!(net_players.init_net_player.is_some());
-    let play_smk = analysis.play_smk();
-    assert!(play_smk.is_some());
     let game_init = analysis.game_init();
     assert!(game_init.sc_main.is_some());
     assert!(game_init.mainmenu_entry_hook.is_some());
     assert!(game_init.game_loop.is_some());
     check_global(game_init.scmain_state.unwrap(), binary, "scmain_state");
 
-    let add_overlay_iscript = analysis.add_overlay_iscript();
-    assert!(add_overlay_iscript.is_some());
-    let campaigns = analysis.campaigns();
-    check_global_struct_opt(campaigns, binary, "campaigns");
-    let run_dialog = analysis.run_dialog();
-    assert!(run_dialog.is_some());
     let spawn_dialog = analysis.spawn_dialog();
-    assert!(spawn_dialog.is_some());
+    let run_dialog = analysis.run_dialog();
     assert_ne!(run_dialog, spawn_dialog);
-    let ai_update_attack_target = analysis.ai_update_attack_target();
-    assert!(ai_update_attack_target.is_some());
-    let is_outside_game_screen = analysis.is_outside_game_screen();
-    assert!(is_outside_game_screen.is_some());
 
     let coords = analysis.game_coord_conversion();
     check_global(coords.screen_x.unwrap(), binary, "screen_x");
@@ -1575,10 +1561,6 @@ fn test_nongeneric<'e>(
 
     let init_map_from_path = analysis.init_map_from_path();
     assert!(init_map_from_path.is_some());
-    let choose_snp = analysis.choose_snp();
-    assert!(choose_snp.is_some());
-    let snet_initialize_provider = analysis.snet_initialize_provider();
-    assert!(snet_initialize_provider.is_some());
 
     let start = analysis.single_player_start();
     assert!(start.single_player_start.is_some());
@@ -1595,14 +1577,10 @@ fn test_nongeneric<'e>(
     assert!(sel.select_map_entry.is_some());
     check_global(sel.is_multiplayer.unwrap(), binary, "is_multiplayer");
 
-    let load_images = analysis.load_images();
-    assert!(load_images.is_some());
     let images_loaded = analysis.images_loaded();
     check_global(images_loaded.unwrap(), binary, "images loaded");
     let init_rtl = analysis.init_real_time_lighting();
     assert!(init_rtl.is_some());
-    let local_player_name = analysis.local_player_name();
-    check_global_struct_opt(local_player_name, binary, "local player name");
 
     let step = analysis.step_network();
     assert!(step.step_network.is_some());
@@ -1622,17 +1600,9 @@ fn test_nongeneric<'e>(
         assert!(snp_definitions.is_none());
     }
 
-    let lobby_state = analysis.lobby_state();
-    check_global(lobby_state.unwrap(), binary, "lobby state");
-
-    let init_network = analysis.init_game_network();
-    assert!(init_network.is_some());
     let init_storm_networking = analysis.init_storm_networking();
     assert!(init_storm_networking.init_storm_networking.is_some());
     assert!(init_storm_networking.load_snp_list.is_some());
-
-    let draw_cursor_marker = analysis.draw_cursor_marker();
-    check_global(draw_cursor_marker.unwrap(), binary, "draw cursor marker");
 
     let misc = analysis.misc_clientside();
     check_global(misc.is_paused.unwrap(), binary, "is_paused");
@@ -1646,9 +1616,6 @@ fn test_nongeneric<'e>(
 
     assert!(analysis.serialize_sprites().is_some());
     assert!(analysis.deserialize_sprites().is_some());
-
-    let fonts = analysis.fonts();
-    check_global_struct_opt(fonts, binary, "fonts");
 
     let limits = analysis.limits();
     if extended_limits {
@@ -1684,7 +1651,6 @@ fn test_nongeneric<'e>(
     assert!(analysis.font_cache_render_ascii().is_some());
     assert!(analysis.ttf_cache_character().is_some());
     assert!(analysis.ttf_render_sdf().is_some());
-    assert!(analysis.ttf_malloc().is_some());
 
     let offset = analysis.create_game_dialog_vtbl_on_multiplayer_create().unwrap();
     // 1207a .. 1232e 0xa8
@@ -1707,7 +1673,6 @@ fn test_nongeneric<'e>(
     assert!(analysis.layout_draw_text().is_some());
     assert!(analysis.draw_f10_menu_tooltip().is_some());
     assert!(analysis.draw_tooltip_layer().is_some());
-    assert!(analysis.draw_graphic_layers().is_some());
 
     if has_prism {
         assert_eq!(analysis.prism_vertex_shaders().len(), 0x6);
@@ -1717,7 +1682,6 @@ fn test_nongeneric<'e>(
         assert_eq!(analysis.prism_pixel_shaders().len(), 0);
     }
 
-    assert!(analysis.ai_attack_prepare().is_some());
     assert!(analysis.ai_step_region().is_some());
     assert!(analysis.ai_spend_money().is_some());
 
@@ -1753,12 +1717,8 @@ fn test_nongeneric<'e>(
         assert!(mouse_xy.y_func.is_none());
     }
 
-    check_global(analysis.status_screen_mode().unwrap(), binary, "status_screen_mode");
     assert!(analysis.check_unit_requirements().is_some());
-    assert!(analysis.check_dat_requirements().is_some());
     check_global(analysis.dat_requirement_error().unwrap(), binary, "dat_requirement_error");
-    check_global(analysis.cheat_flags().unwrap(), binary, "cheat_flags");
-    check_global_struct(analysis.unit_strength().unwrap(), binary, "unit_strength");
 
     check_global(analysis.grpwire_grp().unwrap(), binary, "grpwire_grp");
     check_global(analysis.tranwire_grp().unwrap(), binary, "tranwire_grp");
@@ -1767,7 +1727,6 @@ fn test_nongeneric<'e>(
     check_global(analysis.status_screen().unwrap(), binary, "status_screen");
     assert!(analysis.status_screen_event_handler().is_some());
     assert!(analysis.init_status_screen().is_some());
-    check_global_struct(analysis.wirefram_ddsgrp().unwrap(), binary, "wirefram_ddsgrp");
 
     assert!(analysis.trigger_conditions().is_some());
     assert!(analysis.trigger_actions().is_some());
@@ -1780,20 +1739,6 @@ fn test_nongeneric<'e>(
         "completed units cache",
     );
 
-    check_global_struct_opt(analysis.chk_init_players(), binary, "chk orig players");
-    check_global_struct_opt(
-        analysis.original_chk_player_types(),
-        binary,
-        "original_chk_player_types",
-    );
-    assert!(analysis.give_ai().is_some());
-    assert!(analysis.play_sound().is_some());
-    assert!(analysis.ai_prepare_moving_to().is_some());
-    check_global_struct_opt(
-        analysis.ai_transport_reachability_cached_region(),
-        binary,
-        "ai_transport_reachability_cached_region",
-    );
     // Became a thing since 1.23.0 (carbot)
     let skins = analysis.player_unit_skins();
     if minor_version >= 23 {
@@ -1801,12 +1746,7 @@ fn test_nongeneric<'e>(
     } else {
         assert!(skins.is_none());
     }
-    assert!(analysis.replay_minimap_unexplored_fog_patch().is_some());
-    assert!(analysis.step_replay_commands().is_some());
-    check_global_opt(analysis.replay_data(), binary, "replay_data");
 
-    assert!(analysis.ai_train_military().is_some());
-    assert!(analysis.ai_add_military_to_region().is_some());
     // The vertex buffer funcs / struct layout changed slightly in 1.21.2,
     // but it's been stable since then.
     let vertex_buffer = analysis.vertex_buffer();

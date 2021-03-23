@@ -159,6 +159,32 @@ fn main() {
         return;
     }
 
+    // Addresses
+    let mut lines = Vec::new();
+    for address_op in samase_scarf::AddressAnalysis::iter() {
+        let result = analysis.address_analysis(address_op);
+        lines.push((address_op.name(), result));
+    }
+    lines.sort_unstable_by_key(|x| x.0);
+    for &(name, val) in &lines {
+        if let Some(addr) = val {
+            println!("{}: {:08x}", name, addr.as_u64());
+        } else {
+            println!("{}: None", name);
+        }
+    }
+
+    // Operands
+    let mut lines = Vec::new();
+    for op in samase_scarf::OperandAnalysis::iter() {
+        let result = analysis.operand_analysis(op);
+        lines.push((op.name(), result));
+    }
+    lines.sort_unstable_by_key(|x| x.0);
+    for &(name, val) in &lines {
+        println!("{}: {}", name, format_op_operand(val));
+    }
+
     let open_file = analysis.file_hook();
     println!("open_file: {:?}", open_file);
     let firegraft = analysis.firegraft_addresses();
@@ -182,26 +208,16 @@ fn main() {
     let rng = analysis.rng();
     println!("Rng seed: {}", format_op_operand(rng.seed));
     println!("Rng enable: {}", format_op_operand(rng.enable));
-    let step_objects = analysis.step_objects();
-    println!("step_objects: {:?}", step_objects);
-    let game = analysis.game();
-    println!("game: {}", format_op_operand(game));
-    let player_ai = analysis.player_ai();
-    println!("Player AI: {}", format_op_operand(player_ai));
     let regions = analysis.regions();
     println!("get_region: {:?}", regions.get_region);
     println!("AI regions: {}", format_op_operand(regions.ai_regions));
     println!("change_ai_region_state: {:?}", regions.change_ai_region_state);
-    let pathing = analysis.pathing();
-    println!("pathing: {}", format_op_operand(pathing));
     let unit_lists = analysis.active_hidden_units();
     println!("first_active_unit: {}", format_op_operand(unit_lists.first_active_unit));
     println!("first_hidden_unit: {}", format_op_operand(unit_lists.first_hidden_unit));
     let order_issuing = analysis.order_issuing();
     println!("prepare_issue_order: {:?}", order_issuing.prepare_issue_order);
     println!("do_next_queued_order: {:?}", order_issuing.do_next_queued_order);
-    let step_order = analysis.step_order();
-    println!("step_order: {:?}", step_order);
     let step_order_hidden = analysis.step_order_hidden();
     println!("step_order_hidden: {:?}", step_order_hidden);
     let step_secondary = analysis.step_secondary_order();
@@ -215,8 +231,6 @@ fn main() {
             switch.address, switch.indirection, switch.offset,
         );
     }
-    let command_user = analysis.command_user();
-    println!("command_user: {}", format_op_operand(command_user));
     let selections = analysis.selections();
     println!("unique_command_user: {}", format_op_operand(selections.unique_command_user));
     println!("selections: {}", format_op_operand(selections.selections));
@@ -225,10 +239,6 @@ fn main() {
     println!("command_lengths: len {:x}, {:?}", lengths.len(), lengths);
     let lobby_commands = analysis.process_lobby_commands();
     println!("process_lobby_commands: {:?}", lobby_commands);
-    let send_command = analysis.send_command();
-    println!("send_command: {:?}", send_command);
-    let print_text = analysis.print_text();
-    println!("print_text: {:?}", print_text);
 
     let format_dat = |val: &Option<samase_scarf::DatTablePtr>| {
         if let Some(x) = val {
@@ -259,21 +269,9 @@ fn main() {
             .map(|x| x.to_string()).unwrap_or_else(|| "None".to_string()),
     );
 
-    let is_replay = analysis.is_replay();
-    println!("is_replay: {}", format_op_operand(is_replay));
-    let units = analysis.units();
-    println!("units: {}", format_op_operand(units));
-
     let rclick = analysis.game_screen_rclick();
     println!("game_screen_rclick: {:?}", rclick.game_screen_rclick);
     println!("client_selection: {}", format_op_operand(rclick.client_selection));
-
-    let first_ai_script = analysis.first_ai_script();
-    println!("first_ai_script: {}", format_op_operand(first_ai_script));
-    let first_guard_ai = analysis.first_guard_ai();
-    println!("first_guard_ai: {}", format_op_operand(first_guard_ai));
-    let towns = analysis.player_ai_towns();
-    println!("active_ai_towns: {}", format_op_operand(towns));
 
     let iscript = analysis.step_iscript();
     println!("step_iscript: {:?}", iscript.step_fn);
@@ -305,14 +303,8 @@ fn main() {
     let map_tile_flags = analysis.map_tile_flags();
     println!("map_tile_flags: {}", format_op_operand(map_tile_flags.map_tile_flags));
     println!("update_visibility_point: {:?}", map_tile_flags.update_visibility_point);
-    let players = analysis.players();
-    println!("players: {}", format_op_operand(players));
-    let draw_image = analysis.draw_image();
-    println!("draw_image: {:?}", draw_image);
     let renderer_vtables = analysis.renderer_vtables();
     println!("renderer_vtables: {:?}", renderer_vtables);
-    let local_player_id = analysis.local_player_id();
-    println!("local_player_id: {}", format_op_operand(local_player_id));
     let bullet_creation = analysis.bullet_creation();
     println!("first_active_bullet: {}", format_op_operand(bullet_creation.first_active_bullet));
     println!("last_active_bullet: {}", format_op_operand(bullet_creation.last_active_bullet));
@@ -328,27 +320,12 @@ fn main() {
         println!("net_players: None");
     }
     println!("init_net_player: {:?}", net_players.init_net_player);
-    let play_smk = analysis.play_smk();
-    println!("play_smk: {:?}", play_smk);
 
     let game_init = analysis.game_init();
     println!("sc_main: {:?}", game_init.sc_main);
     println!("mainmenu_entry_hook: {:?}", game_init.mainmenu_entry_hook);
     println!("game_loop: {:?}", game_init.game_loop);
     println!("scmain_state: {}", format_op_operand(game_init.scmain_state));
-
-    let add_overlay_iscript = analysis.add_overlay_iscript();
-    println!("add_overlay_iscript: {:?}", add_overlay_iscript);
-    let campaigns = analysis.campaigns();
-    println!("campaigns: {}", format_op_operand(campaigns));
-    let run_dialog = analysis.run_dialog();
-    println!("run_dialog: {:?}", run_dialog);
-    let spawn_dialog = analysis.spawn_dialog();
-    println!("spawn_dialog: {:?}", spawn_dialog);
-    let ai_update_attack_target = analysis.ai_update_attack_target();
-    println!("ai_update_attack_target: {:?}", ai_update_attack_target);
-    let is_outside_game_screen = analysis.is_outside_game_screen();
-    println!("is_outside_game_screen: {:?}", is_outside_game_screen);
 
     let coords = analysis.game_coord_conversion();
     println!("screen_x: {}", format_op_operand(coords.screen_x));
@@ -363,9 +340,6 @@ fn main() {
 
     let init_map_from_path = analysis.init_map_from_path();
     println!("init_map_from_path: {:?}", init_map_from_path);
-    let choose_snp = analysis.choose_snp();
-    println!("choose_snp: {:?}", choose_snp);
-    println!("SNetInitializeProvider: {:?}", analysis.snet_initialize_provider());
 
     let start = analysis.single_player_start();
     println!("single_player_start: {:?}", start.single_player_start);
@@ -381,14 +355,10 @@ fn main() {
     let sel = analysis.select_map_entry();
     println!("select_map_entry: {:?}", sel.select_map_entry);
     println!("is_multiplayer: {}", format_op_operand(sel.is_multiplayer));
-    let load_images = analysis.load_images();
-    println!("load_images: {:?}", load_images);
     let images_loaded = analysis.images_loaded();
     println!("images_loaded: {}", format_op_operand(images_loaded));
     let init_rtl = analysis.init_real_time_lighting();
     println!("init_real_time_lighting: {:?}", init_rtl);
-    let local_player_name = analysis.local_player_name();
-    println!("local_player_name: {}", format_op_operand(local_player_name));
 
     let step = analysis.step_network();
     println!("step_network: {:?}", step.step_network);
@@ -399,9 +369,6 @@ fn main() {
     println!("player_turns_size: {}", format_op_operand(step.player_turns_size));
     println!("network_ready: {}", format_op_operand(step.network_ready));
 
-    let init_game_network = analysis.init_game_network();
-    println!("init_game_network: {:?}", init_game_network);
-
     let snp_definitions = analysis.snp_definitions();
     if let Some(defs) = snp_definitions {
         println!("snp_definitions: {}, {:x} bytes", defs.snp_definitions, defs.entry_size);
@@ -409,14 +376,9 @@ fn main() {
         println!("snp_definitions: None");
     }
 
-    let lobby_state = analysis.lobby_state();
-    println!("lobby_state: {}", format_op_operand(lobby_state));
     let init_storm_networking = analysis.init_storm_networking();
     println!("init_storm_networking: {:?}", init_storm_networking.init_storm_networking);
     println!("load_snp_list: {:?}", init_storm_networking.load_snp_list);
-
-    let draw_cursor_marker = analysis.draw_cursor_marker();
-    println!("draw_cursor_marker: {}", format_op_operand(draw_cursor_marker));
 
     let misc_clientside = analysis.misc_clientside();
     println!("is_paused: {}", format_op_operand(misc_clientside.is_paused));
@@ -427,9 +389,6 @@ fn main() {
     println!("create_unit: {:?}", unit_creation.create_unit);
     println!("finish_unit_pre: {:?}", unit_creation.finish_unit_pre);
     println!("finish_unit_post: {:?}", unit_creation.finish_unit_post);
-
-    let fonts = analysis.fonts();
-    println!("fonts: {}", format_op_operand(fonts));
 
     println!("init_sprites: {:?}", analysis.init_sprites());
     let sprite_array = analysis.sprite_array();
@@ -457,7 +416,6 @@ fn main() {
     println!("font_cache_render_ascii: {:?}", analysis.font_cache_render_ascii());
     println!("ttf_cache_character: {:?}", analysis.ttf_cache_character());
     println!("ttf_render_sdf: {:?}", analysis.ttf_render_sdf());
-    println!("ttf_malloc: {:?}", analysis.ttf_malloc());
 
     let offset = analysis.create_game_dialog_vtbl_on_multiplayer_create();
     println!("CreateGameScreen.on_multiplayer_create offset: {:x?}", offset);
@@ -468,7 +426,6 @@ fn main() {
     println!("graphic_layers: {}", format_op_operand(analysis.graphic_layers()));
     println!("draw_tooltip_layer: {:?}", analysis.draw_tooltip_layer());
     println!("draw_f10_menu_tooltip: {:?}", analysis.draw_f10_menu_tooltip());
-    println!("draw_graphic_layers: {:?}", analysis.draw_graphic_layers());
 
     println!("Prism vertex shader sets: 0x{:x}", analysis.prism_vertex_shaders().len());
     println!("Prism pixel shader sets: 0x{:x}", analysis.prism_pixel_shaders().len());
@@ -481,11 +438,9 @@ fn main() {
         analysis.prism_pixel_shaders().iter().map(|x| x.as_u64()).collect::<Vec<_>>(),
     );
 
-    println!("ai_attack_prepare: {:?}", analysis.ai_attack_prepare());
     println!("ai_step_region: {:?}", analysis.ai_step_region());
     println!("ai_spend_money: {:?}", analysis.ai_spend_money());
 
-    println!("join_game: {:?}", analysis.join_game());
     println!("set_status_screen_tooltip: {:?}", analysis.set_status_screen_tooltip());
     println!("do_attack: {:?}", analysis.do_attack());
     println!("do_attack_main: {:?}", analysis.do_attack_main());
@@ -501,13 +456,9 @@ fn main() {
     println!("mouse_y: {}", format_op_operand(mouse_xy.y_var));
     println!("get_mouse_x: {:?}", mouse_xy.x_func);
     println!("get_mouse_y: {:?}", mouse_xy.y_func);
-    println!("status_screen_mode: {}", format_op_operand(analysis.status_screen_mode()));
 
     println!("check_unit_requirements: {:?}", analysis.check_unit_requirements());
-    println!("check_dat_requirements: {:?}", analysis.check_dat_requirements());
     println!("dat_requirement_error: {}", format_op_operand(analysis.dat_requirement_error()));
-    println!("cheat_flags: {}", format_op_operand(analysis.cheat_flags()));
-    println!("unit_strength: {}", format_op_operand(analysis.unit_strength()));
 
     println!("grpwire_grp: {}", format_op_operand(analysis.grpwire_grp()));
     println!("grpwire_ddsgrp: {}", format_op_operand(analysis.grpwire_ddsgrp()));
@@ -516,7 +467,6 @@ fn main() {
     println!("status_screen: {}", format_op_operand(analysis.status_screen()));
     println!("status_screen_event_handler: {:?}", analysis.status_screen_event_handler());
     println!("init_status_screen: {:?}", analysis.init_status_screen());
-    println!("wirefram_ddsgrp: {}", format_op_operand(analysis.wirefram_ddsgrp()));
 
     println!("trigger_conditions: {:?}", analysis.trigger_conditions());
     println!("trigger_actions: {:?}", analysis.trigger_actions());
@@ -529,31 +479,11 @@ fn main() {
     println!("snet_send_packets: {:?}", analysis.snet_send_packets());
     println!("snet_recv_packets: {:?}", analysis.snet_recv_packets());
 
-    println!("chk_init_players: {}", format_op_operand(analysis.chk_init_players()));
-    println!(
-        "original_chk_player_types: {}",
-        format_op_operand(analysis.original_chk_player_types()),
-    );
-    println!("give_ai: {:?}", analysis.give_ai());
-    println!("play_sound: {:?}", analysis.play_sound());
-    println!("ai_prepare_moving_to: {:?}", analysis.ai_prepare_moving_to());
-    println!(
-        "ai_transport_reachability_cached_region: {}",
-        format_op_operand(analysis.ai_transport_reachability_cached_region()),
-    );
-    println!("player_unit_skins: {}", format_op_operand(analysis.player_unit_skins()));
-
     let patch = analysis.replay_minimap_unexplored_fog_patch();
     println!(
         "replay_minimap_unexplored_fog_patch: {:x?}",
         patch.as_ref().map(|x| (x.address, &x.data)),
     );
-    println!("step_replay_commands: {:?}", analysis.step_replay_commands());
-    println!("replay_data: {}", format_op_operand(analysis.replay_data()));
-
-    println!("ai_train_military: {:?}", analysis.ai_train_military());
-    println!("ai_add_military_to_region: {:?}", analysis.ai_add_military_to_region());
-    println!("vertex_buffer: {}", format_op_operand(analysis.vertex_buffer()));
 
     println!("crt_fastfail: {:?}", analysis.crt_fastfail());
 

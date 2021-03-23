@@ -594,6 +594,72 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         ret
     }
 
+    pub fn address_analysis(&mut self, addr: AddressAnalysis) -> Option<E::VirtualAddress> {
+        use self::AddressAnalysis::*;
+        match addr {
+            StepObjects => self.step_objects(),
+            SendCommand => self.send_command(),
+            PrintText => self.print_text(),
+            StepOrder => self.step_order(),
+            DrawImage => self.draw_image(),
+            PlaySmk => self.play_smk(),
+            AddOverlayIscript => self.add_overlay_iscript(),
+            RunDialog => self.run_dialog(),
+            AiUpdateAttackTarget => self.ai_update_attack_target(),
+            IsOutsideGameScreen => self.is_outside_game_screen(),
+            ChooseSnp => self.choose_snp(),
+            LoadImages => self.load_images(),
+            InitGameNetwork => self.init_game_network(),
+            SpawnDialog => self.spawn_dialog(),
+            TtfMalloc => self.ttf_malloc(),
+            DrawGraphicLayers => self.draw_graphic_layers(),
+            AiAttackPrepare => self.ai_attack_prepare(),
+            JoinGame => self.join_game(),
+            SnetInitializeProvider => self.snet_initialize_provider(),
+            CheckDatRequirements => self.check_dat_requirements(),
+            GiveAi => self.give_ai(),
+            PlaySound => self.play_sound(),
+            AiPrepareMovingTo => self.ai_prepare_moving_to(),
+            StepReplayCommands => self.step_replay_commands(),
+            AiTrainMilitary => self.ai_train_military(),
+            AiAddMilitaryToRegion => self.ai_add_military_to_region(),
+            _Last => None,
+        }
+    }
+
+    pub fn operand_analysis(&mut self, addr: OperandAnalysis) -> Option<Operand<'e>> {
+        use self::OperandAnalysis::*;
+        match addr {
+            Game => self.game(),
+            Pathing => self.pathing(),
+            CommandUser => self.command_user(),
+            IsReplay => self.is_replay(),
+            LocalPlayerId => self.local_player_id(),
+            LocalPlayerName => self.local_player_name(),
+            LobbyState => self.lobby_state(),
+            DrawCursorMarker => self.draw_cursor_marker(),
+            Units => self.units(),
+            FirstAiScript => self.first_ai_script(),
+            FirstGuardAi => self.first_guard_ai(),
+            PlayerAiTowns => self.player_ai_towns(),
+            PlayerAi => self.player_ai(),
+            Players => self.players(),
+            Campaigns => self.campaigns(),
+            Fonts => self.fonts(),
+            StatusScreenMode => self.status_screen_mode(),
+            CheatFlags => self.cheat_flags(),
+            UnitStrength => self.unit_strength(),
+            WireframDdsgrp => self.wirefram_ddsgrp(),
+            ChkInitPlayers => self.chk_init_players(),
+            OriginalChkPlayerTypes => self.original_chk_player_types(),
+            AiTransportReachabilityCachedRegion => self.ai_transport_reachability_cached_region(),
+            PlayerUnitSkins => self.player_unit_skins(),
+            ReplayData => self.replay_data(),
+            VertexBuffer => self.vertex_buffer(),
+            _Last => None,
+        }
+    }
+
     pub fn firegraft_addresses(&mut self) -> Rc<FiregraftAddresses<E::VirtualAddress>> {
         self.enter(|x, s| x.firegraft_addresses(s))
     }
