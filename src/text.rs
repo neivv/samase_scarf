@@ -6,7 +6,7 @@ use scarf::{DestOperand, Operand, BinaryFile, BinarySection, Operation};
 
 use crate::{
     AnalysisCtx, ArgCache, entry_of_until, EntryOf, OptionExt, single_result_assign,
-    bumpvec_with_capacity,
+    bumpvec_with_capacity, FunctionFinder,
 };
 
 #[derive(Clone)]
@@ -17,19 +17,19 @@ pub struct FontRender<Va: VirtualAddress> {
 }
 
 pub(crate) fn fonts<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
+    let bump = &analysis.bump;
+    let funcs = functions.functions();
 
     let rdata = analysis.binary_sections.rdata;
     let font_string_rvas = crate::find_bytes(bump, &rdata.data, b"font16x");
 
     let candidates = font_string_rvas.iter().flat_map(|&font| {
-        crate::find_functions_using_global(analysis, rdata.virtual_address + font.0)
+        functions.find_functions_using_global(analysis, rdata.virtual_address + font.0)
     });
     let candidates = BumpVec::from_iter_in(candidates, bump);
 
@@ -40,7 +40,7 @@ pub(crate) fn fonts<'e, E: ExecutionState<'e>>(
     // fonts[3] = Func("font16x")
     // Uses Custom(x) to store what offset in array the result is stored to
     let mut result = None;
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     for cand in candidates {
         let use_address = cand.use_address;
         let val = entry_of_until(binary, funcs, use_address, |entry| {
@@ -146,16 +146,14 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FontsAnalyzer<'a, 'e
 }
 
 pub(crate) fn font_render<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    fonts: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> FontRender<E::VirtualAddress> {
     let mut result = FontRender {
         font_cache_render_ascii: None,
         ttf_cache_character: None,
         ttf_render_sdf: None,
-    };
-    let fonts = match analysis.fonts() {
-        Some(s) => s,
-        None => return result,
     };
     // Find ttf init func, which reads config for "shadowOffset" and calls font_cache_render_ascii
     // (arg 1 = fonts[i])
@@ -165,18 +163,17 @@ pub(crate) fn font_render<'e, E: ExecutionState<'e>>(
     // that function's child function calls ttf_render_sdf, with certain known args.
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
+    let bump = &analysis.bump;
+    let funcs = functions.functions();
 
     let rdata = analysis.binary_sections.rdata;
     let font_string_rvas = crate::find_bytes(bump, &rdata.data, b"shadowOffset");
 
     let ttf_init_candidates = font_string_rvas.iter().flat_map(|&font| {
-        crate::find_functions_using_global(analysis, rdata.virtual_address + font.0)
+        functions.find_functions_using_global(analysis, rdata.virtual_address + font.0)
     });
     let ttf_init_candidates = BumpVec::from_iter_in(ttf_init_candidates, bump);
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     for ttf_init in ttf_init_candidates {
         let use_address = ttf_init.use_address;
         entry_of_until(binary, funcs, use_address, |entry| {
@@ -430,13 +427,13 @@ impl<'a, 'e, E: ExecutionState<'e>> TtfCacheCharacterAnalyzer<'a, 'e, E> {
 }
 
 pub(crate) fn ttf_malloc<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    ttf_render_sdf: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
-    let ttf_render_sdf = analysis.ttf_render_sdf()?;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let mut analyzer = FindTtfMalloc::<E> {
-        arg_cache: analysis.arg_cache,
+        arg_cache: &analysis.arg_cache,
         result: None,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, ttf_render_sdf);

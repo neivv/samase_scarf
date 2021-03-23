@@ -3,8 +3,8 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::{
-    AnalysisCtx, ArgCache, EntryOf, OptionExt, OperandExt, entry_of_until_with_limit, find_callers,
-    single_result_assign,
+    AnalysisCtx, ArgCache, EntryOf, OptionExt, OperandExt, entry_of_until_with_limit,
+    single_result_assign, FunctionFinder,
 };
 
 pub struct MapTileFlags<'e, Va: VirtualAddress> {
@@ -34,14 +34,15 @@ pub struct TriggerUnitCountCaches<'e> {
 }
 
 pub(crate) fn map_tile_flags<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    order_nuke_track: E::VirtualAddress,
 ) -> MapTileFlags<'e, E::VirtualAddress> {
-    struct Analyzer<'a, 'b, 'c, 'acx, F: ExecutionState<'b>> {
+    struct Analyzer<'a, 'b, 'c, F: ExecutionState<'b>> {
         result: &'c mut MapTileFlags<'b, F::VirtualAddress>,
-        analysis: &'a mut AnalysisCtx<'acx, 'b, F>,
+        analysis: &'a AnalysisCtx<'b, F>,
     }
-    impl<'a, 'b, 'c, 'acx, F: ExecutionState<'b>> scarf::Analyzer<'b> for
-        Analyzer<'a, 'b, 'c, 'acx, F>
+    impl<'a, 'b, 'c, F: ExecutionState<'b>> scarf::Analyzer<'b> for
+        Analyzer<'a, 'b, 'c, F>
     {
         type State = analysis::DefaultState;
         type Exec = F;
@@ -95,10 +96,6 @@ pub(crate) fn map_tile_flags<'e, E: ExecutionState<'e>>(
         map_tile_flags: None,
         update_visibility_point: None,
     };
-    let order_nuke_track = match crate::step_order::find_order_nuke_track(analysis) {
-        Some(s) => s,
-        None => return result,
-    };
 
     let mut analyzer = Analyzer {
         result: &mut result,
@@ -111,7 +108,7 @@ pub(crate) fn map_tile_flags<'e, E: ExecutionState<'e>>(
 }
 
 fn tile_flags_from_update_visibility_point<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
     addr: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     struct Analyzer<'e, F: ExecutionState<'e>> {
@@ -156,27 +153,21 @@ fn tile_flags_from_update_visibility_point<'e, E: ExecutionState<'e>>(
 }
 
 pub(crate) fn run_triggers<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    rng_enable: Operand<'e>,
+    step_objects: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> RunTriggers<E::VirtualAddress> {
     let mut result = RunTriggers::default();
-    let rng = analysis.rng();
-    let rng_enable = match rng.enable {
-        Some(s) => s,
-        None => return result,
-    };
-    let step_objects = match analysis.step_objects() {
-        Some(s) => s,
-        None => return result,
-    };
     // Search for main_game_loop which calls step_objects
     // main_game_loop also calls run_triggers -> run_player_triggers
     // rng is enabled for the run_triggers_call, use that to filter out most
     // of main_game_loop.
-    let callers = find_callers(analysis, step_objects);
+    let callers = functions.find_callers(analysis, step_objects);
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let funcs = analysis.functions();
-    let arg_cache = analysis.arg_cache;
+    let funcs = functions.functions();
+    let arg_cache = &analysis.arg_cache;
     for caller in callers {
         entry_of_until_with_limit(binary, &funcs, caller, 128, |entry| {
             let mut analyzer = RunTriggersAnalyzer::<E> {
@@ -393,17 +384,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
 }
 
 pub(crate) fn trigger_unit_count_caches<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    conditions: E::VirtualAddress,
+    game: Operand<'e>,
 ) -> TriggerUnitCountCaches<'e> {
     let mut result = TriggerUnitCountCaches::default();
-    let conditions = match analysis.trigger_conditions() {
-        Some(s) => s,
-        None => return result,
-    };
-    let game = match analysis.game() {
-        Some(s) => s,
-        None => return result,
-    };
     // Find the caches by looking for a memcpy calls from game arrays
     // in condition #2 Command
     let binary = analysis.binary;
@@ -412,7 +397,7 @@ pub(crate) fn trigger_unit_count_caches<'e, E: ExecutionState<'e>>(
         Ok(o) => o,
         Err(_) => return result,
     };
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     let mut analyzer = CountCacheAnalyzer::<E> {
         result: &mut result,
         arg_cache,

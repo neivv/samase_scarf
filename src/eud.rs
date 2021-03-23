@@ -5,7 +5,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, Register};
 
-use crate::{AnalysisCtx, EntryOf, bumpvec_with_capacity};
+use crate::{AnalysisCtx, EntryOf, bumpvec_with_capacity, FunctionFinder};
 
 pub struct Eud<'e> {
     pub address: u32,
@@ -42,7 +42,8 @@ fn if_arithmetic_add_or_sub_const<'e>(val: Operand<'e>) -> Option<(Operand<'e>, 
 }
 
 pub(crate) fn eud_table<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> EudTable<'e> {
     fn finish_euds(result: &mut EudTable) {
         result.euds.retain(|x| x.operand.if_constant() != Some(0));
@@ -51,13 +52,13 @@ pub(crate) fn eud_table<'e, E: ExecutionState<'e>>(
 
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let mut const_refs = bumpvec_with_capacity(EUD_ADDRS.len() * 2, bump);
     for &addr in EUD_ADDRS {
         find_const_refs_in_code(binary, addr, &mut const_refs);
     }
     const_refs.sort_unstable();
-    let funcs = analysis.functions();
+    let funcs = functions.functions();
     for &cref in &const_refs {
         let entry = match find_stack_reserve_entry::<E>(ctx, binary, &funcs, cref) {
             Some((e, stack_size)) => {

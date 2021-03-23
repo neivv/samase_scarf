@@ -9,7 +9,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use crate::add_terms::collect_arith_add_terms;
 use crate::{
     AnalysisCtx, ArgCache, EntryOf, OptionExt, entry_of_until, single_result_assign,
-    OperandExt, ControlExt,
+    OperandExt, ControlExt, FunctionFinder, SwitchTable,
 };
 
 #[derive(Clone)]
@@ -59,12 +59,13 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DrawImageEntryCheck<'e, 
 }
 
 pub(crate) fn draw_image<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    switches: &[SwitchTable<E::VirtualAddress>],
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
-    let switch_tables = analysis.switch_tables();
     // Switch table for drawfunc-specific code.
     // Hopefully not going to be changed. Starts from func #2 (Cloaking start)
-    let switches = switch_tables.iter().filter(|switch| {
+    let switches = switches.iter().filter(|switch| {
         let cases = &switch.cases;
         cases.len() == 0x10 &&
             cases[0x0] == cases[0x2] && // Cloak start == cloak end == detected start/end
@@ -74,7 +75,7 @@ pub(crate) fn draw_image<'e, E: ExecutionState<'e>>(
             cases[0x1] == cases[0x7] &&
             cases[0x1] == cases[0xc]
     });
-    let funcs = analysis.functions();
+    let funcs = functions.functions();
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let mut result = None;
@@ -106,19 +107,20 @@ pub(crate) fn draw_image<'e, E: ExecutionState<'e>>(
 }
 
 pub(crate) fn renderer_vtables<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Vec<E::VirtualAddress> {
-    crate::vtables::vtables(analysis, b".?AVRenderer@@\0")
+    crate::vtables::vtables(analysis, functions, b".?AVRenderer@@\0")
 }
 
 pub(crate) fn prism_shaders<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    renderer_vtables: &[E::VirtualAddress],
 ) -> PrismShaders<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let vtables = analysis.renderer_vtables();
     let compare = b".?AVPrismRenderer";
-    let prism_renderer_vtable = vtables.iter().copied().filter(|&vtable| {
+    let prism_renderer_vtable = renderer_vtables.iter().copied().filter(|&vtable| {
         vtable_class_name(binary, vtable)
             .filter(|name| name.starts_with(compare))
             .is_some()
@@ -138,8 +140,8 @@ pub(crate) fn prism_shaders<'e, E: ExecutionState<'e>>(
         if func < code_section.virtual_address || func >= code_end {
             break;
         }
-        let arg_cache = analysis.arg_cache;
-        let bump = analysis.bump;
+        let arg_cache = &analysis.arg_cache;
+        let bump = &analysis.bump;
         let mut analyzer = FindPrismShaders::<E> {
             vertex: Vec::new(),
             pixel: Vec::new(),
@@ -348,12 +350,12 @@ fn is_vertex_shader_name<'e, Va: VirtualAddress>(
 }
 
 pub(crate) fn player_unit_skins<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    draw_image: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let arg_cache = analysis.arg_cache;
-    let draw_image = analysis.draw_image()?;
+    let arg_cache = &analysis.arg_cache;
     // Search for a child function of draw_image
     // thiscall f(player_unit_skins, player, unit_id, image_id)
     let mut analyzer = PlayerUnitSkins::<E> {
@@ -407,7 +409,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 
 }
 
 pub(crate) fn vertex_buffer<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    vtables: &[E::VirtualAddress],
 ) -> Option<Operand<'e>> {
     // Renderer_Draw (vtable + 0x1c) calls a function that uploads vertex
     // buffer (vtable + 0x28)
@@ -421,8 +424,7 @@ pub(crate) fn vertex_buffer<'e, E: ExecutionState<'e>>(
     // immediately, but have a fallback for prism renderer.
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let arg_cache = analysis.arg_cache;
-    let vtables = analysis.renderer_vtables();
+    let arg_cache = &analysis.arg_cache;
     let word_size = E::VirtualAddress::SIZE;
 
     for &renderer in &[&b".?AVGLRenderer"[..], b".?AVPrismRenderer"] {

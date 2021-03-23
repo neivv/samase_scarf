@@ -8,7 +8,7 @@ use scarf::operand::{MemAccess, MemAccessSize};
 use scarf::{BinaryFile, DestOperand, Operation, Operand, OperandCtx};
 
 use crate::{
-    AnalysisCtx, ArgCache, EntryOf, OperandExt, single_result_assign, StringRefs,
+    AnalysisCtx, ArgCache, EntryOf, OperandExt, single_result_assign, StringRefs, FunctionFinder,
     bumpvec_with_capacity,
 };
 
@@ -61,18 +61,19 @@ impl<'e, Va: VirtualAddress> Default for MultiWireframes<'e, Va> {
     }
 }
 
-pub(crate) fn run_dialog<'a, E: ExecutionState<'a>>(
-    analysis: &mut AnalysisCtx<'_, 'a, E>,
+pub(crate) fn run_dialog<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let ctx = analysis.ctx;
 
     let binary = analysis.binary;
-    let funcs = analysis.functions();
-    let mut str_refs = crate::string_refs(analysis, b"rez\\glucmpgn");
+    let funcs = functions.functions();
+    let mut str_refs = functions.string_refs(analysis, b"rez\\glucmpgn");
     if str_refs.is_empty() {
-        str_refs = crate::string_refs(analysis, b"glucmpgn.ui");
+        str_refs = functions.string_refs(analysis, b"glucmpgn.ui");
     }
-    let args = analysis.arg_cache;
+    let args = &analysis.arg_cache;
     let mut result = None;
     for str_ref in &str_refs {
         let val = crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
@@ -239,13 +240,13 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
 /// Assuming that `func` calls the load_dialog function with a constant string somewhere in
 /// arguments, returns the global variable(s) load_dialog's return value is stored to (if any)
 pub(crate) fn find_dialog_global<'exec, E: ExecutionState<'exec>>(
-    analysis: &mut AnalysisCtx<'_, 'exec, E>,
+    analysis: &AnalysisCtx<'exec, E>,
     func: E::VirtualAddress,
     str_ref: &StringRefs<E::VirtualAddress>,
 ) -> EntryOf<E::VirtualAddress> {
     let ctx = analysis.ctx;
     let return_marker = ctx.truncate(ctx.custom(0), E::VirtualAddress::SIZE as u8 * 8);
-    let args = analysis.arg_cache;
+    let args = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(analysis.binary, ctx, func);
     let mut analyzer = DialogGlobalAnalyzer {
         result: EntryOf::Retry,
@@ -369,8 +370,9 @@ fn value_in_call_args<'exec, A: analysis::Analyzer<'exec>>(
     }).next().is_some()
 }
 
-pub(crate) fn spawn_dialog<'a, E: ExecutionState<'a>>(
-    analysis: &mut AnalysisCtx<'_, 'a, E>,
+pub(crate) fn spawn_dialog<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     // This is currently just copypasted from run_dialog, it ends up working fine as the
     // signature and dialog init patterns are same between run (blocking) and spawn (nonblocking).
@@ -378,12 +380,12 @@ pub(crate) fn spawn_dialog<'a, E: ExecutionState<'a>>(
     let ctx = analysis.ctx;
 
     let binary = analysis.binary;
-    let funcs = analysis.functions();
-    let mut str_refs = crate::string_refs(analysis, b"rez\\statlb");
+    let funcs = functions.functions();
+    let mut str_refs = functions.string_refs(analysis, b"rez\\statlb");
     if str_refs.is_empty() {
-        str_refs = crate::string_refs(analysis, b"statlb.ui");
+        str_refs = functions.string_refs(analysis, b"statlb.ui");
     }
-    let args = analysis.arg_cache;
+    let args = &analysis.arg_cache;
     let mut result = None;
     for str_ref in &str_refs {
         let val = crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
@@ -422,7 +424,9 @@ pub(crate) fn spawn_dialog<'a, E: ExecutionState<'a>>(
 }
 
 pub(crate) fn tooltip_related<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    spawn_dialog: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> TooltipRelated<'e, E::VirtualAddress> {
     let mut result = TooltipRelated {
         tooltip_draw_func: None,
@@ -433,21 +437,16 @@ pub(crate) fn tooltip_related<'e, E: ExecutionState<'e>>(
         draw_f10_menu_tooltip: None,
     };
 
-    let spawn_dialog = match analysis.spawn_dialog() {
-        Some(s) => s,
-        None => return result,
-    };
-
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let funcs = analysis.functions();
-    let mut str_refs = crate::string_refs(analysis, b"rez\\stat_f10");
+    let funcs = functions.functions();
+    let mut str_refs = functions.string_refs(analysis, b"rez\\stat_f10");
     if str_refs.is_empty() {
-        str_refs = crate::string_refs(analysis, b"stat_f10.ui");
+        str_refs = functions.string_refs(analysis, b"stat_f10.ui");
     }
     for str_ref in &str_refs {
-        crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
-            let arg_cache = analysis.arg_cache;
+        crate::entry_of_until(binary, funcs, str_ref.use_address, |entry| {
+            let arg_cache = &analysis.arg_cache;
             let exec_state = E::initial_state(ctx, binary);
             let mut analysis = FuncAnalysis::custom_state(
                 binary,
@@ -744,15 +743,16 @@ impl<'a, 'e, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'e, E> {
 }
 
 pub(crate) fn draw_graphic_layers<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    graphic_layers: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
-    let graphic_layers = analysis.graphic_layers()?;
     let graphic_layers_addr = E::VirtualAddress::from_u64(graphic_layers.if_constant()?);
 
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let funcs = analysis.functions();
-    let global_refs = crate::find_functions_using_global(analysis, graphic_layers_addr);
+    let funcs = functions.functions();
+    let global_refs = functions.find_functions_using_global(analysis, graphic_layers_addr);
     let mut result = None;
     let expected_call_addr = ctx.mem32(ctx.add_const(graphic_layers, 0x14 * 7 + 0x10));
     for func in &global_refs {
@@ -802,7 +802,8 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsDrawGraphicLayers<'e, 
 }
 
 pub(crate) fn button_ddsgrps<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    unit_status_funcs: E::VirtualAddress,
 ) -> ButtonDdsgrps<'e> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
@@ -812,18 +813,13 @@ pub(crate) fn button_ddsgrps<'e, E: ExecutionState<'e>>(
         cmdicons: None,
     };
 
-    let firegraft = analysis.firegraft_addresses();
-    let &status_arr = match firegraft.unit_status_funcs.get(0) {
-        Some(s) => s,
-        None => return result,
-    };
-    let gateway_status = match binary.read_address(status_arr + 0xa0 * 0xc + 0x8).ok() {
+    let gateway_status = match binary.read_address(unit_status_funcs + 0xa0 * 0xc + 0x8).ok() {
         Some(s) => s,
         None => return result,
     };
     // Search for [Control.user_pointer].field0 = *cmdicons_ddsgrp
     // Right before that it sets Control.user_u16 to 0xc
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, gateway_status);
     let mut analyzer = CmdIconsDdsGrp::<E> {
         result: &mut result,
@@ -943,11 +939,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
 }
 
 pub(crate) fn mouse_xy<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    run_dialog: E::VirtualAddress,
 ) -> MouseXy<'e, E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
 
     let mut result = MouseXy {
         x_var: None,
@@ -956,13 +953,9 @@ pub(crate) fn mouse_xy<'e, E: ExecutionState<'e>>(
         y_func: None,
     };
 
-    let run_dialog = match analysis.run_dialog() {
-        Some(s) => s,
-        None => return result,
-    };
     // Search for [Control.user_pointer].field0 = *cmdicons_ddsgrp
     // Right before that it sets Control.user_u16 to 0xc
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, run_dialog);
     let mut analyzer = MouseXyAnalyzer::<E> {
         result: &mut result,
@@ -1039,13 +1032,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
 }
 
 pub(crate) fn status_screen_mode<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    status_arr: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
 
-    let firegraft = analysis.firegraft_addresses();
-    let &status_arr = firegraft.unit_status_funcs.get(0)?;
     let goliath_turret_status = binary.read_address(status_arr + 0x4 * 0xc + 0x8).ok()?;
     // First variable that goliath turret's status screen function writes to is
     // setting that mode to 0.
@@ -1101,18 +1093,16 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StatusScreenMode<'e, E> 
 }
 
 pub(crate) fn multi_wireframes<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    spawn_dialog: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> MultiWireframes<'e, E::VirtualAddress> {
     let mut result = MultiWireframes::default();
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let funcs = analysis.functions();
-    let spawn_dialog = match analysis.spawn_dialog() {
-        Some(s) => s,
-        None => return result,
-    };
-    let str_refs = crate::string_refs(analysis, b"unit\\wirefram\\tranwire");
-    let arg_cache = analysis.arg_cache;
+    let funcs = functions.functions();
+    let str_refs = functions.string_refs(analysis, b"unit\\wirefram\\tranwire");
+    let arg_cache = &analysis.arg_cache;
     for str_ref in &str_refs {
         let res = crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let mut analyzer = MultiWireframeAnalyzer {
@@ -1263,7 +1253,8 @@ impl<'a, 'e, E: ExecutionState<'e>> MultiWireframeAnalyzer<'a, 'e, E> {
 }
 
 pub(crate) fn wirefram_ddsgrp<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    ss_event_handler: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     // Search for control draw function of the main wireframe control
     // - Status screen event handler w/ init event calls init_child_event_handlers
@@ -1273,11 +1264,10 @@ pub(crate) fn wirefram_ddsgrp<'e, E: ExecutionState<'e>>(
     // wirefram_ddsgrp is likely `deref_this(get_wirefram_ddsgrp())`, so inline a bit
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let event_handler = analysis.status_screen_event_handler()?;
 
-    let wireframe_event = find_child_event_handler::<E>(analysis, event_handler, 0)?;
+    let wireframe_event = find_child_event_handler::<E>(analysis, ss_event_handler, 0)?;
     let draw_func = find_child_draw_func::<E>(analysis, wireframe_event)?;
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, draw_func);
     let mut analyzer = WireframDdsgrpAnalyzer {
         inline_depth: 0,
@@ -1356,13 +1346,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyz
 /// Given address of a dialog event handler, tries to find
 /// `handlers` in init_child_event_handlers(dlg, handlers, handler_len_bytes)
 fn find_child_event_handlers<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
     event_handler: E::VirtualAddress,
 ) -> Option<(E::VirtualAddress, u32)> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
 
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     // Move event (custom 0) to arg2, and write
     // event.type = 0xe, event.ext_type = 0x0
     let mut exec_state = E::initial_state(ctx, binary);
@@ -1396,7 +1386,7 @@ fn find_child_event_handlers<'e, E: ExecutionState<'e>>(
 }
 
 fn find_child_event_handler<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
     event_handler: E::VirtualAddress,
     index: u32
 ) -> Option<E::VirtualAddress> {
@@ -1440,13 +1430,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindChildEventHandle
 }
 
 fn find_child_draw_func<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
     event_handler: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
 
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     // Move event (custom 0) to arg2, and write
     // event.type = 0xe, event.ext_type = 0x0
     let mut exec_state = E::initial_state(ctx, binary);

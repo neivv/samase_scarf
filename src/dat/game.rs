@@ -6,7 +6,7 @@ use scarf::operand::{OperandType};
 use scarf::{BinaryFile, DestOperand, Operand, Operation, Rva};
 
 use crate::{
-    AnalysisCtx, EntryOf, entry_of_until, OperandExt, OptionExt,
+    AnalysisCache, AnalysisCtx, EntryOf, entry_of_until, OperandExt, OptionExt, FunctionFinder,
 };
 use crate::hash_map::{HashSet, HashMap};
 use super::{
@@ -15,19 +15,20 @@ use super::{
 };
 
 pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'acx, 'e, E>,
+    cache: &mut AnalysisCache<'e, E>,
+    analysis: &'acx AnalysisCtx<'e, E>,
     required_stable_addresses: &mut RequiredStableAddressesMap<'acx, E::VirtualAddress>,
     result: &mut DatPatches<'e, E::VirtualAddress>,
 ) -> Option<()> {
     let ctx = analysis.ctx;
-    let relocs = analysis.relocs_with_values();
+    let relocs = cache.relocs_with_values();
     let text = analysis.binary_sections.text;
     let text_end = text.virtual_address + text.virtual_size;
-    let game = analysis.game()?;
-    let unit_strength = analysis.unit_strength()?;
-    let player_ai = analysis.player_ai()?;
-    let trigger_all_units = analysis.trigger_all_units_cache()?;
-    let trigger_completed_units = analysis.trigger_completed_units_cache()?;
+    let game = cache.game(analysis)?;
+    let unit_strength = cache.unit_strength(analysis)?;
+    let player_ai = cache.player_ai(analysis)?;
+    let trigger_all_units = cache.trigger_all_units_cache(analysis)?;
+    let trigger_completed_units = cache.trigger_completed_units_cache(analysis)?;
     let game_address = game.iter_no_mem_addr()
         .filter_map(|x| {
             x.if_memory()
@@ -36,7 +37,8 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
                 .map(|x| E::VirtualAddress::from_u64(x))
         })
         .next()?;
-    let game_refs = crate::find_functions_using_global(analysis, game_address);
+    let functions = cache.function_finder();
+    let game_refs = functions.find_functions_using_global(analysis, game_address);
     let mut unchecked_refs =
         HashSet::with_capacity_and_hasher(game_refs.len(), Default::default());
     for global in game_refs {
@@ -46,6 +48,7 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
         HashSet::with_capacity_and_hasher(unchecked_refs.len(), Default::default());
     let mut game_ctx = GameContext {
         analysis,
+        functions: &functions,
         result,
         unchecked_refs,
         checked_functions,
@@ -99,7 +102,8 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
 }
 
 pub struct GameContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
-    analysis: &'a mut AnalysisCtx<'acx, 'e, E>,
+    analysis: &'acx AnalysisCtx<'e, E>,
+    functions: &'a FunctionFinder<'a, 'e, E>,
     result: &'a mut DatPatches<'e, E::VirtualAddress>,
     unchecked_refs: HashSet<E::VirtualAddress>,
     checked_functions: HashSet<E::VirtualAddress>,
@@ -119,11 +123,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
     ) {
         let binary = self.analysis.binary;
         let ctx = self.analysis.ctx;
-        let bump = self.analysis.bump;
-        let functions = self.analysis.functions();
+        let bump = &self.analysis.bump;
+        let functions = self.functions.functions();
         let mut function_ends = HashMap::with_capacity_and_hasher(64, Default::default());
         while let Some(game_ref_addr) = self.unchecked_refs.iter().cloned().next() {
-            let result = entry_of_until(binary, &functions, game_ref_addr, |entry| {
+            let result = entry_of_until(binary, functions, game_ref_addr, |entry| {
                 if self.checked_functions.insert(entry) {
                     let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
                     let rsa = required_stable_addresses.get(entry_rva);
@@ -175,10 +179,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
     ) {
         let binary = self.analysis.binary;
         let ctx = self.analysis.ctx;
-        let bump = self.analysis.bump;
-        let functions = self.analysis.functions();
+        let bump = &self.analysis.bump;
+        let functions = self.functions.functions();
         while let Some(ref_addr) = self.unchecked_refs.iter().cloned().next() {
-            let result = entry_of_until(binary, &functions, ref_addr, |entry| {
+            let result = entry_of_until(binary, functions, ref_addr, |entry| {
                 if self.checked_functions.insert(entry) {
                     let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
                     let rsa = required_stable_addresses.get(entry_rva);
@@ -439,7 +443,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         ctrl: &mut Control<'e, '_, '_, Self>,
         addr: Operand<'e>,
     ) {
-        let bump = self.game_ctx.analysis.bump;
+        let bump = &self.game_ctx.analysis.bump;
         let mut terms = match crate::add_terms::collect_arith_add_terms(addr, bump) {
             Some(s) => s,
             None => return,

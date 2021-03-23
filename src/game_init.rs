@@ -4,10 +4,10 @@ use scarf::{DestOperand, Operand, OperandCtx, Operation, BinaryFile};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 
+use crate::switch::CompleteSwitch;
 use crate::{
     AnalysisCtx, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, OperandExt,
-    find_callers, string_refs, if_arithmetic_eq_neq, single_result_assign,
-    bumpvec_with_capacity,
+    if_arithmetic_eq_neq, single_result_assign, bumpvec_with_capacity, FunctionFinder,
 };
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -81,13 +81,13 @@ impl<'e, Va: VirtualAddress> Default for SelectMapEntry<'e, Va> {
 }
 
 pub(crate) fn play_smk<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
+    let bump = &analysis.bump;
+    let funcs = functions.functions();
 
     // Find ref for char *smk_filenames[0x1c]; smk_filenames[0] == "smk\\blizzard.webm"
     let rdata = binary.section(b".rdata\0\0")?;
@@ -99,7 +99,7 @@ pub(crate) fn play_smk<'e, E: ExecutionState<'e>>(
     });
     let data_rvas = BumpVec::from_iter_in(data_rvas, bump);
     let global_refs = data_rvas.iter().flat_map(|&rva| {
-        crate::find_functions_using_global(analysis, data.virtual_address + rva.0)
+        functions.find_functions_using_global(analysis, data.virtual_address + rva.0)
     });
     let global_refs = BumpVec::from_iter_in(global_refs, bump);
 
@@ -162,7 +162,10 @@ fn is_arg1(operand: Operand<'_>) -> bool {
 }
 
 pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    play_smk: E::VirtualAddress,
+    game: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> GameInit<'e, E::VirtualAddress> {
     let mut result = GameInit {
         sc_main: None,
@@ -170,26 +173,17 @@ pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
         game_loop: None,
         scmain_state: None,
     };
-    let play_smk = match analysis.play_smk() {
-        Some(s) => s,
-        None => return result,
-    };
-    let game = match analysis.game() {
-        Some(s) => s,
-        None => return result,
-    };
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let mut game_pointers = bumpvec_with_capacity(4, bump);
     collect_game_pointers(game, &mut game_pointers);
     // The main loop function (sc_main) calls play_smk a few times after initialization
     // but before main load.
     // Since the function is being obfuscated, confirm it being sc_main by that it writes to a
     // game pointer.
-    let callers = crate::find_callers(analysis, play_smk);
+    let callers = functions.find_callers(analysis, play_smk);
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
+    let funcs = functions.functions();
     for caller in callers {
         let new = entry_of_until(binary, funcs, caller, |entry| {
             let mut analyzer = IsScMain::<E> {
@@ -370,7 +364,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
 }
 
 pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<InitMapFromPath<E::VirtualAddress>> {
     // init_map_from_path calls another function
     // that calls chk validation function.
@@ -386,7 +381,7 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
         b"SPRP",
     ];
     let binary = analysis.binary;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let rdata = binary.section(b".rdata\0\0")?;
     let mut chk_data = crate::find_bytes(bump, &rdata.data, &chk_validated_sections[0][..]);
     chk_data.retain(|&rva| {
@@ -414,13 +409,13 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
     let section_refs = BumpVec::from_iter_in(section_refs, bump);
     let chk_validating_funcs = section_refs.into_iter().flat_map(|(chk_funcs_rva, rva)| {
         let address = rdata.virtual_address + rva.0;
-        crate::find_functions_using_global(analysis, address)
+        functions.find_functions_using_global(analysis, address)
             .into_iter()
             .map(move |x| (chk_funcs_rva, x))
     });
     let chk_validating_funcs = BumpVec::from_iter_in(chk_validating_funcs, bump);
     let call_points = chk_validating_funcs.into_iter().flat_map(|(chk_funcs_rva, f)| {
-        crate::find_callers(analysis, f.func_entry)
+        functions.find_callers(analysis, f.func_entry)
             .into_iter()
             .map(move |x| (chk_funcs_rva, x))
     });
@@ -428,9 +423,8 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
     call_points.sort_unstable_by_key(|x| x.1);
     call_points.dedup_by_key(|x| x.1);
 
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
-    let arg_cache = analysis.arg_cache;
+    let funcs = functions.functions();
+    let arg_cache = &analysis.arg_cache;
     let ctx = analysis.ctx;
     let mut result = None;
     for (chk_funcs_rva, addr) in call_points {
@@ -527,7 +521,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsInitMapFromPath
 }
 
 pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     // Search for vtable of AVSelectConnectionScreen, whose event handler (Fn vtable + 0x18)
     // with arg1 == 9 calls a child function doing
@@ -542,12 +537,12 @@ pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
     // but the difference isn't really important. choose_snp is only called
     // as is for provider 0, and choose_snp_for_net just immediately calls
     // choose_snp if provider id isn't BNET.
-    let vtables = crate::vtables::vtables(analysis, b".?AVSelectConnectionScreen@glues@@\0");
+    let vtables =
+        crate::vtables::vtables(analysis, functions, b".?AVSelectConnectionScreen@glues@@\0");
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
-    let arg_cache = analysis.arg_cache;
+    let funcs = functions.functions();
+    let arg_cache = &analysis.arg_cache;
     let mut result = None;
     for vtable in vtables {
         let func = match binary.read_address(vtable + 0x6 * E::VirtualAddress::SIZE) {
@@ -689,23 +684,17 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindChooseSnp<'a,
 }
 
 pub(crate) fn single_player_start<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+    choose_snp: E::VirtualAddress,
+    local_player_id: Operand<'e>,
 ) -> SinglePlayerStart<'e, E::VirtualAddress> {
     let mut result = SinglePlayerStart::default();
-    let choose_snp = match analysis.choose_snp() {
-        Some(s) => s,
-        None => return result,
-    };
-    let local_player_id = match analysis.local_player_id() {
-        Some(s) => s,
-        None => return result,
-    };
-    let callers = crate::find_callers(analysis, choose_snp);
+    let callers = functions.find_callers(analysis, choose_snp);
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
-    let arg_cache = analysis.arg_cache;
+    let funcs = functions.functions();
+    let arg_cache = &analysis.arg_cache;
     for caller in callers {
         let ok = entry_of_until(binary, funcs, caller, |entry| {
             let mut analyzer = SinglePlayerStartAnalyzer {
@@ -926,25 +915,21 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 }
 
 pub(crate) fn select_map_entry<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    single_player_start: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> SelectMapEntry<'e, E::VirtualAddress> {
     let mut result = SelectMapEntry::default();
-    let start = analysis.single_player_start();
-    let single_player_start = match start.single_player_start{
-        Some(s) => s,
-        None => return result,
-    };
     // select_map_entry is one of functions calling single_player_start.
     // Assume also that it moves 0 to arg3.fc (Older versions use a different offset)
     // on start and that first global u8 that is used as jump condition after that is
     // is_multiplayer.
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let callers = crate::find_callers(analysis, single_player_start);
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
-    let arg_cache = analysis.arg_cache;
-    let bump = analysis.bump;
+    let callers = functions.find_callers(analysis, single_player_start);
+    let funcs = functions.functions();
+    let arg_cache = &analysis.arg_cache;
+    let bump = &analysis.bump;
     for caller in callers {
         entry_of_until(binary, funcs, caller, |entry| {
             let mut analyzer = FindSelectMapEntry::<E> {
@@ -1040,19 +1025,19 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSelectMapEntr
 }
 
 pub(crate) fn load_images<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     // First operation of load_images is to call
     // func("scripts\\iscript.bin", 0, &mut iscript_bin_size, "", 0)
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
-    let str_refs = string_refs(analysis, b"scripts\\iscript.bin\0");
+    let funcs = functions.functions();
+    let str_refs = functions.string_refs(analysis, b"scripts\\iscript.bin\0");
     let mut result = None;
     for string in str_refs {
         let new = entry_of_until(binary, funcs, string.use_address, |entry| {
-            let arg_cache = analysis.arg_cache;
+            let arg_cache = &analysis.arg_cache;
             let mut analyzer = IsLoadImages::<E> {
                 result: EntryOf::Retry,
                 use_address: string.use_address,
@@ -1111,22 +1096,19 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsLoadImages<'a, 
 }
 
 pub(crate) fn images_loaded<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    load_images: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> ImagesLoaded<'e, E::VirtualAddress> {
     let mut result = ImagesLoaded {
         images_loaded: None,
         init_real_time_lighting: None,
     };
-    let load_images = match analysis.load_images() {
-        Some(s) => s,
-        None => return result,
-    };
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let bump = analysis.bump;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
-    let callers = crate::find_callers(analysis, load_images);
+    let bump = &analysis.bump;
+    let funcs = functions.functions();
+    let callers = functions.find_callers(analysis, load_images);
     for caller in callers {
         let res = entry_of_until(binary, funcs, caller, |entry| {
             let mut analyzer = FindImagesLoaded::<E> {
@@ -1267,16 +1249,18 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindImagesLoade
 }
 
 pub(crate) fn local_player_name<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    relocs: &[E::VirtualAddress],
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     #[allow(bad_style)]
     let VA_SIZE: u32 = E::VirtualAddress::SIZE;
 
-    let mut vtables = crate::vtables::vtables(analysis, b".?AVCreateGameScreen@glues@@\0");
+    let mut vtables =
+        crate::vtables::vtables(analysis, functions, b".?AVCreateGameScreen@glues@@\0");
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let relocs = analysis.relocs();
+    let bump = &analysis.bump;
     let vtable_lengths = vtables.iter().map(|&addr| {
         let reloc_pos = match relocs.binary_search(&addr) {
             Ok(o) => o,
@@ -1386,11 +1370,11 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheckLocalPlayerName<
 }
 
 pub(crate) fn init_game_network<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    local_storm_player: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
-    let single_player_start = analysis.single_player_start();
-    let local_storm_player = single_player_start.local_storm_player_id?;
-    let vtables = crate::vtables::vtables(analysis, b".?AVGameLobbyScreen@glues@@\0");
+    let vtables = crate::vtables::vtables(analysis, functions, b".?AVGameLobbyScreen@glues@@\0");
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     // Lobby screen vtable's Control::init calls init_game_network,
@@ -1469,15 +1453,14 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitGameNetwork<'
 }
 
 pub(crate) fn lobby_state<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    process_lobby_commands_switch: &CompleteSwitch<E::VirtualAddress>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let (switch, _) = analysis.process_lobby_commands_switch()?;
-
     // Command 0x48 compares state == 8 at start of the function
-    let branch = switch.branch(0x48)?;
+    let branch = process_lobby_commands_switch.branch(0x48)?;
     let mut analyzer = FindLobbyState::<E> {
         result: None,
         inlining: false,
@@ -1542,27 +1525,25 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLobbyState<'e, E>
 }
 
 pub(crate) fn init_game<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    init_units: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> InitGame<'e, E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
 
     let mut result = InitGame {
         loaded_save: None,
         init_game: None,
     };
-    let init_units = match analysis.init_units() {
-        Some(s) => s,
-        None => return result,
-    };
-    let functions = analysis.functions();
 
-    let callers = find_callers(analysis, init_units);
+    let callers = functions.find_callers(analysis, init_units);
+    let functions = functions.functions();
     for call in callers {
         let mut invalid_handle_cmps: BumpVec<'_, (E::VirtualAddress, _)> =
             bumpvec_with_capacity(8, bump);
-        let val = entry_of_until(binary, &functions, call, |entry| {
+        let val = entry_of_until(binary, functions, call, |entry| {
             invalid_handle_cmps.clear();
             let mut analyzer = InitGameAnalyzer::<E> {
                 result: EntryOf::Retry,
@@ -1634,7 +1615,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 }
 
 pub(crate) fn create_game_dialog_vtbl_on_multiplayer_create<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    select_map_entry: E::VirtualAddress,
 ) -> Option<usize> {
     struct Analyzer<'a, 'e, E: ExecutionState<'e>> {
         arg_cache: &'a ArgCache<'e, E>,
@@ -1671,12 +1653,11 @@ pub(crate) fn create_game_dialog_vtbl_on_multiplayer_create<'e, E: ExecutionStat
     }
     // select_map_entry arg2 is CreateGameScreen; and it calls this relevant function
     // For some older versions it also has been arg ecx
-    let select_map_entry = analysis.select_map_entry().select_map_entry?;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let mut analyzer = Analyzer::<E> {
         result: None,
-        arg_cache: analysis.arg_cache,
+        arg_cache: &analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, select_map_entry);
     analysis.analyze(&mut analyzer);
@@ -1684,21 +1665,21 @@ pub(crate) fn create_game_dialog_vtbl_on_multiplayer_create<'e, E: ExecutionStat
 }
 
 pub(crate) fn join_game<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    local_storm_id: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
-    let local_storm_id = analysis.single_player_start().local_storm_player_id
-        .and_then(|x| x.if_memory())
+    let local_storm_id = local_storm_id.if_memory()
         .and_then(|x| x.address.if_constant())
         .map(|x| E::VirtualAddress::from_u64(x))?;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
-    let mut global_refs = crate::find_functions_using_global(analysis, local_storm_id);
+    let funcs = functions.functions();
+    let mut global_refs = functions.find_functions_using_global(analysis, local_storm_id);
     global_refs.sort_unstable_by_key(|x| x.func_entry);
     global_refs.dedup_by_key(|x| x.func_entry);
     let mut result = None;
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     for global in global_refs {
         let new = entry_of_until(binary, funcs, global.use_address, |entry| {
             let mut analyzer = IsJoinGame::<E> {
@@ -1758,12 +1739,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsJoinGame<'a, 'e
 
 
 pub(crate) fn snet_initialize_provider<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    choose_snp: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
-    let choose_snp = analysis.choose_snp()?;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
 
     let mut analyzer = FindSnetInitProvider::<E> {
         result: None,
@@ -1805,11 +1786,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSnetInitProvi
 }
 
 pub(crate) fn chk_init_players<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    chk_callbacks: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let chk_callbacks = analysis.init_map_from_path_vars()?.map_init_chk_callbacks;
     let mut ownr_callback = None;
     for i in 0.. {
         let struct_size = if E::WORD_SIZE == MemAccessSize::Mem32 { 0xc } else { 0x10 };
@@ -1880,19 +1861,19 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindChkInitPlayer<'e,
 }
 
 pub(crate) fn original_chk_player_types<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    chk_init_players: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let chk_init_players = analysis.chk_init_players()
-        .and_then(|x| x.if_constant())
+    let chk_init_players = chk_init_players.if_constant()
         .map(|x| E::VirtualAddress::from_u64(x))?;
-    let mut global_refs = crate::find_functions_using_global(analysis, chk_init_players);
+    let mut global_refs = functions.find_functions_using_global(analysis, chk_init_players);
     global_refs.sort_unstable_by_key(|x| x.func_entry);
     global_refs.dedup_by_key(|x| x.func_entry);
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
-    let arg_cache = analysis.arg_cache;
+    let funcs = functions.functions();
+    let arg_cache = &analysis.arg_cache;
     let mut result = None;
     for global in &global_refs {
         let new_result = entry_of_until(binary, funcs, global.use_address, |entry| {

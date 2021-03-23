@@ -252,7 +252,8 @@ impl<'acx, 'e, E: ExecutionState<'e>> FindBulletLists<'acx, 'e, E> {
 }
 
 pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    iscript_switch: E::VirtualAddress,
 ) -> BulletCreation<'e, E::VirtualAddress> {
     let mut result = BulletCreation {
         first_active_bullet: None,
@@ -262,13 +263,9 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
         create_bullet: None,
         active_iscript_unit: None,
     };
-    let iscript_switch = match analysis.step_iscript().switch_table {
-        Some(s) => s,
-        None => return result,
-    };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let word_size = E::VirtualAddress::SIZE;
     let useweapon = match binary.read_address(iscript_switch + 0x28 * word_size) {
         Ok(o) => o,
@@ -279,7 +276,7 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
         result: None,
         active_iscript_unit: None,
         calls_seen: 0,
-        arg_cache: analysis.arg_cache,
+        arg_cache: &analysis.arg_cache,
     };
     let exec_state = E::initial_state(ctx, binary);
     let mut analysis = FuncAnalysis::custom_state(

@@ -7,6 +7,7 @@ use scarf::operand::{MemAccess, MemAccessSize, Register};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::add_terms::collect_arith_add_terms;
+use crate::switch::CompleteSwitch;
 use crate::{AnalysisCtx, ArgCache, OptionExt, bumpvec_with_capacity};
 
 pub struct NetPlayers<'e, Va: VirtualAddress> {
@@ -132,15 +133,14 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayersAnalyzer<'a
 }
 
 pub(crate) fn players<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    aiscript_hook: &crate::ai::AiScriptHook<'e, E::VirtualAddress>,
 ) -> Option<Operand<'e>> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let bump = analysis.bump;
-    let aiscript = analysis.aiscript_hook();
-    let aiscript = (*aiscript).as_ref()?;
+    let bump = &analysis.bump;
     let word_size = E::VirtualAddress::SIZE;
-    let start_town_case = binary.read_address(aiscript.switch_table + 0x3 * word_size).ok()?;
+    let start_town_case = binary.read_address(aiscript_hook.switch_table + 0x3 * word_size).ok()?;
 
     let mut analyzer = PlayersAnalyzer {
         result: None,
@@ -163,7 +163,8 @@ pub(crate) fn players<'e, E: ExecutionState<'e>>(
 }
 
 pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    rclick: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     #[derive(Copy, Clone)]
     enum State {
@@ -270,7 +271,6 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
 
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let rclick = analysis.game_screen_rclick().game_screen_rclick?;
 
     let mut analyzer = Analyzer {
         result: None,
@@ -478,15 +478,12 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CollectReturnValue
 }
 
 pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    lobby_cmd_switch: &CompleteSwitch<E::VirtualAddress>,
 ) -> NetPlayers<'e, E::VirtualAddress> {
     let mut result = NetPlayers {
         net_players: None,
         init_net_player: None,
-    };
-    let lobby_cmd_switch = match analysis.process_lobby_commands_switch() {
-        Some(s) => s.0,
-        None => return result,
     };
     let cmd_3f = match lobby_cmd_switch.branch(0x3f) {
         Some(s) => s,
@@ -494,10 +491,10 @@ pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let mut analyzer = FindInitNetPlayer {
         result: None,
-        arg_cache: analysis.arg_cache,
+        arg_cache: &analysis.arg_cache,
         in_child_func: false,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, cmd_3f);

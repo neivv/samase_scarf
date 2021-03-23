@@ -46,7 +46,8 @@ use scarf::{
 
 use crate::{
     ArgCache, AnalysisCtx, EntryOf, StringRefs, DatType, entry_of_until, single_result_assign,
-    string_refs, if_callable_const, OperandExt, OptionExt, bumpvec_with_capacity,
+    if_callable_const, OperandExt, OptionExt, bumpvec_with_capacity, AnalysisCache,
+    FunctionFinder,
 };
 use crate::hash_map::{HashMap, HashSet};
 use crate::range_list::RangeList;
@@ -187,13 +188,14 @@ pub struct GrpTexturePatch<'e, Va: VirtualAddress> {
 }
 
 pub(crate) fn dat_table<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
     filename: &'static str,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<DatTablePtr<'e>> {
     let binary = analysis.binary;
-    let functions = analysis.functions();
-    let str_refs = string_refs(analysis, filename.as_bytes());
+    let str_refs = functions.string_refs(analysis, filename.as_bytes());
 
+    let functions = functions.functions();
     let mut result = None;
     'outer: for str_ref in &str_refs {
         let addr = entry_of_until(binary, &functions, str_ref.use_address, |entry| {
@@ -227,13 +229,13 @@ pub(crate) fn dat_table<'e, E: ExecutionState<'e>>(
 }
 
 fn find_dat_root<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
     parent: E::VirtualAddress,
     str_ref: &StringRefs<E::VirtualAddress>,
 ) -> EntryOf<E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, parent);
     let mut analyzer = FindDatRoot {
         str_ref,
@@ -282,17 +284,18 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindDatRoot<'a, '
 }
 
 pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    cache: &mut AnalysisCache<'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
 ) -> Option<DatPatches<'e, E::VirtualAddress>> {
     let dats = [
         DatType::Units, DatType::Weapons, DatType::Flingy, DatType::Upgrades,
         DatType::TechData, DatType::Orders,
     ];
-    let firegraft = analysis.firegraft_addresses();
-    let mut dat_ctx = DatPatchContext::new(analysis);
+    let firegraft = cache.firegraft_addresses(analysis);
+    let mut dat_ctx = DatPatchContext::new(cache, analysis);
     let dat_ctx = dat_ctx.as_mut()?;
     for &dat in &dats {
-        let table = dat_ctx.analysis.dat(dat)?;
+        let table = dat_ctx.cache.dat(dat, analysis)?;
         let address = table.address.if_constant().map(|x| E::VirtualAddress::from_u64(x))?;
         dat_ctx.add_dat(dat, address, table.entry_size).ok()?;
     }
@@ -323,7 +326,8 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         );
     }
     game::dat_game_analysis(
-        &mut dat_ctx.analysis,
+        &mut dat_ctx.cache,
+        &dat_ctx.analysis,
         &mut dat_ctx.required_stable_addresses,
         &mut dat_ctx.result,
     );
@@ -361,7 +365,8 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     // First unhandled rva in u8_funcs
     u8_funcs_pos: usize,
     operand_to_u8_op: HashMap<OperandHashByAddress<'e>, Option<U8Operand>>,
-    analysis: &'a mut AnalysisCtx<'acx, 'e, E>,
+    analysis: &'acx AnalysisCtx<'e, E>,
+    cache: &'a mut AnalysisCache<'e, E>,
     patched_addresses: HashSet<E::VirtualAddress>,
     analyzed_functions: HashMap<Rva, Box<DatFuncAnalysisState<'acx, 'e, E>>>,
     /// Maps array address patch -> index in result vector.
@@ -528,7 +533,8 @@ enum U8Operand {
 
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
     fn new(
-        analysis: &'a mut AnalysisCtx<'acx, 'e, E>,
+        cache: &'a mut AnalysisCache<'e, E>,
+        analysis: &'acx AnalysisCtx<'e, E>,
     ) -> Option<DatPatchContext<'a, 'acx, 'e, E>> {
         fn dat_table<Va: VirtualAddress>(field_count: u32) -> DatTable<Va> {
             DatTable {
@@ -539,8 +545,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         }
 
         let text = analysis.binary_sections.text;
-        let step_iscript = analysis.step_iscript().step_fn?;
-        let bump = analysis.bump;
+        let step_iscript = cache.step_iscript(analysis).step_fn?;
+        let bump = &analysis.bump;
         Some(DatPatchContext {
             array_lookup: HashMap::with_capacity_and_hasher(128, Default::default()),
             operand_to_u8_op: HashMap::with_capacity_and_hasher(2048, Default::default()),
@@ -557,9 +563,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             techdata: dat_table(0xb),
             orders: dat_table(0x13),
             binary: analysis.binary,
-            relocs: analysis.relocs_with_values(),
+            relocs: cache.relocs_with_values(),
             text,
             analysis,
+            cache,
             result: DatPatches {
                 patches: Vec::with_capacity(1024),
                 code_bytes: Vec::with_capacity(2048),
@@ -793,7 +800,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
     }
 
     fn add_patches_from_code_refs(&mut self) {
-        let functions = self.analysis.functions();
+        let functions = self.cache.functions();
         let binary = self.binary;
         loop {
             let rva = match self.unchecked_refs.iter().next() {
@@ -846,7 +853,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
     }
 
     fn add_u8_func_patches(&mut self) {
-        let functions = self.analysis.functions();
+        let functions = self.cache.functions();
         let binary = self.binary;
         let mut checked_funcs = HashSet::with_capacity_and_hasher(64, Default::default());
         for i in self.u8_funcs_pos.. {
@@ -858,7 +865,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 }
             };
             let func = binary.base + func_rva.0;
-            let callers = crate::find_callers(self.analysis, func);
+            let function_finder = self.cache.function_finder();
+            let callers = function_finder.find_callers(self.analysis, func);
             for &address in &callers {
                 entry_of_until(binary, &functions, address, |entry| {
                     if entry == self.update_status_screen_tooltip {
@@ -903,10 +911,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
     }
 
     fn add_func_arg_patches(&mut self) {
-        let functions = self.analysis.functions();
+        let functions = self.cache.functions();
         let binary = self.binary;
         while let Some(child_func) = self.func_arg_widen_queue.pop() {
-            let callers = crate::find_callers(self.analysis, child_func);
+            let callers = self.cache.function_finder().find_callers(self.analysis, child_func);
             for &address in &callers {
                 if self.found_func_arg_widen_refs.contains(&address) {
                     continue;
@@ -943,7 +951,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             analyzer.generate_stack_size_patches();
             let pending_hooks = mem::replace(
                 &mut analyzer.state.pending_hooks,
-                BumpVec::new_in(self.analysis.bump),
+                BumpVec::new_in(&self.analysis.bump),
             );
             if !pending_hooks.is_empty() {
                 let binary = self.binary;
@@ -1384,7 +1392,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         mode: DatFuncAnalysisMode,
     ) -> DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E> {
         let binary = dat_ctx.binary;
-        let bump = dat_ctx.analysis.bump;
+        let bump = &dat_ctx.analysis.bump;
         DatReferringFuncAnalysis {
             dat_ctx,
             ref_address,
@@ -1429,7 +1437,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         mode: DatFuncAnalysisMode,
     ) -> DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E> {
         let binary = dat_ctx.binary;
-        let bump = dat_ctx.analysis.bump;
+        let bump = &dat_ctx.analysis.bump;
         DatReferringFuncAnalysis {
             dat_ctx,
             ref_address: E::VirtualAddress::from_u64(0),
@@ -1867,7 +1875,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             self.dat_ctx.update_status_screen_tooltip = self.entry;
             return;
         }
-        let bump = self.dat_ctx.analysis.bump;
+        let bump = &self.dat_ctx.analysis.bump;
         let needed_cfg_analysis = mem::replace(
             &mut self.needed_cfg_analysis,
             BumpVec::new_in(bump),
@@ -1888,7 +1896,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
 
     fn generate_noncfg_patches(&mut self) {
         let binary = self.binary;
-        let bump = self.dat_ctx.analysis.bump;
+        let bump = &self.dat_ctx.analysis.bump;
         let needed_stack_params = self.needed_stack_params;
         let needed_func_results = mem::replace(&mut self.needed_func_results, Default::default());
         let u8_instruction_lists = mem::replace(
@@ -1933,7 +1941,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         // of multiple branches.
         let binary = self.binary;
         let ctx = self.dat_ctx.analysis.ctx;
-        let bump = self.dat_ctx.analysis.bump;
+        let bump = &self.dat_ctx.analysis.bump;
         // This may(?) infloop under certain conditions, so have a hard limit of
         // branches to go through before quitting.
         let mut limit = 64;
@@ -2310,7 +2318,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     }
 
     fn generate_stack_size_patches(&mut self) {
-        let bump = self.dat_ctx.analysis.bump;
+        let bump = &self.dat_ctx.analysis.bump;
         let mut stack_size_tracker = mem::replace(
             &mut self.state.stack_size_tracker,
             stack_analysis::StackSizeTracker::empty(self.binary, bump),
@@ -2785,7 +2793,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> RecognizeDatPatchFunc<'a, 'b, 'acx
     fn new(
         dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
     ) -> RecognizeDatPatchFunc<'a, 'b, 'acx, 'e, E> {
-        let bump = dat_ctx.analysis.bump;
+        let bump = &dat_ctx.analysis.bump;
         RecognizeDatPatchFunc {
             flags: 0,
             dat_ctx,

@@ -13,11 +13,11 @@ use super::{DatPatchContext};
 pub(crate) fn trigger_analysis<'a, 'e, E: ExecutionState<'e>>(
     dat_ctx: &mut DatPatchContext<'a, '_, 'e, E>,
 ) -> Option<()> {
-    let analysis = &mut dat_ctx.analysis;
+    let analysis = &dat_ctx.analysis;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let conditions = analysis.trigger_conditions()?;
-    let actions = analysis.trigger_actions()?;
+    let conditions = dat_ctx.cache.trigger_conditions(analysis)?;
+    let actions = dat_ctx.cache.trigger_actions(analysis)?;
 
     // Most of these aren't necessary unless there's aggressive inlining,
     // only command + kills + deaths would suffice.
@@ -73,7 +73,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         match *op {
             Operation::Jump { condition, .. } => {
                 let condition = ctrl.resolve(condition);
-                let arg_cache = self.dat_ctx.analysis.arg_cache;
+                let arg_cache = &self.dat_ctx.analysis.arg_cache;
                 let compare = match self.is_action {
                     true => 0xe3,
                     false => 0xe8,
@@ -95,7 +95,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
                     if self.checked_functions.insert(dest) {
-                        let arg_cache = self.dat_ctx.analysis.arg_cache;
+                        let arg_cache = &self.dat_ctx.analysis.arg_cache;
                         // Check for [arg1 + c] for unit_id
                         // (arg1 + 18 for action)
                         let offset = match self.is_action {

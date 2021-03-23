@@ -4,9 +4,9 @@ use scarf::exec_state::{ExecutionState};
 use crate::{AnalysisCtx, find_bytes};
 
 pub(crate) fn fastfail<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
 ) -> Vec<E::VirtualAddress> {
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
 
     // Find fastfail functions by looking for
     // IsProcessorFeaturePresent(0x17)

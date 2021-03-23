@@ -3,12 +3,15 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operand, Operation};
 
 use crate::{
-    AnalysisCtx, EntryOf, find_callers, entry_of_until, if_arithmetic_eq_neq, OperandExt,
-    OptionExt, find_functions_using_global, Patch, bumpvec_with_capacity,
+    AnalysisCtx, EntryOf, entry_of_until, if_arithmetic_eq_neq, OperandExt,
+    OptionExt, Patch, bumpvec_with_capacity, FunctionFinder,
 };
 
-pub(crate) fn unexplored_fog_minimap_patch<'a, E: ExecutionState<'a>>(
-    analysis: &mut AnalysisCtx<'_, 'a, E>,
+pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    first_fow_sprite: Operand<'e>,
+    is_replay: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<Patch<E::VirtualAddress>> {
     // The relevant code is something like
     //
@@ -28,20 +31,18 @@ pub(crate) fn unexplored_fog_minimap_patch<'a, E: ExecutionState<'a>>(
     // minimaps. Would be nice to have other neutral buildings also appear there but this
     // will do for now.
 
-    let first_fow_sprite = analysis.fow_sprites().first_active?;
-    let is_replay = analysis.is_replay()?;
     let first_fow_addr = first_fow_sprite
         .if_memory()
         .and_then(|x| x.address.if_constant())
         .map(|x| E::VirtualAddress::from_u64(x))?;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let funcs = &analysis.functions();
+    let bump = &analysis.bump;
+    let funcs = functions.functions();
 
     let mut first_fow_uses = bumpvec_with_capacity(0x10, bump);
     first_fow_uses.extend(
-        find_functions_using_global(analysis, first_fow_addr)
+        functions.find_functions_using_global(analysis, first_fow_addr)
             .into_iter()
             .map(|x| x.use_address)
     );
@@ -63,7 +64,7 @@ pub(crate) fn unexplored_fog_minimap_patch<'a, E: ExecutionState<'a>>(
             let mut func_analysis = FuncAnalysis::new(binary, ctx, entry);
             func_analysis.analyze(&mut analyzer);
             if analyzer.is_get_fn {
-                first_fow_uses.extend(find_callers(analysis, entry));
+                first_fow_uses.extend(functions.find_callers(analysis, entry));
             }
             analyzer.entry_of
         });

@@ -5,7 +5,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, OperandCtx, Operand, DestOperand, Operation, MemAccessSize};
 
 use crate::{
-    AnalysisCtx, OptionExt, find_functions_using_global, find_callers, EntryOf,
+    AnalysisCtx, OptionExt, EntryOf, FunctionFinder,
     single_result_assign, if_callable_const, entry_of_until, ArgCache, bumpvec_with_capacity,
 };
 
@@ -29,25 +29,27 @@ pub struct Limits<'e, Va: VirtualAddress> {
 }
 
 pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    rng_enable: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     // step_objects calls enable_rng(1) at start and enable_rng(0) at end,
     // detect both inlined writes (though untested, welp) and calls
     // Detect step_objects itself by searching for code that writes both
     // 0x64 and [x] - 1 to [x]; x is vision update counter.
-    let rng = analysis.rng();
-    let rng_enable = rng.enable.as_ref()?;
+    let rng_enable = rng_enable;
     // Use addresses of RNG or call location addresses of RNG set func
     let mut rng_refs = bumpvec_with_capacity(16, bump);
     for part in rng_enable.iter_no_mem_addr() {
         if let Some(enable_addr) = part.if_memory().and_then(|x| x.address.if_constant()) {
             let enable_addr = E::VirtualAddress::from_u64(enable_addr);
-            let globals = find_functions_using_global(analysis, enable_addr);
+            let globals = functions.find_functions_using_global(analysis, enable_addr);
             for global_ref in globals {
-                if is_branchless_leaf(analysis, global_ref.func_entry) {
-                    rng_refs.extend(find_callers(analysis, global_ref.func_entry));
+                let entry = global_ref.func_entry;
+                if is_branchless_leaf(analysis, entry) {
+                    rng_refs.extend(functions.find_callers(analysis, entry));
                 } else {
                     rng_refs.push(global_ref.use_address);
                 }
@@ -59,8 +61,7 @@ pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
     // Binary size trickery as sbumpalo is somewhat bad with generic bloat
     let mut checked_vision_funcs = bumpvec_with_capacity(8, bump);
     let mut result = None;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
+    let funcs = functions.functions();
     let ctx = analysis.ctx;
     let mut checked_functions = bumpvec_with_capacity(8, bump);
     'outer: for &first_candidate_only in &[true, false] {
@@ -165,7 +166,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> IsStepObjects<'a, 'acx, 'e, E> {
 }
 
 fn is_branchless_leaf<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
     addr: E::VirtualAddress,
 ) -> bool {
     struct Analyzer<'e, E: ExecutionState<'e>> {
@@ -295,9 +296,9 @@ impl VisionStepState {
 }
 
 pub(crate) fn game<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    step_objects: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
-    let step_objects = analysis.step_objects()?;
     let binary = analysis.binary;
 
     let ctx = analysis.ctx;
@@ -383,7 +384,8 @@ fn game_detect_check<'e>(ctx: OperandCtx<'e>, val: Operand<'e>) -> Option<Operan
 }
 
 pub(crate) fn limits<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    game_loop: E::VirtualAddress,
 ) -> Limits<'e, E::VirtualAddress> {
     let mut result = Limits {
         set_limits: None,
@@ -391,15 +393,11 @@ pub(crate) fn limits<'e, E: ExecutionState<'e>>(
         smem_alloc: None,
         smem_free: None,
     };
-    let game_loop = match analysis.game_init().game_loop {
-        Some(s) => s,
-        None => return result,
-    };
 
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let arg_cache = analysis.arg_cache;
-    let bump = analysis.bump;
+    let arg_cache = &analysis.arg_cache;
+    let bump = &analysis.bump;
 
     let mut analysis = FuncAnalysis::new(binary, ctx, game_loop);
     let mut analyzer = FindSetLimits::<E> {

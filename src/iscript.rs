@@ -7,8 +7,8 @@ use scarf::exec_state::ExecutionState;
 use scarf::exec_state::VirtualAddress;
 
 use crate::{
-    AnalysisCtx, ArgCache, entry_of_until, EntryOfResult, EntryOf, find_functions_using_global,
-    OptionExt, single_result_assign,
+    AnalysisCtx, ArgCache, entry_of_until, EntryOfResult, EntryOf, FunctionFinder,
+    OptionExt, single_result_assign, SwitchTable,
 };
 
 pub struct StepIscript<'e, Va: VirtualAddress> {
@@ -108,13 +108,14 @@ fn get_iscript_operand_from_goto<'e, E: ExecutionState<'e>>(
 }
 
 pub(crate) fn step_iscript<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    switch_tables: &[SwitchTable<E::VirtualAddress>],
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> StepIscript<'e, E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let funcs = analysis.functions();
+    let funcs = functions.functions();
     let funcs = &funcs[..];
-    let switch_tables = analysis.switch_tables();
     let switches = switch_tables.iter().filter_map(|switch| {
         let cases = &switch.cases;
         if cases.len() < 0x40 {
@@ -130,10 +131,10 @@ pub(crate) fn step_iscript<'e, E: ExecutionState<'e>>(
         opcode_check: None,
     };
     'outer: for (script_operand, switch) in switches {
-        let users = find_functions_using_global(analysis, switch.address);
+        let users = functions.find_functions_using_global(analysis, switch.address);
         for user in users {
             let func_result = entry_of_until(binary, funcs, user.func_entry, |entry| {
-                let arg_cache = analysis.arg_cache;
+                let arg_cache = &analysis.arg_cache;
                 let mut analyzer = IscriptFromSwitchAnalyzer {
                     switch_addr: switch.address,
                     iscript_bin: None,
@@ -248,22 +249,21 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IscriptFromSwitchAna
 }
 
 pub(crate) fn add_overlay_iscript<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    step_iscript_switch: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
-    let iscript = analysis.step_iscript();
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     // Search for a 5-argument fn(img, sprite (Mem32[x + 3c]), x, y, 1) from
     // iscript opcode 8 (imgol)
     // Sprite is actually unused, but checking for it anyway as the function signature
     // changing isn't anticipated.
-    let switch_table = iscript.switch_table?;
     let word_size = <E::VirtualAddress as VirtualAddress>::SIZE;
-    let case_8 = binary.read_address(switch_table + word_size * 8).ok()?;
+    let case_8 = binary.read_address(step_iscript_switch + word_size * 8).ok()?;
 
     let mut analyzer = AddOverlayAnalyzer::<E> {
         result: None,
-        args: analysis.arg_cache,
+        args: &analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, case_8);
     analysis.analyze(&mut analyzer);
@@ -327,15 +327,15 @@ impl<'e, 'b, Exec: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyze
 }
 
 pub(crate) fn draw_cursor_marker<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    iscript_switch_table: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
-    let iscript = analysis.step_iscript();
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     // hide_cursor_marker is iscript opcode 0x2d
-    let cases = iscript.switch_table?;
-    let case =
-        binary.read_address(cases + 0x2d * <E::VirtualAddress as VirtualAddress>::SIZE).ok()?;
+    let case = binary.read_address(
+        iscript_switch_table + 0x2d * <E::VirtualAddress as VirtualAddress>::SIZE
+    ).ok()?;
 
     let mut analyzer = FindDrawCursorMarker::<E> {
         result: None,

@@ -20,7 +20,8 @@ impl<'e, Va: VirtualAddress> RegionRelated<'e, Va> {
 }
 
 pub(crate) fn regions<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    aiscript_hook: &crate::AiScriptHook<'e, E::VirtualAddress>,
 ) -> RegionRelated<'e, E::VirtualAddress> {
     let mut result = RegionRelated {
         get_region: None,
@@ -29,14 +30,9 @@ pub(crate) fn regions<'e, E: ExecutionState<'e>>(
     };
 
     // Find things through aiscript value_area
-    let aiscript_hook = analysis.aiscript_hook();
-    let aiscript_hook = match aiscript_hook.as_ref() {
-        Some(s) => s,
-        None => return result,
-    };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
 
     let value_area = match binary.read_u32(aiscript_hook.switch_table + 0x2a * 4) {
         Ok(o) => E::VirtualAddress::from_u64(o as u64),
@@ -170,11 +166,11 @@ impl<'a, 'e, E: ExecutionState<'e>> RegionsAnalyzer<'a, 'e, E> {
 }
 
 pub(crate) fn pathing<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    get_region: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let get_region = analysis.regions().get_region?;
 
     let mut analysis = FuncAnalysis::new(binary, ctx, get_region);
     let mut analyzer = FindPathing::<E> {

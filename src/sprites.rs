@@ -8,8 +8,8 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{MemAccess, Register};
 
 use crate::{
-    ArgCache, AnalysisCtx, OptionExt, single_result_assign, entry_of_until, EntryOf, string_refs,
-    bumpvec_with_capacity,
+    ArgCache, AnalysisCtx, OptionExt, single_result_assign, entry_of_until, EntryOf,
+    bumpvec_with_capacity, FunctionFinder,
 };
 use crate::hash_map::HashMap;
 
@@ -54,7 +54,8 @@ enum FindSpritesState {
 }
 
 pub(crate) fn sprites<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    order_nuke_track: E::VirtualAddress,
 ) -> Sprites<'e, E::VirtualAddress> {
     let mut result = Sprites {
         sprite_hlines: None,
@@ -69,14 +70,10 @@ pub(crate) fn sprites<'e, E: ExecutionState<'e>>(
         sprite_y_position: None,
         create_lone_sprite: None,
     };
-    let order_nuke_track = match crate::step_order::find_order_nuke_track(analysis) {
-        Some(s) => s,
-        None => return result,
-    };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let arg_cache = analysis.arg_cache;
+    let bump = &analysis.bump;
+    let arg_cache = &analysis.arg_cache;
     let mut analyzer = SpriteAnalyzer::<E> {
         state: FindSpritesState::NukeTrack,
         lone_free: Default::default(),
@@ -796,7 +793,9 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RequiredReturnAddress<'e
 }
 
 pub(crate) fn fow_sprites<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    step_objects: E::VirtualAddress,
+    first_lone: Operand<'e>,
 ) -> FowSprites<'e> {
     // step_orders calls a function that loops through
     // lone sprites, followed by a loop through fow sprites.
@@ -804,16 +803,8 @@ pub(crate) fn fow_sprites<'e, E: ExecutionState<'e>>(
     // so can get all 4 pointers from that.
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let mut result = FowSprites::default();
-    let step_objects = match analysis.step_objects() {
-        Some(s) => s,
-        None => return result,
-    };
-    let first_lone = match analysis.sprites().first_lone {
-        Some(s) => s,
-        None => return result,
-    };
 
     let mut analyzer = FowSpriteAnalyzer::<E> {
         state: FowSpritesState::InStepOrders,
@@ -1042,27 +1033,29 @@ impl<'acx, 'e, E: ExecutionState<'e>> FowSpriteAnalyzer<'acx, 'e, E> {
 }
 
 pub(crate) fn init_sprites<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    first_free_sprite: Operand<'e>,
+    last_free_sprite: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> InitSprites<'e, E::VirtualAddress> {
     let mut result = InitSprites {
         init_sprites: None,
         sprites: None,
     };
-    let sprites = analysis.sprites();
-    let first_free_sprite_addr = match sprites.first_free_sprite.and_then(|x| x.if_memory()) {
+    let first_free_sprite_addr = match first_free_sprite.if_memory() {
         Some(s) => s.address,
         None => return result,
     };
-    let last_free_sprite_addr = match sprites.last_free_sprite.and_then(|x| x.if_memory()) {
+    let last_free_sprite_addr = match last_free_sprite.if_memory() {
         Some(s) => s.address,
         None => return result,
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let functions = analysis.functions();
-    let str_refs = string_refs(analysis, b"arr\\sprites.dat\0");
-    let arg_cache = analysis.arg_cache;
+    let bump = &analysis.bump;
+    let str_refs = functions.string_refs(analysis, b"arr\\sprites.dat\0");
+    let functions = functions.functions();
+    let arg_cache = &analysis.arg_cache;
     for str_ref in str_refs {
         let val = entry_of_until(binary, &functions, str_ref.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);

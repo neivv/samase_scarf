@@ -5,8 +5,7 @@ use scarf::operand::{OperandHashByAddress};
 use scarf::{DestOperand, Operand, Operation};
 
 use crate::{
-    entry_of_until, EntryOf, OptionExt, OperandExt, find_functions_using_global,
-    bumpvec_with_capacity,
+    entry_of_until, EntryOf, OptionExt, OperandExt, bumpvec_with_capacity,
 };
 use crate::hash_map::{HashMap, HashSet};
 use super::{DatPatchContext, DatPatch, GrpTexturePatch, reloc_address_of_instruction};
@@ -17,11 +16,12 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
     // Hook any indexing of wirefram/grpwire/tranwire grp/ddsgrps
     // so that they can be indexed by using .dat value instead of plain unit id
 
-    let analysis = &mut dat_ctx.analysis;
+    let analysis = dat_ctx.analysis;
+    let cache = &mut dat_ctx.cache;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let functions = analysis.functions();
+    let bump = &analysis.bump;
+    let functions = cache.functions();
     let text = dat_ctx.text;
     let text_end = text.virtual_address + text.virtual_size;
 
@@ -30,16 +30,18 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
     let mut functions_returning_grp = HashMap::with_capacity_and_hasher(8, Default::default());
     // Map operand -> grp type
     let grp_op_inputs = [
-        (analysis.grpwire_grp()?, GrpType::Grp),
-        (analysis.grpwire_ddsgrp()?, GrpType::DdsGrp),
-        (analysis.tranwire_grp()?, GrpType::Grp),
-        (analysis.tranwire_ddsgrp()?, GrpType::DdsGrp),
-        (analysis.wirefram_ddsgrp()?, GrpType::DdsGrpSet),
+        (cache.grpwire_grp(analysis)?, GrpType::Grp),
+        (cache.grpwire_ddsgrp(analysis)?, GrpType::DdsGrp),
+        (cache.tranwire_grp(analysis)?, GrpType::Grp),
+        (cache.tranwire_ddsgrp(analysis)?, GrpType::DdsGrp),
+        (cache.wirefram_ddsgrp(analysis)?, GrpType::DdsGrpSet),
         // Function returns
         (ctx.custom(0), GrpType::Grp),
         (ctx.custom(1), GrpType::DdsGrp),
         (ctx.custom(2), GrpType::DdsGrpSet),
     ];
+    let status_screen = cache.status_screen(analysis)?;
+    let init_status_screen = cache.init_status_screen(analysis)?;
     let mut grp_operands = HashMap::with_capacity_and_hasher(16, Default::default());
     let mut refs_to_check = bumpvec_with_capacity(8, bump);
     for &(oper, grp) in &grp_op_inputs {
@@ -48,9 +50,10 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
             .or_else(|| oper.if_memory()?.address.if_constant())
             .map(|x| E::VirtualAddress::from_u64(x));
         if let Some(addr) = addr {
+            let function_finder = cache.function_finder();
             for i in 0..2 {
                 let addr = addr + i * E::VirtualAddress::SIZE;
-                let globals = find_functions_using_global(analysis, addr);
+                let globals = function_finder.find_functions_using_global(analysis, addr);
                 for global in globals {
                     if global.use_address >= text.virtual_address && global.use_address < text_end {
                         refs_to_check.push(global.use_address);
@@ -65,8 +68,7 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
     }
     // Functions that are known to refer the grps but aren't relevant
     let mut bad_functions = bumpvec_with_capacity(4, bump);
-    bad_functions.push(analysis.init_status_screen()?);
-    let status_screen = analysis.status_screen()?;
+    bad_functions.push(init_status_screen);
     while let Some(ref_addr) = refs_to_check.pop() {
         if !checked_refs.insert(ref_addr) {
             continue;
@@ -97,7 +99,7 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
             let entry_of = analyzer.entry_of;
             if let Some(grp) = analyzer.returns_grp {
                 if functions_returning_grp.insert(entry, grp).is_none() {
-                    let callers = crate::find_callers(&mut dat_ctx.analysis, entry);
+                    let callers = dat_ctx.cache.function_finder().find_callers(analysis, entry);
                     for address in callers {
                         refs_to_check.push(address);
                     }

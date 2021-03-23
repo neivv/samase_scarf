@@ -3,8 +3,8 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, FlagArith, Operand, Operation};
 
 use crate::{
-    AnalysisCtx, ArgCache, DatType, entry_of_until, EntryOf, find_functions_using_global,
-    single_result_assign, OperandExt,
+    AnalysisCtx, ArgCache, entry_of_until, EntryOf,
+    single_result_assign, OperandExt, FunctionFinder,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -14,22 +14,22 @@ pub struct CheckUnitRequirements<'e, Va: VirtualAddress> {
 }
 
 pub(crate) fn check_unit_requirements<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    units_dat: (E::VirtualAddress, u32),
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<CheckUnitRequirements<'e, E::VirtualAddress>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let functions = analysis.functions();
 
-    let units_dat = analysis.dat(DatType::Units)?;
-    let units_dat_address = E::VirtualAddress::from_u64(units_dat.address.if_constant()?);
     let requirement_offsets =
-        binary.read_address(units_dat_address + units_dat.entry_size.checked_mul(0x2b)?).ok()?;
+        binary.read_address(units_dat.0 + units_dat.1.checked_mul(0x2b)?).ok()?;
 
-    let mut globals = find_functions_using_global(analysis, requirement_offsets);
+    let mut globals = functions.find_functions_using_global(analysis, requirement_offsets);
     globals.sort_unstable_by_key(|x| x.func_entry);
     globals.dedup_by_key(|x| x.func_entry);
     let mut result = None;
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
+    let functions = functions.functions();
     for global_ref in globals {
         let val = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -115,23 +115,23 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitReqsAnalyzer<
 }
 
 pub(crate) fn check_dat_requirements<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    techdata_dat: (E::VirtualAddress, u32),
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let functions = analysis.functions();
 
-    let techdata_dat = analysis.dat(DatType::TechData)?;
-    let techdata_dat_address = E::VirtualAddress::from_u64(techdata_dat.address.if_constant()?);
     let requirement_offsets = binary.read_address(
-        techdata_dat_address + techdata_dat.entry_size.checked_mul(0x5)?,
+        techdata_dat.0 + techdata_dat.1.checked_mul(0x5)?,
     ).ok()?;
 
-    let mut globals = find_functions_using_global(analysis, requirement_offsets);
+    let mut globals = functions.find_functions_using_global(analysis, requirement_offsets);
     globals.sort_unstable_by_key(|x| x.func_entry);
     globals.dedup_by_key(|x| x.func_entry);
     let mut result = None;
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
+    let functions = functions.functions();
     for global_ref in globals {
         let val = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -190,12 +190,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for DatReqsAnalyzer<'
 }
 
 pub(crate) fn cheat_flags<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    check_dat_reqs: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let check_dat_reqs = analysis.check_dat_requirements()?;
     let mut analysis = FuncAnalysis::new(binary, ctx, check_dat_reqs);
     let mut analyzer = CheatFlagsAnalyzer::<E> {
         result: None,

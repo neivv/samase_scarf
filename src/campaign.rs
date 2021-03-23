@@ -20,13 +20,13 @@ static TERRAN_CAMPAIGN_SIGNATURE: &[u8] = &[
 ];
 
 pub(crate) fn campaigns<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
 ) -> Option<Operand<'e>> {
     // The campaign array is ordered by race, so zerg maps are in first pointer.
     // Check that second pointer is terran maps to avoid false positives.
     let rdata = analysis.binary_sections.rdata;
     let data = analysis.binary_sections.data;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let zerg_campaign_refs = crate::find_bytes(bump, &rdata.data, ZERG_CAMPAIGN_SIGNATURE);
     let va_size = <E::VirtualAddress as VirtualAddress>::SIZE;
     let candidates = zerg_campaign_refs.iter().flat_map(|&zref| {

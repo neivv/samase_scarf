@@ -2,7 +2,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{MemAccessSize, Operand, Operation, BinarySection, BinaryFile};
 
-use crate::{AnalysisCtx, ArgCache, single_result_assign, find_bytes};
+use crate::{AnalysisCtx, ArgCache, single_result_assign, find_bytes, FunctionFinder};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SnpDefinitions<'e> {
@@ -23,7 +23,7 @@ pub struct SnetHandlePackets<Va: VirtualAddress> {
 }
 
 pub(crate) fn snp_definitions<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
 ) -> Option<SnpDefinitions<'e>> {
     // Search for BNAU code.
     // The data is expected to be
@@ -33,7 +33,7 @@ pub(crate) fn snp_definitions<'e, E: ExecutionState<'e>>(
     // BNAU should be followed by UDPA
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let data = analysis.binary_sections.data;
     let results = find_bytes(bump, &data.data, &[0x55, 0x41, 0x4e, 0x42]);
     let mut result = None;
@@ -59,7 +59,8 @@ pub(crate) fn snp_definitions<'e, E: ExecutionState<'e>>(
 }
 
 pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> InitStormNetworking<E::VirtualAddress> {
     let mut result = InitStormNetworking {
         init_storm_networking: None,
@@ -68,11 +69,12 @@ pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
 
     // Init function of AVSelectConnectionScreen calls init_storm_networking,
     // init_storm_networking calls load_snp_list(&[fnptr, fnptr], 1)
-    let vtables = crate::vtables::vtables(analysis, b".?AVSelectConnectionScreen@glues@@\0");
+    let vtables =
+        crate::vtables::vtables(analysis, functions, b".?AVSelectConnectionScreen@glues@@\0");
     let binary = analysis.binary;
     let text = analysis.binary_sections.text;
     let ctx = analysis.ctx;
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     for vtable in vtables {
         let func = match binary.read_address(vtable + 0x3 * E::VirtualAddress::SIZE) {
             Ok(o) => o,
@@ -166,7 +168,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetw
 }
 
 pub(crate) fn snet_handle_packets<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> SnetHandlePackets<E::VirtualAddress> {
     let mut result = SnetHandlePackets {
         send_packets: None,
@@ -175,10 +178,10 @@ pub(crate) fn snet_handle_packets<'e, E: ExecutionState<'e>>(
     // Look for snet functions in packet received handler of UdpServer (vtable fn #3)
     // First one - receive - immediately calls a function pointer to receive the packets,
     // send calls a send_packet function for a ping (?) - send_packet(_, 0, 4, _, 4)
-    let vtables = crate::vtables::vtables(analysis, b".?AVUdpServer@");
+    let vtables = crate::vtables::vtables(analysis, functions, b".?AVUdpServer@");
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     for root_inline_limit in 0..2 {
         for &vtable in &vtables {
             let func = match binary.read_address(vtable + 0x3 * E::VirtualAddress::SIZE) {

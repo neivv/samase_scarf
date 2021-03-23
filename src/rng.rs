@@ -1,5 +1,4 @@
 use std::mem;
-use std::rc::Rc;
 
 use bumpalo::collections::Vec as BumpVec;
 
@@ -8,8 +7,8 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, Operation, Operand, MemAccessSize, DestOperand};
 
 use crate::{
-    AnalysisCtx, ArgCache, DatType, OptionExt, find_functions_using_global, single_result_assign,
-    if_callable_const, EntryOf, entry_of_until,
+    AnalysisCtx, ArgCache, OptionExt, single_result_assign,
+    if_callable_const, EntryOf, entry_of_until, FunctionFinder,
 };
 
 #[derive(Clone, Debug)]
@@ -19,26 +18,27 @@ pub struct Rng<'e> {
 }
 
 pub(crate) fn rng<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
-) -> Rc<Rng<'e>> {
+    analysis: &AnalysisCtx<'e, E>,
+    units_dat: (E::VirtualAddress, u32),
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> Rng<'e> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     // Find the rng from searching the code that checks if unit spawn direction == 0x20 and
     // random direction
 
     let mut spawn_direction_refs = {
-        let units_dat = analysis.dat_virtual_address(DatType::Units);
-        units_dat.and_then(|(dat, dat_table_size)| {
-            binary.read_address(dat + 5 * dat_table_size).ok().map(|spawn_directions| {
-                find_functions_using_global(analysis, spawn_directions)
-            })
+        let (dat, dat_table_size) = units_dat;
+        Some(()).and_then(|()| {
+            let spawn_directions = binary.read_address(dat + 5 * dat_table_size).ok()?;
+            Some(functions.find_functions_using_global(analysis, spawn_directions))
         }).unwrap_or_else(|| BumpVec::new_in(bump))
     };
     spawn_direction_refs.sort_unstable_by_key(|x| x.func_entry);
     spawn_direction_refs.dedup_by_key(|x| x.func_entry);
-    let functions = analysis.functions();
-    let arg_cache = analysis.arg_cache;
+    let functions = functions.functions();
+    let arg_cache = &analysis.arg_cache;
 
     let mut result = None;
     for global_ref in spawn_direction_refs.iter() {
@@ -62,7 +62,7 @@ pub(crate) fn rng<'e, E: ExecutionState<'e>>(
             break;
         }
     }
-    Rc::new(match result {
+    match result {
         Some((s, e)) => Rng {
             seed: Some(s),
             enable: Some(e),
@@ -71,7 +71,7 @@ pub(crate) fn rng<'e, E: ExecutionState<'e>>(
             seed: None,
             enable: None,
         },
-    })
+    }
 }
 
 struct FindRng<'a, 'e, E: ExecutionState<'e>> {

@@ -4,8 +4,8 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::add_terms::collect_arith_add_terms;
 use crate::{
-    ArgCache, AnalysisCtx, single_result_assign, entry_of_until, EntryOf,
-    find_functions_using_global, bumpvec_with_capacity,
+    ArgCache, AnalysisCtx, single_result_assign, entry_of_until, EntryOf, FunctionFinder,
+    bumpvec_with_capacity,
 };
 
 #[derive(Clone)]
@@ -15,7 +15,12 @@ pub struct SpriteSerialization<Va: VirtualAddress> {
 }
 
 pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    sprite_hlines_end: Operand<'e>,
+    (sprite_array, sprite_size): (Operand<'e>, u32),
+    init_sprites: E::VirtualAddress,
+    game: Operand<'e>,
+    function_finder: &FunctionFinder<'_, 'e, E>,
 ) -> SpriteSerialization<E::VirtualAddress> {
     // Find de/serialization functions by checking for
     // sprite_hlines_end[x] = deserialize_sprite_ptr(sprite_hlines_end[x])
@@ -25,28 +30,11 @@ pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
         serialize_sprites: None,
         deserialize_sprites: None,
     };
-    let sprites = analysis.sprites();
-    let sprite_hlines_end = match sprites.sprite_hlines_end {
-        Some(s) => s,
-        None => return result,
-    };
-    let (sprite_array, sprite_size) = match analysis.sprite_array() {
-        Some(s) => s,
-        None => return result,
-    };
-    let init_sprites = match analysis.init_sprites() {
-        Some(s) => s,
-        None => return result,
-    };
-    let game = match analysis.game() {
-        Some(s) => s,
-        None => return result,
-    };
 
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let functions = analysis.functions();
+    let bump = &analysis.bump;
+    let functions = function_finder.functions();
 
     let sprite_array_address = sprite_array.if_constant()
         .or_else(|| sprite_array.if_memory()?.address.if_constant());
@@ -54,7 +42,7 @@ pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
         Some(s) => E::VirtualAddress::from_u64(s),
         None => return result,
     };
-    let globals = find_functions_using_global(analysis, sprite_array_address);
+    let globals = function_finder.find_functions_using_global(analysis, sprite_array_address);
     // Note: Globals were sorted and deduped by func_entry, but
     // it turned out to miss something sometimes, so rely on the checked
     // vec instead to avoid duplicate work.
@@ -68,7 +56,7 @@ pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
         ),
         sprite_hlines_end,
     );
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     for global_ref in globals {
         let val = entry_of_until(binary, &functions, global_ref.func_entry, |entry| {
             let rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);

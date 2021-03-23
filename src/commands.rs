@@ -6,9 +6,9 @@ use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
 use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 
 use crate::{
-    AnalysisCtx, ArgCache, EntryOf, EntryOfResult, OptionExt, if_callable_const, find_callers,
+    AnalysisCtx, ArgCache, EntryOf, EntryOfResult, OptionExt, if_callable_const,
     entry_of_until, single_result_assign, find_bytes, read_u32_at, if_arithmetic_eq_neq,
-    bumpvec_with_capacity, OperandExt,
+    bumpvec_with_capacity, OperandExt, FunctionFinder,
 };
 
 #[derive(Clone, Debug)]
@@ -36,7 +36,8 @@ pub struct StepNetwork<'e, Va: VirtualAddressTrait> {
 }
 
 pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    process_commands: &ProcessCommands<'e, E::VirtualAddress>,
 ) -> Option<E::VirtualAddress> {
     struct Analyzer<'e, E: ExecutionState<'e>> {
         arg1: Operand<'e>,
@@ -78,7 +79,6 @@ pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
     }
 
     // print_text is called for packet 0x5c as print_text(data + 2, data[1])
-    let process_commands = analysis.process_commands();
     let switch = process_commands.switch.as_ref()?;
     let branch = switch.branch(0x5c)?;
 
@@ -97,7 +97,7 @@ pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
 }
 
 pub(crate) fn command_lengths<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
 ) -> Vec<u32> {
     let rdata = analysis.binary_sections.rdata;
     static NEEDLE: &[u8] = &[
@@ -127,7 +127,7 @@ pub(crate) fn command_lengths<'e, E: ExecutionState<'e>>(
         0xff, 0xff, 0xff, 0xff,
         0x1, 0, 0, 0,
     ];
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let results = find_bytes(bump, &rdata.data, NEEDLE);
     test_assert_eq!(results.len(), 1);
     let mut result = results.first().map(|&start| {
@@ -156,12 +156,11 @@ pub(crate) fn command_lengths<'e, E: ExecutionState<'e>>(
 }
 
 pub(crate) fn send_command<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    firegraft: &crate::FiregraftAddresses<E::VirtualAddress>,
 ) -> Option<E::VirtualAddress> {
-    let firegraft = analysis.firegraft_addresses();
-
     let binary = analysis.binary;
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     let ctx = analysis.ctx;
 
     // Search for stim button action
@@ -231,44 +230,45 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'
 }
 
 pub(crate) fn process_commands<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    switch_tables: &[crate::SwitchTable<E::VirtualAddress>],
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> ProcessCommands<'e, E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
+    let bump = &analysis.bump;
+    let funcs = functions.functions();
 
-    let switch_tables = analysis.switch_tables();
     let switches = switch_tables.iter().filter(|switch| {
         switch.cases.len() >= 0x38 && switch.cases.len() < 0x60
     }).filter_map(|switch| {
-        crate::switch::full_switch_info(analysis, switch).and_then(|(mut switch, entry)| {
-            let offset = switch.cases.windows(0x1f).enumerate().find(|&(_, win)| {
-                let low_bound = win[0];
-                let high_bound = win[0x1e];
-                let win = &win[1..];
-                let first = win[0];
-                let second = win[4];
-                low_bound != high_bound && first != low_bound && first != high_bound &&
-                    win.iter().cloned().take(4).all(|x| x == first) &&
-                    win.iter().cloned().skip(4).take(8).all(|x| x == second) &&
-                    win.iter().cloned().skip(0xd).take(3).all(|x| x == first) &&
-                    win.iter().cloned().skip(0x11).take(12).all(|x| x == first)
-            }).map(|(i, _)| switch.offset + i as u32 + switch.offset - 0x37);
-            match offset {
-                Some(x) => {
-                    switch.offset = x;
-                    Some((switch, entry))
+        crate::switch::full_switch_info(analysis, functions, switch)
+            .and_then(|(mut switch, entry)| {
+                let offset = switch.cases.windows(0x1f).enumerate().find(|&(_, win)| {
+                    let low_bound = win[0];
+                    let high_bound = win[0x1e];
+                    let win = &win[1..];
+                    let first = win[0];
+                    let second = win[4];
+                    low_bound != high_bound && first != low_bound && first != high_bound &&
+                        win.iter().cloned().take(4).all(|x| x == first) &&
+                        win.iter().cloned().skip(4).take(8).all(|x| x == second) &&
+                        win.iter().cloned().skip(0xd).take(3).all(|x| x == first) &&
+                        win.iter().cloned().skip(0x11).take(12).all(|x| x == first)
+                }).map(|(i, _)| switch.offset + i as u32 + switch.offset - 0x37);
+                match offset {
+                    Some(x) => {
+                        switch.offset = x;
+                        Some((switch, entry))
+                    }
+                    None => None,
                 }
-                None => None,
-            }
-        })
+            })
     });
     let switches = BumpVec::from_iter_in(switches, bump);
     let switches = switches.into_iter().flat_map(|(switch, process_commands)| {
         let switch = &switch;
-        let callers = find_callers(analysis, process_commands)
+        let callers = functions.find_callers(analysis, process_commands)
             .into_iter()
             .map(move |caller| (switch.clone(), caller, process_commands));
         let mut callers = BumpVec::from_iter_in(callers, bump);
@@ -354,13 +354,13 @@ fn op_is_fully_defined(op: Operand<'_>) -> bool {
 }
 
 pub(crate) fn command_user<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    game: Operand<'e>,
+    process_commands: &ProcessCommands<'e, E::VirtualAddress>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let process_commands = analysis.process_commands();
-    let game = analysis.game()?;
     process_commands.switch.as_ref().and_then(|sw| {
         let command_ally = sw.branch(0xe)?;
         let mut analysis = FuncAnalysis::new(binary, ctx, command_ally);
@@ -437,13 +437,13 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CommandUserAnalyzer<'
 }
 
 pub(crate) fn selections<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    process_commands: &ProcessCommands<'e, E::VirtualAddress>
 ) -> Selections<'e> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
 
-    let process_commands = analysis.process_commands();
     let mut result = Selections {
         selections: None,
         unique_command_user: None,
@@ -569,13 +569,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 }
 
 pub(crate) fn is_replay<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    process_commands: &ProcessCommands<'e, E::VirtualAddress>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
 
-    let process_commands = analysis.process_commands();
     let command = process_commands.switch.as_ref()
         .and_then(|sw| sw.branch(0x5d))?;
 
@@ -674,7 +674,9 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyze
 }
 
 pub(crate) fn step_network<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    process_lobby_commands: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> StepNetwork<'e, E::VirtualAddress> {
     let mut result = StepNetwork {
         step_network: None,
@@ -685,15 +687,10 @@ pub(crate) fn step_network<'e, E: ExecutionState<'e>>(
         player_turns_size: None,
         network_ready: None,
     };
-    let process_lobby_commands = match analysis.process_lobby_commands() {
-        Some(s) => s,
-        None => return result,
-    };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
+    let bump = &analysis.bump;
+    let funcs = functions.functions();
     // step_network calls process_lobby_commands 2~3 frames deep
     // Recognize step_network from its first comparision being
     // menu_screen_id == MENU_SCREEN_EXIT (0x21 currently, but allow matching higher constants,
@@ -704,7 +701,7 @@ pub(crate) fn step_network<'e, E: ExecutionState<'e>>(
         repeat_limit -= 1;
         let mut new_entries = bumpvec_with_capacity(8, bump);
         for child in entries {
-            let callers = find_callers(analysis, child);
+            let callers = functions.find_callers(analysis, child);
             for caller in callers {
                 let val = entry_of_until(binary, funcs, caller, |entry| {
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -734,7 +731,7 @@ pub(crate) fn step_network<'e, E: ExecutionState<'e>>(
         entries.sort_unstable();
         entries.dedup();
     }
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     if let Some(step_network) = result.step_network {
         let exec_state = E::initial_state(ctx, binary);
         let state = StepNetworkState {
@@ -878,20 +875,19 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwor
 }
 
 pub(crate) fn step_replay_commands<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    process_commands: E::VirtualAddress,
+    game: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     // step_replay_commands calls process_commands, and starts with comparision of global bool
     // is_ingame and frame count against replay limit.
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let funcs = analysis.functions();
-    let funcs = &funcs[..];
-
-    let process_commands = analysis.process_commands().process_commands?;
-    let game = analysis.game()?;
+    let funcs = functions.functions();
 
     let mut result = None;
-    let callers = find_callers(analysis, process_commands);
+    let callers = functions.find_callers(analysis, process_commands);
     for caller in callers {
         let new = entry_of_until(binary, funcs, caller, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -952,7 +948,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepReplayCommands<
 }
 
 pub(crate) fn replay_data<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    process_commands_switch: &crate::switch::CompleteSwitch<E::VirtualAddress>,
 ) -> Option<Operand<'e>> {
     // process_commands calls add_to_replay_data(data, len) after its switch,
     // which immediately checks replay_data.field0 == 0
@@ -961,9 +958,7 @@ pub(crate) fn replay_data<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let process_commands = analysis.process_commands();
-    let switch = process_commands.switch.as_ref()?;
-    let branch = switch.branch(0x15)?;
+    let branch = process_commands_switch.branch(0x15)?;
 
     let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, branch);

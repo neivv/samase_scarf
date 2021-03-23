@@ -1,12 +1,12 @@
 use bumpalo::collections::Vec as BumpVec;
 
-use scarf::analysis::{self, Control, FuncAnalysis};
+use scarf::analysis::{self, Control, FuncAnalysis, RelocValues};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operation};
 
 use crate::{
-    AnalysisCtx, OptionExt, read_u32_at, find_bytes, string_refs, find_functions_using_global,
-    entry_of_until, bumpvec_with_capacity,
+    AnalysisCtx, OptionExt, read_u32_at, find_bytes, FunctionFinder, entry_of_until,
+    bumpvec_with_capacity,
 };
 
 const BUTTONSET_BUTTON_COUNTS: [u8; 13] = [6, 9, 6, 5, 0, 7, 0, 9, 7, 8, 6, 7, 6];
@@ -14,9 +14,9 @@ const BUTTONSET_BUTTON_COUNTS: [u8; 13] = [6, 9, 6, 5, 0, 7, 0, 9, 7, 8, 6, 7, 6
 /// scan for the first button count and then filter the result, allowing anything in the
 /// pointer slot, unless the value is zero, in which case the pointer must be zero.
 pub(crate) fn find_buttonsets<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
 ) -> Vec<E::VirtualAddress> {
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let data = analysis.binary_sections.data;
     let first = [BUTTONSET_BUTTON_COUNTS[0], 0, 0, 0];
     let mut result = find_bytes(bump, &data.data, &first[..]);
@@ -34,21 +34,22 @@ pub(crate) fn find_buttonsets<'e, E: ExecutionState<'e>>(
     result.into_iter().map(|x| data.virtual_address + x.0).collect()
 }
 
-pub(crate) fn find_unit_status_funcs<'exec, E: ExecutionState<'exec>>(
-    cache: &mut AnalysisCtx<'_, 'exec, E>,
+pub(crate) fn find_unit_status_funcs<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> Vec<E::VirtualAddress> {
-    let binary = cache.binary;
-    let bump = cache.bump;
-    let mut str_refs = string_refs(cache, b"rez\\statdata.bin\0");
+    let binary = analysis.binary;
+    let bump = &analysis.bump;
+    let mut str_refs = functions.string_refs(analysis, b"rez\\statdata.bin\0");
     if str_refs.is_empty() {
-        str_refs = string_refs(cache, b"statdata.ui");
+        str_refs = functions.string_refs(analysis, b"statdata.ui");
         // Currently rez and filename are separate but do this just in case.
-        str_refs.extend(string_refs(cache, b"rez\\statdata.ui"));
+        str_refs.extend(functions.string_refs(analysis, b"rez\\statdata.ui"));
     }
-    let funcs = cache.functions();
+    let funcs = functions.functions();
     let statdata_bin_globals = str_refs.iter().flat_map(|str_ref| {
         entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
-            crate::dialog::find_dialog_global(cache, entry, &str_ref)
+            crate::dialog::find_dialog_global(analysis, entry, &str_ref)
         }).into_option()
     });
     let mut statdata_bin_globals = BumpVec::from_iter_in(statdata_bin_globals, bump);
@@ -56,14 +57,14 @@ pub(crate) fn find_unit_status_funcs<'exec, E: ExecutionState<'exec>>(
     statdata_bin_globals.dedup();
 
     let statdata_using_funcs = statdata_bin_globals.iter().flat_map(|&addr| {
-        find_functions_using_global(cache, addr).into_iter().map(|x| x.func_entry)
+        functions.find_functions_using_global(analysis, addr).into_iter().map(|x| x.func_entry)
     });
     let mut statdata_using_funcs = BumpVec::from_iter_in(statdata_using_funcs, bump);
     statdata_using_funcs.sort_unstable();
     statdata_using_funcs.dedup();
     let mut statdata = Vec::with_capacity(statdata_using_funcs.len() * 2);
     for &addr in &statdata_using_funcs {
-        statdata.extend(find_unit_status_func_uses(cache, addr));
+        statdata.extend(find_unit_status_func_uses(analysis, addr));
     }
     statdata.sort_unstable();
     statdata.dedup();
@@ -73,12 +74,12 @@ pub(crate) fn find_unit_status_funcs<'exec, E: ExecutionState<'exec>>(
 /// If the function calls something from an 0xc-sized array, and then has another call
 /// with offset 4, return the array (offset - 4, as the first u32 is unit id)
 fn find_unit_status_func_uses<'acx, 'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'acx, 'e, E>,
+    analysis: &'acx AnalysisCtx<'e, E>,
     func: E::VirtualAddress,
 ) -> BumpVec<'acx, E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
 
     let mut analyzer: UnitStatusFuncUses<'acx, 'e, E> = UnitStatusFuncUses {
         result: bumpvec_with_capacity(4, bump),
@@ -181,16 +182,16 @@ static ORDER_REQ_TABLE_BEGIN: [u8; 0x30] = [
     0x02, 0xFF, 0x7D, 0x00, 0xFF, 0xFF, 0x06, 0x00,
 ];
 
-pub(crate) fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    relocs: &[RelocValues<E::VirtualAddress>],
     signature: &[u8],
 ) -> Vec<(E::VirtualAddress, u32)> {
     use std::cmp::Ordering;
 
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let data = analysis.binary_sections.data;
     let table_addresses = find_bytes(bump, &data.data, signature);
-    let relocs = analysis.relocs_with_values();
     let mut result = Vec::with_capacity(16);
     for &table_rva in &table_addresses {
         let table_va = data.virtual_address + table_rva.0;
@@ -211,14 +212,16 @@ pub(crate) fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
 }
 
 pub(crate) fn find_requirement_tables<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    relocs: &[RelocValues<E::VirtualAddress>],
 ) -> RequirementTables<E::VirtualAddress> {
     RequirementTables {
-        units: find_requirement_table_refs(analysis, &UNIT_REQ_TABLE_BEGIN[..]),
-        upgrades: find_requirement_table_refs(analysis, &UPGRADE_REQ_TABLE_BEGIN[..]),
-        tech_use: find_requirement_table_refs(analysis, &TECH_USE_REQ_TABLE_BEGIN[..]),
-        tech_research: find_requirement_table_refs(analysis, &TECH_RESEARCH_REQ_TABLE_BEGIN[..]),
-        orders: find_requirement_table_refs(analysis, &ORDER_REQ_TABLE_BEGIN[..]),
+        units: find_requirement_table_refs(analysis, relocs, &UNIT_REQ_TABLE_BEGIN[..]),
+        upgrades: find_requirement_table_refs(analysis, relocs, &UPGRADE_REQ_TABLE_BEGIN[..]),
+        tech_use: find_requirement_table_refs(analysis, relocs, &TECH_USE_REQ_TABLE_BEGIN[..]),
+        tech_research:
+            find_requirement_table_refs(analysis, relocs, &TECH_RESEARCH_REQ_TABLE_BEGIN[..]),
+        orders: find_requirement_table_refs(analysis, relocs, &ORDER_REQ_TABLE_BEGIN[..]),
     }
 }
 

@@ -10,14 +10,15 @@ use super::{DatPatchContext, DatArrayPatch, reloc_address_of_instruction};
 pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
     dat_ctx: &mut DatPatchContext<'a, '_, 'e, E>,
 ) -> Option<()> {
-    let analysis = &mut dat_ctx.analysis;
-    let init_units = analysis.init_units()?;
-    let load_dat = analysis.load_dat()?;
-    let (units_dat, field_size) = analysis.dat_virtual_address(DatType::Units)?;
+    let analysis = &dat_ctx.analysis;
+    let cache = &mut dat_ctx.cache;
+    let init_units = cache.init_units(analysis)?;
+    let load_dat = cache.load_dat(analysis)?;
+    let (units_dat, field_size) = cache.dat_virtual_address(DatType::Units, analysis)?;
 
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let mut analyzer = InitUnitsAnalyzer {
         dat_ctx,
         load_dat,
@@ -174,11 +175,12 @@ pub(crate) fn button_use_analysis<'a, 'acx, 'e, E: ExecutionState<'e>>(
 ) -> Option<()> {
     // For some reason, button condition param is passed as u8 to the condition function.
     // Widen it to u16.
-    let analysis = &mut dat_ctx.analysis;
-    let globals = crate::find_functions_using_global(analysis, buttons);
+    let functions = dat_ctx.cache.function_finder();
+    let analysis = &dat_ctx.analysis;
+    let globals = functions.find_functions_using_global(analysis, buttons);
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let functions = analysis.functions();
+    let functions = dat_ctx.cache.functions();
     for global in &globals {
         entry_of_until(binary, &functions, global.use_address, |entry| {
             let mut analyzer = ButtonUseAnalyzer {
@@ -285,8 +287,8 @@ pub(crate) fn command_analysis<'a, 'acx, 'e, E: ExecutionState<'e>>(
 ) -> Option<()> {
     // Remove unit_id <= 105 check from Command_train,
     // unit_id >= 130 && unit_id <= 152 from zerg building morph
-    let analysis = &mut dat_ctx.analysis;
-    let process_commands = analysis.process_commands();
+    let analysis = &dat_ctx.analysis;
+    let process_commands = dat_ctx.cache.process_commands(analysis);
     let switch = process_commands.switch.as_ref()?;
     let binary = analysis.binary;
     let ctx = analysis.ctx;

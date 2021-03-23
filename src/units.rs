@@ -5,8 +5,8 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation};
 
 use crate::{
-    AnalysisCtx, DatType, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
-    find_functions_using_global, entry_of_until, unwrap_sext, bumpvec_with_capacity,
+    AnalysisCtx, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
+    entry_of_until, unwrap_sext, bumpvec_with_capacity, FunctionFinder,
 };
 
 #[derive(Clone, Debug)]
@@ -29,20 +29,21 @@ pub struct InitUnits<Va: VirtualAddress> {
 }
 
 pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    orders_dat: (E::VirtualAddress, u32),
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> ActiveHiddenUnits<'e> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let functions = analysis.functions();
+    let bump = &analysis.bump;
     // There's a function which accesses orders_dat_use_weapon_targeting, and loops through
     // both active and hidden units.
 
     let mut weapon_order_refs = {
-        let orders_dat = analysis.dat_virtual_address(DatType::Orders);
-        orders_dat.and_then(|(dat, dat_table_size)| {
+        let (dat, dat_table_size) = orders_dat;
+        Some(()).and_then(|()| {
             binary.read_address(dat + 1 * dat_table_size).ok().map(|weapon_orders| {
-                let funcs = find_functions_using_global(analysis, weapon_orders)
+                let funcs = functions.find_functions_using_global(analysis, weapon_orders)
                     .into_iter()
                     .map(move |x| (weapon_orders, x));
                 BumpVec::from_iter_in(funcs, bump)
@@ -52,8 +53,9 @@ pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
     weapon_order_refs.sort_unstable_by_key(|x| x.1.func_entry);
     weapon_order_refs.dedup_by_key(|x| x.1.func_entry);
     let mut result = None;
+    let functions = functions.functions();
     for (global_addr, global_ref) in weapon_order_refs {
-        let val = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
+        let val = entry_of_until(binary, functions, global_ref.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             let mut analyzer = ActiveHiddenAnalyzer::<E> {
                 candidates: bumpvec_with_capacity(8, bump),
@@ -166,30 +168,30 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 }
 
 pub(crate) fn order_issuing<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    units_dat: (E::VirtualAddress, u32),
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> OrderIssuing<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     // Search for units_dat_idle_order[arbiter] to find Order_CloakingNearbyUnits
 
     let mut arbiter_idle_orders = {
-        let units_dat = analysis.dat_virtual_address(DatType::Units);
-        units_dat.and_then(|(dat, dat_table_size)| {
-            binary.read_address(dat + 0xe * dat_table_size).ok().map(|idle_orders| {
-                let address = idle_orders + 0x47;
-                let order = ctx.mem8(ctx.constant(address.as_u64()));
-                let funcs = find_functions_using_global(analysis, address)
-                    .into_iter()
-                    .map(move |global_ref| (global_ref, order.clone()));
-                BumpVec::from_iter_in(funcs, bump)
-            })
-        }).unwrap_or_else(|| BumpVec::new_in(bump))
+        let (dat, dat_table_size) = units_dat;
+        let idle_orders = binary.read_address(dat + 0xe * dat_table_size)
+            .unwrap_or_else(|_| E::VirtualAddress::from_u64(0));
+        let address = idle_orders + 0x47;
+        let order = ctx.mem8(ctx.constant(address.as_u64()));
+        let funcs = functions.find_functions_using_global(analysis, address)
+            .into_iter()
+            .map(move |global_ref| (global_ref, order.clone()));
+        BumpVec::from_iter_in(funcs, bump)
     };
     arbiter_idle_orders.sort_unstable_by_key(|x| (x.0.func_entry, x.1.clone()));
     arbiter_idle_orders.dedup_by_key(|x| (x.0.func_entry, x.1.clone()));
     let mut result = None;
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     for (global_ref, order) in arbiter_idle_orders {
         let order_init_arbiter = global_ref.func_entry;
         let mut analysis = FuncAnalysis::new(binary, ctx, order_init_arbiter);
@@ -267,13 +269,13 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for OrderIssuingAnaly
 }
 
 pub(crate) fn units<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    init_units: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let init_units = analysis.init_units()?;
 
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     let mut analyzer = UnitsAnalyzer {
         result: None,
         arg_cache,
@@ -336,35 +338,26 @@ impl<'a, 'e, E: ExecutionState<'e>> UnitsAnalyzer<'a, 'e, E> {
 }
 
 pub(crate) fn init_units<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    units: (E::VirtualAddress, u32),
+    orders: (E::VirtualAddress, u32),
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> InitUnits<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
 
     let mut result = InitUnits {
         init_units: None,
         load_dat: None,
     };
 
-    let units = match analysis.dat(DatType::Units) {
-        Some(s) => s,
-        None => return result,
-    };
-    let orders = match analysis.dat(DatType::Orders) {
-        Some(s) => s,
-        None => return result,
-    };
     let mut order_refs = BumpVec::new_in(bump);
     {
         let mut arr = [(&orders, &mut order_refs)];
         for &mut (ref dat, ref mut out) in &mut arr {
             out.extend(
-                dat.address.iter()
-                    .filter_map(|x| x.if_constant())
-                    .flat_map(|x| {
-                        find_functions_using_global(analysis, E::VirtualAddress::from_u64(x))
-                    })
+                functions.find_functions_using_global(analysis, dat.0)
             );
         }
     }
@@ -411,14 +404,14 @@ pub(crate) fn init_units<'e, E: ExecutionState<'e>>(
         }
     }
 
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     let mut checked = bumpvec_with_capacity(8, bump);
     for order_ref in &order_refs {
         if checked.iter().any(|&x| x == order_ref.func_entry) {
             continue;
         }
         let mut analyzer = Analyzer::<E> {
-            units_dat: units.address,
+            units_dat: ctx.constant(units.0.as_u64()),
             arg_cache,
             binary,
             result: &mut result,
@@ -443,7 +436,8 @@ pub struct UnitCreation<Va: VirtualAddress> {
 }
 
 pub(crate) fn unit_creation<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    order_scan: E::VirtualAddress,
 ) -> UnitCreation<E::VirtualAddress> {
     let mut result = UnitCreation {
         create_unit: None,
@@ -454,12 +448,8 @@ pub(crate) fn unit_creation<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     // create_unit(id, x, y, player, skin)
     // Search for create_unit(0x21, Mem16[..], Mem16[..], Mem8[..], ..)
-    let order_scan = match crate::step_order::find_order_function(analysis, 0x8b) {
-        Some(s) => s,
-        None => return result,
-    };
 
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     let mut analyzer = UnitCreationAnalyzer::<E> {
         result: &mut result,
         arg_cache,
@@ -590,12 +580,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnaly
 }
 
 pub(crate) fn strength<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    init_game: E::VirtualAddress,
+    init_units: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let init_game = analysis.init_game().init_game?;
-    let init_units = analysis.init_units()?;
     let mut analyzer = StrengthAnalyzer::<E> {
         result: None,
         init_units,

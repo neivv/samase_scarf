@@ -2,10 +2,11 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{AnalysisCtx};
+use crate::{AnalysisCtx, FunctionFinder};
 
 pub(crate) fn vtables<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
     name: &[u8],
 ) -> Vec<E::VirtualAddress> {
     // TODO x86_64 probs has Rvas instead
@@ -17,9 +18,9 @@ pub(crate) fn vtables<'e, E: ExecutionState<'e>>(
     // -> Mem32[addr + x * 4] (Base class for renderer)
     // -> Mem32[addr] (?? Indirection)
     // -> addr + 8 == b".?AVRenderer" (Base class info, in .data instead of .rdata)
-    let relocs = analysis.relocs_with_values();
+    let relocs = functions.relocs_with_values();
     let data = analysis.binary_sections.data;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
     let base_class_info = relocs.iter().filter_map(|reloc| {
         if reloc.address >= data.virtual_address {
             let offset = ((reloc.address.as_u64() - data.virtual_address.as_u64()) + 8) as usize;

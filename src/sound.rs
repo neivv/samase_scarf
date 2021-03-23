@@ -5,7 +5,8 @@ use scarf::{Operand, Operation};
 use crate::{AnalysisCtx, ArgCache};
 
 pub(crate) fn play_sound<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    iscript_switch: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
@@ -13,16 +14,12 @@ pub(crate) fn play_sound<'e, E: ExecutionState<'e>>(
     // play_sound_outermost(sound, xy, 1, 0)
     // which calls play_sound_outer(sound, unused?, 0, x, y)
     // which calls play_sound(sound, unused, 0, x, y)
-    let iscript_switch = match analysis.step_iscript().switch_table {
-        Some(s) => s,
-        None => return None,
-    };
     let word_size = E::VirtualAddress::SIZE;
     let playsound = match binary.read_address(iscript_switch + 0x18 * word_size) {
         Ok(o) => o,
         Err(_) => return None,
     };
-    let arg_cache = analysis.arg_cache;
+    let arg_cache = &analysis.arg_cache;
     let mut analyzer = PlaySoundAnalyzer::<E> {
         result: None,
         inline_depth: 0,

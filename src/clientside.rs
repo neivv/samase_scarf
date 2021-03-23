@@ -6,9 +6,8 @@ use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation, Rva};
 use scarf::operand::{OperandCtx, Register};
 
 use crate::{
-    AnalysisCtx, ArgCache, EntryOf, EntryOfResult, find_callers, entry_of_until, unwrap_sext,
-    single_result_assign, OptionExt, DatType, find_functions_using_global,
-    if_arithmetic_eq_neq,
+    AnalysisCtx, ArgCache, EntryOf, EntryOfResult, entry_of_until, unwrap_sext,
+    single_result_assign, OptionExt, if_arithmetic_eq_neq, FunctionFinder,
 };
 use crate::hash_map::HashMap;
 
@@ -40,13 +39,14 @@ pub struct MiscClientSide<'e> {
 
 // Candidates are either a global ref with Some(global), or a call with None
 fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'acx, 'e, E>,
+    analysis: &'acx AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
     candidates: &[(E::VirtualAddress, Option<E::VirtualAddress>)],
 ) -> ResultOrEntries<'acx, (E::VirtualAddress, Operand<'e>), E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = analysis.bump;
-    let funcs = &analysis.functions();
+    let bump = &analysis.bump;
+    let funcs = functions.functions();
 
     let mut result: Option<(E::VirtualAddress, Operand<'e>)> = None;
     let mut entries = BumpVec::new_in(bump);
@@ -75,7 +75,7 @@ fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
         match res {
             EntryOfResult::Ok(show_rclick_error_if_needed, client_selection) => {
                 entries.push(show_rclick_error_if_needed);
-                let callers = find_callers(analysis, show_rclick_error_if_needed);
+                let callers = functions.find_callers(analysis, show_rclick_error_if_needed);
                 for f in callers {
                     let res: EntryOfResult<(), E::VirtualAddress> = entry_of_until(
                         binary,
@@ -208,9 +208,9 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
 
 // Candidates are either a global ref with Some(global), or a call with None
 pub(crate) fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
-    analysis: &mut AnalysisCtx<'_, 'a, E>,
+    analysis: &AnalysisCtx<'a, E>,
+    game_screen_rclick: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
-    let game_screen_rclick = analysis.game_screen_rclick().game_screen_rclick?;
     struct Analyzer<'a, 'b, E: ExecutionState<'a>> {
         result: Option<E::VirtualAddress>,
         args: &'b ArgCache<'a, E>,
@@ -246,7 +246,7 @@ pub(crate) fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
     let ctx = analysis.ctx;
     let mut analyzer = Analyzer {
         result: None,
-        args: analysis.arg_cache,
+        args: &analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_rclick);
     analysis.analyze(&mut analyzer);
@@ -278,17 +278,11 @@ fn if_f32_div<'e>(operand: Operand<'e>) -> Option<(Operand<'e>, Operand<'e>)> {
 }
 
 pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
-    analysis: &mut AnalysisCtx<'_, 'a, E>,
+    analysis: &AnalysisCtx<'a, E>,
+    game_screen_rclick: E::VirtualAddress,
+    is_outside_game_screen: E::VirtualAddress,
 ) -> GameCoordConversion<'a> {
     let mut result = GameCoordConversion::default();
-    let game_screen_rclick = match analysis.game_screen_rclick().game_screen_rclick {
-        Some(s) => s,
-        None => return result,
-    };
-    let is_outside_game_screen = match analysis.is_outside_game_screen() {
-        Some(s) => s,
-        None => return result,
-    };
 
     // Search for the collowing start in game_screen_rclick:
     // if is_outside_game_screen(event.x, event.y) == 0 {
@@ -409,7 +403,7 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
         is_outside_game_screen_seen: false,
         is_outside_game_screen,
         ctx,
-        args: analysis.arg_cache,
+        args: &analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_rclick);
     analysis.analyze(&mut analyzer);
@@ -418,10 +412,12 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
 }
 
 pub(crate) fn game_screen_rclick<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    units_dat: (E::VirtualAddress, u32),
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> GameScreenRClick<'e, E::VirtualAddress> {
     let binary = analysis.binary;
-    let bump = analysis.bump;
+    let bump = &analysis.bump;
 
     // units_dat_rlick_order is accessed by get_rclick_order,
     // which is called/inlined by show_rclick_error_if_needed,
@@ -429,26 +425,22 @@ pub(crate) fn game_screen_rclick<'e, E: ExecutionState<'e>>(
     // which also contains loop over client selection (while ptr != &client_selection[0])
     // game_screen_rclick should be only caller of show_rclick_error_if_needed
 
-    let units_dat = analysis.dat_virtual_address(DatType::Units);
-    let uses = units_dat.and_then(|(dat, dat_table_size)| {
-        binary.read_u32(dat + 0x1c * dat_table_size).ok()
-    }).map(|rclick_order| {
-        let addr = E::VirtualAddress::from_u64(rclick_order as u64);
-        BumpVec::from_iter_in(
-            find_functions_using_global(analysis, addr)
-                .into_iter()
-                .map(|x| (x.use_address, Some(addr))),
-            bump,
-        )
-    }).unwrap_or_else(|| BumpVec::new_in(bump));
-    let result = game_screen_rclick_inner(analysis, &uses);
+    let rclick_order = binary.read_address(units_dat.0 + 0x1c * units_dat.1)
+        .unwrap_or_else(|_| E::VirtualAddress::from_u64(0));
+    let uses = BumpVec::from_iter_in(
+        functions.find_functions_using_global(analysis, rclick_order)
+            .into_iter()
+            .map(|x| (x.use_address, Some(rclick_order))),
+        bump,
+    );
+    let result = game_screen_rclick_inner(analysis, functions, &uses);
     let result = match result {
         ResultOrEntries::Entries(entries) => {
             let callers = entries.iter().flat_map(|&f| {
-                find_callers(analysis, f).into_iter().map(|x| (x, None))
+                functions.find_callers(analysis, f).into_iter().map(|x| (x, None))
             });
             let callers = BumpVec::from_iter_in(callers, bump);
-            game_screen_rclick_inner(analysis, &callers)
+            game_screen_rclick_inner(analysis, functions, &callers)
         }
         ResultOrEntries::Result(o) => ResultOrEntries::Result(o),
     };
@@ -466,7 +458,10 @@ pub(crate) fn game_screen_rclick<'e, E: ExecutionState<'e>>(
 }
 
 pub(crate) fn misc_clientside<'e, E: ExecutionState<'e>>(
-    analysis: &mut AnalysisCtx<'_, 'e, E>,
+    analysis: &AnalysisCtx<'e, E>,
+    is_multiplayer: Operand<'e>,
+    scmain_state: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> MiscClientSide<'e> {
     let mut result = MiscClientSide {
         is_paused: None,
@@ -491,20 +486,10 @@ pub(crate) fn misc_clientside<'e, E: ExecutionState<'e>>(
     //     end_targeting()
     //   }
     // }
-    let vtables = crate::vtables::vtables(analysis, b".?AVOptionsMenuPopup@glues@@\0");
+    let vtables = crate::vtables::vtables(analysis, functions, b".?AVOptionsMenuPopup@glues@@\0");
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let vtable_fn_result_op = ctx.custom(0);
-    let sel = analysis.select_map_entry();
-    let game_init = analysis.game_init();
-    let is_multiplayer = match sel.is_multiplayer {
-        Some(s) => s,
-        None => return result,
-    };
-    let scmain_state = match game_init.scmain_state {
-        Some(s) => s,
-        None => return result,
-    };
     for vtable in vtables {
         let init_func = match binary.read_address(vtable + 0x3 * E::VirtualAddress::SIZE) {
             Ok(o) => o,
