@@ -52,15 +52,15 @@ fn everything_1209() {
 #[test]
 fn everything_1209b() {
     test_with_extra_checks(Path::new("1209b.exe"), |ctx, analysis| {
-        let ais = analysis.aiscript_hook();
-        let ais = (*ais).as_ref().unwrap();
+        let ais = analysis.aiscript_hook().unwrap();
         assert_eq!(ais.opcode_operand.if_register(), Some(Register(0)));
         assert_eq!(ais.switch_loop_address.0, 0x00607ED0);
         assert_eq!(ais.return_address.0, 0x00608F4F);
 
-        let sel = analysis.select_map_entry();
-        assert_eq!(sel.select_map_entry.unwrap().0, 0x008A1ED0);
-        assert_eq!(sel.is_multiplayer.unwrap(), ctx.mem8(ctx.constant(0x1036D20)));
+        let select_map_entry = analysis.select_map_entry();
+        let is_multiplayer = analysis.is_multiplayer();
+        assert_eq!(select_map_entry.unwrap().0, 0x008A1ED0);
+        assert_eq!(is_multiplayer.unwrap(), ctx.mem8(ctx.constant(0x1036D20)));
 
         assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x1039e3c)));
     });
@@ -79,12 +79,14 @@ fn everything_12011() {
 #[test]
 fn everything_12011b() {
     test_with_extra_checks(Path::new("12011b.exe"), |ctx, analysis| {
-        let active_hidden = analysis.active_hidden_units();
-        assert_eq!(active_hidden.first_active_unit.unwrap(), ctx.mem32(ctx.constant(0xf240ac)));
-        assert_eq!(active_hidden.first_hidden_unit.unwrap(), ctx.mem32(ctx.constant(0xf240c4)));
-        let order_issuing = analysis.order_issuing();
-        assert_eq!(order_issuing.prepare_issue_order.unwrap().0, 0x006A8FB0);
-        assert_eq!(order_issuing.do_next_queued_order.unwrap().0, 0x006A96A0);
+        let first_active_unit = analysis.first_active_unit();
+        let first_hidden_unit = analysis.first_hidden_unit();
+        assert_eq!(first_active_unit.unwrap(), ctx.mem32(ctx.constant(0xf240ac)));
+        assert_eq!(first_hidden_unit.unwrap(), ctx.mem32(ctx.constant(0xf240c4)));
+        let prepare_issue_order = analysis.prepare_issue_order();
+        let do_next_queued_order = analysis.do_next_queued_order();
+        assert_eq!(prepare_issue_order.unwrap().0, 0x006A8FB0);
+        assert_eq!(do_next_queued_order.unwrap().0, 0x006A96A0);
     });
 }
 
@@ -128,8 +130,7 @@ fn everything_1210b() {
 #[test]
 fn everything_1211() {
     test_with_extra_checks(Path::new("1211.exe"), |_ctx, analysis| {
-        let ais = analysis.aiscript_hook();
-        let ais = (*ais).as_ref().unwrap();
+        let ais = analysis.aiscript_hook().unwrap();
         assert_eq!(ais.opcode_operand.if_register(), Some(Register(0)));
         assert_eq!(ais.script_operand_at_switch.if_register(), Some(Register(6)));
         assert_eq!(ais.op_limit_hook_begin.0, 0x007134EB);
@@ -246,18 +247,17 @@ fn everything_1213b() {
         assert_eq!(commands.process_commands.unwrap().0, 0x00696d80);
 
         let init_game = analysis.init_game();
-        assert_eq!(init_game.init_game.unwrap().0, 0x00643460);
-        assert_eq!(init_game.loaded_save.unwrap(), ctx.mem32(ctx.constant(0x00c666dc)));
+        let loaded_save = analysis.loaded_save();
+        assert_eq!(init_game.unwrap().0, 0x00643460);
+        assert_eq!(loaded_save.unwrap(), ctx.mem32(ctx.constant(0x00c666dc)));
 
         let command_user = analysis.command_user().unwrap();
         assert_eq!(command_user, ctx.mem32(ctx.constant(0x00c65de4)));
 
+        let unique_command_user = analysis.unique_command_user();
         let selections = analysis.selections();
-        assert_eq!(
-            selections.unique_command_user.unwrap(),
-            ctx.mem32(ctx.constant(0x00c65de8))
-        );
-        assert_eq!(selections.selections.unwrap(), ctx.constant(0x00eb4d90));
+        assert_eq!(unique_command_user.unwrap(), ctx.mem32(ctx.constant(0x00c65de8)));
+        assert_eq!(selections.unwrap(), ctx.constant(0x00eb4d90));
 
         let is_replay = analysis.is_replay().unwrap();
         assert_eq!(is_replay, ctx.mem32(ctx.constant(0x00ea9940)));
@@ -327,8 +327,7 @@ fn everything_1215f() {
         let guard_ai = analysis.first_guard_ai().unwrap();
         assert_eq!(guard_ai, ctx.constant(0x0D258A8));
 
-        let ais = analysis.aiscript_hook();
-        let ais = (*ais).as_ref().unwrap();
+        let ais = analysis.aiscript_hook().unwrap();
         assert_eq!(ais.return_address.0, 0x005BCB3C);
 
         let pathing = analysis.pathing().unwrap();
@@ -426,9 +425,10 @@ fn everything_1221() {
         assert_eq!(start.skins.unwrap(), ctx.constant(0x00E55158));
         assert_eq!(start.player_skins.unwrap(), ctx.constant(0x010A52A0));
 
-        let sel = analysis.select_map_entry();
-        assert_eq!(sel.select_map_entry.unwrap().0, 0x005E7350);
-        assert_eq!(sel.is_multiplayer.unwrap(), ctx.mem8(ctx.constant(0x010A5138)));
+        let select_map_entry = analysis.select_map_entry();
+        let is_multiplayer = analysis.is_multiplayer();
+        assert_eq!(select_map_entry.unwrap().0, 0x005E7350);
+        assert_eq!(is_multiplayer.unwrap(), ctx.mem8(ctx.constant(0x010A5138)));
 
         let load = analysis.load_images().unwrap();
         assert_eq!(load.0, 0x0054D1E0);
@@ -463,15 +463,22 @@ fn everything_1221c() {
         assert_eq!(iscript.step_fn.unwrap().0, 0x00546760);
         assert_eq!(iscript.script_operand_at_switch.unwrap(), ctx.register(7));
 
-        let sprites = analysis.sprites();
-        assert_eq!(sprites.sprite_hlines.unwrap(), ctx.constant(0x00e7ccc0));
-        assert_eq!(sprites.sprite_hlines_end.unwrap(), ctx.constant(0x00e7d0c0));
-        assert_eq!(sprites.first_free_sprite.unwrap(), ctx.mem32(ctx.constant(0x00e7c9a0)));
-        assert_eq!(sprites.last_free_sprite.unwrap(), ctx.mem32(ctx.constant(0x00e7c9a4)));
-        assert_eq!(sprites.first_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d610)));
-        assert_eq!(sprites.last_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d614)));
-        assert_eq!(sprites.first_free_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d608)));
-        assert_eq!(sprites.last_free_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d60c)));
+        let sprite_hlines = analysis.sprite_hlines();
+        let sprite_hlines_end = analysis.sprite_hlines_end();
+        let first_free_sprite = analysis.first_free_sprite();
+        let last_free_sprite = analysis.last_free_sprite();
+        let first_lone = analysis.first_lone_sprite();
+        let last_lone = analysis.last_lone_sprite();
+        let first_free_lone = analysis.first_free_lone_sprite();
+        let last_free_lone = analysis.last_free_lone_sprite();
+        assert_eq!(sprite_hlines.unwrap(), ctx.constant(0x00e7ccc0));
+        assert_eq!(sprite_hlines_end.unwrap(), ctx.constant(0x00e7d0c0));
+        assert_eq!(first_free_sprite.unwrap(), ctx.mem32(ctx.constant(0x00e7c9a0)));
+        assert_eq!(last_free_sprite.unwrap(), ctx.mem32(ctx.constant(0x00e7c9a4)));
+        assert_eq!(first_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d610)));
+        assert_eq!(last_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d614)));
+        assert_eq!(first_free_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d608)));
+        assert_eq!(last_free_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d60c)));
     })
 }
 
@@ -500,8 +507,9 @@ fn everything_1222c() {
 fn everything_1222d() {
     test_with_extra_checks(Path::new("1222d.exe"), |ctx, analysis| {
         let init_game = analysis.init_game();
-        assert_eq!(init_game.init_game.unwrap().0, 0x00694330);
-        assert_eq!(init_game.loaded_save.unwrap(), ctx.mem32(ctx.constant(0x00da61cc)));
+        let loaded_save = analysis.loaded_save();
+        assert_eq!(init_game.unwrap().0, 0x00694330);
+        assert_eq!(loaded_save.unwrap(), ctx.mem32(ctx.constant(0x00da61cc)));
     })
 }
 
@@ -523,7 +531,7 @@ fn everything_1223b() {
 fn everything_1223c() {
     test_with_extra_checks(Path::new("1223c.exe"), |ctx, analysis| {
         let map_tile_flags = analysis.map_tile_flags();
-        assert_eq!(map_tile_flags.map_tile_flags.unwrap(), ctx.mem32(ctx.constant(0xe47004)));
+        assert_eq!(map_tile_flags.unwrap(), ctx.mem32(ctx.constant(0xe47004)));
     })
 }
 
@@ -558,9 +566,10 @@ fn everything_1224() {
         );
         assert_eq!(players, val);
 
-        let sprites = analysis.sprites();
-        assert_eq!(sprites.sprite_hlines.unwrap(), ctx.constant(0x00e287e8));
-        assert_eq!(sprites.sprite_hlines_end.unwrap(), ctx.constant(0x00e28be8));
+        let sprite_hlines = analysis.sprite_hlines();
+        let sprite_hlines_end = analysis.sprite_hlines_end();
+        assert_eq!(sprite_hlines.unwrap(), ctx.constant(0x00e287e8));
+        assert_eq!(sprite_hlines_end.unwrap(), ctx.constant(0x00e28be8));
 
         let draw_image = analysis.draw_image().unwrap();
         assert_eq!(draw_image.0, 0x0055CDA0);
@@ -588,13 +597,18 @@ fn everything_1224c() {
         assert_eq!(iscript.script_operand_at_switch.unwrap(), ctx.register(6));
         assert_eq!(iscript.iscript_bin.unwrap(), ctx.mem32(ctx.constant(0xde75c4)));
         assert_eq!(iscript.opcode_check.unwrap(), (VirtualAddress(0x00540A2A), 2));
-        let bullets = analysis.bullet_creation();
-        assert_eq!(bullets.first_active_bullet.unwrap(), ctx.mem32(ctx.constant(0xde60c4)));
-        assert_eq!(bullets.last_active_bullet.unwrap(), ctx.mem32(ctx.constant(0xde60c8)));
-        assert_eq!(bullets.first_free_bullet.unwrap(), ctx.mem32(ctx.constant(0xde6094)));
-        assert_eq!(bullets.last_free_bullet.unwrap(), ctx.mem32(ctx.constant(0xde6098)));
-        assert_eq!(bullets.create_bullet.unwrap().0, 0x531f00);
-        assert_eq!(bullets.active_iscript_unit.unwrap(), ctx.mem32(ctx.constant(0xde7190)));
+        let first_active_bullet = analysis.first_active_bullet();
+        let last_active_bullet = analysis.last_active_bullet();
+        let first_free_bullet = analysis.first_free_bullet();
+        let last_free_bullet = analysis.last_free_bullet();
+        let create_bullet = analysis.create_bullet();
+        let active_iscript_unit = analysis.active_iscript_unit();
+        assert_eq!(first_active_bullet.unwrap(), ctx.mem32(ctx.constant(0xde60c4)));
+        assert_eq!(last_active_bullet.unwrap(), ctx.mem32(ctx.constant(0xde60c8)));
+        assert_eq!(first_free_bullet.unwrap(), ctx.mem32(ctx.constant(0xde6094)));
+        assert_eq!(last_free_bullet.unwrap(), ctx.mem32(ctx.constant(0xde6098)));
+        assert_eq!(create_bullet.unwrap().0, 0x531f00);
+        assert_eq!(active_iscript_unit.unwrap(), ctx.mem32(ctx.constant(0xde7190)));
 
         let net_players = analysis.net_players();
         assert_eq!(net_players.init_net_player.unwrap().0, 0x00721680);
@@ -622,9 +636,10 @@ fn everything_1230a() {
             exit: VirtualAddress(0x005b6d07),
             unit: ctx.register(6),
         });
-        let active_hidden = analysis.active_hidden_units();
-        assert_eq!(active_hidden.first_active_unit.unwrap(), ctx.mem32(ctx.constant(0xddf144)));
-        assert_eq!(active_hidden.first_hidden_unit.unwrap(), ctx.mem32(ctx.constant(0xddf154)));
+        let first_active_unit = analysis.first_active_unit();
+        let first_hidden_unit = analysis.first_hidden_unit();
+        assert_eq!(first_active_unit.unwrap(), ctx.mem32(ctx.constant(0xddf144)));
+        assert_eq!(first_hidden_unit.unwrap(), ctx.mem32(ctx.constant(0xddf154)));
         assert_eq!(analysis.player_unit_skins().unwrap(), ctx.constant(0x00fe9b10));
     })
 }
@@ -676,10 +691,10 @@ fn everything_1230g() {
         assert_eq!(run_dialog.unwrap().0, 0x00904F30);
         let ai_update_attack_target = analysis.ai_update_attack_target();
         assert_eq!(ai_update_attack_target.unwrap().0, 0x00581090);
-        let map_tile_flags = analysis.map_tile_flags();
-        assert_eq!(map_tile_flags.update_visibility_point.unwrap().0, 0x00565E20);
-        let sprites = analysis.sprites();
-        assert_eq!(sprites.create_lone_sprite.unwrap().0, 0x00565A70);
+        let update_visibility_point = analysis.update_visibility_point();
+        assert_eq!(update_visibility_point.unwrap().0, 0x00565E20);
+        let create_lone_sprite = analysis.create_lone_sprite();
+        assert_eq!(create_lone_sprite.unwrap().0, 0x00565A70);
     })
 }
 
@@ -701,10 +716,12 @@ fn everything_1230i() {
         let is_outside_game_screen = analysis.is_outside_game_screen();
         assert_eq!(is_outside_game_screen.unwrap().0, 0x0065E7D0);
 
-        let coords = analysis.game_coord_conversion();
-        assert_eq!(coords.screen_x.unwrap(), ctx.mem32(ctx.constant(0x00e4caf4)));
-        assert_eq!(coords.screen_y.unwrap(), ctx.mem32(ctx.constant(0x00e4caf8)));
-        assert_eq!(coords.scale.unwrap(), ctx.mem32(ctx.constant(0x00d77940)));
+        let screen_x = analysis.screen_x();
+        let screen_y = analysis.screen_y();
+        let zoom = analysis.zoom();
+        assert_eq!(screen_x.unwrap(), ctx.mem32(ctx.constant(0x00e4caf4)));
+        assert_eq!(screen_y.unwrap(), ctx.mem32(ctx.constant(0x00e4caf8)));
+        assert_eq!(zoom.unwrap(), ctx.mem32(ctx.constant(0x00d77940)));
     })
 }
 
@@ -719,15 +736,19 @@ fn everything_1231a() {
     test_with_extra_checks(Path::new("1231a.exe"), |ctx, analysis| {
         let commands = analysis.process_lobby_commands();
         assert_eq!(commands.unwrap().0, 0x00703c50);
-        let fow = analysis.fow_sprites();
-        assert_eq!(fow.first_active.unwrap(), ctx.mem32(ctx.constant(0x0E32110)));
-        assert_eq!(fow.last_active.unwrap(), ctx.mem32(ctx.constant(0x0E32114)));
-        assert_eq!(fow.first_free.unwrap(), ctx.mem32(ctx.constant(0x0E32108)));
-        assert_eq!(fow.last_free.unwrap(), ctx.mem32(ctx.constant(0x0E3210C)));
+        let first_active = analysis.first_fow_sprite();
+        let last_active = analysis.last_fow_sprite();
+        let first_free = analysis.first_free_fow_sprite();
+        let last_free = analysis.last_free_fow_sprite();
+        assert_eq!(first_active.unwrap(), ctx.mem32(ctx.constant(0x0E32110)));
+        assert_eq!(last_active.unwrap(), ctx.mem32(ctx.constant(0x0E32114)));
+        assert_eq!(first_free.unwrap(), ctx.mem32(ctx.constant(0x0E32108)));
+        assert_eq!(last_free.unwrap(), ctx.mem32(ctx.constant(0x0E3210C)));
 
-        let rng = analysis.rng();
-        assert_eq!(rng.seed.unwrap(), ctx.mem32(ctx.constant(0x1030770)));
-        assert_eq!(rng.enable.unwrap(), ctx.mem32(ctx.constant(0x1030B80)));
+        let rng_seed = analysis.rng_seed();
+        let rng_enable = analysis.rng_enable();
+        assert_eq!(rng_seed.unwrap(), ctx.mem32(ctx.constant(0x1030770)));
+        assert_eq!(rng_enable.unwrap(), ctx.mem32(ctx.constant(0x1030B80)));
     })
 }
 
@@ -779,9 +800,10 @@ fn everything_1232e() {
         assert_eq!(start.skins.unwrap(), ctx.constant(0x00E003A0));
         assert_eq!(start.player_skins.unwrap(), ctx.constant(0x0106F6E0));
 
-        let sel = analysis.select_map_entry();
-        assert_eq!(sel.select_map_entry.unwrap().0, 0x005FD7F0);
-        assert_eq!(sel.is_multiplayer.unwrap(), ctx.mem8(ctx.constant(0x0106F57C)));
+        let select_map_entry = analysis.select_map_entry();
+        let is_multiplayer = analysis.is_multiplayer();
+        assert_eq!(select_map_entry.unwrap().0, 0x005FD7F0);
+        assert_eq!(is_multiplayer.unwrap(), ctx.mem8(ctx.constant(0x0106F57C)));
 
         let load = analysis.load_images().unwrap();
         assert_eq!(load.0, 0x00566710);
@@ -853,10 +875,12 @@ fn everything_1233b() {
         let spawn_dialog = analysis.spawn_dialog();
         assert_eq!(spawn_dialog.unwrap().0, 0x0097BB60);
 
-        let unit_creation = analysis.unit_creation();
-        assert_eq!(unit_creation.create_unit.unwrap().0, 0x005A0720);
-        assert_eq!(unit_creation.finish_unit_pre.unwrap().0, 0x005A1110);
-        assert_eq!(unit_creation.finish_unit_post.unwrap().0, 0x005A0E20);
+        let create_unit = analysis.create_unit();
+        let finish_unit_pre = analysis.finish_unit_pre();
+        let finish_unit_post = analysis.finish_unit_post();
+        assert_eq!(create_unit.unwrap().0, 0x005A0720);
+        assert_eq!(finish_unit_pre.unwrap().0, 0x005A1110);
+        assert_eq!(finish_unit_post.unwrap().0, 0x005A0E20);
 
         let init_rtl = analysis.init_real_time_lighting().unwrap();
         assert_eq!(init_rtl.0, 0x0056ACD0);
@@ -878,9 +902,10 @@ fn everything_1233c() {
 #[test]
 fn everything_1233d() {
     test_with_extra_checks(Path::new("1233d.exe"), |ctx, analysis| {
-        let sprites = analysis.sprites();
-        let (x, _, _) = sprites.sprite_x_position.unwrap();
-        let (y, _, _) = sprites.sprite_y_position.unwrap();
+        let sprite_x_position = analysis.sprite_x_position();
+        let sprite_y_position = analysis.sprite_y_position();
+        let (x, _, _) = sprite_x_position.unwrap();
+        let (y, _, _) = sprite_y_position.unwrap();
         let x_low = ctx.and_const(x, 0xffff);
         let y_low = ctx.and_const(y, 0xffff);
         let low = ctx.and_const(
@@ -948,9 +973,10 @@ fn everything_1233d() {
 #[test]
 fn everything_1233e() {
     test_with_extra_checks(Path::new("1233e.exe"), |ctx ,analysis| {
-        let rng = analysis.rng();
-        assert_eq!(rng.seed.unwrap(), ctx.mem32(ctx.constant(0x10A11C0)));
-        assert_eq!(rng.enable.unwrap(), ctx.mem32(ctx.constant(0x10A15D0)));
+        let rng_seed = analysis.rng_seed();
+        let rng_enable = analysis.rng_enable();
+        assert_eq!(rng_seed.unwrap(), ctx.mem32(ctx.constant(0x10A11C0)));
+        assert_eq!(rng_enable.unwrap(), ctx.mem32(ctx.constant(0x10A15D0)));
 
         let fonts = analysis.fonts();
         assert_eq!(fonts.unwrap(), ctx.constant(0x10D1A5C));
@@ -1244,7 +1270,7 @@ fn test_nongeneric<'e>(
         let result = analysis.operand_analysis(op);
         match op {
             // special handling
-            Units | PlayerUnitSkins | VertexBuffer => {
+            Units | PlayerUnitSkins | VertexBuffer | Sprites => {
                 continue;
             }
             Game | Players => {
@@ -1252,17 +1278,23 @@ fn test_nongeneric<'e>(
                 check_game(result, binary, op.name());
             }
             Pathing | CommandUser | IsReplay | LocalPlayerId | LobbyState | DrawCursorMarker |
-                FirstAiScript | StatusScreenMode | CheatFlags | ReplayData =>
+                FirstAiScript | StatusScreenMode | CheatFlags | ReplayData | RngSeed |
+                RngEnable | LoadedSave | FirstFreeSprite | LastFreeSprite | FirstLoneSprite |
+                LastLoneSprite | FirstFreeLoneSprite | LastFreeLoneSprite | ScreenX | ScreenY |
+                Zoom | FirstFowSprite | LastFowSprite | FirstFreeFowSprite | LastFreeFowSprite |
+                FirstActiveUnit | FirstHiddenUnit | MapTileFlags | TooltipDrawFunc |
+                CurrentTooltipCtrl | IsMultiplayer | FirstFreeBullet | LastFreeBullet |
+                FirstActiveBullet | LastActiveBullet | ActiveIscriptUnit | UniqueCommandUser =>
             {
                 check_global_opt(result, binary, op.name());
             }
             LocalPlayerName | FirstGuardAi | PlayerAiTowns | PlayerAi | Campaigns | Fonts |
                 UnitStrength | WireframDdsgrp | ChkInitPlayers | OriginalChkPlayerTypes |
-                AiTransportReachabilityCachedRegion =>
+                AiTransportReachabilityCachedRegion | SpriteHlines | SpriteHlinesEnd |
+                AiRegions | GraphicLayers | Selections =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }
-            _Last => (),
         }
     }
     let results = analysis.file_hook();
@@ -1333,52 +1365,18 @@ fn test_nongeneric<'e>(
         samase_scarf::StepOrderHiddenHook::Separate(..) => assert!(!new_codegen),
     }
 
-    let aiscript_hook = analysis.aiscript_hook();
-    assert!(aiscript_hook.is_some());
-    let aiscript_hook = (*aiscript_hook).as_ref().unwrap();
+    let aiscript_hook = analysis.aiscript_hook().unwrap();
     assert!(op_register_anywidth(aiscript_hook.opcode_operand).is_some());
     assert_ne!(
         aiscript_hook.opcode_operand,
         aiscript_hook.script_operand_at_switch
     );
-    let rng = analysis.rng();
-    assert!(rng.seed.is_some());
-    assert!(rng.enable.is_some());
-    check_global(rng.seed.unwrap(), binary, "rng seed");
-    check_global(rng.enable.unwrap(), binary, "rng enable");
-    assert_ne!(rng.seed.unwrap(), rng.enable.unwrap());
-    let regions = analysis.regions();
-    assert!(regions.get_region.is_some());
-    assert!(regions.ai_regions.is_some());
-    assert!(regions.change_ai_region_state.is_some());
-    check_global_struct(regions.ai_regions.unwrap(), binary, "ai regions");
-
-    let active_hidden_units = analysis.active_hidden_units();
-    assert!(active_hidden_units.first_active_unit.is_some());
-    assert!(active_hidden_units.first_hidden_unit.is_some());
-    check_global(
-        active_hidden_units.first_active_unit.unwrap(),
-        binary,
-        "first active unit",
-    );
-    check_global(
-        active_hidden_units.first_hidden_unit.unwrap(),
-        binary,
-        "first hidden unit",
-    );
-    let order_issuing = analysis.order_issuing();
-    assert!(order_issuing.prepare_issue_order.is_some());
-    assert!(order_issuing.do_next_queued_order.is_some());
-    assert!(order_issuing.order_init_arbiter.is_some());
+    assert_ne!(analysis.rng_seed().unwrap(), analysis.rng_enable().unwrap());
 
     let commands = analysis.process_commands();
     assert!(commands.process_commands.is_some());
     assert!(commands.storm_command_user.is_some());
     check_global(commands.storm_command_user.unwrap(), binary, "storm_command_user");
-    let selections = analysis.selections();
-    let unique_command_user = selections.unique_command_user.unwrap();
-    check_global(unique_command_user, binary, "unique_command_user");
-    check_global_struct(selections.selections.unwrap(), binary, "selections");
 
     let lobby_commands = analysis.process_lobby_commands();
     assert!(lobby_commands.is_some());
@@ -1402,10 +1400,6 @@ fn test_nongeneric<'e>(
     assert!(init_units.is_some());
     let load_dat = analysis.load_dat();
     assert!(load_dat.is_some());
-    let init_game = analysis.init_game();
-    assert!(init_game.init_game.is_some());
-    assert!(init_game.loaded_save.is_some());
-    check_global(init_game.loaded_save.unwrap(), binary, "loaded save");
 
     let command_lengths = analysis.command_lengths();
     assert_eq!(command_lengths[0x37], 7);
@@ -1428,20 +1422,10 @@ fn test_nongeneric<'e>(
     assert!(iscript.opcode_check.is_some());
     check_global(iscript.iscript_bin.unwrap(), binary, "iscript_bin");
 
-    let sprites = analysis.sprites();
-    check_global_struct_opt(sprites.sprite_hlines, binary, "sprite hlines");
-    check_global_struct_opt(sprites.sprite_hlines_end, binary, "sprite hlines end");
-    check_global_opt(sprites.first_free_sprite, binary, "first free sprite");
-    check_global_opt(sprites.last_free_sprite, binary, "last free sprite");
-    check_global_opt(sprites.first_lone, binary, "first lone sprite");
-    check_global_opt(sprites.last_lone, binary, "last lone sprite");
-    check_global_opt(sprites.first_free_lone, binary, "first free lone sprite");
-    check_global_opt(sprites.last_free_lone, binary, "first free lone sprite");
-    assert!(sprites.create_lone_sprite.is_some());
-    let (x, x_off, x_size) = sprites.sprite_x_position.unwrap();
-    let (y, y_off, y_size) = sprites.sprite_y_position.unwrap();
-    let init_sprites = analysis.init_sprites();
-    assert!(init_sprites.is_some());
+    let sprite_x_position = analysis.sprite_x_position();
+    let sprite_y_position = analysis.sprite_y_position();
+    let (x, x_off, x_size) = sprite_x_position.unwrap();
+    let (y, y_off, y_size) = sprite_y_position.unwrap();
     let (sprite_array, sprite_size) = analysis.sprite_array().unwrap();
     if extended_limits {
         // Allocated behind a pointer
@@ -1509,10 +1493,6 @@ fn test_nongeneric<'e>(
         check_euds(binary, &euds.euds, "702_euds.txt");
     }
 
-    let map_tile_flags = analysis.map_tile_flags();
-    check_global(map_tile_flags.map_tile_flags.unwrap(), binary, "map_tile_flags");
-    assert!(map_tile_flags.update_visibility_point.is_some());
-
     let vtables = analysis.renderer_vtables();
     let has_prism = (minor_version == 23 && patch_version == 4 && is_ptr) ||
         (minor_version == 23 && patch_version >= 5) ||
@@ -1524,14 +1504,6 @@ fn test_nongeneric<'e>(
     } else {
         assert_eq!(vtables.len(), 2);
     }
-
-    let bullets = analysis.bullet_creation();
-    check_global_opt(bullets.first_free_bullet, binary, "first free bullet");
-    check_global_opt(bullets.last_free_bullet, binary, "last free bullet");
-    check_global_opt(bullets.first_active_bullet, binary, "first active bullet");
-    check_global_opt(bullets.last_active_bullet, binary, "last active bullet");
-    check_global(bullets.active_iscript_unit.unwrap(), binary, "active iscript unit");
-    assert!(bullets.create_bullet.is_some());
 
     let net_players = analysis.net_players();
     let (players, size) = net_players.net_players.clone().unwrap();
@@ -1548,17 +1520,6 @@ fn test_nongeneric<'e>(
     let run_dialog = analysis.run_dialog();
     assert_ne!(run_dialog, spawn_dialog);
 
-    let coords = analysis.game_coord_conversion();
-    check_global(coords.screen_x.unwrap(), binary, "screen_x");
-    check_global(coords.screen_y.unwrap(), binary, "screen_y");
-    check_global(coords.scale.unwrap(), binary, "ui_scale");
-
-    let fow = analysis.fow_sprites();
-    check_global_opt(fow.first_active, binary, "first fow sprite");
-    check_global_opt(fow.last_active, binary, "last fow sprite");
-    check_global_opt(fow.first_free, binary, "first free fow sprite");
-    check_global_opt(fow.last_free, binary, "first free fow sprite");
-
     let init_map_from_path = analysis.init_map_from_path();
     assert!(init_map_from_path.is_some());
 
@@ -1572,10 +1533,6 @@ fn test_nongeneric<'e>(
     check_global_struct_opt(start.skins, binary, "skins");
     check_global_struct_opt(start.player_skins, binary, "player skins");
     assert_eq!(start.skins_size, 0x15e);
-
-    let sel = analysis.select_map_entry();
-    assert!(sel.select_map_entry.is_some());
-    check_global(sel.is_multiplayer.unwrap(), binary, "is_multiplayer");
 
     let images_loaded = analysis.images_loaded();
     check_global(images_loaded.unwrap(), binary, "images loaded");
@@ -1609,14 +1566,6 @@ fn test_nongeneric<'e>(
     check_global(misc.is_placing_building.unwrap(), binary, "is_placing_building");
     check_global(misc.is_targeting.unwrap(), binary, "is_targeting");
 
-    let unit_creation = analysis.unit_creation();
-    assert!(unit_creation.create_unit.is_some());
-    assert!(unit_creation.finish_unit_pre.is_some());
-    assert!(unit_creation.finish_unit_post.is_some());
-
-    assert!(analysis.serialize_sprites().is_some());
-    assert!(analysis.deserialize_sprites().is_some());
-
     let limits = analysis.limits();
     if extended_limits {
         assert!(limits.set_limits.is_some());
@@ -1648,10 +1597,6 @@ fn test_nongeneric<'e>(
         assert_eq!(limits.arrays.len(), 0);
     }
 
-    assert!(analysis.font_cache_render_ascii().is_some());
-    assert!(analysis.ttf_cache_character().is_some());
-    assert!(analysis.ttf_render_sdf().is_some());
-
     let offset = analysis.create_game_dialog_vtbl_on_multiplayer_create().unwrap();
     // 1207a .. 1232e 0xa8
     // 1233a .. 1233f 0xac
@@ -1666,13 +1611,6 @@ fn test_nongeneric<'e>(
     } else {
         assert_eq!(offset, 0xa8);
     }
-
-    check_global(analysis.tooltip_draw_func().unwrap(), binary, "tooltip_draw_func");
-    check_global(analysis.current_tooltip_ctrl().unwrap(), binary, "current_tooltip_ctrl");
-    check_global_struct(analysis.graphic_layers().unwrap(), binary, "graphic_layers");
-    assert!(analysis.layout_draw_text().is_some());
-    assert!(analysis.draw_f10_menu_tooltip().is_some());
-    assert!(analysis.draw_tooltip_layer().is_some());
 
     if has_prism {
         assert_eq!(analysis.prism_vertex_shaders().len(), 0x6);

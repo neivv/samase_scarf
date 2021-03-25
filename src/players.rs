@@ -134,13 +134,13 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayersAnalyzer<'a
 
 pub(crate) fn players<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
-    aiscript_hook: &crate::ai::AiScriptHook<'e, E::VirtualAddress>,
+    aiscript_switch_table: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     let bump = &analysis.bump;
     let word_size = E::VirtualAddress::SIZE;
-    let start_town_case = binary.read_address(aiscript_hook.switch_table + 0x3 * word_size).ok()?;
+    let start_town_case = binary.read_address(aiscript_switch_table + 0x3 * word_size).ok()?;
 
     let mut analyzer = PlayersAnalyzer {
         result: None,

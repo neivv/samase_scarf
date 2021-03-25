@@ -63,9 +63,8 @@ use scarf::operand::{MemAccessSize, OperandCtx};
 pub use scarf;
 pub use scarf::{BinarySection, VirtualAddress};
 pub use crate::ai::AiScriptHook;
-pub use crate::bullets::BulletCreation;
-pub use crate::clientside::{GameScreenRClick, GameCoordConversion, MiscClientSide};
-pub use crate::commands::{ProcessCommands, Selections, StepNetwork};
+pub use crate::clientside::{GameScreenRClick, MiscClientSide};
+pub use crate::commands::{ProcessCommands, StepNetwork};
 pub use crate::dat::{
     DatTablePtr, DatPatch, DatPatches, DatArrayPatch, DatEntryCountPatch, DatReplaceFunc
 };
@@ -73,19 +72,14 @@ pub use crate::dialog::{MouseXy, TooltipRelated};
 pub use crate::eud::{Eud, EudTable};
 pub use crate::firegraft::RequirementTables;
 pub use crate::game::{Limits};
-pub use crate::game_init::{GameInit, InitGame, ImagesLoaded, SinglePlayerStart, SelectMapEntry};
+pub use crate::game_init::{GameInit, ImagesLoaded, SinglePlayerStart};
 pub use crate::iscript::StepIscript;
 pub use crate::map::MapTileFlags;
 pub use crate::network::{InitStormNetworking, SnpDefinitions};
-pub use crate::pathing::RegionRelated;
 pub use crate::players::NetPlayers;
 pub use crate::renderer::{PrismShaders};
-pub use crate::rng::Rng;
-pub use crate::save::{SpriteSerialization};
 pub use crate::step_order::{SecondaryOrderHook, StepOrderHiddenHook};
-pub use crate::sprites::{FowSprites, InitSprites, Sprites};
-pub use crate::text::{FontRender};
-pub use crate::units::{ActiveHiddenUnits, InitUnits, OrderIssuing, UnitCreation};
+pub use crate::units::{InitUnits, OrderIssuing};
 
 use crate::dialog::{MultiWireframes};
 use crate::game_init::{InitMapFromPath};
@@ -176,19 +170,18 @@ macro_rules! results {
         #[derive(Copy, Clone, Debug)]
         pub enum $name {
             $($variant,)*
-            _Last,
         }
 
         impl $name {
+            const COUNT: usize = $( ($variant_name, 1).1 + )* 0;
             pub fn name(self) -> &'static str {
                 match self {
                     $($name::$variant => $variant_name,)*
-                    $name::_Last => "",
                 }
             }
 
             pub fn iter() -> impl Iterator<Item = $name> {
-                static ITEMS: [$name; $name::_Last as usize] = [
+                static ITEMS: [$name; $name::COUNT] = [
                     $($name::$variant,)*
                 ];
                 ITEMS.iter().copied()
@@ -225,6 +218,28 @@ results! {
         StepReplayCommands => "step_replay_commands",
         AiTrainMilitary => "ai_train_military",
         AiAddMilitaryToRegion => "ai_add_military_to_region",
+        GetRegion => "get_region",
+        ChangeAiRegionState => "change_ai_region_state",
+        InitGame => "init_game",
+        CreateLoneSprite => "create_lone_sprite",
+        CreateUnit => "create_unit",
+        FinishUnitPre => "finish_unit_pre",
+        FinishUnitPost => "finish_unit_post",
+        InitSprites => "init_sprites",
+        SerializeSprites => "serialize_sprites",
+        DeserializeSprites => "deserialize_sprites",
+        FontCacheRenderAscii => "font_cache_render_ascii",
+        TtfCacheCharacter => "ttf_cache_character",
+        TtfRenderSdf => "ttf_render_sdf",
+        UpdateVisibilityPoint => "update_visibility_point",
+        LayoutDrawText => "layout_draw_text",
+        DrawF10MenuTooltip => "draw_f10_menu_tooltip",
+        DrawTooltipLayer => "draw_tooltip_layer",
+        SelectMapEntry => "select_map_entry",
+        CreateBullet => "create_bullet",
+        OrderInitArbiter => "order_init_arbiter",
+        PrepareIssueOrder => "prepare_issue_order",
+        DoNextQueuedOrder => "do_next_queued_order",
     }
 }
 
@@ -256,6 +271,40 @@ results! {
         PlayerUnitSkins => "player_unit_skins",
         ReplayData => "replay_data",
         VertexBuffer => "vertex_buffer",
+        RngSeed => "rng_seed",
+        RngEnable => "rng_enable",
+        AiRegions => "ai_regions",
+        LoadedSave => "loaded_save",
+        SpriteHlines => "sprite_hlines",
+        SpriteHlinesEnd => "sprite_hlines_end",
+        FirstFreeSprite => "first_free_sprite",
+        LastFreeSprite => "last_free_sprite",
+        FirstLoneSprite => "first_lone_sprite",
+        LastLoneSprite => "last_lone_sprite",
+        FirstFreeLoneSprite => "first_free_lone_sprite",
+        LastFreeLoneSprite => "last_free_lone_sprite",
+        ScreenX => "screen_x",
+        ScreenY => "screen_y",
+        Zoom => "zoom",
+        FirstFowSprite => "first_fow_sprite",
+        LastFowSprite => "last_fow_sprite",
+        FirstFreeFowSprite => "first_free_fow_sprite",
+        LastFreeFowSprite => "last_free_fow_sprite",
+        Sprites => "sprites",
+        FirstActiveUnit => "first_active_unit",
+        FirstHiddenUnit => "first_hidden_unit",
+        MapTileFlags => "map_tile_flags",
+        TooltipDrawFunc => "tooltip_draw_func",
+        CurrentTooltipCtrl => "current_tooltip_ctrl",
+        GraphicLayers => "graphic_layers",
+        IsMultiplayer => "is_multiplayer",
+        FirstActiveBullet => "first_active_bullet",
+        LastActiveBullet => "last_active_bullet",
+        FirstFreeBullet => "first_free_bullet",
+        LastFreeBullet => "last_free_bullet",
+        ActiveIscriptUnit => "active_iscript_unit",
+        UniqueCommandUser => "unique_command_user",
+        Selections => "selections",
     }
 }
 
@@ -269,50 +318,36 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     switch_tables: Cached<Rc<Vec<SwitchTable<E::VirtualAddress>>>>,
     open_file: Cached<Rc<Vec<E::VirtualAddress>>>,
     firegraft_addresses: Cached<Rc<FiregraftAddresses<E::VirtualAddress>>>,
-    aiscript_hook: Cached<Rc<Option<AiScriptHook<'e, E::VirtualAddress>>>>,
-    rng: Cached<Rc<Rng<'e>>>,
+    aiscript_hook: Cached<Option<AiScriptHook<'e, E::VirtualAddress>>>,
     // 0 = Not calculated, 1 = Not found
-    address_results: [E::VirtualAddress; AddressAnalysis::_Last as usize],
+    address_results: [E::VirtualAddress; AddressAnalysis::COUNT],
     // None = Not calculated, Custom(1234578) = Not found
-    operand_results: [Option<Operand<'e>>; OperandAnalysis::_Last as usize],
+    operand_results: [Option<Operand<'e>>; OperandAnalysis::COUNT],
     operand_not_found: Operand<'e>,
-    regions: Cached<Rc<RegionRelated<'e, E::VirtualAddress>>>,
-    active_hidden_units: Cached<Rc<ActiveHiddenUnits<'e>>>,
-    order_issuing: Cached<Rc<OrderIssuing<E::VirtualAddress>>>,
     process_commands: Cached<Rc<ProcessCommands<'e, E::VirtualAddress>>>,
     command_lengths: Cached<Rc<Vec<u32>>>,
-    selections: Cached<Rc<Selections<'e>>>,
     process_lobby_commands: Cached<Option<(CompleteSwitch<E::VirtualAddress>, E::VirtualAddress)>>,
     step_order_hidden: Cached<Rc<Vec<StepOrderHiddenHook<'e, E::VirtualAddress>>>>,
     init_units: Cached<InitUnits<E::VirtualAddress>>,
     step_secondary_order: Cached<Rc<Vec<SecondaryOrderHook<'e, E::VirtualAddress>>>>,
-    init_game: Cached<Rc<InitGame<'e, E::VirtualAddress>>>,
     game_screen_rclick: Cached<Rc<GameScreenRClick<'e, E::VirtualAddress>>>,
     step_iscript: Cached<Rc<StepIscript<'e, E::VirtualAddress>>>,
-    sprites: Cached<Rc<Sprites<'e, E::VirtualAddress>>>,
+    sprite_x_position: Option<(Operand<'e>, u32, MemAccessSize)>,
+    sprite_y_position: Option<(Operand<'e>, u32, MemAccessSize)>,
     eud: Cached<Rc<EudTable<'e>>>,
-    map_tile_flags: Cached<Rc<MapTileFlags<'e, E::VirtualAddress>>>,
     renderer_vtables: Cached<Rc<Vec<E::VirtualAddress>>>,
-    bullet_creation: Cached<Rc<BulletCreation<'e, E::VirtualAddress>>>,
     net_players: Cached<Rc<NetPlayers<'e, E::VirtualAddress>>>,
     game_init: Cached<Rc<GameInit<'e, E::VirtualAddress>>>,
-    game_coord_conversion: Cached<Rc<GameCoordConversion<'e>>>,
-    fow_sprites: Cached<Rc<FowSprites<'e>>>,
     init_map_from_path: Cached<Option<InitMapFromPath<E::VirtualAddress>>>,
     single_player_start: Cached<Rc<SinglePlayerStart<'e, E::VirtualAddress>>>,
-    select_map_entry: Cached<Rc<SelectMapEntry<'e, E::VirtualAddress>>>,
     images_loaded: Cached<ImagesLoaded<'e, E::VirtualAddress>>,
     step_network: Cached<Rc<StepNetwork<'e, E::VirtualAddress>>>,
     snp_definitions: Cached<Option<SnpDefinitions<'e>>>,
     init_storm_networking: Cached<Rc<InitStormNetworking<E::VirtualAddress>>>,
     misc_clientside: Cached<Rc<MiscClientSide<'e>>>,
-    unit_creation: Cached<Rc<UnitCreation<E::VirtualAddress>>>,
-    init_sprites: Cached<InitSprites<'e, E::VirtualAddress>>,
-    sprite_serialization: Cached<SpriteSerialization<E::VirtualAddress>>,
+    sprite_struct_size: u32,
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
-    font_render: Cached<FontRender<E::VirtualAddress>>,
     create_game_dialog_vtbl_on_multiplayer_create: Cached<Option<usize>>,
-    tooltip_related: Cached<TooltipRelated<'e, E::VirtualAddress>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
     ai_step_frame_funcs: Cached<ai::AiStepFrameFuncs<E::VirtualAddress>>,
     do_attack: Cached<Option<step_order::DoAttack<'e, E::VirtualAddress>>>,
@@ -508,48 +543,34 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 open_file: Default::default(),
                 firegraft_addresses: Default::default(),
                 aiscript_hook: Default::default(),
-                rng: Default::default(),
                 address_results:
-                    [E::VirtualAddress::from_u64(0); AddressAnalysis::_Last as usize],
-                operand_results: [None; OperandAnalysis::_Last as usize],
+                    [E::VirtualAddress::from_u64(0); AddressAnalysis::COUNT],
+                operand_results: [None; OperandAnalysis::COUNT],
                 operand_not_found: ctx.custom(0x12345678),
-                regions: Default::default(),
-                active_hidden_units: Default::default(),
-                order_issuing: Default::default(),
                 process_commands: Default::default(),
                 command_lengths: Default::default(),
-                selections: Default::default(),
                 process_lobby_commands: Default::default(),
                 step_order_hidden: Default::default(),
                 step_secondary_order: Default::default(),
                 init_units: Default::default(),
                 game_screen_rclick: Default::default(),
-                init_game: Default::default(),
                 step_iscript: Default::default(),
-                sprites: Default::default(),
+                sprite_x_position: Default::default(),
+                sprite_y_position: Default::default(),
                 eud: Default::default(),
-                map_tile_flags: Default::default(),
                 renderer_vtables: Default::default(),
-                bullet_creation: Default::default(),
                 net_players: Default::default(),
                 game_init: Default::default(),
-                game_coord_conversion: Default::default(),
-                fow_sprites: Default::default(),
                 init_map_from_path: Default::default(),
                 single_player_start: Default::default(),
-                select_map_entry: Default::default(),
                 images_loaded: Default::default(),
                 step_network: Default::default(),
                 snp_definitions: Default::default(),
                 init_storm_networking: Default::default(),
                 misc_clientside: Default::default(),
-                unit_creation: Default::default(),
-                init_sprites: Default::default(),
-                sprite_serialization: Default::default(),
+                sprite_struct_size: 0,
                 limits: Default::default(),
-                font_render: Default::default(),
                 create_game_dialog_vtbl_on_multiplayer_create: Default::default(),
-                tooltip_related: Default::default(),
                 prism_shaders: Default::default(),
                 ai_step_frame_funcs: Default::default(),
                 dat_patches: Default::default(),
@@ -623,7 +644,28 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             StepReplayCommands => self.step_replay_commands(),
             AiTrainMilitary => self.ai_train_military(),
             AiAddMilitaryToRegion => self.ai_add_military_to_region(),
-            _Last => None,
+            GetRegion => self.get_region(),
+            ChangeAiRegionState => self.change_ai_region_state(),
+            InitGame => self.init_game(),
+            CreateLoneSprite => self.create_lone_sprite(),
+            CreateUnit => self.create_unit(),
+            FinishUnitPre => self.finish_unit_pre(),
+            FinishUnitPost => self.finish_unit_post(),
+            InitSprites => self.init_sprites(),
+            SerializeSprites => self.serialize_sprites(),
+            DeserializeSprites => self.deserialize_sprites(),
+            FontCacheRenderAscii => self.font_cache_render_ascii(),
+            TtfCacheCharacter => self.ttf_cache_character(),
+            TtfRenderSdf => self.ttf_render_sdf(),
+            UpdateVisibilityPoint => self.update_visibility_point(),
+            LayoutDrawText => self.layout_draw_text(),
+            DrawF10MenuTooltip => self.draw_f10_menu_tooltip(),
+            DrawTooltipLayer => self.draw_tooltip_layer(),
+            SelectMapEntry => self.select_map_entry(),
+            CreateBullet => self.create_bullet(),
+            OrderInitArbiter => self.order_init_arbiter(),
+            PrepareIssueOrder => self.prepare_issue_order(),
+            DoNextQueuedOrder => self.do_next_queued_order(),
         }
     }
 
@@ -656,8 +698,65 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             PlayerUnitSkins => self.player_unit_skins(),
             ReplayData => self.replay_data(),
             VertexBuffer => self.vertex_buffer(),
-            _Last => None,
+            RngSeed => self.rng_seed(),
+            RngEnable => self.rng_enable(),
+            AiRegions => self.ai_regions(),
+            LoadedSave => self.loaded_save(),
+            SpriteHlines => self.sprite_hlines(),
+            SpriteHlinesEnd => self.sprite_hlines_end(),
+            FirstFreeSprite => self.first_free_sprite(),
+            LastFreeSprite => self.last_free_sprite(),
+            FirstLoneSprite => self.first_lone_sprite(),
+            LastLoneSprite => self.last_lone_sprite(),
+            FirstFreeLoneSprite => self.first_free_lone_sprite(),
+            LastFreeLoneSprite => self.last_free_lone_sprite(),
+            ScreenX => self.screen_x(),
+            ScreenY => self.screen_y(),
+            Zoom => self.zoom(),
+            FirstFowSprite => self.first_fow_sprite(),
+            LastFowSprite => self.last_fow_sprite(),
+            FirstFreeFowSprite => self.first_free_fow_sprite(),
+            LastFreeFowSprite => self.last_free_fow_sprite(),
+            Sprites => self.sprite_array().map(|x| x.0),
+            FirstActiveUnit => self.first_active_unit(),
+            FirstHiddenUnit => self.first_hidden_unit(),
+            MapTileFlags => self.map_tile_flags(),
+            TooltipDrawFunc => self.tooltip_draw_func(),
+            CurrentTooltipCtrl => self.current_tooltip_ctrl(),
+            GraphicLayers => self.graphic_layers(),
+            IsMultiplayer => self.is_multiplayer(),
+            FirstActiveBullet => self.first_active_bullet(),
+            LastActiveBullet => self.last_active_bullet(),
+            FirstFreeBullet => self.first_free_bullet(),
+            LastFreeBullet => self.last_free_bullet(),
+            ActiveIscriptUnit => self.active_iscript_unit(),
+            UniqueCommandUser => self.unique_command_user(),
+            Selections => self.selections(),
         }
+    }
+
+    fn analyze_many_addr<F>(
+        &mut self,
+        addr: AddressAnalysis,
+        cache_fn: F,
+    ) -> Option<E::VirtualAddress>
+    where F: FnOnce(&mut AnalysisCache<'e, E>, &AnalysisCtx<'e, E>)
+    {
+        if self.cache.address_results[addr as usize] == E::VirtualAddress::from_u64(0) {
+            self.enter(cache_fn);
+        }
+        Some(self.cache.address_results[addr as usize])
+            .filter(|&addr| addr != E::VirtualAddress::from_u64(1))
+    }
+
+    fn analyze_many_op<F>(&mut self, op: OperandAnalysis, cache_fn: F) -> Option<Operand<'e>>
+    where F: FnOnce(&mut AnalysisCache<'e, E>, &AnalysisCtx<'e, E>)
+    {
+        if self.cache.operand_results[op as usize].is_none() {
+            self.enter(cache_fn);
+        }
+        self.cache.operand_results[op as usize]
+            .filter(|&op| op != self.cache.operand_not_found)
     }
 
     pub fn firegraft_addresses(&mut self) -> Rc<FiregraftAddresses<E::VirtualAddress>> {
@@ -672,8 +771,12 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.file_hook(s))
     }
 
-    pub fn rng(&mut self) -> Rc<Rng<'e>> {
-        self.enter(|x, s| x.rng(s))
+    pub fn rng_seed(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::RngSeed, AnalysisCache::cache_rng)
+    }
+
+    pub fn rng_enable(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::RngEnable, AnalysisCache::cache_rng)
     }
 
     pub fn step_objects(&mut self) -> Option<E::VirtualAddress> {
@@ -684,24 +787,59 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.game(s))
     }
 
-    pub fn aiscript_hook(&mut self) -> Rc<Option<AiScriptHook<'e, E::VirtualAddress>>> {
+    pub fn aiscript_hook(&mut self) -> Option<AiScriptHook<'e, E::VirtualAddress>> {
         self.enter(|x, s| x.aiscript_hook(s))
     }
 
-    pub fn regions(&mut self) -> Rc<RegionRelated<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.regions(s))
+    pub fn get_region(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::GetRegion, AnalysisCache::cache_regions)
+    }
+
+    pub fn change_ai_region_state(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::ChangeAiRegionState, AnalysisCache::cache_regions)
+    }
+
+    pub fn ai_regions(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::AiRegions, AnalysisCache::cache_regions)
     }
 
     pub fn pathing(&mut self) -> Option<Operand<'e>> {
         self.enter(|x, s| x.pathing(s))
     }
 
-    pub fn active_hidden_units(&mut self) -> Rc<ActiveHiddenUnits<'e>> {
-        self.enter(|x, s| x.active_hidden_units(s))
+    pub fn first_active_unit(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FirstActiveUnit,
+            AnalysisCache::cache_active_hidden_units,
+        )
     }
 
-    pub fn order_issuing(&mut self) -> Rc<OrderIssuing<E::VirtualAddress>> {
-        self.enter(|x, s| x.order_issuing(s))
+    pub fn first_hidden_unit(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FirstHiddenUnit,
+            AnalysisCache::cache_active_hidden_units,
+        )
+    }
+
+    pub fn order_init_arbiter(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::OrderInitArbiter,
+            AnalysisCache::cache_order_issuing,
+        )
+    }
+
+    pub fn prepare_issue_order(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::PrepareIssueOrder,
+            AnalysisCache::cache_order_issuing,
+        )
+    }
+
+    pub fn do_next_queued_order(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::DoNextQueuedOrder,
+            AnalysisCache::cache_order_issuing,
+        )
     }
 
     pub fn process_commands(&mut self) -> Rc<ProcessCommands<'e, E::VirtualAddress>> {
@@ -717,8 +855,12 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.command_lengths(s))
     }
 
-    pub fn selections(&mut self) -> Rc<Selections<'e>> {
-        self.enter(|x, s| x.selections(s))
+    pub fn selections(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::Selections, AnalysisCache::cache_selections)
+    }
+
+    pub fn unique_command_user(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::UniqueCommandUser, AnalysisCache::cache_selections)
     }
 
     pub fn is_replay(&mut self) -> Option<Operand<'e>> {
@@ -769,8 +911,18 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.game_screen_rclick(s))
     }
 
-    pub fn select_map_entry(&mut self) -> Rc<SelectMapEntry<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.select_map_entry(s))
+    pub fn select_map_entry(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::SelectMapEntry,
+            AnalysisCache::cache_select_map_entry,
+        )
+    }
+
+    pub fn is_multiplayer(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::IsMultiplayer,
+            AnalysisCache::cache_select_map_entry,
+        )
     }
 
     pub fn load_images(&mut self) -> Option<E::VirtualAddress> {
@@ -877,20 +1029,73 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.player_ai(s))
     }
 
-    pub fn init_game(&mut self) -> Rc<InitGame<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.init_game(s))
+    pub fn init_game(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::InitGame, AnalysisCache::cache_init_game)
     }
 
-    pub fn sprites(&mut self) -> Rc<Sprites<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.sprites(s))
+    pub fn loaded_save(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::LoadedSave, AnalysisCache::cache_init_game)
+    }
+
+    pub fn create_lone_sprite(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::CreateLoneSprite, AnalysisCache::cache_sprites)
+    }
+
+    pub fn sprite_hlines(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::SpriteHlines, AnalysisCache::cache_sprites)
+    }
+
+    pub fn sprite_hlines_end(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::SpriteHlinesEnd, AnalysisCache::cache_sprites)
+    }
+
+    pub fn first_free_sprite(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::FirstFreeSprite, AnalysisCache::cache_sprites)
+    }
+
+    pub fn last_free_sprite(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::LastFreeSprite, AnalysisCache::cache_sprites)
+    }
+
+    pub fn first_lone_sprite(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::FirstLoneSprite, AnalysisCache::cache_sprites)
+    }
+
+    pub fn last_lone_sprite(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::LastLoneSprite, AnalysisCache::cache_sprites)
+    }
+
+    pub fn first_free_lone_sprite(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::FirstFreeLoneSprite, AnalysisCache::cache_sprites)
+    }
+
+    pub fn last_free_lone_sprite(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::LastFreeLoneSprite, AnalysisCache::cache_sprites)
+    }
+
+    pub fn sprite_x_position(&mut self) -> Option<(Operand<'e>, u32, MemAccessSize)> {
+        self.sprite_hlines(); // Ends up caching sprite pos
+        self.cache.sprite_x_position
+    }
+
+    pub fn sprite_y_position(&mut self) -> Option<(Operand<'e>, u32, MemAccessSize)> {
+        self.sprite_hlines(); // Ends up caching sprite pos
+        self.cache.sprite_y_position
     }
 
     pub fn eud_table(&mut self) -> Rc<EudTable<'e>> {
         self.enter(|x, s| x.eud_table(s))
     }
 
-    pub fn map_tile_flags(&mut self) -> Rc<MapTileFlags<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.map_tile_flags(s))
+    pub fn map_tile_flags(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::MapTileFlags, AnalysisCache::cache_map_tile_flags)
+    }
+
+    pub fn update_visibility_point(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UpdateVisibilityPoint,
+            AnalysisCache::cache_map_tile_flags,
+        )
     }
 
     pub fn players(&mut self) -> Option<Operand<'e>> {
@@ -901,8 +1106,46 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.draw_image(s))
     }
 
-    pub fn bullet_creation(&mut self) -> Rc<BulletCreation<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.bullet_creation(s))
+    pub fn first_active_bullet(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FirstActiveBullet,
+            AnalysisCache::cache_bullet_creation,
+        )
+    }
+
+    pub fn last_active_bullet(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::LastActiveBullet,
+            AnalysisCache::cache_bullet_creation,
+        )
+    }
+
+    pub fn first_free_bullet(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FirstFreeBullet,
+            AnalysisCache::cache_bullet_creation,
+        )
+    }
+
+    pub fn last_free_bullet(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::LastFreeBullet,
+            AnalysisCache::cache_bullet_creation,
+        )
+    }
+
+    pub fn active_iscript_unit(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ActiveIscriptUnit,
+            AnalysisCache::cache_bullet_creation,
+        )
+    }
+
+    pub fn create_bullet(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::CreateBullet,
+            AnalysisCache::cache_bullet_creation,
+        )
     }
 
     pub fn net_players(&mut self) -> Rc<NetPlayers<'e, E::VirtualAddress>> {
@@ -925,20 +1168,54 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.is_outside_game_screen(s))
     }
 
-    pub fn game_coord_conversion(&mut self) -> Rc<GameCoordConversion<'e>> {
-        self.enter(|x, s| x.game_coord_conversion(s))
+    pub fn screen_x(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::ScreenX, AnalysisCache::cache_coord_conversion)
     }
 
-    pub fn fow_sprites(&mut self) -> Rc<FowSprites<'e>> {
-        self.enter(|x, s| x.fow_sprites(s))
+    pub fn screen_y(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::ScreenY, AnalysisCache::cache_coord_conversion)
+    }
+
+    pub fn zoom(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::Zoom, AnalysisCache::cache_coord_conversion)
+    }
+
+    pub fn first_fow_sprite(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::FirstFowSprite, AnalysisCache::cache_fow_sprites)
+    }
+
+    pub fn last_fow_sprite(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::LastFowSprite, AnalysisCache::cache_fow_sprites)
+    }
+
+    pub fn first_free_fow_sprite(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FirstFreeFowSprite,
+            AnalysisCache::cache_fow_sprites,
+        )
+    }
+
+    pub fn last_free_fow_sprite(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::LastFreeFowSprite, AnalysisCache::cache_fow_sprites)
     }
 
     pub fn spawn_dialog(&mut self) -> Option<E::VirtualAddress> {
         self.enter(|x, s| x.spawn_dialog(s))
     }
 
-    pub fn unit_creation(&mut self) -> Rc<UnitCreation<E::VirtualAddress>> {
-        self.enter(|x, s| x.unit_creation(s))
+    pub fn create_unit(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::CreateUnit, AnalysisCache::cache_unit_creation)
+    }
+
+    pub fn finish_unit_pre(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::FinishUnitPre, AnalysisCache::cache_unit_creation)
+    }
+
+    pub fn finish_unit_post(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::FinishUnitPost,
+            AnalysisCache::cache_unit_creation,
+        )
     }
 
     pub fn fonts(&mut self) -> Option<Operand<'e>> {
@@ -946,19 +1223,26 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn init_sprites(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.init_sprites(s))
+        self.analyze_many_addr(AddressAnalysis::InitSprites, AnalysisCache::cache_init_sprites)
     }
 
     pub fn sprite_array(&mut self) -> Option<(Operand<'e>, u32)> {
-        self.enter(|x, s| x.sprite_array(s))
+        self.analyze_many_op(OperandAnalysis::Sprites, AnalysisCache::cache_init_sprites)
+            .map(|x| (x, self.cache.sprite_struct_size))
     }
 
     pub fn serialize_sprites(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.serialize_sprites(s))
+        self.analyze_many_addr(
+            AddressAnalysis::SerializeSprites,
+            AnalysisCache::cache_sprite_serialization,
+        )
     }
 
     pub fn deserialize_sprites(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.deserialize_sprites(s))
+        self.analyze_many_addr(
+            AddressAnalysis::DeserializeSprites,
+            AnalysisCache::cache_sprite_serialization,
+        )
     }
 
     pub fn limits(&mut self) -> Rc<Limits<'e, E::VirtualAddress>> {
@@ -966,15 +1250,24 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn font_cache_render_ascii(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.font_cache_render_ascii(s))
+        self.analyze_many_addr(
+            AddressAnalysis::FontCacheRenderAscii,
+            AnalysisCache::cache_font_render,
+        )
     }
 
     pub fn ttf_cache_character(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.ttf_cache_character(s))
+        self.analyze_many_addr(
+            AddressAnalysis::TtfCacheCharacter,
+            AnalysisCache::cache_font_render,
+        )
     }
 
     pub fn ttf_render_sdf(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.ttf_render_sdf(s))
+        self.analyze_many_addr(
+            AddressAnalysis::TtfRenderSdf,
+            AnalysisCache::cache_font_render,
+        )
     }
 
     /// Memory allocation function that at least TTF code uses.
@@ -990,27 +1283,45 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn tooltip_draw_func(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.tooltip_draw_func(s))
+        self.analyze_many_op(
+            OperandAnalysis::TooltipDrawFunc,
+            AnalysisCache::cache_tooltip_related,
+        )
     }
 
     pub fn current_tooltip_ctrl(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.current_tooltip_ctrl(s))
+        self.analyze_many_op(
+            OperandAnalysis::CurrentTooltipCtrl,
+            AnalysisCache::cache_tooltip_related,
+        )
     }
 
     pub fn layout_draw_text(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.layout_draw_text(s))
+        self.analyze_many_addr(
+            AddressAnalysis::LayoutDrawText,
+            AnalysisCache::cache_tooltip_related,
+        )
     }
 
     pub fn graphic_layers(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.graphic_layers(s))
+        self.analyze_many_op(
+            OperandAnalysis::GraphicLayers,
+            AnalysisCache::cache_tooltip_related,
+        )
     }
 
     pub fn draw_f10_menu_tooltip(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.draw_f10_menu_tooltip(s))
+        self.analyze_many_addr(
+            AddressAnalysis::DrawF10MenuTooltip,
+            AnalysisCache::cache_tooltip_related,
+        )
     }
 
     pub fn draw_tooltip_layer(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.draw_tooltip_layer(s))
+        self.analyze_many_addr(
+            AddressAnalysis::DrawTooltipLayer,
+            AnalysisCache::cache_tooltip_related,
+        )
     }
 
     pub fn draw_graphic_layers(&mut self) -> Option<E::VirtualAddress> {
@@ -1471,6 +1782,60 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         result
     }
 
+    fn cache_many<F, const ADDR_COUNT: usize, const OPERAND_COUNT: usize>(
+        &mut self,
+        addresses: &[AddressAnalysis; ADDR_COUNT],
+        operands: &[OperandAnalysis; OPERAND_COUNT],
+        func: F,
+    )
+    where F: FnOnce(&mut AnalysisCache<'e, E>) ->
+        Option<([Option<E::VirtualAddress>; ADDR_COUNT], [Option<Operand<'e>>; OPERAND_COUNT])>
+    {
+        for &addr in addresses {
+            self.address_results[addr as usize] = E::VirtualAddress::from_u64(1);
+        }
+        for &op in operands {
+            self.operand_results[op as usize] = Some(self.operand_not_found);
+        }
+        let result = func(self);
+        if let Some(ref res) = result {
+            for i in 0..ADDR_COUNT {
+                if let Some(addr) = res.0[i] {
+                    self.address_results[addresses[i] as usize] = addr;
+                }
+            }
+            for i in 0..OPERAND_COUNT {
+                if let Some(op) = res.1[i] {
+                    self.operand_results[operands[i] as usize] = Some(op);
+                }
+            }
+        }
+    }
+
+    fn cache_many_addr<F>(
+        &mut self,
+        addr: AddressAnalysis,
+        cache_fn: F,
+    ) -> Option<E::VirtualAddress>
+    where F: FnOnce(&mut AnalysisCache<'e, E>)
+    {
+        if self.address_results[addr as usize] == E::VirtualAddress::from_u64(0) {
+            cache_fn(self);
+        }
+        Some(self.address_results[addr as usize])
+            .filter(|&addr| addr != E::VirtualAddress::from_u64(1))
+    }
+
+    fn cache_many_op<F>(&mut self, op: OperandAnalysis, cache_fn: F) -> Option<Operand<'e>>
+    where F: FnOnce(&mut AnalysisCache<'e, E>)
+    {
+        if self.operand_results[op as usize].is_none() {
+            cache_fn(self);
+        }
+        self.operand_results[op as usize]
+            .filter(|&op| op != self.operand_not_found)
+    }
+
     fn firegraft_addresses(
         &mut self,
         actx: &AnalysisCtx<'e, E>,
@@ -1578,25 +1943,21 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         result
     }
 
-    fn rng(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Rng<'e>> {
-        if let Some(cached) = self.rng.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let units_dat = self.dat_virtual_address(DatType::Units, actx)?;
-            Some(rng::rng(actx, units_dat, &self.function_finder()))
-        }).unwrap_or_else(|| Rng {
-            seed: None,
-            enable: None,
-        });
-        let result = Rc::new(result);
-        self.rng.cache(&result);
-        result
+    fn cache_rng(&mut self, actx: &AnalysisCtx<'e, E>) {
+        self.cache_many(&[], &[OperandAnalysis::RngSeed, OperandAnalysis::RngEnable], |s| {
+            let units_dat = s.dat_virtual_address(DatType::Units, actx)?;
+            let rng = rng::rng(actx, units_dat, &s.function_finder());
+            Some(([], [rng.seed, rng.enable]))
+        })
+    }
+
+    pub fn rng_enable(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::RngEnable, |s| s.cache_rng(actx))
     }
 
     fn step_objects(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::StepObjects, |s| {
-            game::step_objects(actx, s.rng(actx).enable?, &s.function_finder())
+            game::step_objects(actx, s.rng_enable(actx)?, &s.function_finder())
         })
     }
 
@@ -1609,81 +1970,72 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn aiscript_hook(
         &mut self,
         actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<Option<AiScriptHook<'e, E::VirtualAddress>>> {
+    ) -> Option<AiScriptHook<'e, E::VirtualAddress>> {
         if let Some(cached) = self.aiscript_hook.cached() {
             return cached;
         }
-        let result = Rc::new(ai::aiscript_hook(self, actx));
+        let result = ai::aiscript_hook(self, actx);
         self.aiscript_hook.cache(&result);
         result
     }
 
-    fn regions(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<RegionRelated<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.regions.cached() {
-            return cached;
+    fn aiscript_switch_table(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<E::VirtualAddress> {
+        if let Some(cached) = self.aiscript_hook.cached_ref() {
+            return Some(cached.as_ref()?.switch_table);
         }
-        let result = Some(()).and_then(|()| {
-            let aiscript_hook = self.aiscript_hook(actx);
-            let aiscript_hook = aiscript_hook.as_ref().as_ref()?;
-            Some(pathing::regions(actx, aiscript_hook))
-        }).unwrap_or_else(|| {
-            RegionRelated {
-                get_region: None,
-                ai_regions: None,
-                change_ai_region_state: None,
-            }
-        });
-        let result = Rc::new(result);
-        self.regions.cache(&result);
-        result
+        Some(self.aiscript_hook(actx).as_ref()?.switch_table)
+    }
+
+    fn cache_regions(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use crate::AddressAnalysis::*;
+        self.cache_many(&[GetRegion, ChangeAiRegionState], &[OperandAnalysis::AiRegions], |s| {
+            let aiscript_hook = s.aiscript_hook(actx);
+            let result = pathing::regions(actx, aiscript_hook.as_ref()?);
+            Some(([result.get_region, result.change_ai_region_state], [result.ai_regions]))
+        })
+    }
+
+    fn get_region(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::GetRegion, |s| s.cache_regions(actx))
+    }
+
+    fn ai_regions(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::AiRegions, |s| s.cache_regions(actx))
     }
 
     fn pathing(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::Pathing, |s| {
-            pathing::pathing(actx, s.regions(actx).get_region?)
+            let get_region = s.get_region(actx)?;
+            pathing::pathing(actx, get_region)
         })
     }
 
-    fn active_hidden_units(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<ActiveHiddenUnits<'e>> {
-        if let Some(cached) = self.active_hidden_units.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let orders_dat = self.dat_virtual_address(DatType::Orders, actx)?;
-            let functions = self.function_finder();
-            Some(units::active_hidden_units(actx, orders_dat, &functions))
-        }).unwrap_or_else(|| {
-            ActiveHiddenUnits {
-                first_active_unit: None,
-                first_hidden_unit: None,
-            }
-        });
-        let result = Rc::new(result);
-        self.active_hidden_units.cache(&result);
-        result
+    fn cache_active_hidden_units(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(&[], &[FirstActiveUnit, FirstHiddenUnit], |s| {
+            let orders_dat = s.dat_virtual_address(DatType::Orders, actx)?;
+            let functions = s.function_finder();
+            let result = units::active_hidden_units(actx, orders_dat, &functions);
+            Some(([], [result.first_active_unit, result.first_hidden_unit]))
+        })
     }
 
-    fn order_issuing(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<OrderIssuing<E::VirtualAddress>> {
-        if let Some(cached) = self.order_issuing.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let units_dat = self.dat_virtual_address(DatType::Units, actx)?;
-            let functions = self.function_finder();
-            Some(units::order_issuing(actx, units_dat, &functions))
-        }).unwrap_or_else(|| {
-            OrderIssuing {
-                order_init_arbiter: None,
-                prepare_issue_order: None,
-                do_next_queued_order: None,
-            }
-        });
-        let result = Rc::new(result);
-        self.order_issuing.cache(&result);
-        result
+    fn cache_order_issuing(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[OrderInitArbiter, PrepareIssueOrder, DoNextQueuedOrder], &[], |s| {
+            let units_dat = s.dat_virtual_address(DatType::Units, actx)?;
+            let functions = s.function_finder();
+            let result = units::order_issuing(actx, units_dat, &functions);
+            Some(([result.order_init_arbiter, result.prepare_issue_order,
+                result.do_next_queued_order], []))
+        })
+    }
+
+    fn order_init_arbiter(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::OrderInitArbiter, |s| s.cache_order_issuing(actx))
     }
 
     fn process_commands(
@@ -1717,15 +2069,12 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         result
     }
 
-    fn selections(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Selections<'e>> {
-        if let Some(cached) = self.selections.cached() {
-            return cached;
-        }
-
-        let result = commands::selections(actx, &self.process_commands(actx));
-        let result = Rc::new(result);
-        self.selections.cache(&result);
-        result
+    fn cache_selections(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(&[], &[UniqueCommandUser, Selections], |s| {
+            let result = commands::selections(actx, &s.process_commands(actx));
+            Some(([], [result.unique_command_user, result.selections]))
+        })
     }
 
     fn is_replay(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
@@ -1879,21 +2228,22 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         result
     }
 
-    fn select_map_entry(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<SelectMapEntry<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.select_map_entry.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let single_player_start = self.single_player_start(actx).single_player_start?;
-            let functions = self.function_finder();
-            Some(game_init::select_map_entry(actx, single_player_start, &functions))
-        }).unwrap_or_else(|| SelectMapEntry::default());
-        let result = Rc::new(result);
-        self.select_map_entry.cache(&result);
-        result
+    fn cache_select_map_entry(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[SelectMapEntry], &[OperandAnalysis::IsMultiplayer], |s| {
+            let single_player_start = s.single_player_start(actx).single_player_start?;
+            let functions = s.function_finder();
+            let result = game_init::select_map_entry(actx, single_player_start, &functions);
+            Some(([result.select_map_entry], [result.is_multiplayer]))
+        })
+    }
+
+    fn select_map_entry(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::SelectMapEntry, |s| s.cache_select_map_entry(actx))
+    }
+
+    fn is_multiplayer(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::IsMultiplayer, |s| s.cache_select_map_entry(actx))
     }
 
     fn load_images(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -2004,7 +2354,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn step_order(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::StepOrder, |s| {
-            let order_init_arbiter = s.order_issuing(actx).order_init_arbiter?;
+            let order_init_arbiter = s.order_init_arbiter(actx)?;
             let switches = s.switch_tables();
             let funcs = s.function_finder();
             step_order::step_order(actx, order_init_arbiter, &switches, &funcs)
@@ -2099,7 +2449,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             return cached;
         }
         let result = Some(()).and_then(|()| {
-            let is_multiplayer = self.select_map_entry(actx).is_multiplayer?;
+            let is_multiplayer = self.is_multiplayer(actx)?;
             let scmain_state = self.game_init(actx).scmain_state?;
             let funcs = self.function_finder();
             Some(clientside::misc_clientside(actx, is_multiplayer, scmain_state, &funcs))
@@ -2151,8 +2501,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn first_ai_script(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::FirstAiScript, |s| {
             let aiscript = s.aiscript_hook(actx);
-            let aiscript = aiscript.as_ref().as_ref()?;
-            ai::first_ai_script(actx, aiscript, &s.function_finder())
+            ai::first_ai_script(actx, aiscript.as_ref()?, &s.function_finder())
         })
     }
 
@@ -2165,59 +2514,62 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn player_ai_towns(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::PlayerAiTowns, |s| {
-            ai::player_ai_towns(actx, s.aiscript_hook(actx).as_ref().as_ref()?)
+            let aiscript_switch = s.aiscript_switch_table(actx)?;
+            ai::player_ai_towns(actx, aiscript_switch)
         })
     }
 
     fn player_ai(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::PlayerAi, |s| {
-            ai::player_ai(actx, s.aiscript_hook(actx).as_ref().as_ref()?)
+            ai::player_ai(actx, s.aiscript_hook(actx).as_ref()?)
         })
     }
 
-    fn init_game(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<InitGame<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.init_game.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            Some(game_init::init_game(actx, self.init_units(actx)?, &self.function_finder()))
-        }).unwrap_or_else(|| {
-            InitGame {
-                loaded_save: None,
-                init_game: None,
-            }
-        });
-        let result = Rc::new(result);
-        self.init_game.cache(&result);
-        result
+    fn cache_init_game(&mut self, actx: &AnalysisCtx<'e, E>) {
+        self.cache_many(&[AddressAnalysis::InitGame], &[OperandAnalysis::LoadedSave], |s| {
+            let init_units = s.init_units(actx)?;
+            let result = game_init::init_game(actx, init_units, &s.function_finder());
+            Some(([result.init_game], [result.loaded_save]))
+        })
     }
 
-    fn sprites(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Sprites<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.sprites.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let step_order = self.step_order(actx)?;
+    fn init_game(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::InitGame, |s| s.cache_init_game(actx))
+    }
+
+    fn cache_sprites(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(&[AddressAnalysis::CreateLoneSprite], &[
+            SpriteHlines, SpriteHlinesEnd, FirstFreeSprite, LastFreeSprite, FirstLoneSprite,
+            LastLoneSprite, FirstFreeLoneSprite, LastFreeLoneSprite,
+        ], |s| {
+            let step_order = s.step_order(actx)?;
             let order_nuke_track = step_order::find_order_nuke_track(actx, step_order)?;
-            Some(sprites::sprites(actx, order_nuke_track))
-        }).unwrap_or_else(|| {
-            Sprites {
-                sprite_hlines: None,
-                sprite_hlines_end: None,
-                first_free_sprite: None,
-                last_free_sprite: None,
-                first_lone: None,
-                last_lone: None,
-                first_free_lone: None,
-                last_free_lone: None,
-                sprite_x_position: None,
-                sprite_y_position: None,
-                create_lone_sprite: None,
-            }
-        });
-        let result = Rc::new(result);
-        self.sprites.cache(&result);
-        result
+            let result = sprites::sprites(actx, order_nuke_track);
+            s.sprite_x_position = result.sprite_x_position;
+            s.sprite_y_position = result.sprite_y_position;
+            Some(([result.create_lone_sprite], [
+                result.sprite_hlines, result.sprite_hlines_end, result.first_free_sprite,
+                result.last_free_sprite, result.first_lone, result.last_lone,
+                result.first_free_lone, result.last_free_lone,
+            ]))
+        })
+    }
+
+    fn first_lone_sprite(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::FirstLoneSprite, |s| s.cache_sprites(actx))
+    }
+
+    fn first_free_sprite(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::FirstFreeSprite, |s| s.cache_sprites(actx))
+    }
+
+    fn last_free_sprite(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::LastFreeSprite, |s| s.cache_sprites(actx))
+    }
+
+    fn sprite_hlines_end(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::SpriteHlinesEnd, |s| s.cache_sprites(actx))
     }
 
     fn eud_table(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<EudTable<'e>> {
@@ -2230,28 +2582,20 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         result
     }
 
-    fn map_tile_flags(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<MapTileFlags<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.map_tile_flags.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let step_order = self.step_order(actx)?;
+    fn cache_map_tile_flags(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[UpdateVisibilityPoint], &[OperandAnalysis::MapTileFlags], |s| {
+            let step_order = s.step_order(actx)?;
             let order_nuke_track = step_order::find_order_nuke_track(actx, step_order)?;
-            Some(map::map_tile_flags(actx, order_nuke_track))
-        }).unwrap_or_else(|| {
-            MapTileFlags {
-                map_tile_flags: None,
-                update_visibility_point: None,
-            }
-        });
-        let result = Rc::new(result);
-        self.map_tile_flags.cache(&result);
-        result
+            let result = map::map_tile_flags(actx, order_nuke_track);
+            Some(([result.update_visibility_point], [result.map_tile_flags]))
+        })
     }
 
     fn players(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::Players, |s| {
-            players::players(actx, s.aiscript_hook(actx).as_ref().as_ref()?)
+            let aiscript_switch = s.aiscript_switch_table(actx)?;
+            players::players(actx, aiscript_switch)
         })
     }
 
@@ -2262,28 +2606,16 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn bullet_creation(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<BulletCreation<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.bullet_creation.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            Some(bullets::bullet_creation(actx, self.step_iscript(actx).switch_table?))
-        }).unwrap_or_else(|| {
-            BulletCreation {
-                first_active_bullet: None,
-                last_active_bullet: None,
-                first_free_bullet: None,
-                last_free_bullet: None,
-                create_bullet: None,
-                active_iscript_unit: None,
-            }
-        });
-        let result = Rc::new(result);
-        self.bullet_creation.cache(&result);
-        result
+    fn cache_bullet_creation(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(&[AddressAnalysis::CreateBullet], &[
+            FirstActiveBullet, LastActiveBullet, FirstFreeBullet, LastFreeBullet,
+            ActiveIscriptUnit,
+        ], |s| {
+            let result = bullets::bullet_creation(actx, s.step_iscript(actx).switch_table?);
+            Some(([result.create_bullet], [result.first_active_bullet, result.last_active_bullet,
+                result.first_free_bullet, result.last_free_bullet, result.active_iscript_unit]))
+        })
     }
 
     fn net_players(
@@ -2337,38 +2669,36 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn game_coord_conversion(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<GameCoordConversion<'e>> {
-        if let Some(cached) = self.game_coord_conversion.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let game_screen_rclick = self.game_screen_rclick(actx).game_screen_rclick?;
-            let is_outside_game_screen = self.is_outside_game_screen(actx)?;
-            Some(clientside::game_coord_conversion(
+    fn cache_coord_conversion(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(&[], &[ScreenX, ScreenY, Zoom], |s| {
+            let game_screen_rclick = s.game_screen_rclick(actx).game_screen_rclick?;
+            let is_outside_game_screen = s.is_outside_game_screen(actx)?;
+            let result = clientside::game_coord_conversion(
                 actx,
                 game_screen_rclick,
                 is_outside_game_screen
-            ))
-        }).unwrap_or_else(|| GameCoordConversion::default());
-        let result = Rc::new(result);
-        self.game_coord_conversion.cache(&result);
-        result
+            );
+            Some(([], [result.screen_x, result.screen_y, result.scale]))
+        })
     }
 
-    fn fow_sprites(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<FowSprites<'e>> {
-        if let Some(cached) = self.fow_sprites.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let step_objects = self.step_objects(actx)?;
-            Some(sprites::fow_sprites(actx, step_objects, self.sprites(actx).first_lone?))
-        }).unwrap_or_else(|| FowSprites::default());
-        let result = Rc::new(result);
-        self.fow_sprites.cache(&result);
-        result
+    fn cache_fow_sprites(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(&[], &[
+            FirstFowSprite, LastFowSprite, FirstFreeFowSprite, LastFreeFowSprite,
+        ], |s| {
+            let step_objects = s.step_objects(actx)?;
+            let first_lone = s.first_lone_sprite(actx)?;
+            let result = sprites::fow_sprites(actx, step_objects, first_lone);
+            Some(([], [
+                result.first_active, result.last_active, result.first_free, result.last_free,
+            ]))
+        })
+    }
+
+    fn first_fow_sprite(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::FirstFowSprite, |s| s.cache_fow_sprites(actx))
     }
 
     fn spawn_dialog(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -2377,27 +2707,14 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn unit_creation(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<UnitCreation<E::VirtualAddress>> {
-        if let Some(cached) = self.unit_creation.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let step_order = self.step_order(actx)?;
+    fn cache_unit_creation(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[CreateUnit, FinishUnitPre, FinishUnitPost], &[], |s| {
+            let step_order = s.step_order(actx)?;
             let order_scan = step_order::find_order_function(actx, step_order, 0x8b)?;
-            Some(units::unit_creation(actx, order_scan))
-        }).unwrap_or_else(|| {
-            UnitCreation {
-                create_unit: None,
-                finish_unit_pre: None,
-                finish_unit_post: None,
-            }
-        });
-        let result = Rc::new(result);
-        self.unit_creation.cache(&result);
-        result
+            let result = units::unit_creation(actx, order_scan);
+            Some(([result.create_unit, result.finish_unit_pre, result.finish_unit_post], []))
+        })
     }
 
     fn fonts(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
@@ -2406,75 +2723,44 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn init_sprites_etc(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> InitSprites<'e, E::VirtualAddress> {
-        if let Some(cached) = self.init_sprites.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let sprites = self.sprites(actx);
-            let first_free = sprites.first_free_sprite?;
-            let last_free = sprites.last_free_sprite?;
-            let functions = self.function_finder();
-            Some(sprites::init_sprites(actx, first_free, last_free, &functions))
-        }).unwrap_or_else(|| {
-            InitSprites {
-                init_sprites: None,
-                sprites: None,
-            }
-        });
-        self.init_sprites.cache(&result);
-        result
+    fn cache_init_sprites(&mut self, actx: &AnalysisCtx<'e, E>) {
+        self.cache_many(&[AddressAnalysis::InitSprites], &[OperandAnalysis::Sprites], |s| {
+            let first_free = s.first_free_sprite(actx)?;
+            let last_free = s.last_free_sprite(actx)?;
+            let functions = s.function_finder();
+            let result = sprites::init_sprites(actx, first_free, last_free, &functions);
+            s.sprite_struct_size = result.sprites.map(|x| x.1).unwrap_or(0);
+            Some(([result.init_sprites], [result.sprites.map(|x| x.0)]))
+        })
     }
 
     fn init_sprites(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.init_sprites_etc(actx).init_sprites
+        self.cache_many_addr(AddressAnalysis::InitSprites, |s| s.cache_init_sprites(actx))
     }
 
     fn sprite_array(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<(Operand<'e>, u32)> {
-        self.init_sprites_etc(actx).sprites
+        self.cache_many_op(OperandAnalysis::Sprites, |s| s.cache_init_sprites(actx))
+            .map(|x| (x, self.sprite_struct_size))
     }
 
-    fn sprite_serialization(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> SpriteSerialization<E::VirtualAddress> {
-        if let Some(cached) = self.sprite_serialization.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let sprites = self.sprites(actx);
-            let hlines_end = sprites.sprite_hlines_end?;
-            let sprite_array = self.sprite_array(actx)?;
-            let init_sprites = self.init_sprites(actx)?;
-            let game = self.game(actx)?;
-            let funcs = self.function_finder();
-            Some(save::sprite_serialization(
+    fn cache_sprite_serialization(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[SerializeSprites, DeserializeSprites], &[], |s| {
+            let hlines_end = s.sprite_hlines_end(actx)?;
+            let sprite_array = s.sprite_array(actx)?;
+            let init_sprites = s.init_sprites(actx)?;
+            let game = s.game(actx)?;
+            let funcs = s.function_finder();
+            let result = save::sprite_serialization(
                 actx,
                 hlines_end,
                 sprite_array,
                 init_sprites,
                 game,
                 &funcs,
-            ))
-        }).unwrap_or_else(|| {
-            SpriteSerialization {
-                serialize_sprites: None,
-                deserialize_sprites: None,
-            }
-        });
-        self.sprite_serialization.cache(&result);
-        result
-    }
-
-    fn serialize_sprites(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.sprite_serialization(actx).serialize_sprites
-    }
-
-    fn deserialize_sprites(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.sprite_serialization(actx).deserialize_sprites
+            );
+            Some(([result.serialize_sprites, result.deserialize_sprites], []))
+        })
     }
 
     fn limits(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Limits<'e, E::VirtualAddress>> {
@@ -2496,36 +2782,18 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         result
     }
 
-    fn font_render(&mut self, actx: &AnalysisCtx<'e, E>) -> FontRender<E::VirtualAddress> {
-        if let Some(cached) = self.font_render.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            Some(text::font_render(actx, self.fonts(actx)?, &self.function_finder()))
-        }).unwrap_or_else(|| {
-            FontRender {
-                font_cache_render_ascii: None,
-                ttf_cache_character: None,
-                ttf_render_sdf: None,
-            }
-        });
-        self.font_render.cache(&result);
-        result
-    }
-
-    fn font_cache_render_ascii(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Option<E::VirtualAddress> {
-        self.font_render(actx).font_cache_render_ascii
-    }
-
-    fn ttf_cache_character(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.font_render(actx).ttf_cache_character
+    fn cache_font_render(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[FontCacheRenderAscii, TtfCacheCharacter, TtfRenderSdf], &[], |s| {
+            let result = text::font_render(actx, s.fonts(actx)?, &s.function_finder());
+            Some(([
+                result.font_cache_render_ascii, result.ttf_cache_character, result.ttf_render_sdf
+            ], []))
+        })
     }
 
     fn ttf_render_sdf(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.font_render(actx).ttf_render_sdf
+        self.cache_many_addr(AddressAnalysis::TtfRenderSdf, |s| s.cache_font_render(actx))
     }
 
     fn ttf_malloc(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -2541,58 +2809,31 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         if let Some(cached) = self.create_game_dialog_vtbl_on_multiplayer_create.cached() {
             return cached;
         }
-        let result = self.select_map_entry(actx).select_map_entry
+        let result = self.select_map_entry(actx)
             .and_then(|x| game_init::create_game_dialog_vtbl_on_multiplayer_create(actx, x));
         self.create_game_dialog_vtbl_on_multiplayer_create.cache(&result);
         result
     }
 
-    fn tooltip_related(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> TooltipRelated<'e, E::VirtualAddress> {
-        if let Some(cached) = self.tooltip_related.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let spawn_dialog = self.spawn_dialog(actx)?;
-            Some(dialog::tooltip_related(actx, spawn_dialog, &self.function_finder()))
-        }).unwrap_or_else(|| {
-            TooltipRelated {
-                tooltip_draw_func: None,
-                current_tooltip_ctrl: None,
-                graphic_layers: None,
-                layout_draw_text: None,
-                draw_tooltip_layer: None,
-                draw_f10_menu_tooltip: None,
-            }
-        });
-        self.tooltip_related.cache(&result);
-        result
-    }
-
-    fn tooltip_draw_func(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.tooltip_related(actx).tooltip_draw_func
-    }
-
-    fn current_tooltip_ctrl(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.tooltip_related(actx).current_tooltip_ctrl
-    }
-
-    fn layout_draw_text(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.tooltip_related(actx).layout_draw_text
+    fn cache_tooltip_related(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[LayoutDrawText, DrawF10MenuTooltip, DrawTooltipLayer],
+            &[TooltipDrawFunc, CurrentTooltipCtrl, GraphicLayers],
+            |s| {
+                let spawn_dialog = s.spawn_dialog(actx)?;
+                let result = dialog::tooltip_related(actx, spawn_dialog, &s.function_finder());
+                Some((
+                    [result.layout_draw_text, result.draw_f10_menu_tooltip,
+                    result.draw_tooltip_layer], [result.tooltip_draw_func,
+                    result.current_tooltip_ctrl, result.graphic_layers],
+                ))
+            })
     }
 
     fn graphic_layers(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.tooltip_related(actx).graphic_layers
-    }
-
-    fn draw_f10_menu_tooltip(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.tooltip_related(actx).draw_f10_menu_tooltip
-    }
-
-    fn draw_tooltip_layer(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.tooltip_related(actx).draw_tooltip_layer
+        self.cache_many_op(OperandAnalysis::GraphicLayers, |s| s.cache_tooltip_related(actx))
     }
 
     fn draw_graphic_layers(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -2620,7 +2861,8 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn ai_attack_prepare(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::AiAttackPrepare, |s| {
-            ai::attack_prepare(actx, s.aiscript_hook(actx).as_ref().as_ref()?)
+            let aiscript_switch = s.aiscript_switch_table(actx)?;
+            ai::attack_prepare(actx, aiscript_switch)
         })
     }
 
@@ -2641,7 +2883,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         }
         let result = Some(()).and_then(|()| {
             let step_objects = self.step_objects(actx)?;
-            let ai_regions = self.regions(actx).ai_regions?;
+            let ai_regions = self.ai_regions(actx)?;
             let game = self.game(actx)?;
             Some(ai::step_frame_funcs(actx, step_objects, ai_regions, game))
         }).unwrap_or_else(|| {
@@ -2818,7 +3060,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn unit_strength(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::UnitStrength, |s| {
-            units::strength(actx, s.init_game(actx).init_game?, s.init_units(actx)?)
+            units::strength(actx, s.init_game(actx)?, s.init_units(actx)?)
         })
     }
 
@@ -2882,7 +3124,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             return cached;
         }
         let result = Some(()).and_then(|()| {
-            let rng_enable = self.rng(actx).enable?;
+            let rng_enable = self.rng_enable(actx)?;
             let step_objects = self.step_objects(actx)?;
             Some(map::run_triggers(actx, rng_enable, step_objects, &self.function_finder()))
         }).unwrap_or_else(|| RunTriggers::default());
@@ -3005,7 +3247,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             return cached;
         }
         let result = Some(()).and_then(|()| {
-            let first_fow_sprite = self.fow_sprites(actx).first_active?;
+            let first_fow_sprite = self.first_fow_sprite(actx)?;
             let is_replay = self.is_replay(actx)?;
             let funcs = self.function_finder();
             minimap::unexplored_fog_minimap_patch(actx, first_fow_sprite, is_replay, &funcs)
@@ -3040,7 +3282,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     ) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::AiAddMilitaryToRegion, |s| {
             let train_military = s.ai_train_military(actx)?;
-            ai::add_military_to_region(actx, train_military, s.regions(actx).ai_regions?)
+            ai::add_military_to_region(actx, train_military, s.ai_regions(actx)?)
         })
     }
 
@@ -3081,8 +3323,12 @@ impl<'e> AnalysisX86<'e> {
         self.0.file_hook()
     }
 
-    pub fn rng(&mut self) -> Rc<Rng<'e>> {
-        self.0.rng()
+    pub fn rng_seed(&mut self) -> Option<Operand<'e>> {
+        self.0.rng_seed()
+    }
+
+    pub fn rng_enable(&mut self) -> Option<Operand<'e>> {
+        self.0.rng_enable()
     }
 
     pub fn step_objects(&mut self) -> Option<VirtualAddress> {
@@ -3093,24 +3339,44 @@ impl<'e> AnalysisX86<'e> {
         self.0.game()
     }
 
-    pub fn aiscript_hook(&mut self) -> Rc<Option<AiScriptHook<'e, VirtualAddress>>> {
+    pub fn aiscript_hook(&mut self) -> Option<AiScriptHook<'e, VirtualAddress>> {
         self.0.aiscript_hook()
     }
 
-    pub fn regions(&mut self) -> Rc<RegionRelated<'e, VirtualAddress>> {
-        self.0.regions()
+    pub fn get_region(&mut self) -> Option<VirtualAddress> {
+        self.0.get_region()
+    }
+
+    pub fn change_ai_region_state(&mut self) -> Option<VirtualAddress> {
+        self.0.change_ai_region_state()
+    }
+
+    pub fn ai_regions(&mut self) -> Option<Operand<'e>> {
+        self.0.ai_regions()
     }
 
     pub fn pathing(&mut self) -> Option<Operand<'e>> {
         self.0.pathing()
     }
 
-    pub fn active_hidden_units(&mut self) -> Rc<ActiveHiddenUnits<'e>> {
-        self.0.active_hidden_units()
+    pub fn first_active_unit(&mut self) -> Option<Operand<'e>> {
+        self.0.first_active_unit()
     }
 
-    pub fn order_issuing(&mut self) -> Rc<OrderIssuing<VirtualAddress>> {
-        self.0.order_issuing()
+    pub fn first_hidden_unit(&mut self) -> Option<Operand<'e>> {
+        self.0.first_hidden_unit()
+    }
+
+    pub fn order_init_arbiter(&mut self) -> Option<VirtualAddress> {
+        self.0.order_init_arbiter()
+    }
+
+    pub fn prepare_issue_order(&mut self) -> Option<VirtualAddress> {
+        self.0.prepare_issue_order()
+    }
+
+    pub fn do_next_queued_order(&mut self) -> Option<VirtualAddress> {
+        self.0.do_next_queued_order()
     }
 
     pub fn process_commands(&mut self) -> Rc<ProcessCommands<'e, VirtualAddress>> {
@@ -3126,8 +3392,12 @@ impl<'e> AnalysisX86<'e> {
         self.0.command_lengths()
     }
 
-    pub fn selections(&mut self) -> Rc<Selections<'e>> {
+    pub fn selections(&mut self) -> Option<Operand<'e>> {
         self.0.selections()
+    }
+
+    pub fn unique_command_user(&mut self) -> Option<Operand<'e>> {
+        self.0.unique_command_user()
     }
 
     pub fn is_replay(&mut self) -> Option<Operand<'e>> {
@@ -3178,8 +3448,12 @@ impl<'e> AnalysisX86<'e> {
         self.0.game_screen_rclick()
     }
 
-    pub fn select_map_entry(&mut self) -> Rc<SelectMapEntry<'e, VirtualAddress>> {
+    pub fn select_map_entry(&mut self) -> Option<VirtualAddress> {
         self.0.select_map_entry()
+    }
+
+    pub fn is_multiplayer(&mut self) -> Option<Operand<'e>> {
+        self.0.is_multiplayer()
     }
 
     pub fn load_images(&mut self) -> Option<VirtualAddress> {
@@ -3286,20 +3560,68 @@ impl<'e> AnalysisX86<'e> {
         self.0.player_ai()
     }
 
-    pub fn init_game(&mut self) -> Rc<InitGame<'e, VirtualAddress>> {
+    pub fn init_game(&mut self) -> Option<VirtualAddress> {
         self.0.init_game()
     }
 
-    pub fn sprites(&mut self) -> Rc<Sprites<'e, VirtualAddress>> {
-        self.0.sprites()
+    pub fn loaded_save(&mut self) -> Option<Operand<'e>> {
+        self.0.loaded_save()
+    }
+
+    pub fn create_lone_sprite(&mut self) -> Option<VirtualAddress> {
+        self.0.create_lone_sprite()
+    }
+
+    pub fn sprite_hlines(&mut self) -> Option<Operand<'e>> {
+        self.0.sprite_hlines()
+    }
+
+    pub fn sprite_hlines_end(&mut self) -> Option<Operand<'e>> {
+        self.0.sprite_hlines_end()
+    }
+
+    pub fn first_free_sprite(&mut self) -> Option<Operand<'e>> {
+        self.0.first_free_sprite()
+    }
+
+    pub fn last_free_sprite(&mut self) -> Option<Operand<'e>> {
+        self.0.last_free_sprite()
+    }
+
+    pub fn first_lone_sprite(&mut self) -> Option<Operand<'e>> {
+        self.0.first_lone_sprite()
+    }
+
+    pub fn last_lone_sprite(&mut self) -> Option<Operand<'e>> {
+        self.0.last_lone_sprite()
+    }
+
+    pub fn first_free_lone_sprite(&mut self) -> Option<Operand<'e>> {
+        self.0.first_free_lone_sprite()
+    }
+
+    pub fn last_free_lone_sprite(&mut self) -> Option<Operand<'e>> {
+        self.0.last_free_lone_sprite()
+    }
+
+    pub fn sprite_x_position(&mut self) -> Option<(Operand<'e>, u32, MemAccessSize)> {
+        self.0.sprite_x_position()
+    }
+
+    pub fn sprite_y_position(&mut self) -> Option<(Operand<'e>, u32, MemAccessSize)> {
+        self.0.sprite_y_position()
     }
 
     pub fn eud_table(&mut self) -> Rc<EudTable<'e>> {
         self.0.eud_table()
     }
 
-    pub fn map_tile_flags(&mut self) -> Rc<MapTileFlags<'e, VirtualAddress>> {
+    pub fn map_tile_flags(&mut self) -> Option<Operand<'e>> {
         self.0.map_tile_flags()
+    }
+
+    pub fn update_visibility_point(&mut self) -> Option<VirtualAddress> {
+        self.0.update_visibility_point()
     }
 
     pub fn players(&mut self) -> Option<Operand<'e>> {
@@ -3310,8 +3632,28 @@ impl<'e> AnalysisX86<'e> {
         self.0.draw_image()
     }
 
-    pub fn bullet_creation(&mut self) -> Rc<BulletCreation<'e, VirtualAddress>> {
-        self.0.bullet_creation()
+    pub fn first_active_bullet(&mut self) -> Option<Operand<'e>> {
+        self.0.first_active_bullet()
+    }
+
+    pub fn last_active_bullet(&mut self) -> Option<Operand<'e>> {
+        self.0.last_active_bullet()
+    }
+
+    pub fn first_free_bullet(&mut self) -> Option<Operand<'e>> {
+        self.0.first_free_bullet()
+    }
+
+    pub fn last_free_bullet(&mut self) -> Option<Operand<'e>> {
+        self.0.last_free_bullet()
+    }
+
+    pub fn active_iscript_unit(&mut self) -> Option<Operand<'e>> {
+        self.0.active_iscript_unit()
+    }
+
+    pub fn create_bullet(&mut self) -> Option<VirtualAddress> {
+        self.0.create_bullet()
     }
 
     pub fn net_players(&mut self) -> Rc<NetPlayers<'e, VirtualAddress>> {
@@ -3334,20 +3676,48 @@ impl<'e> AnalysisX86<'e> {
         self.0.is_outside_game_screen()
     }
 
-    pub fn game_coord_conversion(&mut self) -> Rc<GameCoordConversion<'e>> {
-        self.0.game_coord_conversion()
+    pub fn screen_x(&mut self) -> Option<Operand<'e>> {
+        self.0.screen_x()
     }
 
-    pub fn fow_sprites(&mut self) -> Rc<FowSprites<'e>> {
-        self.0.fow_sprites()
+    pub fn screen_y(&mut self) -> Option<Operand<'e>> {
+        self.0.screen_y()
+    }
+
+    pub fn zoom(&mut self) -> Option<Operand<'e>> {
+        self.0.zoom()
+    }
+
+    pub fn first_fow_sprite(&mut self) -> Option<Operand<'e>> {
+        self.0.first_fow_sprite()
+    }
+
+    pub fn last_fow_sprite(&mut self) -> Option<Operand<'e>> {
+        self.0.last_fow_sprite()
+    }
+
+    pub fn first_free_fow_sprite(&mut self) -> Option<Operand<'e>> {
+        self.0.first_free_fow_sprite()
+    }
+
+    pub fn last_free_fow_sprite(&mut self) -> Option<Operand<'e>> {
+        self.0.last_free_fow_sprite()
     }
 
     pub fn spawn_dialog(&mut self) -> Option<VirtualAddress> {
         self.0.spawn_dialog()
     }
 
-    pub fn unit_creation(&mut self) -> Rc<UnitCreation<VirtualAddress>> {
-        self.0.unit_creation()
+    pub fn create_unit(&mut self) -> Option<VirtualAddress> {
+        self.0.create_unit()
+    }
+
+    pub fn finish_unit_pre(&mut self) -> Option<VirtualAddress> {
+        self.0.finish_unit_pre()
+    }
+
+    pub fn finish_unit_post(&mut self) -> Option<VirtualAddress> {
+        self.0.finish_unit_post()
     }
 
     pub fn fonts(&mut self) -> Option<Operand<'e>> {

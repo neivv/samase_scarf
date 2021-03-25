@@ -642,13 +642,13 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GuardAiAnalyzer<'e, E
 
 pub(crate) fn player_ai_towns<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
-    aiscript: &AiScriptHook<'e, E::VirtualAddress>,
+    aiscript_switch_table: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
     let addr_size = E::VirtualAddress::SIZE;
-    let start_town = binary.read_address(aiscript.switch_table + 0x3 * addr_size).ok()?;
+    let start_town = binary.read_address(aiscript_switch_table + 0x3 * addr_size).ok()?;
 
     let state = AiTownState {
         jump_count: 0,
@@ -839,13 +839,13 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlayerAiAnalyzer<'e, 
 
 pub(crate) fn attack_prepare<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
-    aiscript_hook: &AiScriptHook<'e, E::VirtualAddress>,
+    aiscript_switch_table: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
     let addr_size = E::VirtualAddress::SIZE;
-    let attack_prepare = binary.read_address(aiscript_hook.switch_table + 0xd * addr_size).ok()?;
+    let attack_prepare = binary.read_address(aiscript_switch_table + 0xd * addr_size).ok()?;
 
     let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, attack_prepare);

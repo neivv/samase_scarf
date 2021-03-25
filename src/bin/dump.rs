@@ -205,19 +205,6 @@ fn main() {
     );
     let aiscript_hook = analysis.aiscript_hook();
     println!("Aiscript hook: {:#?}", aiscript_hook);
-    let rng = analysis.rng();
-    println!("Rng seed: {}", format_op_operand(rng.seed));
-    println!("Rng enable: {}", format_op_operand(rng.enable));
-    let regions = analysis.regions();
-    println!("get_region: {:?}", regions.get_region);
-    println!("AI regions: {}", format_op_operand(regions.ai_regions));
-    println!("change_ai_region_state: {:?}", regions.change_ai_region_state);
-    let unit_lists = analysis.active_hidden_units();
-    println!("first_active_unit: {}", format_op_operand(unit_lists.first_active_unit));
-    println!("first_hidden_unit: {}", format_op_operand(unit_lists.first_hidden_unit));
-    let order_issuing = analysis.order_issuing();
-    println!("prepare_issue_order: {:?}", order_issuing.prepare_issue_order);
-    println!("do_next_queued_order: {:?}", order_issuing.do_next_queued_order);
     let step_order_hidden = analysis.step_order_hidden();
     println!("step_order_hidden: {:?}", step_order_hidden);
     let step_secondary = analysis.step_secondary_order();
@@ -231,9 +218,6 @@ fn main() {
             switch.address, switch.indirection, switch.offset,
         );
     }
-    let selections = analysis.selections();
-    println!("unique_command_user: {}", format_op_operand(selections.unique_command_user));
-    println!("selections: {}", format_op_operand(selections.selections));
     let lengths = analysis.command_lengths();
     let lengths = lengths.iter().map(|&x| x as i32).collect::<Vec<_>>();
     println!("command_lengths: len {:x}, {:?}", lengths.len(), lengths);
@@ -261,13 +245,6 @@ fn main() {
 
     println!("init_units: {:?}", analysis.init_units());
     println!("load_dat: {:?}", analysis.load_dat());
-    let init_game = analysis.init_game();
-    println!("init_game: {:?}", init_game.init_game);
-    println!(
-        "loaded_save: {}",
-        init_game.loaded_save.as_ref()
-            .map(|x| x.to_string()).unwrap_or_else(|| "None".to_string()),
-    );
 
     let rclick = analysis.game_screen_rclick();
     println!("game_screen_rclick: {:?}", rclick.game_screen_rclick);
@@ -280,38 +257,20 @@ fn main() {
     println!("step iscript opcode check: {:?}", iscript.opcode_check);
     println!("iscript_bin: {}", format_op_operand(iscript.iscript_bin));
 
-    let sprites = analysis.sprites();
-    println!("sprite_hlines: {}", format_op_operand(sprites.sprite_hlines));
-    println!("sprite_hlines_end: {}", format_op_operand(sprites.sprite_hlines_end));
-    println!("first_free_sprite: {}", format_op_operand(sprites.first_free_sprite));
-    println!("last_free_sprite: {}", format_op_operand(sprites.last_free_sprite));
-    println!("first_lone: {}", format_op_operand(sprites.first_lone));
-    println!("last_lone: {}", format_op_operand(sprites.last_lone));
-    println!("first_free_lone: {}", format_op_operand(sprites.first_free_lone));
-    println!("last_free_lone: {}", format_op_operand(sprites.last_free_lone));
-    println!("create_lone: {:?}", sprites.create_lone_sprite);
-    println!("sprite_x: {}", format_op_operand(sprites.sprite_x_position.map(|x| x.0)));
-    println!("sprite_x_offset: {:x?}", sprites.sprite_x_position.map(|x| x.1));
-    println!("sprite_x_size: {:x?}", sprites.sprite_x_position.map(|x| x.2));
-    println!("sprite_y: {}", format_op_operand(sprites.sprite_y_position.map(|x| x.0)));
-    println!("sprite_y_offset: {:x?}", sprites.sprite_y_position.map(|x| x.1));
-    println!("sprite_y_size: {:x?}", sprites.sprite_x_position.map(|x| x.2));
+    let sprite_x_position = analysis.sprite_x_position();
+    let sprite_y_position = analysis.sprite_y_position();
+    println!("sprite_x: {}", format_op_operand(sprite_x_position.map(|x| x.0)));
+    println!("sprite_x_offset: {:x?}", sprite_x_position.map(|x| x.1));
+    println!("sprite_x_size: {:x?}", sprite_x_position.map(|x| x.2));
+    println!("sprite_y: {}", format_op_operand(sprite_y_position.map(|x| x.0)));
+    println!("sprite_y_offset: {:x?}", sprite_y_position.map(|x| x.1));
+    println!("sprite_y_size: {:x?}", sprite_x_position.map(|x| x.2));
 
     let euds = analysis.eud_table();
     println!("{} euds", euds.euds.len());
 
-    let map_tile_flags = analysis.map_tile_flags();
-    println!("map_tile_flags: {}", format_op_operand(map_tile_flags.map_tile_flags));
-    println!("update_visibility_point: {:?}", map_tile_flags.update_visibility_point);
     let renderer_vtables = analysis.renderer_vtables();
     println!("renderer_vtables: {:?}", renderer_vtables);
-    let bullet_creation = analysis.bullet_creation();
-    println!("first_active_bullet: {}", format_op_operand(bullet_creation.first_active_bullet));
-    println!("last_active_bullet: {}", format_op_operand(bullet_creation.last_active_bullet));
-    println!("first_free_bullet: {}", format_op_operand(bullet_creation.first_free_bullet));
-    println!("last_free_bullet: {}", format_op_operand(bullet_creation.last_free_bullet));
-    println!("active_iscript_unit: {}", format_op_operand(bullet_creation.active_iscript_unit));
-    println!("create_bullet: {:?}", bullet_creation.create_bullet);
 
     let net_players = analysis.net_players();
     if let Some(ref net_players) = net_players.net_players {
@@ -327,17 +286,6 @@ fn main() {
     println!("game_loop: {:?}", game_init.game_loop);
     println!("scmain_state: {}", format_op_operand(game_init.scmain_state));
 
-    let coords = analysis.game_coord_conversion();
-    println!("screen_x: {}", format_op_operand(coords.screen_x));
-    println!("screen_y: {}", format_op_operand(coords.screen_y));
-    println!("graphic_scale: {}", format_op_operand(coords.scale));
-
-    let fow = analysis.fow_sprites();
-    println!("first_active_fow_sprite: {}", format_op_operand(fow.first_active));
-    println!("last_active_fow_sprite: {}", format_op_operand(fow.last_active));
-    println!("first_free_fow_sprite: {}", format_op_operand(fow.first_free));
-    println!("last_free_fow_sprite: {}", format_op_operand(fow.last_free));
-
     let init_map_from_path = analysis.init_map_from_path();
     println!("init_map_from_path: {:?}", init_map_from_path);
 
@@ -352,9 +300,6 @@ fn main() {
     println!("player_skins: {}", format_op_operand(start.player_skins));
     println!("skins_size: {:x}", start.skins_size);
 
-    let sel = analysis.select_map_entry();
-    println!("select_map_entry: {:?}", sel.select_map_entry);
-    println!("is_multiplayer: {}", format_op_operand(sel.is_multiplayer));
     let images_loaded = analysis.images_loaded();
     println!("images_loaded: {}", format_op_operand(images_loaded));
     let init_rtl = analysis.init_real_time_lighting();
@@ -385,17 +330,8 @@ fn main() {
     println!("is_placing_building: {}", format_op_operand(misc_clientside.is_placing_building));
     println!("is_targeting: {}", format_op_operand(misc_clientside.is_targeting));
 
-    let unit_creation = analysis.unit_creation();
-    println!("create_unit: {:?}", unit_creation.create_unit);
-    println!("finish_unit_pre: {:?}", unit_creation.finish_unit_pre);
-    println!("finish_unit_post: {:?}", unit_creation.finish_unit_post);
-
-    println!("init_sprites: {:?}", analysis.init_sprites());
     let sprite_array = analysis.sprite_array();
-    println!("sprite_array: {}", format_op_operand(sprite_array.map(|x| x.0)));
     println!("sprite_struct_size: {:?}", sprite_array.map(|x| format!("0x{:x}", x.1)));
-    println!("serialize_sprites: {:?}", analysis.serialize_sprites());
-    println!("deserialize_sprites: {:?}", analysis.deserialize_sprites());
 
     let limits = analysis.limits();
     println!("set_limits: {:?}", limits.set_limits);
@@ -413,19 +349,8 @@ fn main() {
         println!("limits.{}: {:?}", name, arr);
     }
 
-    println!("font_cache_render_ascii: {:?}", analysis.font_cache_render_ascii());
-    println!("ttf_cache_character: {:?}", analysis.ttf_cache_character());
-    println!("ttf_render_sdf: {:?}", analysis.ttf_render_sdf());
-
     let offset = analysis.create_game_dialog_vtbl_on_multiplayer_create();
     println!("CreateGameScreen.on_multiplayer_create offset: {:x?}", offset);
-
-    println!("tooltip_draw_func: {}", format_op_operand(analysis.tooltip_draw_func()));
-    println!("current_tooltip_ctrl: {}", format_op_operand(analysis.current_tooltip_ctrl()));
-    println!("layout_draw_text: {:?}", analysis.layout_draw_text());
-    println!("graphic_layers: {}", format_op_operand(analysis.graphic_layers()));
-    println!("draw_tooltip_layer: {:?}", analysis.draw_tooltip_layer());
-    println!("draw_f10_menu_tooltip: {:?}", analysis.draw_f10_menu_tooltip());
 
     println!("Prism vertex shader sets: 0x{:x}", analysis.prism_vertex_shaders().len());
     println!("Prism pixel shader sets: 0x{:x}", analysis.prism_pixel_shaders().len());
