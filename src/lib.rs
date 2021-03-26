@@ -240,6 +240,8 @@ results! {
         OrderInitArbiter => "order_init_arbiter",
         PrepareIssueOrder => "prepare_issue_order",
         DoNextQueuedOrder => "do_next_queued_order",
+        ResetUiEventHandlers => "reset_ui_event_handlers",
+        UiDefaultScrollHandler => "ui_default_scroll_handler",
     }
 }
 
@@ -305,6 +307,7 @@ results! {
         ActiveIscriptUnit => "active_iscript_unit",
         UniqueCommandUser => "unique_command_user",
         Selections => "selections",
+        GlobalEventHandlers => "global_event_handlers",
     }
 }
 
@@ -666,6 +669,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             OrderInitArbiter => self.order_init_arbiter(),
             PrepareIssueOrder => self.prepare_issue_order(),
             DoNextQueuedOrder => self.do_next_queued_order(),
+            ResetUiEventHandlers => self.reset_ui_event_handlers(),
+            UiDefaultScrollHandler => self.ui_default_scroll_handler(),
         }
     }
 
@@ -732,6 +737,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ActiveIscriptUnit => self.active_iscript_unit(),
             UniqueCommandUser => self.unique_command_user(),
             Selections => self.selections(),
+            GlobalEventHandlers => self.global_event_handlers(),
         }
     }
 
@@ -1536,6 +1542,27 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn crt_fastfail(&mut self) -> Rc<Vec<E::VirtualAddress>> {
         self.enter(|x, s| x.crt_fastfail(s))
+    }
+
+    pub fn reset_ui_event_handlers(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ResetUiEventHandlers,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn ui_default_scroll_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UiDefaultScrollHandler,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn global_event_handlers(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::GlobalEventHandlers,
+            AnalysisCache::cache_ui_event_handlers,
+        )
     }
 
     /// Mainly for tests/dump
@@ -3300,6 +3327,23 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.crt_fastfail.cache(&result);
         result
     }
+
+    fn cache_ui_event_handlers(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[ResetUiEventHandlers, UiDefaultScrollHandler],
+            &[GlobalEventHandlers],
+            |s| {
+                let game_screen_rclick = s.game_screen_rclick(actx).game_screen_rclick?;
+                let result =
+                    dialog::ui_event_handlers(actx, game_screen_rclick, &s.function_finder());
+                Some((
+                    [result.reset_ui_event_handlers, result.default_scroll_handler],
+                    [result.global_event_handlers],
+                ))
+            });
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -3998,6 +4042,18 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn crt_fastfail(&mut self) -> Rc<Vec<VirtualAddress>> {
         self.0.crt_fastfail()
+    }
+
+    pub fn reset_ui_event_handlers(&mut self) -> Option<VirtualAddress> {
+        self.0.reset_ui_event_handlers()
+    }
+
+    pub fn ui_default_scroll_handler(&mut self) -> Option<VirtualAddress> {
+        self.0.ui_default_scroll_handler()
+    }
+
+    pub fn global_event_handlers(&mut self) -> Option<Operand<'e>> {
+        self.0.global_event_handlers()
     }
 }
 

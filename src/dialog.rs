@@ -1,4 +1,5 @@
 use bumpalo::collections::Vec as BumpVec;
+use fxhash::FxHashMap;
 
 use std::convert::TryInto;
 
@@ -45,6 +46,12 @@ pub struct MultiWireframes<'e, Va: VirtualAddress> {
     pub status_screen: Option<Operand<'e>>,
     pub status_screen_event_handler: Option<Va>,
     pub init_status_screen: Option<Va>,
+}
+
+pub(crate) struct UiEventHandlers<'e, Va: VirtualAddress> {
+    pub reset_ui_event_handlers: Option<Va>,
+    pub default_scroll_handler: Option<Va>,
+    pub global_event_handlers: Option<Operand<'e>>,
 }
 
 impl<'e, Va: VirtualAddress> Default for MultiWireframes<'e, Va> {
@@ -1494,6 +1501,128 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindChildDrawFunc<'a
                 }
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) fn ui_event_handlers<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    game_screen_rclick: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> UiEventHandlers<'e, E::VirtualAddress> {
+    let mut result = UiEventHandlers {
+        reset_ui_event_handlers: None,
+        default_scroll_handler: None,
+        global_event_handlers: None,
+    };
+
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+    let funcs = functions.functions();
+    let global_refs = functions.find_functions_using_global(analysis, game_screen_rclick);
+    for func in &global_refs {
+        let val = crate::entry_of_until(binary, &funcs, func.use_address, |entry| {
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            let mut analyzer = ResetUiEventHandlersAnalyzer::<E> {
+                entry_of: EntryOf::Retry,
+                use_address: func.use_address,
+                result: &mut result,
+                stores: FxHashMap::with_capacity_and_hasher(0x20, Default::default()),
+                ctx,
+            };
+            analysis.analyze(&mut analyzer);
+            analyzer.finish();
+            analyzer.entry_of
+        }).into_option_with_entry().map(|x| x.0);
+        if let Some(addr) = val {
+            result.reset_ui_event_handlers = Some(addr);
+            break;
+        }
+    }
+
+    result
+}
+
+struct ResetUiEventHandlersAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    entry_of: EntryOf<()>,
+    use_address: E::VirtualAddress,
+    result: &'a mut UiEventHandlers<'e, E::VirtualAddress>,
+    // Base, offset -> value
+    stores: FxHashMap<(scarf::operand::OperandHashByAddress<'e>, u64), E::VirtualAddress>,
+    ctx: OperandCtx<'e>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    ResetUiEventHandlersAnalyzer<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if ctrl.address() <= self.use_address &&
+            ctrl.current_instruction_end() > self.use_address
+        {
+            self.entry_of = EntryOf::Stop;
+        }
+        match *op {
+            Operation::Move(DestOperand::Memory(mem), val, None)
+                if mem.size == E::WORD_SIZE =>
+            {
+                // Search for stores to
+                // global_event_handlers[0] = func1
+                // global_event_handlers[1] = (not set)
+                // global_event_handlers[2] = func2
+                // global_event_handlers[3] = 0
+                // ..
+                // global_event_handlers[0x11] = scroll_handler
+                // global_event_handlers[0x12] = scroll_handler
+                let val = ctrl.resolve(val);
+                if let Some(c) = val.if_constant() {
+                    let val = E::VirtualAddress::from_u64(c);
+                    let address = ctrl.resolve(mem.address);
+                    if !address.contains_undefined() {
+                        let (base, offset) = Operand::const_offset(address, self.ctx)
+                            .unwrap_or_else(|| (address, 0));
+                        self.stores.insert((base.hash_by_address(), offset), val);
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> ResetUiEventHandlersAnalyzer<'a, 'e, E> {
+    fn finish(&mut self) {
+        'outer: for (&(base, offset), _) in &self.stores {
+            let mut val_11 = E::VirtualAddress::from_u64(0);
+            for i in 0..0x13 {
+                if matches!(i, 1 | 5 | 8 | 9 | 0xc | 0xe | 0x10) {
+                    // These indices aren't set by this func
+                    // (Though at least idx 1 gets set by a func that is called)
+                    continue;
+                }
+                let val = match self.stores.get(&(base, offset.wrapping_add(4 * i))) {
+                    Some(&s) => s,
+                    None => continue 'outer,
+                };
+                if i == 3 && val != E::VirtualAddress::from_u64(0) {
+                    continue 'outer;
+                }
+                if i != 3 && val == E::VirtualAddress::from_u64(0) {
+                    continue 'outer;
+                }
+                if i == 0x11 {
+                    val_11 = val;
+                }
+                if i == 0x12 && val_11 != val {
+                    continue 'outer;
+                }
+            }
+            let addr = self.ctx.add_const(base.0, offset);
+            self.result.global_event_handlers = Some(addr);
+            self.result.default_scroll_handler = Some(val_11);
+            self.entry_of = EntryOf::Ok(());
+            return;
         }
     }
 }

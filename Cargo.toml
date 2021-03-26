@@ -10,7 +10,6 @@ required-features = ["binaries"]
 
 [profile.dev]
 lto = "no"
-codegen-units = 4
 opt-level = 2 # Does not worsen compilation times but halves runtime on scarf
 # Disabled for faster builds
 debug = 0

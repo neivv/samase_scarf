@@ -1219,13 +1219,16 @@ fn everything_1238a() {
 
 #[test]
 fn everything_1238b() {
-    test_with_extra_checks(Path::new("1238b.exe"), |_ctx, analysis| {
+    test_with_extra_checks(Path::new("1238b.exe"), |ctx, analysis| {
         let fastfail = analysis.crt_fastfail();
         assert!(fastfail.iter().any(|x| x.0 == 0xcca86f));
         assert!(fastfail.iter().any(|x| x.0 == 0xcca974));
         assert!(fastfail.iter().any(|x| x.0 == 0xccbb25));
         assert!(fastfail.iter().any(|x| x.0 == 0xcd749d));
         assert!(fastfail.iter().any(|x| x.0 == 0xcd8408));
+        assert_eq!(analysis.reset_ui_event_handlers().unwrap().0, 0x006D8910);
+        assert_eq!(analysis.ui_default_scroll_handler().unwrap().0, 0x006D8880);
+        assert_eq!(analysis.global_event_handlers().unwrap(), ctx.constant(0x011D0A60));
     })
 }
 
@@ -1291,7 +1294,7 @@ fn test_nongeneric<'e>(
             LocalPlayerName | FirstGuardAi | PlayerAiTowns | PlayerAi | Campaigns | Fonts |
                 UnitStrength | WireframDdsgrp | ChkInitPlayers | OriginalChkPlayerTypes |
                 AiTransportReachabilityCachedRegion | SpriteHlines | SpriteHlinesEnd |
-                AiRegions | GraphicLayers | Selections =>
+                AiRegions | GraphicLayers | Selections | GlobalEventHandlers =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }
