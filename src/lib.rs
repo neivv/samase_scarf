@@ -58,7 +58,7 @@ use byteorder::{ReadBytesExt, LE};
 
 use scarf::{BinaryFile, Operand, Rva};
 use scarf::analysis::{self, Control, FuncCallPair, RelocValues};
-use scarf::operand::{MemAccessSize, OperandCtx};
+use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 
 pub use scarf;
 pub use scarf::{BinarySection, VirtualAddress};
@@ -242,6 +242,7 @@ results! {
         DoNextQueuedOrder => "do_next_queued_order",
         ResetUiEventHandlers => "reset_ui_event_handlers",
         UiDefaultScrollHandler => "ui_default_scroll_handler",
+        ClampZoom => "clamp_zoom",
     }
 }
 
@@ -671,6 +672,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             DoNextQueuedOrder => self.do_next_queued_order(),
             ResetUiEventHandlers => self.reset_ui_event_handlers(),
             UiDefaultScrollHandler => self.ui_default_scroll_handler(),
+            ClampZoom => self.clamp_zoom(),
         }
     }
 
@@ -1563,6 +1565,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             OperandAnalysis::GlobalEventHandlers,
             AnalysisCache::cache_ui_event_handlers,
         )
+    }
+
+    pub fn clamp_zoom(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x, s| x.clamp_zoom(s))
     }
 
     /// Mainly for tests/dump
@@ -3344,6 +3350,21 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
                 ))
             });
     }
+
+    fn ui_default_scroll_handler(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::UiDefaultScrollHandler,
+            |s| s.cache_ui_event_handlers(actx),
+        )
+    }
+
+    fn clamp_zoom(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_single_address(AddressAnalysis::ClampZoom, |s| {
+            let scroll_handler = s.ui_default_scroll_handler(actx)?;
+            let is_multiplayer = s.is_multiplayer(actx)?;
+            dialog::clamp_zoom(actx, scroll_handler, is_multiplayer)
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -4055,6 +4076,10 @@ impl<'e> AnalysisX86<'e> {
     pub fn global_event_handlers(&mut self) -> Option<Operand<'e>> {
         self.0.global_event_handlers()
     }
+
+    pub fn clamp_zoom(&mut self) -> Option<VirtualAddress> {
+        self.0.clamp_zoom()
+    }
 }
 
 pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
@@ -4496,6 +4521,7 @@ trait OperandExt<'e> {
     fn if_arithmetic_lsh_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_rsh_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_gt_const(self, offset: u64) -> Option<Operand<'e>>;
+    fn if_arithmetic_float(self, ty: ArithOpType) -> Option<(Operand<'e>, Operand<'e>)>;
 }
 
 impl<'e> OperandExt<'e> for Operand<'e> {
@@ -4576,6 +4602,14 @@ impl<'e> OperandExt<'e> for Operand<'e> {
             None
         } else {
             Some(l)
+        }
+    }
+
+    fn if_arithmetic_float(self, ty: ArithOpType) -> Option<(Operand<'e>, Operand<'e>)> {
+        match self.ty() {
+            scarf::operand::OperandType::ArithmeticFloat(arith, _size)
+                if arith.ty == ty => Some((arith.left, arith.right)),
+            _ => None,
         }
     }
 }

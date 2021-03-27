@@ -5,12 +5,12 @@ use std::convert::TryInto;
 
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::operand::{MemAccess, MemAccessSize};
+use scarf::operand::{ArithOpType, MemAccess, MemAccessSize};
 use scarf::{BinaryFile, DestOperand, Operation, Operand, OperandCtx};
 
 use crate::{
-    AnalysisCtx, ArgCache, EntryOf, OperandExt, single_result_assign, StringRefs, FunctionFinder,
-    bumpvec_with_capacity,
+    AnalysisCtx, ArgCache, ControlExt, EntryOf, OperandExt, OptionExt, single_result_assign,
+    StringRefs, FunctionFinder, bumpvec_with_capacity, if_arithmetic_eq_neq,
 };
 
 #[derive(Clone)]
@@ -1623,6 +1623,84 @@ impl<'a, 'e, E: ExecutionState<'e>> ResetUiEventHandlersAnalyzer<'a, 'e, E> {
             self.result.default_scroll_handler = Some(val_11);
             self.entry_of = EntryOf::Ok(());
             return;
+        }
+    }
+}
+
+pub(crate) fn clamp_zoom<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    scroll_handler: E::VirtualAddress,
+    is_multiplayer: Operand<'e>,
+) -> Option<E::VirtualAddress> {
+    // ui_default_scroll_handler calls into scroll_zoom(-0.1f32),
+    // which calls into clamp_zoom((a1 + val1) * val2),
+    // which jumps based on is_multiplayer
+
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, scroll_handler);
+    let mut analyzer = FindClampZoom::<E> {
+        inline_depth: 0,
+        is_multiplayer,
+        arg_cache: &actx.arg_cache,
+        result: None,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct FindClampZoom<'a, 'e, E: ExecutionState<'e>> {
+    inline_depth: u8,
+    arg_cache: &'a ArgCache<'e, E>,
+    is_multiplayer: Operand<'e>,
+    result: Option<E::VirtualAddress>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindClampZoom<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.inline_depth < 2 {
+            if let Operation::Call(dest) = *op {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    // 0xbdcc_cccd == -0.1 f32
+                    let ok = if self.inline_depth == 0 {
+                        arg1.if_constant() == Some(0xbdcc_cccd)
+                    } else {
+                        arg1.if_arithmetic_float(ArithOpType::Mul)
+                            .and_either(|x| x.if_arithmetic_float(ArithOpType::Add))
+                            .map(|x| x.0)
+                            .and_either(|x| x.if_constant().filter(|&c| c == 0xbdcc_cccd))
+                            .is_some()
+                    };
+
+                    if ok {
+                        self.inline_depth += 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth -= 1;
+                        if self.result.is_some() {
+                            if self.inline_depth == 1 {
+                                self.result = Some(dest);
+                            }
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+        } else {
+            if let Operation::Jump { condition, .. } = *op {
+                let condition = ctrl.resolve(condition);
+                let ok = if_arithmetic_eq_neq(condition)
+                    .map(|x| (x.0, x.1))
+                    .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
+                    .filter(|&x| x == self.is_multiplayer)
+                    .is_some();
+                if ok {
+                    self.result = Some(E::VirtualAddress::from_u64(0));
+                    ctrl.end_analysis();
+                }
+            }
         }
     }
 }
