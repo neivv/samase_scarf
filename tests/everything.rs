@@ -1230,6 +1230,7 @@ fn everything_1238b() {
         assert_eq!(analysis.ui_default_scroll_handler().unwrap().0, 0x006D8880);
         assert_eq!(analysis.global_event_handlers().unwrap(), ctx.constant(0x011D0A60));
         assert_eq!(analysis.clamp_zoom().unwrap().0, 0x00614c40);
+        assert_eq!(analysis.draw_minimap_units().unwrap().0, 0x0073D160);
     })
 }
 

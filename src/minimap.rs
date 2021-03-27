@@ -12,7 +12,7 @@ pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
     first_fow_sprite: Operand<'e>,
     is_replay: Operand<'e>,
     functions: &FunctionFinder<'_, 'e, E>,
-) -> Option<Patch<E::VirtualAddress>> {
+) -> (Option<Patch<E::VirtualAddress>>, Option<E::VirtualAddress>) {
     // The relevant code is something like
     //
     // for fow in fow_sprites() {
@@ -34,7 +34,11 @@ pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
     let first_fow_addr = first_fow_sprite
         .if_memory()
         .and_then(|x| x.address.if_constant())
-        .map(|x| E::VirtualAddress::from_u64(x))?;
+        .map(|x| E::VirtualAddress::from_u64(x));
+    let first_fow_addr = match first_fow_addr {
+        Some(s) => s,
+        None => return (None, None),
+    };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let bump = &analysis.bump;
@@ -47,10 +51,11 @@ pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
             .map(|x| x.use_address)
     );
     let mut result = None;
+    let mut draw_minimap_units = None;
     let mut i = 0;
     while i < first_fow_uses.len() {
         let use_address = first_fow_uses[i];
-        entry_of_until(binary, funcs, use_address, |entry| {
+        let entry = entry_of_until(binary, funcs, use_address, |entry| {
             let mut analyzer = ReplayFowAnalyzer::<E> {
                 result: &mut result,
                 entry_of: EntryOf::Retry,
@@ -67,13 +72,14 @@ pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
                 first_fow_uses.extend(functions.find_callers(analysis, entry));
             }
             analyzer.entry_of
-        });
+        }).into_option_with_entry().map(|x| x.0);
         if result.is_some() {
+            draw_minimap_units = entry;
             break;
         }
         i += 1;
     }
-    result
+    (result, draw_minimap_units)
 }
 
 struct ReplayFowAnalyzer<'a, 'e, E: ExecutionState<'e>> {
@@ -154,6 +160,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayFowAnalyzer<'a
                             } else {
                                 warn!("Can't patch {:?}", address);
                             }
+                            self.entry_of = EntryOf::Ok(());
                             ctrl.end_analysis();
                         }
                     } else {

@@ -243,6 +243,7 @@ results! {
         ResetUiEventHandlers => "reset_ui_event_handlers",
         UiDefaultScrollHandler => "ui_default_scroll_handler",
         ClampZoom => "clamp_zoom",
+        DrawMinimapUnits => "draw_minimap_units",
     }
 }
 
@@ -673,6 +674,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ResetUiEventHandlers => self.reset_ui_event_handlers(),
             UiDefaultScrollHandler => self.ui_default_scroll_handler(),
             ClampZoom => self.clamp_zoom(),
+            DrawMinimapUnits => self.draw_minimap_units(),
         }
     }
 
@@ -1519,6 +1521,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         &mut self,
     ) -> Option<Rc<Patch<E::VirtualAddress>>> {
         self.enter(|x, s| x.replay_minimap_unexplored_fog_patch(s))
+    }
+
+    pub fn draw_minimap_units(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x, s| x.draw_minimap_units(s))
     }
 
     pub fn step_replay_commands(&mut self) -> Option<E::VirtualAddress> {
@@ -3283,10 +3289,24 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             let first_fow_sprite = self.first_fow_sprite(actx)?;
             let is_replay = self.is_replay(actx)?;
             let funcs = self.function_finder();
-            minimap::unexplored_fog_minimap_patch(actx, first_fow_sprite, is_replay, &funcs)
-        }).map(|x| Rc::new(x));
-        self.replay_minimap_unexplored_fog_patch.cache(&result);
-        result
+            Some(minimap::unexplored_fog_minimap_patch(actx, first_fow_sprite, is_replay, &funcs))
+        });
+        let (patch, draw_minimap_units) = match result {
+            Some(s) => (s.0.map(Rc::new), s.1),
+            None => (None, None),
+        };
+        self.replay_minimap_unexplored_fog_patch.cache(&patch);
+        self.cache_single_address(AddressAnalysis::DrawMinimapUnits, |_| draw_minimap_units);
+        patch
+    }
+
+    fn draw_minimap_units(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        if self.address_results[AddressAnalysis::DrawMinimapUnits as usize] ==
+            E::VirtualAddress::from_u64(0)
+        {
+            self.replay_minimap_unexplored_fog_patch(actx);
+        }
+        self.cache_single_address(AddressAnalysis::DrawMinimapUnits, |_| None)
     }
 
     fn step_replay_commands(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -4039,6 +4059,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn replay_minimap_unexplored_fog_patch(&mut self) -> Option<Rc<Patch<VirtualAddress>>> {
         self.0.replay_minimap_unexplored_fog_patch()
+    }
+
+    pub fn draw_minimap_units(&mut self) -> Option<VirtualAddress> {
+        self.0.draw_minimap_units()
     }
 
     pub fn step_replay_commands(&mut self) -> Option<VirtualAddress> {
