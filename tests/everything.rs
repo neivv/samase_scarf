@@ -453,6 +453,13 @@ fn everything_1221b() {
         assert_eq!(analysis.ai_spend_money().unwrap().0, 0x005F3E70);
         assert_eq!(analysis.ai_train_military().unwrap().0, 0x0060FD80);
         assert_eq!(analysis.ai_add_military_to_region().unwrap().0, 0x0060e530);
+
+        assert_eq!(analysis.first_player_unit().unwrap(), ctx.constant(0xE6C824));
+        assert_eq!(analysis.replay_visions().unwrap(), ctx.mem8(ctx.constant(0x10660C0)));
+        assert_eq!(
+            analysis.replay_show_entire_map().unwrap(),
+            ctx.mem32(ctx.constant(0x10660C4)),
+        );
     })
 }
 
@@ -1231,6 +1238,12 @@ fn everything_1238b() {
         assert_eq!(analysis.global_event_handlers().unwrap(), ctx.constant(0x011D0A60));
         assert_eq!(analysis.clamp_zoom().unwrap().0, 0x00614c40);
         assert_eq!(analysis.draw_minimap_units().unwrap().0, 0x0073D160);
+        assert_eq!(analysis.first_player_unit().unwrap(), ctx.constant(0xffd218));
+        assert_eq!(analysis.replay_visions().unwrap(), ctx.mem8(ctx.constant(0x11fe330)));
+        assert_eq!(
+            analysis.replay_show_entire_map().unwrap(),
+            ctx.mem32(ctx.constant(0x11fe334)),
+        );
     })
 }
 
@@ -1289,14 +1302,15 @@ fn test_nongeneric<'e>(
                 Zoom | FirstFowSprite | LastFowSprite | FirstFreeFowSprite | LastFreeFowSprite |
                 FirstActiveUnit | FirstHiddenUnit | MapTileFlags | TooltipDrawFunc |
                 CurrentTooltipCtrl | IsMultiplayer | FirstFreeBullet | LastFreeBullet |
-                FirstActiveBullet | LastActiveBullet | ActiveIscriptUnit | UniqueCommandUser =>
+                FirstActiveBullet | LastActiveBullet | ActiveIscriptUnit | UniqueCommandUser |
+                ReplayVisions | ReplayShowEntireMap =>
             {
                 check_global_opt(result, binary, op.name());
             }
             LocalPlayerName | FirstGuardAi | PlayerAiTowns | PlayerAi | Campaigns | Fonts |
                 UnitStrength | WireframDdsgrp | ChkInitPlayers | OriginalChkPlayerTypes |
                 AiTransportReachabilityCachedRegion | SpriteHlines | SpriteHlinesEnd |
-                AiRegions | GraphicLayers | Selections | GlobalEventHandlers =>
+                AiRegions | GraphicLayers | Selections | GlobalEventHandlers | FirstPlayerUnit =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }

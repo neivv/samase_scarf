@@ -310,6 +310,9 @@ results! {
         UniqueCommandUser => "unique_command_user",
         Selections => "selections",
         GlobalEventHandlers => "global_event_handlers",
+        ReplayVisions => "replay_visions",
+        ReplayShowEntireMap => "replay_show_entire_map",
+        FirstPlayerUnit => "first_player_unit",
     }
 }
 
@@ -742,6 +745,9 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             UniqueCommandUser => self.unique_command_user(),
             Selections => self.selections(),
             GlobalEventHandlers => self.global_event_handlers(),
+            ReplayVisions => self.replay_visions(),
+            ReplayShowEntireMap => self.replay_show_entire_map(),
+            FirstPlayerUnit => self.first_player_unit(),
         }
     }
 
@@ -1570,6 +1576,27 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.analyze_many_op(
             OperandAnalysis::GlobalEventHandlers,
             AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn replay_visions(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ReplayVisions,
+            AnalysisCache::cache_replay_visions,
+        )
+    }
+
+    pub fn replay_show_entire_map(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ReplayShowEntireMap,
+            AnalysisCache::cache_replay_visions,
+        )
+    }
+
+    pub fn first_player_unit(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FirstPlayerUnit,
+            AnalysisCache::cache_replay_visions,
         )
     }
 
@@ -3385,6 +3412,18 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             dialog::clamp_zoom(actx, scroll_handler, is_multiplayer)
         })
     }
+
+    fn cache_replay_visions(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(&[], &[ReplayVisions, ReplayShowEntireMap, FirstPlayerUnit], |s| {
+            let draw_minimap_units = s.draw_minimap_units(actx)?;
+            let is_replay = s.is_replay(actx)?;
+            let result = minimap::replay_visions(actx, draw_minimap_units, is_replay);
+            Some(([], [
+                result.replay_visions, result.replay_show_entire_map, result.first_player_unit,
+            ]))
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -4103,6 +4142,18 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn clamp_zoom(&mut self) -> Option<VirtualAddress> {
         self.0.clamp_zoom()
+    }
+
+    pub fn replay_visions(&mut self) -> Option<Operand<'e>> {
+        self.0.replay_visions()
+    }
+
+    pub fn replay_show_entire_map(&mut self) -> Option<Operand<'e>> {
+        self.0.replay_show_entire_map()
+    }
+
+    pub fn first_player_unit(&mut self) -> Option<Operand<'e>> {
+        self.0.first_player_unit()
     }
 }
 
