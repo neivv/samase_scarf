@@ -63,7 +63,6 @@ use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 pub use scarf;
 pub use scarf::{BinarySection, VirtualAddress};
 pub use crate::ai::AiScriptHook;
-pub use crate::clientside::{GameScreenRClick, MiscClientSide};
 pub use crate::commands::{ProcessCommands, StepNetwork};
 pub use crate::dat::{
     DatTablePtr, DatPatch, DatPatches, DatArrayPatch, DatEntryCountPatch, DatReplaceFunc
@@ -72,14 +71,13 @@ pub use crate::dialog::{MouseXy, TooltipRelated};
 pub use crate::eud::{Eud, EudTable};
 pub use crate::firegraft::RequirementTables;
 pub use crate::game::{Limits};
-pub use crate::game_init::{GameInit, ImagesLoaded, SinglePlayerStart};
+pub use crate::game_init::{ImagesLoaded};
 pub use crate::iscript::StepIscript;
-pub use crate::map::MapTileFlags;
-pub use crate::network::{InitStormNetworking, SnpDefinitions};
+pub use crate::network::{SnpDefinitions};
 pub use crate::players::NetPlayers;
 pub use crate::renderer::{PrismShaders};
 pub use crate::step_order::{SecondaryOrderHook, StepOrderHiddenHook};
-pub use crate::units::{InitUnits, OrderIssuing};
+pub use crate::units::{OrderIssuing};
 
 use crate::dialog::{MultiWireframes};
 use crate::game_init::{InitMapFromPath};
@@ -244,6 +242,16 @@ results! {
         UiDefaultScrollHandler => "ui_default_scroll_handler",
         ClampZoom => "clamp_zoom",
         DrawMinimapUnits => "draw_minimap_units",
+        InitNetPlayer => "init_net_player",
+        ScMain => "sc_main",
+        MainMenuEntryHook => "mainmenu_entry_hook",
+        GameLoop => "game_loop",
+        SinglePlayerStart => "single_player_start",
+        InitUnits => "init_units",
+        LoadDat => "load_dat",
+        GameScreenRClick => "game_screen_rclick",
+        InitStormNetworking => "init_storm_networking",
+        LoadSnpList => "load_snp_list",
     }
 }
 
@@ -313,6 +321,19 @@ results! {
         ReplayVisions => "replay_visions",
         ReplayShowEntireMap => "replay_show_entire_map",
         FirstPlayerUnit => "first_player_unit",
+        NetPlayers => "net_players",
+        ScMainState => "scmain_state",
+        LocalStormPlayerId => "local_storm_player_id",
+        LocalUniquePlayerId => "local_unique_player_id",
+        NetPlayerToGame => "net_player_to_game",
+        NetPlayerToUnique => "net_player_to_unique",
+        GameData => "game_data",
+        Skins => "skins",
+        PlayerSkins => "player_skins",
+        IsPaused => "is_paused",
+        IsPlacingBuilding => "is_placing_building",
+        IsTargeting => "is_targeting",
+        ClientSelection => "client_selection",
     }
 }
 
@@ -336,24 +357,19 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     command_lengths: Cached<Rc<Vec<u32>>>,
     process_lobby_commands: Cached<Option<(CompleteSwitch<E::VirtualAddress>, E::VirtualAddress)>>,
     step_order_hidden: Cached<Rc<Vec<StepOrderHiddenHook<'e, E::VirtualAddress>>>>,
-    init_units: Cached<InitUnits<E::VirtualAddress>>,
     step_secondary_order: Cached<Rc<Vec<SecondaryOrderHook<'e, E::VirtualAddress>>>>,
-    game_screen_rclick: Cached<Rc<GameScreenRClick<'e, E::VirtualAddress>>>,
     step_iscript: Cached<Rc<StepIscript<'e, E::VirtualAddress>>>,
     sprite_x_position: Option<(Operand<'e>, u32, MemAccessSize)>,
     sprite_y_position: Option<(Operand<'e>, u32, MemAccessSize)>,
     eud: Cached<Rc<EudTable<'e>>>,
     renderer_vtables: Cached<Rc<Vec<E::VirtualAddress>>>,
-    net_players: Cached<Rc<NetPlayers<'e, E::VirtualAddress>>>,
-    game_init: Cached<Rc<GameInit<'e, E::VirtualAddress>>>,
     init_map_from_path: Cached<Option<InitMapFromPath<E::VirtualAddress>>>,
-    single_player_start: Cached<Rc<SinglePlayerStart<'e, E::VirtualAddress>>>,
     images_loaded: Cached<ImagesLoaded<'e, E::VirtualAddress>>,
     step_network: Cached<Rc<StepNetwork<'e, E::VirtualAddress>>>,
     snp_definitions: Cached<Option<SnpDefinitions<'e>>>,
-    init_storm_networking: Cached<Rc<InitStormNetworking<E::VirtualAddress>>>,
-    misc_clientside: Cached<Rc<MiscClientSide<'e>>>,
-    sprite_struct_size: u32,
+    sprite_struct_size: u16,
+    net_player_size: u16,
+    skins_size: u16,
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
     create_game_dialog_vtbl_on_multiplayer_create: Cached<Option<usize>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
@@ -560,23 +576,18 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 process_lobby_commands: Default::default(),
                 step_order_hidden: Default::default(),
                 step_secondary_order: Default::default(),
-                init_units: Default::default(),
-                game_screen_rclick: Default::default(),
                 step_iscript: Default::default(),
                 sprite_x_position: Default::default(),
                 sprite_y_position: Default::default(),
                 eud: Default::default(),
                 renderer_vtables: Default::default(),
-                net_players: Default::default(),
-                game_init: Default::default(),
                 init_map_from_path: Default::default(),
-                single_player_start: Default::default(),
                 images_loaded: Default::default(),
                 step_network: Default::default(),
                 snp_definitions: Default::default(),
-                init_storm_networking: Default::default(),
-                misc_clientside: Default::default(),
                 sprite_struct_size: 0,
+                net_player_size: 0,
+                skins_size: 0,
                 limits: Default::default(),
                 create_game_dialog_vtbl_on_multiplayer_create: Default::default(),
                 prism_shaders: Default::default(),
@@ -678,6 +689,16 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             UiDefaultScrollHandler => self.ui_default_scroll_handler(),
             ClampZoom => self.clamp_zoom(),
             DrawMinimapUnits => self.draw_minimap_units(),
+            InitNetPlayer => self.init_net_player(),
+            ScMain => self.sc_main(),
+            MainMenuEntryHook => self.mainmenu_entry_hook(),
+            GameLoop => self.game_loop(),
+            SinglePlayerStart => self.single_player_start(),
+            InitUnits => self.init_units(),
+            LoadDat => self.load_dat(),
+            GameScreenRClick => self.game_screen_rclick(),
+            InitStormNetworking => self.init_storm_networking(),
+            LoadSnpList => self.load_snp_list(),
         }
     }
 
@@ -748,6 +769,19 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ReplayVisions => self.replay_visions(),
             ReplayShowEntireMap => self.replay_show_entire_map(),
             FirstPlayerUnit => self.first_player_unit(),
+            NetPlayers => self.net_players().map(|x| x.0),
+            ScMainState => self.scmain_state(),
+            LocalStormPlayerId => self.local_storm_player_id(),
+            LocalUniquePlayerId => self.local_unique_player_id(),
+            NetPlayerToGame => self.net_player_to_game(),
+            NetPlayerToUnique => self.net_player_to_unique(),
+            GameData => self.game_data(),
+            Skins => self.skins(),
+            PlayerSkins => self.player_skins(),
+            IsPaused => self.is_paused(),
+            IsPlacingBuilding => self.is_placing_building(),
+            IsTargeting => self.is_targeting(),
+            ClientSelection => self.client_selection(),
         }
     }
 
@@ -915,16 +949,83 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.vtables_for_class(name, s))
     }
 
-    pub fn single_player_start(&mut self) -> Rc<SinglePlayerStart<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.single_player_start(s))
+    pub fn single_player_start(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::SinglePlayerStart,
+            AnalysisCache::cache_single_player_start,
+        )
+    }
+
+    pub fn local_storm_player_id(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::LocalStormPlayerId,
+            AnalysisCache::cache_single_player_start,
+        )
+    }
+
+    pub fn local_unique_player_id(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::LocalUniquePlayerId,
+            AnalysisCache::cache_single_player_start,
+        )
+    }
+
+    pub fn net_player_to_game(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::NetPlayerToGame,
+            AnalysisCache::cache_single_player_start,
+        )
+    }
+
+    pub fn net_player_to_unique(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::NetPlayerToUnique,
+            AnalysisCache::cache_single_player_start,
+        )
+    }
+
+    pub fn game_data(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::GameData,
+            AnalysisCache::cache_single_player_start,
+        )
+    }
+
+    pub fn skins(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::Skins,
+            AnalysisCache::cache_single_player_start,
+        )
+    }
+
+    pub fn player_skins(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::PlayerSkins,
+            AnalysisCache::cache_single_player_start,
+        )
+    }
+
+    pub fn skins_size(&mut self) -> Option<u32> {
+        self.player_skins()
+            .map(|_| self.cache.skins_size as u32)
     }
 
     pub fn local_player_id(&mut self) -> Option<Operand<'e>> {
         self.enter(|x, s| x.local_player_id(s))
     }
 
-    pub fn game_screen_rclick(&mut self) -> Rc<GameScreenRClick<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.game_screen_rclick(s))
+    pub fn game_screen_rclick(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::GameScreenRClick,
+            AnalysisCache::cache_game_screen_rclick,
+        )
+    }
+
+    pub fn client_selection(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ClientSelection,
+            AnalysisCache::cache_game_screen_rclick,
+        )
     }
 
     pub fn select_map_entry(&mut self) -> Option<E::VirtualAddress> {
@@ -973,8 +1074,18 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.lobby_state(s))
     }
 
-    pub fn init_storm_networking(&mut self) -> Rc<InitStormNetworking<E::VirtualAddress>> {
-        self.enter(|x, s| x.init_storm_networking(s))
+    pub fn init_storm_networking(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::InitStormNetworking,
+            AnalysisCache::cache_init_storm_networking,
+        )
+    }
+
+    pub fn load_snp_list(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::LoadSnpList,
+            AnalysisCache::cache_init_storm_networking,
+        )
     }
 
     pub fn step_order(&mut self) -> Option<E::VirtualAddress> {
@@ -1009,20 +1120,43 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.play_smk(s))
     }
 
-    pub fn game_init(&mut self) -> Rc<GameInit<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.game_init(s))
+    pub fn sc_main(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::ScMain, AnalysisCache::cache_game_init)
     }
 
-    pub fn misc_clientside(&mut self) -> Rc<MiscClientSide<'e>> {
-        self.enter(|x, s| x.misc_clientside(s))
+    pub fn mainmenu_entry_hook(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::MainMenuEntryHook, AnalysisCache::cache_game_init)
+    }
+
+    pub fn game_loop(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::GameLoop, AnalysisCache::cache_game_init)
+    }
+
+    pub fn scmain_state(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::ScMainState, AnalysisCache::cache_game_init)
+    }
+
+    pub fn is_paused(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::IsPaused, AnalysisCache::cache_misc_clientside)
+    }
+
+    pub fn is_placing_building(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::IsPlacingBuilding,
+            AnalysisCache::cache_misc_clientside,
+        )
+    }
+
+    pub fn is_targeting(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::IsTargeting, AnalysisCache::cache_misc_clientside)
     }
 
     pub fn init_units(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.init_units_related(s).init_units)
+        self.analyze_many_addr(AddressAnalysis::InitUnits, AnalysisCache::cache_init_units)
     }
 
     pub fn load_dat(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.load_dat(s))
+        self.analyze_many_addr(AddressAnalysis::LoadDat, AnalysisCache::cache_init_units)
     }
 
     pub fn units(&mut self) -> Option<Operand<'e>> {
@@ -1164,8 +1298,18 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         )
     }
 
-    pub fn net_players(&mut self) -> Rc<NetPlayers<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.net_players(s))
+    pub fn net_players(&mut self) -> Option<(Operand<'e>, u32)> {
+        self.analyze_many_op(
+            OperandAnalysis::NetPlayers,
+            AnalysisCache::cache_net_players,
+        ).map(|x| (x, self.cache.net_player_size.into()))
+    }
+
+    pub fn init_net_player(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::InitNetPlayer,
+            AnalysisCache::cache_net_players,
+        )
     }
 
     pub fn campaigns(&mut self) -> Option<Operand<'e>> {
@@ -1244,7 +1388,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn sprite_array(&mut self) -> Option<(Operand<'e>, u32)> {
         self.analyze_many_op(OperandAnalysis::Sprites, AnalysisCache::cache_init_sprites)
-            .map(|x| (x, self.cache.sprite_struct_size))
+            .map(|x| (x, self.cache.sprite_struct_size.into()))
     }
 
     pub fn serialize_sprites(&mut self) -> Option<E::VirtualAddress> {
@@ -2247,57 +2391,67 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         vtables
     }
 
-    fn single_player_start(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<SinglePlayerStart<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.single_player_start.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let choose_snp = self.choose_snp(actx)?;
-            let local_player_id = self.local_player_id(actx)?;
-            let functions = self.function_finder();
-            Some(game_init::single_player_start(actx, &functions, choose_snp, local_player_id))
-        }).unwrap_or_else(|| SinglePlayerStart::default());
-        let result = Rc::new(result);
-        self.single_player_start.cache(&result);
-        result
+    fn cache_single_player_start(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[SinglePlayerStart], &[
+            LocalStormPlayerId, LocalUniquePlayerId, NetPlayerToGame, NetPlayerToUnique,
+            GameData, Skins, PlayerSkins,
+        ], |s| {
+            let choose_snp = s.choose_snp(actx)?;
+            let local_player_id = s.local_player_id(actx)?;
+            let functions = s.function_finder();
+            let result =
+                game_init::single_player_start(actx, &functions, choose_snp, local_player_id);
+            s.skins_size = result.skins_size as u16;
+            Some(([result.single_player_start], [result.local_storm_player_id,
+                result.local_unique_player_id, result.net_player_to_game,
+                result.net_player_to_unique, result.game_data, result.skins,
+                result.player_skins]))
+        })
+    }
+
+    fn single_player_start(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::SinglePlayerStart,
+            |s| s.cache_single_player_start(actx),
+        )
+    }
+
+    fn local_storm_player_id(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(
+            OperandAnalysis::LocalStormPlayerId,
+            |s| s.cache_single_player_start(actx),
+        )
     }
 
     fn local_player_id(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::LocalPlayerId, |s| {
-            players::local_player_id(actx, s.game_screen_rclick(actx).game_screen_rclick?)
+            players::local_player_id(actx, s.game_screen_rclick(actx)?)
         })
     }
 
-    fn game_screen_rclick(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<GameScreenRClick<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.game_screen_rclick.cached() {
-            return cached;
-        }
-
-        let result = Some(()).and_then(|()| {
-            let units_dat = self.dat_virtual_address(DatType::Units, actx)?;
-            let functions = self.function_finder();
-            Some(clientside::game_screen_rclick(actx, units_dat, &functions))
-        }).unwrap_or_else(|| {
-            GameScreenRClick {
-                game_screen_rclick: None,
-                client_selection: None,
-            }
+    fn cache_game_screen_rclick(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[GameScreenRClick], &[OperandAnalysis::ClientSelection], |s| {
+            let units_dat = s.dat_virtual_address(DatType::Units, actx)?;
+            let functions = s.function_finder();
+            let result = clientside::game_screen_rclick(actx, units_dat, &functions);
+            Some(([result.game_screen_rclick], [result.client_selection]))
         });
-        let result = Rc::new(result);
-        self.game_screen_rclick.cache(&result);
-        result
+    }
+
+    fn game_screen_rclick(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::GameScreenRClick,
+            |s| s.cache_game_screen_rclick(actx),
+        )
     }
 
     fn cache_select_map_entry(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(&[SelectMapEntry], &[OperandAnalysis::IsMultiplayer], |s| {
-            let single_player_start = s.single_player_start(actx).single_player_start?;
+            let single_player_start = s.single_player_start(actx)?;
             let functions = s.function_finder();
             let result = game_init::select_map_entry(actx, single_player_start, &functions);
             Some(([result.select_map_entry], [result.is_multiplayer]))
@@ -2383,7 +2537,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn init_game_network(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::InitGameNetwork, |s| {
-            let local_storm_player_id = s.single_player_start(actx).local_storm_player_id?;
+            let local_storm_player_id = s.local_storm_player_id(actx)?;
             let functions = s.function_finder();
             game_init::init_game_network(actx, local_storm_player_id, &functions)
         })
@@ -2405,17 +2559,12 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn init_storm_networking(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<InitStormNetworking<E::VirtualAddress>> {
-        if let Some(cached) = self.init_storm_networking.cached() {
-            return cached;
-        }
-        let result = network::init_storm_networking(actx, &self.function_finder());
-        let result = Rc::new(result);
-        self.init_storm_networking.cache(&result);
-        result
+    fn cache_init_storm_networking(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[InitStormNetworking, LoadSnpList], &[], |s| {
+            let result = network::init_storm_networking(actx, &s.function_finder());
+            Some(([result.init_storm_networking, result.load_snp_list], []))
+        })
     }
 
     fn step_order(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -2489,73 +2638,56 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn game_init(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<GameInit<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.game_init.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let play_smk = self.play_smk(actx)?;
-            let game = self.game(actx)?;
-            Some(game_init::game_init(actx, play_smk, game, &self.function_finder()))
-        }).unwrap_or_else(|| {
-            GameInit {
-                sc_main: None,
-                mainmenu_entry_hook: None,
-                game_loop: None,
-                scmain_state: None,
-            }
-        });
-        let result = Rc::new(result);
-        self.game_init.cache(&result);
-        result
+    fn cache_game_init(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[ScMain, MainMenuEntryHook, GameLoop], &[ScMainState], |s| {
+            let play_smk = s.play_smk(actx)?;
+            let game = s.game(actx)?;
+            let result = game_init::game_init(actx, play_smk, game, &s.function_finder());
+            Some((
+                [result.sc_main, result.mainmenu_entry_hook, result.game_loop],
+                [result.scmain_state],
+            ))
+        })
     }
 
-    fn misc_clientside(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<MiscClientSide<'e>> {
-        if let Some(cached) = self.misc_clientside.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let is_multiplayer = self.is_multiplayer(actx)?;
-            let scmain_state = self.game_init(actx).scmain_state?;
-            let funcs = self.function_finder();
-            Some(clientside::misc_clientside(actx, is_multiplayer, scmain_state, &funcs))
-        }).unwrap_or_else(|| {
-            MiscClientSide {
-                is_paused: None,
-                is_placing_building: None,
-                is_targeting: None,
-            }
-        });
-        let result = Rc::new(result);
-        self.misc_clientside.cache(&result);
-        result
+    fn game_loop(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::GameLoop, |s| s.cache_game_init(actx))
     }
 
-    fn init_units_related(&mut self, actx: &AnalysisCtx<'e, E>) -> InitUnits<E::VirtualAddress> {
-        if let Some(cached) = self.init_units.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let units_dat = self.dat_virtual_address(DatType::Units, actx)?;
-            let orders_dat = self.dat_virtual_address(DatType::Orders, actx)?;
-            let funcs = self.function_finder();
-            Some(units::init_units(actx, units_dat, orders_dat, &funcs))
-        }).unwrap_or_else(|| {
-            InitUnits {
-                init_units: None,
-                load_dat: None,
-            }
-        });
-        self.init_units.cache(&result);
-        result
+    fn scmain_state(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::ScMainState, |s| s.cache_game_init(actx))
+    }
+
+    fn cache_misc_clientside(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(&[], &[IsPaused, IsPlacingBuilding, IsTargeting], |s| {
+            let is_multiplayer = s.is_multiplayer(actx)?;
+            let scmain_state = s.scmain_state(actx)?;
+            let funcs = s.function_finder();
+            let result = clientside::misc_clientside(actx, is_multiplayer, scmain_state, &funcs);
+            Some(([], [result.is_paused, result.is_placing_building, result.is_targeting]))
+        })
+    }
+
+    fn cache_init_units(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[InitUnits, LoadDat], &[], |s| {
+            let units_dat = s.dat_virtual_address(DatType::Units, actx)?;
+            let orders_dat = s.dat_virtual_address(DatType::Orders, actx)?;
+            let funcs = s.function_finder();
+            let result = units::init_units(actx, units_dat, orders_dat, &funcs);
+            Some(([result.init_units, result.load_dat], []))
+        })
     }
 
     fn init_units(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.init_units_related(actx).init_units
+        self.cache_many_addr(AddressAnalysis::InitUnits, |s| s.cache_init_units(actx))
     }
 
     fn load_dat(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.init_units_related(actx).load_dat
+        self.cache_many_addr(AddressAnalysis::LoadDat, |s| s.cache_init_units(actx))
     }
 
     fn units(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
@@ -2684,25 +2816,13 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn net_players(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<NetPlayers<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.net_players.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let (switch, _) = self.process_lobby_commands_switch(actx)?;
-            Some(players::net_players(actx, &switch))
-        }).unwrap_or_else(|| {
-            NetPlayers {
-                net_players: None,
-                init_net_player: None,
-            }
-        });
-        let result = Rc::new(result);
-        self.net_players.cache(&result);
-        result
+    fn cache_net_players(&mut self, actx: &AnalysisCtx<'e, E>) {
+        self.cache_many(&[AddressAnalysis::InitNetPlayer], &[OperandAnalysis::NetPlayers], |s| {
+            let (switch, _) = s.process_lobby_commands_switch(actx)?;
+            let result = players::net_players(actx, &switch);
+            s.net_player_size = result.net_players.map(|x| x.1).unwrap_or(0) as u16;
+            Some(([result.init_net_player], [result.net_players.map(|x| x.0)]))
+        })
     }
 
     fn campaigns(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
@@ -2730,7 +2850,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn is_outside_game_screen(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::IsOutsideGameScreen, |s| {
-            let game_screen_rclick = s.game_screen_rclick(actx).game_screen_rclick?;
+            let game_screen_rclick = s.game_screen_rclick(actx)?;
             clientside::is_outside_game_screen(actx, game_screen_rclick)
         })
     }
@@ -2738,7 +2858,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn cache_coord_conversion(&mut self, actx: &AnalysisCtx<'e, E>) {
         use OperandAnalysis::*;
         self.cache_many(&[], &[ScreenX, ScreenY, Zoom], |s| {
-            let game_screen_rclick = s.game_screen_rclick(actx).game_screen_rclick?;
+            let game_screen_rclick = s.game_screen_rclick(actx)?;
             let is_outside_game_screen = s.is_outside_game_screen(actx)?;
             let result = clientside::game_coord_conversion(
                 actx,
@@ -2795,7 +2915,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             let last_free = s.last_free_sprite(actx)?;
             let functions = s.function_finder();
             let result = sprites::init_sprites(actx, first_free, last_free, &functions);
-            s.sprite_struct_size = result.sprites.map(|x| x.1).unwrap_or(0);
+            s.sprite_struct_size = result.sprites.map(|x| x.1 as u16).unwrap_or(0);
             Some(([result.init_sprites], [result.sprites.map(|x| x.0)]))
         })
     }
@@ -2806,7 +2926,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn sprite_array(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<(Operand<'e>, u32)> {
         self.cache_many_op(OperandAnalysis::Sprites, |s| s.cache_init_sprites(actx))
-            .map(|x| (x, self.sprite_struct_size))
+            .map(|x| (x, self.sprite_struct_size.into()))
     }
 
     fn cache_sprite_serialization(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -2834,7 +2954,8 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             return cached;
         }
         let result = Some(()).and_then(|()| {
-            Some(game::limits(actx, self.game_init(actx).game_loop?))
+            let game_loop = self.game_loop(actx)?;
+            Some(game::limits(actx, game_loop))
         }).unwrap_or_else(|| {
             Limits {
                 set_limits: None,
@@ -2963,7 +3084,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn join_game(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::JoinGame, |s| {
-            let local_storm_id = s.single_player_start(actx).local_storm_player_id?;
+            let local_storm_id = s.local_storm_player_id(actx)?;
             game_init::join_game(actx, local_storm_id, &s.function_finder())
         })
     }
@@ -3388,7 +3509,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             &[ResetUiEventHandlers, UiDefaultScrollHandler],
             &[GlobalEventHandlers],
             |s| {
-                let game_screen_rclick = s.game_screen_rclick(actx).game_screen_rclick?;
+                let game_screen_rclick = s.game_screen_rclick(actx)?;
                 let result =
                     dialog::ui_event_handlers(actx, game_screen_rclick, &s.function_finder());
                 Some((
@@ -3560,16 +3681,52 @@ impl<'e> AnalysisX86<'e> {
         self.0.vtables_for_class(name)
     }
 
-    pub fn single_player_start(&mut self) -> Rc<SinglePlayerStart<'e, VirtualAddress>> {
+    pub fn single_player_start(&mut self) -> Option<VirtualAddress> {
         self.0.single_player_start()
+    }
+
+    pub fn local_storm_player_id(&mut self) -> Option<Operand<'e>> {
+        self.0.local_storm_player_id()
+    }
+
+    pub fn local_unique_player_id(&mut self) -> Option<Operand<'e>> {
+        self.0.local_unique_player_id()
+    }
+
+    pub fn net_player_to_game(&mut self) -> Option<Operand<'e>> {
+        self.0.net_player_to_game()
+    }
+
+    pub fn net_player_to_unique(&mut self) -> Option<Operand<'e>> {
+        self.0.net_player_to_unique()
+    }
+
+    pub fn game_data(&mut self) -> Option<Operand<'e>> {
+        self.0.game_data()
+    }
+
+    pub fn skins(&mut self) -> Option<Operand<'e>> {
+        self.0.skins()
+    }
+
+    pub fn player_skins(&mut self) -> Option<Operand<'e>> {
+        self.0.player_skins()
+    }
+
+    pub fn skins_size(&mut self) -> Option<u32> {
+        self.0.skins_size()
     }
 
     pub fn local_player_id(&mut self) -> Option<Operand<'e>> {
         self.0.local_player_id()
     }
 
-    pub fn game_screen_rclick(&mut self) -> Rc<GameScreenRClick<'e, VirtualAddress>> {
+    pub fn game_screen_rclick(&mut self) -> Option<VirtualAddress> {
         self.0.game_screen_rclick()
+    }
+
+    pub fn client_selection(&mut self) -> Option<Operand<'e>> {
+        self.0.client_selection()
     }
 
     pub fn select_map_entry(&mut self) -> Option<VirtualAddress> {
@@ -3612,8 +3769,12 @@ impl<'e> AnalysisX86<'e> {
         self.0.lobby_state()
     }
 
-    pub fn init_storm_networking(&mut self) -> Rc<InitStormNetworking<VirtualAddress>> {
+    pub fn init_storm_networking(&mut self) -> Option<VirtualAddress> {
         self.0.init_storm_networking()
+    }
+
+    pub fn load_snp_list(&mut self) -> Option<VirtualAddress> {
+        self.0.load_snp_list()
     }
 
     pub fn step_order(&mut self) -> Option<VirtualAddress> {
@@ -3648,12 +3809,32 @@ impl<'e> AnalysisX86<'e> {
         self.0.play_smk()
     }
 
-    pub fn game_init(&mut self) -> Rc<GameInit<'e, VirtualAddress>> {
-        self.0.game_init()
+    pub fn sc_main(&mut self) -> Option<VirtualAddress> {
+        self.0.sc_main()
     }
 
-    pub fn misc_clientside(&mut self) -> Rc<MiscClientSide<'e>> {
-        self.0.misc_clientside()
+    pub fn mainmenu_entry_hook(&mut self) -> Option<VirtualAddress> {
+        self.0.mainmenu_entry_hook()
+    }
+
+    pub fn game_loop(&mut self) -> Option<VirtualAddress> {
+        self.0.game_loop()
+    }
+
+    pub fn scmain_state(&mut self) -> Option<Operand<'e>> {
+        self.0.scmain_state()
+    }
+
+    pub fn is_paused(&mut self) -> Option<Operand<'e>> {
+        self.0.is_paused()
+    }
+
+    pub fn is_placing_building(&mut self) -> Option<Operand<'e>> {
+        self.0.is_placing_building()
+    }
+
+    pub fn is_targeting(&mut self) -> Option<Operand<'e>> {
+        self.0.is_targeting()
     }
 
     pub fn init_units(&mut self) -> Option<VirtualAddress> {
@@ -3780,8 +3961,12 @@ impl<'e> AnalysisX86<'e> {
         self.0.create_bullet()
     }
 
-    pub fn net_players(&mut self) -> Rc<NetPlayers<'e, VirtualAddress>> {
+    pub fn net_players(&mut self) -> Option<(Operand<'e>, u32)> {
         self.0.net_players()
+    }
+
+    pub fn init_net_player(&mut self) -> Option<VirtualAddress> {
+        self.0.init_net_player()
     }
 
     pub fn campaigns(&mut self) -> Option<Operand<'e>> {

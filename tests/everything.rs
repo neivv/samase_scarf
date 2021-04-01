@@ -115,8 +115,9 @@ fn everything_1210() {
 fn everything_1210b() {
     test_with_extra_checks(Path::new("1210b.exe"), |ctx, analysis| {
         let net_players = analysis.net_players();
-        assert_eq!(net_players.init_net_player.unwrap().0, 0x006F28E0);
-        assert_eq!(net_players.net_players.as_ref().unwrap().0, ctx.constant(0x00F31988));
+        let init_net_player = analysis.init_net_player();
+        assert_eq!(init_net_player.unwrap().0, 0x006F28E0);
+        assert_eq!(net_players.as_ref().unwrap().0, ctx.constant(0x00F31988));
 
         assert_eq!(analysis.tooltip_draw_func().unwrap(), ctx.mem32(ctx.constant(0xd49148)));
         assert_eq!(analysis.current_tooltip_ctrl().unwrap(), ctx.mem32(ctx.constant(0xd4914c)));
@@ -265,9 +266,10 @@ fn everything_1213b() {
         let units = analysis.units().unwrap();
         assert_eq!(units, ctx.mem32(ctx.constant(0x00CBDB8C)));
 
-        let rclick = analysis.game_screen_rclick();
-        assert_eq!(rclick.game_screen_rclick.unwrap().0, 0x006b2400);
-        assert_eq!(rclick.client_selection.unwrap(), ctx.constant(0x00ec3750));
+        let game_screen_rclick = analysis.game_screen_rclick();
+        let client_selection = analysis.client_selection();
+        assert_eq!(game_screen_rclick.unwrap().0, 0x006b2400);
+        assert_eq!(client_selection.unwrap(), ctx.constant(0x00ec3750));
     })
 }
 
@@ -421,9 +423,10 @@ fn everything_1221() {
         let choose_snp = analysis.choose_snp().unwrap();
         assert_eq!(choose_snp.0, 0x006fef60);
 
-        let start = analysis.single_player_start();
-        assert_eq!(start.skins.unwrap(), ctx.constant(0x00E55158));
-        assert_eq!(start.player_skins.unwrap(), ctx.constant(0x010A52A0));
+        let skins = analysis.skins();
+        let player_skins = analysis.player_skins();
+        assert_eq!(skins.unwrap(), ctx.constant(0x00E55158));
+        assert_eq!(player_skins.unwrap(), ctx.constant(0x010A52A0));
 
         let select_map_entry = analysis.select_map_entry();
         let is_multiplayer = analysis.is_multiplayer();
@@ -445,7 +448,7 @@ fn everything_1221b() {
 
         let lobby_state = analysis.lobby_state();
         assert_eq!(lobby_state.unwrap(), ctx.mem8(ctx.constant(0x01060fc5)));
-        let init = analysis.init_storm_networking().init_storm_networking.unwrap();
+        let init = analysis.init_storm_networking().unwrap();
         assert_eq!(init.0, 0x006F0BB0);
 
         assert_eq!(analysis.chk_init_players().unwrap(), ctx.constant(0x1064330));
@@ -618,15 +621,19 @@ fn everything_1224c() {
         assert_eq!(active_iscript_unit.unwrap(), ctx.mem32(ctx.constant(0xde7190)));
 
         let net_players = analysis.net_players();
-        assert_eq!(net_players.init_net_player.unwrap().0, 0x00721680);
-        assert_eq!(net_players.net_players.unwrap().0, ctx.constant(0x00FED8D8));
+        let init_net_player = analysis.init_net_player();
+        assert_eq!(init_net_player.unwrap().0, 0x00721680);
+        assert_eq!(net_players.unwrap().0, ctx.constant(0x00FED8D8));
         let play_smk = analysis.play_smk();
         assert_eq!(play_smk.unwrap().0, 0x00739200);
-        let game_init = analysis.game_init();
-        assert_eq!(game_init.sc_main.unwrap().0, 0x006e4350);
-        assert_eq!(game_init.mainmenu_entry_hook.unwrap().0, 0x006e51ae);
-        assert_eq!(game_init.game_loop.unwrap().0, 0x0006e5450);
-        assert_eq!(game_init.scmain_state.unwrap(), ctx.mem32(ctx.constant(0x00FC7FE8)));
+        let sc_main = analysis.sc_main();
+        let mainmenu_entry_hook = analysis.mainmenu_entry_hook();
+        let game_loop = analysis.game_loop();
+        let scmain_state = analysis.scmain_state();
+        assert_eq!(sc_main.unwrap().0, 0x006e4350);
+        assert_eq!(mainmenu_entry_hook.unwrap().0, 0x006e51ae);
+        assert_eq!(game_loop.unwrap().0, 0x0006e5450);
+        assert_eq!(scmain_state.unwrap(), ctx.mem32(ctx.constant(0x00FC7FE8)));
 
         assert_eq!(analysis.font_cache_render_ascii().unwrap().0, 0x008FCFF0);
         assert_eq!(analysis.ttf_cache_character().unwrap().0, 0x009036B0);
@@ -766,8 +773,8 @@ fn everything_1232a() {
         assert_eq!(results.unit_status_funcs[0].0, 0x00E41128);
         let run_dialog = analysis.run_dialog();
         assert_eq!(run_dialog.unwrap().0, 0x0097cfc0);
-        let game_init = analysis.game_init();
-        assert_eq!(game_init.mainmenu_entry_hook.unwrap().0, 0x00708C4E);
+        let mainmenu_entry_hook = analysis.mainmenu_entry_hook();
+        assert_eq!(mainmenu_entry_hook.unwrap().0, 0x00708C4E);
     })
 }
 
@@ -797,15 +804,22 @@ fn everything_1232e() {
         let choose_snp = analysis.choose_snp().unwrap();
         assert_eq!(choose_snp.0, 0x00716C20);
 
-        let start = analysis.single_player_start();
-        assert_eq!(start.single_player_start.unwrap().0, 0x00714870);
-        assert_eq!(start.local_storm_player_id.unwrap(), ctx.mem32(ctx.constant(0xdff54c)));
-        assert_eq!(start.local_unique_player_id.unwrap(), ctx.mem32(ctx.constant(0xdff548)));
-        assert_eq!(start.net_player_to_game.unwrap(), ctx.constant(0x106f6a8));
-        assert_eq!(start.net_player_to_unique.unwrap(), ctx.constant(0x106f678));
-        assert_eq!(start.game_data.unwrap(), ctx.constant(0x1070ce0));
-        assert_eq!(start.skins.unwrap(), ctx.constant(0x00E003A0));
-        assert_eq!(start.player_skins.unwrap(), ctx.constant(0x0106F6E0));
+        let single_player_start = analysis.single_player_start();
+        let local_storm_player_id = analysis.local_storm_player_id();
+        let local_unique_player_id = analysis.local_unique_player_id();
+        let net_player_to_game = analysis.net_player_to_game();
+        let net_player_to_unique = analysis.net_player_to_unique();
+        let game_data = analysis.game_data();
+        let skins = analysis.skins();
+        let player_skins = analysis.player_skins();
+        assert_eq!(single_player_start.unwrap().0, 0x00714870);
+        assert_eq!(local_storm_player_id.unwrap(), ctx.mem32(ctx.constant(0xdff54c)));
+        assert_eq!(local_unique_player_id.unwrap(), ctx.mem32(ctx.constant(0xdff548)));
+        assert_eq!(net_player_to_game.unwrap(), ctx.constant(0x106f6a8));
+        assert_eq!(net_player_to_unique.unwrap(), ctx.constant(0x106f678));
+        assert_eq!(game_data.unwrap(), ctx.constant(0x1070ce0));
+        assert_eq!(skins.unwrap(), ctx.constant(0x00E003A0));
+        assert_eq!(player_skins.unwrap(), ctx.constant(0x0106F6E0));
 
         let select_map_entry = analysis.select_map_entry();
         let is_multiplayer = analysis.is_multiplayer();
@@ -846,7 +860,7 @@ fn everything_1232e() {
 
         let lobby_state = analysis.lobby_state();
         assert_eq!(lobby_state.unwrap(), ctx.mem8(ctx.constant(0x0106f475)));
-        let init = analysis.init_storm_networking().init_storm_networking.unwrap();
+        let init = analysis.init_storm_networking().unwrap();
         assert_eq!(init.0, 0x00716F70);
     })
 }
@@ -857,22 +871,20 @@ fn everything_1233a() {
         let open_file = analysis.file_hook();
         assert_eq!(open_file[0].0, 0x00544720);
 
-        let init = analysis.init_storm_networking();
-        let init_storm = init.init_storm_networking.unwrap();
-        assert_eq!(init_storm.0, 0x0073b2e0);
-        let load_snps = init.load_snp_list.unwrap();
+        let init = analysis.init_storm_networking().unwrap();
+        assert_eq!(init.0, 0x0073b2e0);
+        let load_snps = analysis.load_snp_list().unwrap();
         assert_eq!(load_snps.0, 0x007A4590);
 
         let draw_cursor_marker = analysis.draw_cursor_marker();
         assert_eq!(draw_cursor_marker.unwrap(), ctx.mem8(ctx.constant(0x00ee6c21)));
 
-        let misc = analysis.misc_clientside();
-        assert_eq!(misc.is_paused.unwrap(), ctx.mem32(ctx.constant(0x00eed95c)));
-        assert_eq!(
-            misc.is_placing_building.unwrap(),
-            ctx.mem32(ctx.constant(0x010e748c)),
-        );
-        assert_eq!(misc.is_targeting.unwrap(), ctx.mem8(ctx.constant(0x010f54f2)));
+        let is_paused = analysis.is_paused();
+        let is_placing_building = analysis.is_placing_building();
+        let is_targeting = analysis.is_targeting();
+        assert_eq!(is_paused.unwrap(), ctx.mem32(ctx.constant(0x00eed95c)));
+        assert_eq!(is_placing_building.unwrap(), ctx.mem32(ctx.constant(0x010e748c)));
+        assert_eq!(is_targeting.unwrap(), ctx.mem8(ctx.constant(0x010f54f2)));
     })
 }
 
@@ -1309,14 +1321,17 @@ fn test_nongeneric<'e>(
                 FirstActiveUnit | FirstHiddenUnit | MapTileFlags | TooltipDrawFunc |
                 CurrentTooltipCtrl | IsMultiplayer | FirstFreeBullet | LastFreeBullet |
                 FirstActiveBullet | LastActiveBullet | ActiveIscriptUnit | UniqueCommandUser |
-                ReplayVisions | ReplayShowEntireMap =>
+                ReplayVisions | ReplayShowEntireMap | ScMainState | LocalStormPlayerId |
+                LocalUniquePlayerId | IsPaused | IsPlacingBuilding | IsTargeting =>
             {
                 check_global_opt(result, binary, op.name());
             }
             LocalPlayerName | FirstGuardAi | PlayerAiTowns | PlayerAi | Campaigns | Fonts |
                 UnitStrength | WireframDdsgrp | ChkInitPlayers | OriginalChkPlayerTypes |
                 AiTransportReachabilityCachedRegion | SpriteHlines | SpriteHlinesEnd |
-                AiRegions | GraphicLayers | Selections | GlobalEventHandlers | FirstPlayerUnit =>
+                AiRegions | GraphicLayers | Selections | GlobalEventHandlers | FirstPlayerUnit |
+                NetPlayers | NetPlayerToGame | NetPlayerToUnique | GameData | Skins |
+                PlayerSkins | ClientSelection =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }
@@ -1421,11 +1436,6 @@ fn test_nongeneric<'e>(
         assert!(analysis.dat(DatType::SfxData).is_none());
     }
 
-    let init_units = analysis.init_units();
-    assert!(init_units.is_some());
-    let load_dat = analysis.load_dat();
-    assert!(load_dat.is_some());
-
     let command_lengths = analysis.command_lengths();
     assert_eq!(command_lengths[0x37], 7);
     assert!(command_lengths.len() >= 0x59);
@@ -1436,10 +1446,6 @@ fn test_nongeneric<'e>(
     } else {
         check_global_struct(units, binary, "units");
     }
-
-    let rclick = analysis.game_screen_rclick();
-    assert!(rclick.game_screen_rclick.is_some());
-    check_global_struct(rclick.client_selection.unwrap(), binary, "client selection");
 
     let iscript = analysis.step_iscript();
     assert!(iscript.step_fn.is_some());
@@ -1530,16 +1536,8 @@ fn test_nongeneric<'e>(
         assert_eq!(vtables.len(), 2);
     }
 
-    let net_players = analysis.net_players();
-    let (players, size) = net_players.net_players.clone().unwrap();
-    check_global_struct(players, binary, "net players");
+    let (_, size) = analysis.net_players().unwrap();
     assert_eq!(size, 0x68, "sizeof NetPlayer");
-    assert!(net_players.init_net_player.is_some());
-    let game_init = analysis.game_init();
-    assert!(game_init.sc_main.is_some());
-    assert!(game_init.mainmenu_entry_hook.is_some());
-    assert!(game_init.game_loop.is_some());
-    check_global(game_init.scmain_state.unwrap(), binary, "scmain_state");
 
     let spawn_dialog = analysis.spawn_dialog();
     let run_dialog = analysis.run_dialog();
@@ -1548,16 +1546,8 @@ fn test_nongeneric<'e>(
     let init_map_from_path = analysis.init_map_from_path();
     assert!(init_map_from_path.is_some());
 
-    let start = analysis.single_player_start();
-    assert!(start.single_player_start.is_some());
-    check_global(start.local_storm_player_id.unwrap(), binary, "local storm player id");
-    check_global(start.local_unique_player_id.unwrap(), binary, "local uniq player id");
-    check_global_struct_opt(start.net_player_to_game, binary, "net player to game");
-    check_global_struct_opt(start.net_player_to_unique, binary, "net player to uniq");
-    check_global_struct_opt(start.game_data, binary, "game data");
-    check_global_struct_opt(start.skins, binary, "skins");
-    check_global_struct_opt(start.player_skins, binary, "player skins");
-    assert_eq!(start.skins_size, 0x15e);
+    let skins_size = analysis.skins_size().unwrap();
+    assert_eq!(skins_size, 0x15e);
 
     let images_loaded = analysis.images_loaded();
     check_global(images_loaded.unwrap(), binary, "images loaded");
@@ -1581,15 +1571,6 @@ fn test_nongeneric<'e>(
     } else {
         assert!(snp_definitions.is_none());
     }
-
-    let init_storm_networking = analysis.init_storm_networking();
-    assert!(init_storm_networking.init_storm_networking.is_some());
-    assert!(init_storm_networking.load_snp_list.is_some());
-
-    let misc = analysis.misc_clientside();
-    check_global(misc.is_paused.unwrap(), binary, "is_paused");
-    check_global(misc.is_placing_building.unwrap(), binary, "is_placing_building");
-    check_global(misc.is_targeting.unwrap(), binary, "is_targeting");
 
     let limits = analysis.limits();
     if extended_limits {

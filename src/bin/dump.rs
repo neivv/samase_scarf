@@ -243,13 +243,6 @@ fn main() {
     println!("portdata.dat: {}", format_dat(&analysis.dat(DatType::PortData)));
     println!("mapdata.dat: {}", format_dat(&analysis.dat(DatType::MapData)));
 
-    println!("init_units: {:?}", analysis.init_units());
-    println!("load_dat: {:?}", analysis.load_dat());
-
-    let rclick = analysis.game_screen_rclick();
-    println!("game_screen_rclick: {:?}", rclick.game_screen_rclick);
-    println!("client_selection: {}", format_op_operand(rclick.client_selection));
-
     let iscript = analysis.step_iscript();
     println!("step_iscript: {:?}", iscript.step_fn);
     println!("step iscript script ptr: {}", format_op_operand(iscript.script_operand_at_switch));
@@ -272,33 +265,11 @@ fn main() {
     let renderer_vtables = analysis.renderer_vtables();
     println!("renderer_vtables: {:?}", renderer_vtables);
 
-    let net_players = analysis.net_players();
-    if let Some(ref net_players) = net_players.net_players {
-        println!("net_players: {}, Size 0x{:x}", net_players.0, net_players.1);
-    } else {
-        println!("net_players: None");
-    }
-    println!("init_net_player: {:?}", net_players.init_net_player);
-
-    let game_init = analysis.game_init();
-    println!("sc_main: {:?}", game_init.sc_main);
-    println!("mainmenu_entry_hook: {:?}", game_init.mainmenu_entry_hook);
-    println!("game_loop: {:?}", game_init.game_loop);
-    println!("scmain_state: {}", format_op_operand(game_init.scmain_state));
-
     let init_map_from_path = analysis.init_map_from_path();
     println!("init_map_from_path: {:?}", init_map_from_path);
 
-    let start = analysis.single_player_start();
-    println!("single_player_start: {:?}", start.single_player_start);
-    println!("local_storm_player_id: {}", format_op_operand(start.local_storm_player_id));
-    println!("local_unique_player_id: {}", format_op_operand(start.local_unique_player_id));
-    println!("net_player_to_game: {}", format_op_operand(start.net_player_to_game));
-    println!("net_player_to_unique: {}", format_op_operand(start.net_player_to_unique));
-    println!("game_data: {}", format_op_operand(start.game_data));
-    println!("skins: {}", format_op_operand(start.skins));
-    println!("player_skins: {}", format_op_operand(start.player_skins));
-    println!("skins_size: {:x}", start.skins_size);
+    let skins_size = analysis.skins_size().unwrap_or(0);
+    println!("skins_size: {:x}", skins_size);
 
     let images_loaded = analysis.images_loaded();
     println!("images_loaded: {}", format_op_operand(images_loaded));
@@ -320,15 +291,6 @@ fn main() {
     } else {
         println!("snp_definitions: None");
     }
-
-    let init_storm_networking = analysis.init_storm_networking();
-    println!("init_storm_networking: {:?}", init_storm_networking.init_storm_networking);
-    println!("load_snp_list: {:?}", init_storm_networking.load_snp_list);
-
-    let misc_clientside = analysis.misc_clientside();
-    println!("is_paused: {}", format_op_operand(misc_clientside.is_paused));
-    println!("is_placing_building: {}", format_op_operand(misc_clientside.is_placing_building));
-    println!("is_targeting: {}", format_op_operand(misc_clientside.is_targeting));
 
     let sprite_array = analysis.sprite_array();
     println!("sprite_struct_size: {:?}", sprite_array.map(|x| format!("0x{:x}", x.1)));
