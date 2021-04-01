@@ -246,6 +246,7 @@ results! {
         ScMain => "sc_main",
         MainMenuEntryHook => "mainmenu_entry_hook",
         GameLoop => "game_loop",
+        RunMenus => "run_menus",
         SinglePlayerStart => "single_player_start",
         InitUnits => "init_units",
         LoadDat => "load_dat",
@@ -693,6 +694,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ScMain => self.sc_main(),
             MainMenuEntryHook => self.mainmenu_entry_hook(),
             GameLoop => self.game_loop(),
+            RunMenus => self.run_menus(),
             SinglePlayerStart => self.single_player_start(),
             InitUnits => self.init_units(),
             LoadDat => self.load_dat(),
@@ -1130,6 +1132,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn game_loop(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(AddressAnalysis::GameLoop, AnalysisCache::cache_game_init)
+    }
+
+    pub fn run_menus(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::RunMenus, AnalysisCache::cache_game_init)
     }
 
     pub fn scmain_state(&mut self) -> Option<Operand<'e>> {
@@ -2641,12 +2647,12 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn cache_game_init(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
-        self.cache_many(&[ScMain, MainMenuEntryHook, GameLoop], &[ScMainState], |s| {
+        self.cache_many(&[ScMain, MainMenuEntryHook, GameLoop, RunMenus], &[ScMainState], |s| {
             let play_smk = s.play_smk(actx)?;
             let game = s.game(actx)?;
             let result = game_init::game_init(actx, play_smk, game, &s.function_finder());
             Some((
-                [result.sc_main, result.mainmenu_entry_hook, result.game_loop],
+                [result.sc_main, result.mainmenu_entry_hook, result.game_loop, result.run_menus],
                 [result.scmain_state],
             ))
         })
@@ -3819,6 +3825,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn game_loop(&mut self) -> Option<VirtualAddress> {
         self.0.game_loop()
+    }
+
+    pub fn run_menus(&mut self) -> Option<VirtualAddress> {
+        self.0.run_menus()
     }
 
     pub fn scmain_state(&mut self) -> Option<Operand<'e>> {

@@ -1261,7 +1261,8 @@ fn everything_1238b() {
 
 #[test]
 fn everything_1238c() {
-    test_with_extra_checks(Path::new("1238c.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1238c.exe"), |_ctx, analysis| {
+        assert_eq!(analysis.run_menus().unwrap().0, 0x006F3590);
     })
 }
 

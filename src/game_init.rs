@@ -17,6 +17,7 @@ pub struct GameInit<'e, Va: VirtualAddress> {
     pub sc_main: Option<Va>,
     pub mainmenu_entry_hook: Option<Va>,
     pub game_loop: Option<Va>,
+    pub run_menus: Option<Va>,
     pub scmain_state: Option<Operand<'e>>,
 }
 
@@ -171,6 +172,7 @@ pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
         sc_main: None,
         mainmenu_entry_hook: None,
         game_loop: None,
+        run_menus: None,
         scmain_state: None,
     };
     let bump = &analysis.bump;
@@ -271,7 +273,7 @@ struct ScMainAnalyzer<'a, 'e, E: ExecutionState<'e>> {
 enum ScMainAnalyzerState {
     SearchingEntryHook,
     SearchingGameLoop,
-    SearchingGameLoop_SwitchJumped,
+    SwitchJumped(u8),
 }
 
 impl analysis::AnalysisState for ScMainAnalyzerState {
@@ -293,11 +295,16 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
         }
         match *op {
             Operation::Jump { to, condition } => {
+                if let ScMainAnalyzerState::SwitchJumped(..) = *ctrl.user_state() {
+                    // Expecting call immediately after switch jump
+                    ctrl.end_analysis();
+                    return;
+                }
                 let condition = ctrl.resolve(condition);
                 if condition.if_constant().unwrap_or(0) != 0 {
                     let to = ctrl.resolve(to);
                     if to.if_memory().is_some() {
-                        // Switch jump, follow case 3 if searching for game loop,
+                        // Switch jump, follow cases 3 & 4 if searching for game loop,
                         // switch expression is also scmain_state then
                         if *ctrl.user_state() == ScMainAnalyzerState::SearchingGameLoop {
                             let base_offset = to.if_mem32()
@@ -310,16 +317,19 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
                                 });
                             if let Some((base, offset)) = base_offset {
                                 let addr_size = <E::VirtualAddress as VirtualAddress>::SIZE;
-                                let case = E::VirtualAddress::from_u64(base) + 3 * addr_size;
-                                if let Ok(addr) = self.binary.read_address(case) {
-                                    let offset = ctrl.unresolve_memory(offset)
-                                        .unwrap_or_else(|| offset.clone());
-                                    self.result.scmain_state = Some(offset);
-                                    *ctrl.user_state() =
-                                        ScMainAnalyzerState::SearchingGameLoop_SwitchJumped;
-                                    ctrl.analyze_with_current_state(self, addr);
-                                    ctrl.end_analysis();
+                                for case_n in 3..5 {
+                                    let case = E::VirtualAddress::from_u64(base) +
+                                        case_n as u32 * addr_size;
+                                    if let Ok(addr) = self.binary.read_address(case) {
+                                        let offset = ctrl.unresolve_memory(offset)
+                                            .unwrap_or_else(|| offset.clone());
+                                        self.result.scmain_state = Some(offset);
+                                        *ctrl.user_state() =
+                                            ScMainAnalyzerState::SwitchJumped(case_n);
+                                        ctrl.analyze_with_current_state(self, addr);
+                                    }
                                 }
+                                ctrl.end_analysis();
                             }
                         }
                     }
@@ -342,10 +352,14 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
                 }
             }
             Operation::Call(to) => {
-                if *ctrl.user_state() == ScMainAnalyzerState::SearchingGameLoop_SwitchJumped {
+                if let ScMainAnalyzerState::SwitchJumped(case) = *ctrl.user_state() {
                     let to = ctrl.resolve(to);
                     if let Some(dest) = to.if_constant() {
-                        self.result.game_loop = Some(E::VirtualAddress::from_u64(dest));
+                        if case == 3 {
+                            self.result.game_loop = Some(E::VirtualAddress::from_u64(dest));
+                        } else {
+                            self.result.run_menus = Some(E::VirtualAddress::from_u64(dest));
+                        }
                         ctrl.end_analysis();
                     }
                 }
