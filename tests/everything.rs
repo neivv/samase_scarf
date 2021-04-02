@@ -1263,6 +1263,9 @@ fn everything_1238b() {
 fn everything_1238c() {
     test_with_extra_checks(Path::new("1238c.exe"), |_ctx, analysis| {
         assert_eq!(analysis.run_menus().unwrap().0, 0x006F3590);
+        assert_eq!(analysis.set_music().unwrap().0, 0x006eceb0);
+        assert_eq!(analysis.pre_mission_glue().unwrap().0, 0x006996d0);
+        assert_eq!(analysis.show_mission_glue().unwrap().0, 0x00699790);
     })
 }
 

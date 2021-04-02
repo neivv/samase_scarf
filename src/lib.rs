@@ -253,6 +253,9 @@ results! {
         GameScreenRClick => "game_screen_rclick",
         InitStormNetworking => "init_storm_networking",
         LoadSnpList => "load_snp_list",
+        SetMusic => "set_music",
+        PreMissionGlue => "pre_mission_glue",
+        ShowMissionGlue => "show_mission_glue",
     }
 }
 
@@ -701,6 +704,9 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             GameScreenRClick => self.game_screen_rclick(),
             InitStormNetworking => self.init_storm_networking(),
             LoadSnpList => self.load_snp_list(),
+            SetMusic => self.set_music(),
+            PreMissionGlue => self.pre_mission_glue(),
+            ShowMissionGlue => self.show_mission_glue(),
         }
     }
 
@@ -1754,6 +1760,24 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.clamp_zoom(s))
     }
 
+    pub fn set_music(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::SetMusic, AnalysisCache::cache_menu_screens)
+    }
+
+    pub fn pre_mission_glue(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::PreMissionGlue,
+            AnalysisCache::cache_menu_screens,
+        )
+    }
+
+    pub fn show_mission_glue(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ShowMissionGlue,
+            AnalysisCache::cache_menu_screens,
+        )
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -2662,6 +2686,10 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::GameLoop, |s| s.cache_game_init(actx))
     }
 
+    fn run_menus(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::RunMenus, |s| s.cache_game_init(actx))
+    }
+
     fn scmain_state(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_many_op(OperandAnalysis::ScMainState, |s| s.cache_game_init(actx))
     }
@@ -3551,6 +3579,15 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             ]))
         })
     }
+
+    fn cache_menu_screens(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[SetMusic, PreMissionGlue, ShowMissionGlue], &[], |s| {
+            let run_menus = s.run_menus(actx)?;
+            let result = dialog::analyze_run_menus(actx, run_menus);
+            Some(([result.set_music, result.pre_mission_glue, result.show_mission_glue], []))
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -4349,6 +4386,18 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn first_player_unit(&mut self) -> Option<Operand<'e>> {
         self.0.first_player_unit()
+    }
+
+    pub fn set_music(&mut self) -> Option<VirtualAddress> {
+        self.0.set_music()
+    }
+
+    pub fn pre_mission_glue(&mut self) -> Option<VirtualAddress> {
+        self.0.pre_mission_glue()
+    }
+
+    pub fn show_mission_glue(&mut self) -> Option<VirtualAddress> {
+        self.0.show_mission_glue()
     }
 }
 

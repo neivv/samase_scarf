@@ -54,6 +54,12 @@ pub(crate) struct UiEventHandlers<'e, Va: VirtualAddress> {
     pub global_event_handlers: Option<Operand<'e>>,
 }
 
+pub(crate) struct RunMenus<Va: VirtualAddress> {
+    pub set_music: Option<Va>,
+    pub pre_mission_glue: Option<Va>,
+    pub show_mission_glue: Option<Va>,
+}
+
 impl<'e, Va: VirtualAddress> Default for MultiWireframes<'e, Va> {
     fn default() -> Self {
         MultiWireframes {
@@ -1699,6 +1705,141 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindClampZoom<'a, 'e
                 if ok {
                     self.result = Some(E::VirtualAddress::from_u64(0));
                     ctrl.end_analysis();
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_run_menus<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    run_menus: E::VirtualAddress,
+) -> RunMenus<E::VirtualAddress> {
+    let mut result = RunMenus {
+        set_music: None,
+        pre_mission_glue: None,
+        show_mission_glue: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, run_menus);
+    let mut analyzer = RunMenusAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        state: RunMenusState::Start,
+        inline_depth: 0,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum RunMenusState {
+    Start,
+    TerranBriefing,
+    CheckPreMissionGlue,
+    FindShowMissionGlue,
+}
+
+struct RunMenusAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut RunMenus<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: RunMenusState,
+    inline_depth: u8,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            RunMenusState::Start => {
+                // Find switch jump
+                if let Operation::Jump { condition, to } = *op {
+                    if condition == ctx.const_1() {
+                        let to = ctrl.resolve(to);
+                        let switch_table = ctrl.if_mem_word(to)
+                            .and_then(|x| x.if_arithmetic_add())
+                            .and_then(|x| x.1.if_constant())
+                            .map(|x| E::VirtualAddress::from_u64(x));
+                        if let Some(switch_table) = switch_table {
+                            let binary = ctrl.binary();
+                            let case = binary.read_address(
+                                switch_table + 0x13 * E::VirtualAddress::SIZE
+                            );
+                            if let Ok(case) = case {
+                                self.state = RunMenusState::TerranBriefing;
+                                ctrl.analyze_with_current_state(self, case);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            RunMenusState::TerranBriefing => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.result.set_music.is_none() {
+                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            if arg1.if_constant() == Some(0xe) {
+                                self.result.set_music = Some(dest);
+                                return;
+                            }
+                            if self.inline_depth == 0 {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.result.set_music.is_some() {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        } else {
+                            self.state = RunMenusState::CheckPreMissionGlue;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.state = RunMenusState::TerranBriefing;
+                            if self.result.pre_mission_glue.is_some() {
+                                self.result.pre_mission_glue = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+                if let Operation::Jump { to, .. } = *op {
+                    if to.if_memory().is_some() {
+                        // Looped back to switch probably.
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            RunMenusState::CheckPreMissionGlue => {
+                if let Operation::Jump { condition, .. } = *op {
+                    let cond = ctrl.resolve(condition);
+                    let ok = if_arithmetic_eq_neq(cond)
+                        .map(|x| (x.0, x.1))
+                        .and_either_other(|x| Some(()).filter(|&()| x == ctx.const_0()))
+                        .and_then(|x| {
+                            x.if_arithmetic_and_const(0x20)
+                                .or_else(|| x.if_arithmetic_and_const(0x2000_0000))
+                        })
+                        .is_some();
+                    if ok {
+                        self.result.pre_mission_glue = Some(E::VirtualAddress::from_u64(0));
+                        self.state = RunMenusState::FindShowMissionGlue;
+                    }
+                }
+            }
+            RunMenusState::FindShowMissionGlue => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let ok = arg1.if_mem32().is_some() && arg2.if_constant() == Some(1);
+                        if ok {
+                            self.result.show_mission_glue = Some(dest);
+                            ctrl.end_analysis();
+                        }
+                    }
                 }
             }
         }
