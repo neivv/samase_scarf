@@ -198,6 +198,7 @@ results! {
         PlaySmk => "play_smk",
         AddOverlayIscript => "add_overlay_iscript",
         RunDialog => "run_dialog",
+        GluCmpgnEventHandler => "glucmpgn_event_handler",
         AiUpdateAttackTarget => "ai_update_attack_target",
         IsOutsideGameScreen => "is_outside_game_screen",
         ChooseSnp => "choose_snp",
@@ -256,6 +257,8 @@ results! {
         SetMusic => "set_music",
         PreMissionGlue => "pre_mission_glue",
         ShowMissionGlue => "show_mission_glue",
+        MenuSwishIn => "menu_swish_in",
+        MenuSwishOut => "menu_swish_out",
     }
 }
 
@@ -338,6 +341,7 @@ results! {
         IsPlacingBuilding => "is_placing_building",
         IsTargeting => "is_targeting",
         ClientSelection => "client_selection",
+        DialogReturnCode => "dialog_return_code",
     }
 }
 
@@ -649,6 +653,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             PlaySmk => self.play_smk(),
             AddOverlayIscript => self.add_overlay_iscript(),
             RunDialog => self.run_dialog(),
+            GluCmpgnEventHandler => self.glucmpgn_event_handler(),
             AiUpdateAttackTarget => self.ai_update_attack_target(),
             IsOutsideGameScreen => self.is_outside_game_screen(),
             ChooseSnp => self.choose_snp(),
@@ -707,6 +712,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             SetMusic => self.set_music(),
             PreMissionGlue => self.pre_mission_glue(),
             ShowMissionGlue => self.show_mission_glue(),
+            MenuSwishIn => self.menu_swish_in(),
+            MenuSwishOut => self.menu_swish_out(),
         }
     }
 
@@ -790,6 +797,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             IsPlacingBuilding => self.is_placing_building(),
             IsTargeting => self.is_targeting(),
             ClientSelection => self.client_selection(),
+            DialogReturnCode => self.dialog_return_code(),
         }
     }
 
@@ -1329,7 +1337,14 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn run_dialog(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.run_dialog(s))
+        self.analyze_many_addr(AddressAnalysis::RunDialog, AnalysisCache::cache_run_dialog)
+    }
+
+    pub fn glucmpgn_event_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::GluCmpgnEventHandler,
+            AnalysisCache::cache_run_dialog,
+        )
     }
 
     pub fn ai_update_attack_target(&mut self) -> Option<E::VirtualAddress> {
@@ -1775,6 +1790,27 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.analyze_many_addr(
             AddressAnalysis::ShowMissionGlue,
             AnalysisCache::cache_menu_screens,
+        )
+    }
+
+    pub fn menu_swish_in(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::MenuSwishIn,
+            AnalysisCache::cache_glucmpgn_events,
+        )
+    }
+
+    pub fn menu_swish_out(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::MenuSwishOut,
+            AnalysisCache::cache_glucmpgn_events,
+        )
+    }
+
+    pub fn dialog_return_code(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::DialogReturnCode,
+            AnalysisCache::cache_glucmpgn_events,
         )
     }
 
@@ -2865,10 +2901,20 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn run_dialog(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.cache_single_address(AddressAnalysis::RunDialog, |s| {
-            dialog::run_dialog(actx, &s.function_finder())
+    fn cache_run_dialog(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[RunDialog, GluCmpgnEventHandler], &[], |s| {
+            let result = dialog::run_dialog(actx, &s.function_finder());
+            Some(([result.run_dialog, result.glucmpgn_event_handler], []))
         })
+    }
+
+    fn run_dialog(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::RunDialog, |s| s.cache_run_dialog(actx))
+    }
+
+    fn glucmpgn_event_handler(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::GluCmpgnEventHandler, |s| s.cache_run_dialog(actx))
     }
 
     fn ai_update_attack_target(
@@ -3588,6 +3634,16 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             Some(([result.set_music, result.pre_mission_glue, result.show_mission_glue], []))
         })
     }
+
+    fn cache_glucmpgn_events(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[MenuSwishIn, MenuSwishOut], &[DialogReturnCode], |s| {
+            let event_handler = s.glucmpgn_event_handler(actx)?;
+            let result = dialog::analyze_glucmpgn_events(actx, event_handler);
+            Some(([result.swish_in, result.swish_out], [result.dialog_return_code],))
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -4024,6 +4080,10 @@ impl<'e> AnalysisX86<'e> {
         self.0.run_dialog()
     }
 
+    pub fn glucmpgn_event_handler(&mut self) -> Option<VirtualAddress> {
+        self.0.glucmpgn_event_handler()
+    }
+
     pub fn ai_update_attack_target(&mut self) -> Option<VirtualAddress> {
         self.0.ai_update_attack_target()
     }
@@ -4398,6 +4458,18 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn show_mission_glue(&mut self) -> Option<VirtualAddress> {
         self.0.show_mission_glue()
+    }
+
+    pub fn menu_swish_in(&mut self) -> Option<VirtualAddress> {
+        self.0.menu_swish_in()
+    }
+
+    pub fn menu_swish_out(&mut self) -> Option<VirtualAddress> {
+        self.0.menu_swish_out()
+    }
+
+    pub fn dialog_return_code(&mut self) -> Option<Operand<'e>> {
+        self.0.dialog_return_code()
     }
 }
 

@@ -41,6 +41,10 @@ fn everything_1208() {
         // with snet_recv_packets if it was ordered before.
         assert_eq!(analysis.snet_send_packets().unwrap().0, 0x009ae6a0);
         assert_eq!(analysis.snet_recv_packets().unwrap().0, 0x009b14f0);
+
+        assert_eq!(analysis.menu_swish_in().unwrap().0, 0x0077a7c0);
+        assert_eq!(analysis.menu_swish_out().unwrap().0, 0x00779e70);
+        assert_eq!(analysis.dialog_return_code().unwrap(), ctx.mem32(ctx.constant(0x115cae4)));
     });
 }
 
@@ -1261,11 +1265,14 @@ fn everything_1238b() {
 
 #[test]
 fn everything_1238c() {
-    test_with_extra_checks(Path::new("1238c.exe"), |_ctx, analysis| {
+    test_with_extra_checks(Path::new("1238c.exe"), |ctx, analysis| {
         assert_eq!(analysis.run_menus().unwrap().0, 0x006F3590);
         assert_eq!(analysis.set_music().unwrap().0, 0x006eceb0);
         assert_eq!(analysis.pre_mission_glue().unwrap().0, 0x006996d0);
         assert_eq!(analysis.show_mission_glue().unwrap().0, 0x00699790);
+        assert_eq!(analysis.menu_swish_in().unwrap().0, 0x006f44b0);
+        assert_eq!(analysis.menu_swish_out().unwrap().0, 0x006f3c20);
+        assert_eq!(analysis.dialog_return_code().unwrap(), ctx.mem32(ctx.constant(0x1201ef0)));
     })
 }
 
@@ -1326,7 +1333,8 @@ fn test_nongeneric<'e>(
                 CurrentTooltipCtrl | IsMultiplayer | FirstFreeBullet | LastFreeBullet |
                 FirstActiveBullet | LastActiveBullet | ActiveIscriptUnit | UniqueCommandUser |
                 ReplayVisions | ReplayShowEntireMap | ScMainState | LocalStormPlayerId |
-                LocalUniquePlayerId | IsPaused | IsPlacingBuilding | IsTargeting =>
+                LocalUniquePlayerId | IsPaused | IsPlacingBuilding | IsTargeting |
+                DialogReturnCode =>
             {
                 check_global_opt(result, binary, op.name());
             }

@@ -60,6 +60,17 @@ pub(crate) struct RunMenus<Va: VirtualAddress> {
     pub show_mission_glue: Option<Va>,
 }
 
+pub(crate) struct RunDialog<Va: VirtualAddress> {
+    pub run_dialog: Option<Va>,
+    pub glucmpgn_event_handler: Option<Va>,
+}
+
+pub(crate) struct GluCmpgnEvents<'e, Va: VirtualAddress> {
+    pub swish_in: Option<Va>,
+    pub swish_out: Option<Va>,
+    pub dialog_return_code: Option<Operand<'e>>,
+}
+
 impl<'e, Va: VirtualAddress> Default for MultiWireframes<'e, Va> {
     fn default() -> Self {
         MultiWireframes {
@@ -77,7 +88,11 @@ impl<'e, Va: VirtualAddress> Default for MultiWireframes<'e, Va> {
 pub(crate) fn run_dialog<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     functions: &FunctionFinder<'_, 'e, E>,
-) -> Option<E::VirtualAddress> {
+) -> RunDialog<E::VirtualAddress> {
+    let mut result = RunDialog {
+        run_dialog: None,
+        glucmpgn_event_handler: None,
+    };
     let ctx = analysis.ctx;
 
     let binary = analysis.binary;
@@ -87,12 +102,11 @@ pub(crate) fn run_dialog<'e, E: ExecutionState<'e>>(
         str_refs = functions.string_refs(analysis, b"glucmpgn.ui");
     }
     let args = &analysis.arg_cache;
-    let mut result = None;
     for str_ref in &str_refs {
-        let val = crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+        crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let mut analyzer = RunDialogAnalyzer {
                 string_address: str_ref.string_address,
-                result: None,
+                result: &mut result,
                 args,
                 ctx,
             };
@@ -111,13 +125,13 @@ pub(crate) fn run_dialog<'e, E: ExecutionState<'e>>(
                 },
             );
             analysis.analyze(&mut analyzer);
-            if let Some(result) = analyzer.result {
-                EntryOf::Ok(result)
+            if result.run_dialog.is_some() {
+                EntryOf::Ok(())
             } else {
                 EntryOf::Retry
             }
-        }).into_option();
-        if single_result_assign(val, &mut result) {
+        });
+        if result.run_dialog.is_some() {
             break;
         }
     }
@@ -126,8 +140,8 @@ pub(crate) fn run_dialog<'e, E: ExecutionState<'e>>(
 
 struct RunDialogAnalyzer<'exec, 'b, E: ExecutionState<'exec>> {
     string_address: E::VirtualAddress,
-    result: Option<E::VirtualAddress>,
     args: &'b ArgCache<'exec, E>,
+    result: &'b mut RunDialog<E::VirtualAddress>,
     ctx: OperandCtx<'exec>,
 }
 
@@ -194,14 +208,18 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
                 if arg1_is_dialog_ptr {
                     // run_dialog(dialog, 0, event_handler)
                     let arg2_zero = arg2.if_constant().filter(|&c| c == 0).is_some();
-                    let arg3_ptr = arg3.if_constant().filter(|&c| c != 0).is_some();
-                    if arg2_zero && arg3_ptr {
-                        if let Some(to) = ctrl.resolve(to).if_constant() {
-                            let result = Some(E::VirtualAddress::from_u64(to));
-                            if single_result_assign(result, &mut self.result) {
-                                ctrl.end_analysis();
+                    let arg3_ptr = arg3.if_constant().filter(|&c| c != 0);
+                    if arg2_zero {
+                        if let Some(arg3) = arg3_ptr {
+                            if let Some(to) = ctrl.resolve(to).if_constant() {
+                                let result = Some(E::VirtualAddress::from_u64(to));
+                                if single_result_assign(result, &mut self.result.run_dialog) {
+                                    ctrl.end_analysis();
+                                }
+                                self.result.glucmpgn_event_handler =
+                                    Some(E::VirtualAddress::from_u64(arg3));
+                                return;
                             }
-                            return;
                         }
                     }
                 }
@@ -399,12 +417,15 @@ pub(crate) fn spawn_dialog<'e, E: ExecutionState<'e>>(
         str_refs = functions.string_refs(analysis, b"statlb.ui");
     }
     let args = &analysis.arg_cache;
-    let mut result = None;
+    let mut result = RunDialog {
+        run_dialog: None,
+        glucmpgn_event_handler: None,
+    };
     for str_ref in &str_refs {
-        let val = crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+        crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let mut analyzer = RunDialogAnalyzer {
                 string_address: str_ref.string_address,
-                result: None,
+                result: &mut result,
                 args,
                 ctx,
             };
@@ -423,17 +444,17 @@ pub(crate) fn spawn_dialog<'e, E: ExecutionState<'e>>(
                 },
             );
             analysis.analyze(&mut analyzer);
-            if let Some(result) = analyzer.result {
-                EntryOf::Ok(result)
+            if result.run_dialog.is_some() {
+                EntryOf::Ok(())
             } else {
                 EntryOf::Retry
             }
-        }).into_option();
-        if single_result_assign(val, &mut result) {
+        });
+        if result.run_dialog.is_some() {
             break;
         }
     }
-    result
+    result.run_dialog
 }
 
 pub(crate) fn tooltip_related<'e, E: ExecutionState<'e>>(
@@ -1842,6 +1863,158 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                     }
                 }
             }
+        }
+    }
+}
+
+pub(crate) fn analyze_glucmpgn_events<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    event_handler: E::VirtualAddress,
+) -> GluCmpgnEvents<'e, E::VirtualAddress> {
+    let mut result = GluCmpgnEvents {
+        swish_in: None,
+        swish_out: None,
+        dialog_return_code: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let exec = E::initial_state(ctx, binary);
+    let state = GluCmpgnState {
+        dialog_return_stored: false,
+    };
+    let mut analysis = FuncAnalysis::custom_state(binary, ctx, event_handler, exec, state);
+    let mut analyzer = GluCmpgnAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        ext_event_branch: 0,
+        inlining: false,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+struct GluCmpgnState {
+    dialog_return_stored: bool,
+}
+
+impl AnalysisState for GluCmpgnState {
+    fn merge(&mut self, newer: Self) {
+        self.dialog_return_stored |= newer.dialog_return_stored;
+    }
+}
+
+struct GluCmpgnAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut GluCmpgnEvents<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    ext_event_branch: u8,
+    inlining: bool,
+}
+
+fn resolve_memory<Va: VirtualAddress>(binary: &BinaryFile<Va>, op: Operand<'_>) -> Option<u64> {
+    if let Some(mem) = op.if_memory() {
+        let val = resolve_memory(binary, mem.address)?;
+        let val = binary.read_u64(Va::from_u64(val)).ok()?;
+        Some(val & mem.size.mask())
+    } else if let Some(c) = op.if_constant() {
+        Some(c)
+    } else if let scarf::OperandType::Arithmetic(arith) = op.ty() {
+        let left = resolve_memory(binary, arith.left)?;
+        let right = resolve_memory(binary, arith.right)?;
+        match arith.ty {
+            ArithOpType::Add => Some(left.wrapping_add(right)),
+            ArithOpType::Sub => Some(left.wrapping_sub(right)),
+            ArithOpType::Mul => Some(left.wrapping_mul(right)),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GluCmpgnAnalyzer<'a, 'e, E>
+{
+    type State = GluCmpgnState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Jump { condition, to } => {
+                let ctx = ctrl.ctx();
+                let binary = ctrl.binary();
+                if condition == ctx.const_1() {
+                    let to = ctrl.resolve(to);
+                    // Case 2 = Activate button (end), 0xa = Init
+                    let ext_param = ctx.mem32(self.arg_cache.on_entry(1));
+                    for &case in &[2u8, 0xa] {
+                        let op = ctx.substitute(to, ext_param, ctx.constant(case.into()), 8);
+                        let dest = resolve_memory(binary, op);
+                        if let Some(dest) = dest {
+                            let dest = E::VirtualAddress::from_u64(dest);
+                            self.ext_event_branch = case;
+                            ctrl.analyze_with_current_state(self, dest);
+                        }
+                    }
+                    ctrl.end_analysis();
+                }
+            }
+            Operation::Call(dest) if self.ext_event_branch != 0 => {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    if self.ext_event_branch == 0xa && self.result.swish_in.is_none() {
+                        // swish_in(this, ptr, 2, 2, 0)
+                        let is_swish_in = Some(())
+                            .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                            .filter(|&x| x == self.arg_cache.on_entry(0))
+                            .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                            .and_then(|x| x.if_constant().filter(|&c| c > 0x1000))
+                            .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
+                            .filter(|x| x.if_constant() == Some(2))
+                            .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
+                            .filter(|x| x.if_constant() == Some(2))
+                            .map(|_| ctrl.resolve(self.arg_cache.on_call(4)))
+                            .filter(|x| x.if_constant() == Some(0))
+                            .is_some();
+                        if is_swish_in {
+                            self.result.swish_in = Some(dest);
+                            ctrl.end_analysis();
+                        }
+                    }
+                    if self.ext_event_branch == 2 {
+                        let state = ctrl.user_state();
+                        if state.dialog_return_stored {
+                            state.dialog_return_stored = false;
+                            if self.result.swish_out.is_none() {
+                                self.result.swish_out = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                        }
+                        if !self.inlining {
+                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            if arg1 == self.arg_cache.on_entry(0) {
+                                self.inlining = true;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inlining = false;
+                                if self.result.swish_out.is_some() {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Operation::Move(DestOperand::Memory(mem), val, None)
+                if self.ext_event_branch == 2 =>
+            {
+                if self.result.dialog_return_code.is_none() {
+                    let val = ctrl.resolve(val);
+                    if val.if_constant() == Some(8) {
+                        let ctx = ctrl.ctx();
+                        self.result.dialog_return_code =
+                            Some(ctx.mem_variable_rc(mem.size, mem.address));
+                        ctrl.user_state().dialog_return_stored = true;
+                    }
+                }
+            }
+            _ => (),
         }
     }
 }
