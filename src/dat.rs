@@ -1312,15 +1312,16 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             l.if_constant()
                                 .and_then(|c| {
                                     Some((true, r, match c {
-                                        0xe4 => DatType::Units,
-                                        0x82 => DatType::Weapons,
-                                        0xd1 => DatType::Flingy,
-                                        0x205 => DatType::Sprites,
-                                        0x3e7 => DatType::Images,
-                                        0x3d => DatType::Upgrades,
-                                        0x2c => DatType::TechData,
-                                        0xdc => DatType::PortData,
-                                        0xbd => DatType::Orders,
+                                        0x6a => (DatType::Units, false), // First building
+                                        0xe4 => (DatType::Units, true),
+                                        0x82 => (DatType::Weapons, true),
+                                        0xd1 => (DatType::Flingy, false),
+                                        0x205 => (DatType::Sprites, false),
+                                        0x3e7 => (DatType::Images, false),
+                                        0x3d => (DatType::Upgrades, true),
+                                        0x2c => (DatType::TechData, true),
+                                        0xdc => (DatType::PortData, false),
+                                        0xbd => (DatType::Orders, false),
                                         _ => return None,
                                     }))
                                 })
@@ -1329,21 +1330,24 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                     r.if_constant()
                                         .and_then(|c| {
                                             Some((false, l, match c {
-                                                0xe3 => DatType::Units,
-                                                0x81 => DatType::Weapons,
-                                                0xd0 => DatType::Flingy,
-                                                0x204 => DatType::Sprites,
-                                                0x3e6 => DatType::Images,
-                                                0x3c => DatType::Upgrades,
-                                                0x2b => DatType::TechData,
-                                                0xdb => DatType::PortData,
-                                                0xbc => DatType::Orders,
+                                                0x69 => (DatType::Units, false), // Last creature
+                                                0xe3 => (DatType::Units, true),
+                                                0x81 => (DatType::Weapons, true),
+                                                0xd0 => (DatType::Flingy, false),
+                                                0x204 => (DatType::Sprites, false),
+                                                0x3e6 => (DatType::Images, false),
+                                                0x3c => (DatType::Upgrades, true),
+                                                0x2b => (DatType::TechData, true),
+                                                0xdb => (DatType::PortData, false),
+                                                0xbc => (DatType::Orders, false),
                                                 _ => return None,
                                             }))
                                         })
                                 })
                         });
-                    if let Some((jump, op, dat)) = make_jump_unconditional {
+                    if let Some((jump, op, (dat, first_invalid_is_none))) =
+                        make_jump_unconditional
+                    {
                         // TODO currently just assumes that those above constant checks are always
                         // dat limit checks
 
@@ -1359,11 +1363,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 return;
                             }
                         }
-                        let first_invalid_is_none = match dat {
-                            DatType::Units | DatType::Weapons | DatType::Upgrades |
-                                DatType::TechData => true,
-                            _ => false,
-                        };
                         match (jump, first_invalid_is_none) {
                             (true, false) => self.make_jump_unconditional(address),
                             (true, true) => self.make_jump_eq_neq(address, false),
