@@ -1137,7 +1137,6 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GiveAiAnalyzer<'a
                         // Trigger.current_player = Mem32[arg1 + 10]
                         let is_switch_default_case = condition
                             .if_arithmetic_gt_const(0xd)
-                            .and_then(|x| x.if_arithmetic_and_const(0xffff_ffff))
                             .and_then(|x| x.if_arithmetic_sub_const(0xd))
                             .and_then(|x| x.if_mem32())
                             .and_then(|x| x.if_arithmetic_add_const(0x10))
