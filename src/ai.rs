@@ -1666,3 +1666,46 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddMilitaryAnalyzer<
         }
     }
 }
+
+pub(crate) fn ai_spell_cast<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    order_guard: E::VirtualAddress,
+) -> Option<E::VirtualAddress> {
+    let ctx = analysis.ctx;
+    // Order 0xa0 (Guard) immediately calls ai_spell_cast
+
+    struct Analyzer<'exec, 'b, E: ExecutionState<'exec>> {
+        result: Option<E::VirtualAddress>,
+        args: &'b ArgCache<'exec, E>,
+    }
+    impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for Analyzer<'exec, 'b, E> {
+        type State = analysis::DefaultState;
+        type Exec = E;
+        fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation<'exec>) {
+            match *op {
+                Operation::Call(dest) => {
+                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        let arg1 = ctrl.resolve(self.args.on_call(0));
+                        let arg2 = ctrl.resolve(self.args.on_call(1));
+                        let this = ctrl.ctx().register(1);
+                        let args_ok = arg1 == this &&
+                            arg2.if_constant() == Some(0);
+                        if args_ok {
+                            self.result = Some(E::VirtualAddress::from_u64(dest));
+                        }
+                    }
+                    ctrl.end_analysis();
+                }
+                _ => (),
+            }
+        }
+    }
+
+    let mut analyzer = Analyzer {
+        result: None,
+        args: &analysis.arg_cache,
+    };
+    let mut analysis = FuncAnalysis::new(analysis.binary, ctx, order_guard);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}

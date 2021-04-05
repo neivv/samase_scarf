@@ -259,6 +259,7 @@ results! {
         ShowMissionGlue => "show_mission_glue",
         MenuSwishIn => "menu_swish_in",
         MenuSwishOut => "menu_swish_out",
+        AiSpellCast => "ai_spell_cast",
     }
 }
 
@@ -714,6 +715,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ShowMissionGlue => self.show_mission_glue(),
             MenuSwishIn => self.menu_swish_in(),
             MenuSwishOut => self.menu_swish_out(),
+            AiSpellCast => self.ai_spell_cast(),
         }
     }
 
@@ -1812,6 +1814,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             OperandAnalysis::DialogReturnCode,
             AnalysisCache::cache_glucmpgn_events,
         )
+    }
+
+    pub fn ai_spell_cast(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(AnalysisCache::ai_spell_cast)
     }
 
     /// Mainly for tests/dump
@@ -3644,6 +3650,14 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             Some(([result.swish_in, result.swish_out], [result.dialog_return_code],))
         })
     }
+
+    fn ai_spell_cast(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_single_address(AddressAnalysis::AiSpellCast, |s| {
+            let step_order = s.step_order(actx)?;
+            let order_guard = step_order::find_order_function(actx, step_order, 0xa0)?;
+            ai::ai_spell_cast(actx, order_guard)
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -4470,6 +4484,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn dialog_return_code(&mut self) -> Option<Operand<'e>> {
         self.0.dialog_return_code()
+    }
+
+    pub fn ai_spell_cast(&mut self) -> Option<VirtualAddress> {
+        self.0.ai_spell_cast()
     }
 }
 
