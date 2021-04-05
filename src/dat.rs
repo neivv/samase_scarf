@@ -27,6 +27,7 @@ mod wireframe;
 
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
+use std::convert::{TryFrom, TryInto};
 use std::hash::Hash;
 use std::mem;
 use std::rc::Rc;
@@ -1121,6 +1122,23 @@ struct InstructionLists<'acx, Key: Hash + Eq> {
     used_addresses: HashSet<Rva>,
 }
 
+/// bool means that first invalid is None
+fn entry_limit_to_dat(entries: u32) -> Option<(DatType, bool)> {
+    Some(match entries {
+        0x6a => (DatType::Units, false), // First building
+        0xe4 => (DatType::Units, true),
+        0x82 => (DatType::Weapons, true),
+        0xd1 => (DatType::Flingy, false),
+        0x205 => (DatType::Sprites, false),
+        0x3e7 => (DatType::Images, false),
+        0x3d => (DatType::Upgrades, true),
+        0x2c => (DatType::TechData, true),
+        0xdc => (DatType::PortData, false),
+        0xbd => (DatType::Orders, false),
+        _ => return None,
+    })
+}
+
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E>
 {
@@ -1306,70 +1324,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
                 if self.mode == DatFuncAnalysisMode::ArrayIndex {
                     let condition = ctrl.resolve(condition);
-                    let make_jump_unconditional = condition.if_arithmetic_gt()
-                        .and_then(|(l, r)| {
-                            // limit > value should be converted to always jump
-                            l.if_constant()
-                                .and_then(|c| {
-                                    Some((true, r, match c {
-                                        0x6a => (DatType::Units, false), // First building
-                                        0xe4 => (DatType::Units, true),
-                                        0x82 => (DatType::Weapons, true),
-                                        0xd1 => (DatType::Flingy, false),
-                                        0x205 => (DatType::Sprites, false),
-                                        0x3e7 => (DatType::Images, false),
-                                        0x3d => (DatType::Upgrades, true),
-                                        0x2c => (DatType::TechData, true),
-                                        0xdc => (DatType::PortData, false),
-                                        0xbd => (DatType::Orders, false),
-                                        _ => return None,
-                                    }))
-                                })
-                                .or_else(|| {
-                                    // value > last_valid should never jump
-                                    r.if_constant()
-                                        .and_then(|c| {
-                                            Some((false, l, match c {
-                                                0x69 => (DatType::Units, false), // Last creature
-                                                0xe3 => (DatType::Units, true),
-                                                0x81 => (DatType::Weapons, true),
-                                                0xd0 => (DatType::Flingy, false),
-                                                0x204 => (DatType::Sprites, false),
-                                                0x3e6 => (DatType::Images, false),
-                                                0x3c => (DatType::Upgrades, true),
-                                                0x2b => (DatType::TechData, true),
-                                                0xdb => (DatType::PortData, false),
-                                                0xbc => (DatType::Orders, false),
-                                                _ => return None,
-                                            }))
-                                        })
-                                })
-                        });
-                    if let Some((jump, op, (dat, first_invalid_is_none))) =
-                        make_jump_unconditional
-                    {
-                        // TODO currently just assumes that those above constant checks are always
-                        // dat limit checks
-
-                        let address = ctrl.address();
-                        // Hackfix for step_lone_sprites, which does a lone.sprite.id > 0x81
-                        // check
-                        if dat == DatType::Weapons {
-                            let skip = op.if_mem16()
-                                .and_then(|x| x.if_arithmetic_add_const(8))
-                                .and_then(|x| x.if_mem32())
-                                .is_some();
-                            if skip {
-                                return;
-                            }
-                        }
-                        match (jump, first_invalid_is_none) {
-                            (true, false) => self.make_jump_unconditional(address),
-                            (true, true) => self.make_jump_eq_neq(address, false),
-                            (false, false) => self.nop(address),
-                            (false, true) => self.make_jump_eq_neq(address, true),
-                        }
-                    }
+                    self.check_array_limit_jump(ctrl, condition);
                 }
             }
             _ => (),
@@ -1592,6 +1547,84 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
         }
         None
+    }
+
+    /// Patches x > array_limit jumps to not jump / only check for equivalency
+    /// if array_limit == None.
+    /// Condition has to be resolved.
+    fn check_array_limit_jump(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        condition: Operand<'e>,
+    ) {
+        let make_jump_unconditional = condition.if_arithmetic_gt()
+            .and_then(|(l, r)| {
+                // limit > value should be converted to always jump
+                l.if_constant()
+                    .and_then(|c| {
+                        Some(()).and_then(|()| {
+                            // Check signed comparisions
+                            let (right_inner, mask) = Operand::and_masked(r);
+                            if let Some((add_l, add_r)) = right_inner.if_arithmetic_add() {
+                                // `8000_0050 > (x + 8000_0000) & ffff_ffff`
+                                // is signed 50 > x
+                                let add_r = add_r.if_constant()?;
+                                if add_r == mask.wrapping_add(1) >> 1 {
+                                    let c = c.checked_sub(add_r)?;
+                                    let dat = entry_limit_to_dat(c.try_into().ok()?)?;
+                                    return Some((true, add_l, dat));
+                                }
+                            } else if let Some((sub_l, sub_r)) = right_inner.if_arithmetic_sub() {
+                                // 7fff_ffaf > (x - 51)
+                                // is signed x > 50
+                                // (7fff_ffaf + 51 == 8000_0000)
+                                let sub_r = sub_r.if_constant()?;
+                                if sub_r.wrapping_add(c).count_ones() == 1 {
+                                    // Catch signed comparision (value > last_valid)
+                                    // c = last_valid + 1, but since entry_limit_to_dat
+                                    // takes last_valid + 1 too, just pass c directly there
+                                    let dat = entry_limit_to_dat(sub_r.try_into().ok()?)?;
+                                    return Some((false, sub_l, dat));
+                                }
+                            }
+                            None
+                        }).or_else(|| {
+                            let dat = entry_limit_to_dat(c.try_into().ok()?)?;
+                            Some((true, r, dat))
+                        })
+                    })
+                    .or_else(|| {
+                        // value > last_valid should never jump
+                        let c = r.if_constant()?;
+                        let c = u32::try_from(c).ok()?
+                            .wrapping_add(1);
+                        let dat = entry_limit_to_dat(c)?;
+                        Some((false, l, dat))
+                    })
+            });
+        if let Some((jump, op, (dat, first_invalid_is_none))) = make_jump_unconditional {
+            // TODO currently just assumes that those above constant checks are always
+            // dat limit checks
+
+            let address = ctrl.address();
+            // Hackfix for step_lone_sprites, which does a lone.sprite.id > 0x81
+            // check
+            if dat == DatType::Weapons {
+                let skip = op.if_mem16()
+                    .and_then(|x| x.if_arithmetic_add_const(8))
+                    .and_then(|x| x.if_mem32())
+                    .is_some();
+                if skip {
+                    return;
+                }
+            }
+            match (jump, first_invalid_is_none) {
+                (true, false) => self.make_jump_unconditional(address),
+                (true, true) => self.make_jump_eq_neq(address, false),
+                (false, false) => self.nop(address),
+                (false, true) => self.make_jump_eq_neq(address, true),
+            }
+        }
     }
 
     fn check_func_argument(
