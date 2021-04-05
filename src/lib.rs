@@ -260,6 +260,7 @@ results! {
         MenuSwishIn => "menu_swish_in",
         MenuSwishOut => "menu_swish_out",
         AiSpellCast => "ai_spell_cast",
+        GiveUnit => "give_unit",
     }
 }
 
@@ -716,6 +717,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             MenuSwishIn => self.menu_swish_in(),
             MenuSwishOut => self.menu_swish_out(),
             AiSpellCast => self.ai_spell_cast(),
+            GiveUnit => self.give_unit(),
         }
     }
 
@@ -1818,6 +1820,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn ai_spell_cast(&mut self) -> Option<E::VirtualAddress> {
         self.enter(AnalysisCache::ai_spell_cast)
+    }
+
+    pub fn give_unit(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(AnalysisCache::give_unit)
     }
 
     /// Mainly for tests/dump
@@ -3658,6 +3664,13 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             ai::ai_spell_cast(actx, order_guard)
         })
     }
+
+    fn give_unit(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_single_address(AddressAnalysis::GiveUnit, |s| {
+            let actions = s.trigger_actions(actx)?;
+            units::give_unit(actx, actions)
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -4488,6 +4501,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn ai_spell_cast(&mut self) -> Option<VirtualAddress> {
         self.0.ai_spell_cast()
+    }
+
+    pub fn give_unit(&mut self) -> Option<VirtualAddress> {
+        self.0.give_unit()
     }
 }
 

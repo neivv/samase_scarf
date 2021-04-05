@@ -5,7 +5,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation};
 
 use crate::{
-    AnalysisCtx, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
+    AnalysisCtx, ControlExt, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
     entry_of_until, unwrap_sext, bumpvec_with_capacity, FunctionFinder,
 };
 
@@ -650,6 +650,52 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StrengthAnalyzer<'e, 
                 }
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) fn give_unit<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    trigger_actions: E::VirtualAddress,
+) -> Option<E::VirtualAddress> {
+    // search for trigger_find_units(&rect, func, &params)
+    // give_unit is at params offset 0xc
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let action_give_ptr = trigger_actions + E::VirtualAddress::SIZE * 0x30;
+    let action_give = binary.read_address(action_give_ptr).ok()?;
+
+    let mut analysis = FuncAnalysis::new(binary, ctx, action_give);
+    let mut analyzer = FindGiveUnit::<E> {
+        arg_cache: &actx.arg_cache,
+        result: None,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct FindGiveUnit<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGiveUnit<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(_) = *op {
+            let arg2_ok = ctrl.resolve_va(self.arg_cache.on_call(1)).is_some();
+            if arg2_ok {
+                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                let ctx = ctrl.ctx();
+                let func = ctrl.read_memory(ctx.add_const(arg3, 0xc), E::WORD_SIZE);
+                if let Some(func) = func.if_constant() {
+                    if func >= ctrl.binary().base().as_u64() {
+                        self.result = Some(E::VirtualAddress::from_u64(func));
+                        ctrl.end_analysis();
+                    }
+                }
+            }
         }
     }
 }
