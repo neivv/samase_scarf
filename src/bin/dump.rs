@@ -22,19 +22,21 @@ fn main() {
     init_stdout_log();
     let start_time = ::std::time::Instant::now();
     let exe = std::env::args_os().nth(1).unwrap();
-    let do_dump_shaders = std::env::args_os().nth(2).and_then(|arg| {
+    let arg2 = std::env::args_os().nth(2);
+    let arg2 = arg2.as_ref();
+    let do_dump_shaders = arg2.and_then(|arg| {
         let ok = arg.to_str()? == "--dump-shaders";
         Some(()).filter(|()| ok)
     }).is_some();
-    let do_dump_vtables = std::env::args_os().nth(2).and_then(|arg| {
+    let do_dump_vtables = arg2.and_then(|arg| {
         let ok = arg.to_str()? == "--dump-vtables";
         Some(()).filter(|()| ok)
     }).is_some();
-    let do_dump_dat_patches = std::env::args_os().nth(2).and_then(|arg| {
+    let do_dump_dat_patches = arg2.and_then(|arg| {
         let ok = arg.to_str()? == "--dat-patches";
         Some(()).filter(|()| ok)
     }).is_some();
-    let do_dump_euds = std::env::args_os().nth(2).and_then(|arg| {
+    let do_dump_euds = arg2.and_then(|arg| {
         let ok = arg.to_str()? == "--dump-euds";
         Some(()).filter(|()| ok)
     }).is_some();
@@ -159,9 +161,16 @@ fn main() {
         return;
     }
 
+    let filter = arg2.and_then(|x| x.to_str());
+
     // Addresses
     let mut lines = Vec::new();
     for address_op in samase_scarf::AddressAnalysis::iter() {
+        if let Some(ref filter) = filter {
+            if !address_op.name().contains(filter) {
+                continue;
+            }
+        }
         let result = analysis.address_analysis(address_op);
         lines.push((address_op.name(), result));
     }
@@ -177,6 +186,11 @@ fn main() {
     // Operands
     let mut lines = Vec::new();
     for op in samase_scarf::OperandAnalysis::iter() {
+        if let Some(ref filter) = filter {
+            if !op.name().contains(filter) {
+                continue;
+            }
+        }
         let result = analysis.operand_analysis(op);
         lines.push((op.name(), result));
     }
@@ -185,194 +199,196 @@ fn main() {
         println!("{}: {}", name, format_op_operand(val));
     }
 
-    let open_file = analysis.file_hook();
-    println!("open_file: {:?}", open_file);
-    let firegraft = analysis.firegraft_addresses();
-    println!("Buttonsets: {:?}", firegraft.buttonsets);
-    println!("Unit status: {:?}", firegraft.unit_status_funcs);
-    println!(
-        "Req tables:\n\
-        Units: {:?}\n\
-        Upgrades: {:?}\n\
-        Tech use: {:?}\n\
-        Tech research: {:?}\n\
-        Orders: {:?}",
-        firegraft.requirement_table_refs.units,
-        firegraft.requirement_table_refs.upgrades,
-        firegraft.requirement_table_refs.tech_use,
-        firegraft.requirement_table_refs.tech_research,
-        firegraft.requirement_table_refs.orders,
-    );
-    let aiscript_hook = analysis.aiscript_hook();
-    println!("Aiscript hook: {:#?}", aiscript_hook);
-    let step_order_hidden = analysis.step_order_hidden();
-    println!("step_order_hidden: {:?}", step_order_hidden);
-    let step_secondary = analysis.step_secondary_order();
-    println!("step_secondary_order: {:?}", step_secondary);
-    let commands = analysis.process_commands();
-    println!("process_commands: {:?}", commands.process_commands);
-    println!("storm_command_user: {}", format_op_operand(commands.storm_command_user));
-    for switch in &commands.switch {
+    if filter.is_none() {
+        let open_file = analysis.file_hook();
+        println!("open_file: {:?}", open_file);
+        let firegraft = analysis.firegraft_addresses();
+        println!("Buttonsets: {:?}", firegraft.buttonsets);
+        println!("Unit status: {:?}", firegraft.unit_status_funcs);
         println!(
-            "process_commands switch: {:?} ({:?} @ {:x})",
-            switch.address, switch.indirection, switch.offset,
+            "Req tables:\n\
+            Units: {:?}\n\
+            Upgrades: {:?}\n\
+            Tech use: {:?}\n\
+            Tech research: {:?}\n\
+            Orders: {:?}",
+            firegraft.requirement_table_refs.units,
+            firegraft.requirement_table_refs.upgrades,
+            firegraft.requirement_table_refs.tech_use,
+            firegraft.requirement_table_refs.tech_research,
+            firegraft.requirement_table_refs.orders,
         );
-    }
-    let lengths = analysis.command_lengths();
-    let lengths = lengths.iter().map(|&x| x as i32).collect::<Vec<_>>();
-    println!("command_lengths: len {:x}, {:?}", lengths.len(), lengths);
-    let lobby_commands = analysis.process_lobby_commands();
-    println!("process_lobby_commands: {:?}", lobby_commands);
-
-    let format_dat = |val: &Option<samase_scarf::DatTablePtr>| {
-        if let Some(x) = val {
-            format!("{} (entry size {})", x.address, x.entry_size)
-        } else {
-            format!("None")
+        let aiscript_hook = analysis.aiscript_hook();
+        println!("Aiscript hook: {:#?}", aiscript_hook);
+        let step_order_hidden = analysis.step_order_hidden();
+        println!("step_order_hidden: {:?}", step_order_hidden);
+        let step_secondary = analysis.step_secondary_order();
+        println!("step_secondary_order: {:?}", step_secondary);
+        let commands = analysis.process_commands();
+        println!("process_commands: {:?}", commands.process_commands);
+        println!("storm_command_user: {}", format_op_operand(commands.storm_command_user));
+        for switch in &commands.switch {
+            println!(
+                "process_commands switch: {:?} ({:?} @ {:x})",
+                switch.address, switch.indirection, switch.offset,
+            );
         }
-    };
-    println!("units.dat: {}", format_dat(&analysis.dat(DatType::Units)));
-    println!("weapons.dat: {}", format_dat(&analysis.dat(DatType::Weapons)));
-    println!("flingy.dat: {}", format_dat(&analysis.dat(DatType::Flingy)));
-    println!("sprites.dat: {}", format_dat(&analysis.dat(DatType::Sprites)));
-    println!("images.dat: {}", format_dat(&analysis.dat(DatType::Images)));
-    println!("orders.dat: {}", format_dat(&analysis.dat(DatType::Orders)));
-    println!("upgrades.dat: {}", format_dat(&analysis.dat(DatType::Upgrades)));
-    println!("techdata.dat: {}", format_dat(&analysis.dat(DatType::TechData)));
-    println!("sfxdata.dat: {}", format_dat(&analysis.dat(DatType::SfxData)));
-    println!("portdata.dat: {}", format_dat(&analysis.dat(DatType::PortData)));
-    println!("mapdata.dat: {}", format_dat(&analysis.dat(DatType::MapData)));
+        let lengths = analysis.command_lengths();
+        let lengths = lengths.iter().map(|&x| x as i32).collect::<Vec<_>>();
+        println!("command_lengths: len {:x}, {:?}", lengths.len(), lengths);
+        let lobby_commands = analysis.process_lobby_commands();
+        println!("process_lobby_commands: {:?}", lobby_commands);
 
-    let iscript = analysis.step_iscript();
-    println!("step_iscript: {:?}", iscript.step_fn);
-    println!("step iscript script ptr: {}", format_op_operand(iscript.script_operand_at_switch));
-    println!("step iscript switch: {:?}", iscript.switch_table);
-    println!("step iscript opcode check: {:?}", iscript.opcode_check);
-    println!("iscript_bin: {}", format_op_operand(iscript.iscript_bin));
-
-    let sprite_x_position = analysis.sprite_x_position();
-    let sprite_y_position = analysis.sprite_y_position();
-    println!("sprite_x: {}", format_op_operand(sprite_x_position.map(|x| x.0)));
-    println!("sprite_x_offset: {:x?}", sprite_x_position.map(|x| x.1));
-    println!("sprite_x_size: {:x?}", sprite_x_position.map(|x| x.2));
-    println!("sprite_y: {}", format_op_operand(sprite_y_position.map(|x| x.0)));
-    println!("sprite_y_offset: {:x?}", sprite_y_position.map(|x| x.1));
-    println!("sprite_y_size: {:x?}", sprite_x_position.map(|x| x.2));
-
-    let euds = analysis.eud_table();
-    println!("{} euds", euds.euds.len());
-
-    let renderer_vtables = analysis.renderer_vtables();
-    println!("renderer_vtables: {:?}", renderer_vtables);
-
-    let init_map_from_path = analysis.init_map_from_path();
-    println!("init_map_from_path: {:?}", init_map_from_path);
-
-    let skins_size = analysis.skins_size().unwrap_or(0);
-    println!("skins_size: {:x}", skins_size);
-
-    let images_loaded = analysis.images_loaded();
-    println!("images_loaded: {}", format_op_operand(images_loaded));
-    let init_rtl = analysis.init_real_time_lighting();
-    println!("init_real_time_lighting: {:?}", init_rtl);
-
-    let step = analysis.step_network();
-    println!("step_network: {:?}", step.step_network);
-    println!("receive_storm_turns: {:?}", step.receive_storm_turns);
-    println!("menu_screen_id: {}", format_op_operand(step.menu_screen_id));
-    println!("net_player_flags: {}", format_op_operand(step.net_player_flags));
-    println!("player_turns: {}", format_op_operand(step.player_turns));
-    println!("player_turns_size: {}", format_op_operand(step.player_turns_size));
-    println!("network_ready: {}", format_op_operand(step.network_ready));
-
-    let snp_definitions = analysis.snp_definitions();
-    if let Some(defs) = snp_definitions {
-        println!("snp_definitions: {}, {:x} bytes", defs.snp_definitions, defs.entry_size);
-    } else {
-        println!("snp_definitions: None");
-    }
-
-    let sprite_array = analysis.sprite_array();
-    println!("sprite_struct_size: {:?}", sprite_array.map(|x| format!("0x{:x}", x.1)));
-
-    let limits = analysis.limits();
-    println!("set_limits: {:?}", limits.set_limits);
-    for (i, arr) in limits.arrays.iter().enumerate() {
-        let name = match i {
-            0 => "images".into(),
-            1 => "sprites".into(),
-            2 => "lone_sprites".into(),
-            3 => "units".into(),
-            4 => "bullets".into(),
-            5 => "orders".into(),
-            6 => "fow_sprites".into(),
-            i => format!("unk_{}", i * 4),
+        let format_dat = |val: &Option<samase_scarf::DatTablePtr>| {
+            if let Some(x) = val {
+                format!("{} (entry size {})", x.address, x.entry_size)
+            } else {
+                format!("None")
+            }
         };
-        println!("limits.{}: {:?}", name, arr);
+        println!("units.dat: {}", format_dat(&analysis.dat(DatType::Units)));
+        println!("weapons.dat: {}", format_dat(&analysis.dat(DatType::Weapons)));
+        println!("flingy.dat: {}", format_dat(&analysis.dat(DatType::Flingy)));
+        println!("sprites.dat: {}", format_dat(&analysis.dat(DatType::Sprites)));
+        println!("images.dat: {}", format_dat(&analysis.dat(DatType::Images)));
+        println!("orders.dat: {}", format_dat(&analysis.dat(DatType::Orders)));
+        println!("upgrades.dat: {}", format_dat(&analysis.dat(DatType::Upgrades)));
+        println!("techdata.dat: {}", format_dat(&analysis.dat(DatType::TechData)));
+        println!("sfxdata.dat: {}", format_dat(&analysis.dat(DatType::SfxData)));
+        println!("portdata.dat: {}", format_dat(&analysis.dat(DatType::PortData)));
+        println!("mapdata.dat: {}", format_dat(&analysis.dat(DatType::MapData)));
+
+        let iscript = analysis.step_iscript();
+        println!("step_iscript: {:?}", iscript.step_fn);
+        println!("step iscript script ptr: {}", format_op_operand(iscript.script_operand_at_switch));
+        println!("step iscript switch: {:?}", iscript.switch_table);
+        println!("step iscript opcode check: {:?}", iscript.opcode_check);
+        println!("iscript_bin: {}", format_op_operand(iscript.iscript_bin));
+
+        let sprite_x_position = analysis.sprite_x_position();
+        let sprite_y_position = analysis.sprite_y_position();
+        println!("sprite_x: {}", format_op_operand(sprite_x_position.map(|x| x.0)));
+        println!("sprite_x_offset: {:x?}", sprite_x_position.map(|x| x.1));
+        println!("sprite_x_size: {:x?}", sprite_x_position.map(|x| x.2));
+        println!("sprite_y: {}", format_op_operand(sprite_y_position.map(|x| x.0)));
+        println!("sprite_y_offset: {:x?}", sprite_y_position.map(|x| x.1));
+        println!("sprite_y_size: {:x?}", sprite_x_position.map(|x| x.2));
+
+        let euds = analysis.eud_table();
+        println!("{} euds", euds.euds.len());
+
+        let renderer_vtables = analysis.renderer_vtables();
+        println!("renderer_vtables: {:?}", renderer_vtables);
+
+        let init_map_from_path = analysis.init_map_from_path();
+        println!("init_map_from_path: {:?}", init_map_from_path);
+
+        let skins_size = analysis.skins_size().unwrap_or(0);
+        println!("skins_size: {:x}", skins_size);
+
+        let images_loaded = analysis.images_loaded();
+        println!("images_loaded: {}", format_op_operand(images_loaded));
+        let init_rtl = analysis.init_real_time_lighting();
+        println!("init_real_time_lighting: {:?}", init_rtl);
+
+        let step = analysis.step_network();
+        println!("step_network: {:?}", step.step_network);
+        println!("receive_storm_turns: {:?}", step.receive_storm_turns);
+        println!("menu_screen_id: {}", format_op_operand(step.menu_screen_id));
+        println!("net_player_flags: {}", format_op_operand(step.net_player_flags));
+        println!("player_turns: {}", format_op_operand(step.player_turns));
+        println!("player_turns_size: {}", format_op_operand(step.player_turns_size));
+        println!("network_ready: {}", format_op_operand(step.network_ready));
+
+        let snp_definitions = analysis.snp_definitions();
+        if let Some(defs) = snp_definitions {
+            println!("snp_definitions: {}, {:x} bytes", defs.snp_definitions, defs.entry_size);
+        } else {
+            println!("snp_definitions: None");
+        }
+
+        let sprite_array = analysis.sprite_array();
+        println!("sprite_struct_size: {:?}", sprite_array.map(|x| format!("0x{:x}", x.1)));
+
+        let limits = analysis.limits();
+        println!("set_limits: {:?}", limits.set_limits);
+        for (i, arr) in limits.arrays.iter().enumerate() {
+            let name = match i {
+                0 => "images".into(),
+                1 => "sprites".into(),
+                2 => "lone_sprites".into(),
+                3 => "units".into(),
+                4 => "bullets".into(),
+                5 => "orders".into(),
+                6 => "fow_sprites".into(),
+                i => format!("unk_{}", i * 4),
+            };
+            println!("limits.{}: {:?}", name, arr);
+        }
+
+        let offset = analysis.create_game_dialog_vtbl_on_multiplayer_create();
+        println!("CreateGameScreen.on_multiplayer_create offset: {:x?}", offset);
+
+        println!("Prism vertex shader sets: 0x{:x}", analysis.prism_vertex_shaders().len());
+        println!("Prism pixel shader sets: 0x{:x}", analysis.prism_pixel_shaders().len());
+        println!(
+            "Prism vertex shaders: {:x?}",
+            analysis.prism_vertex_shaders().iter().map(|x| x.as_u64()).collect::<Vec<_>>(),
+        );
+        println!(
+            "Prism pixel shaders: {:x?}",
+            analysis.prism_pixel_shaders().iter().map(|x| x.as_u64()).collect::<Vec<_>>(),
+        );
+
+        println!("ai_step_region: {:?}", analysis.ai_step_region());
+        println!("ai_spend_money: {:?}", analysis.ai_spend_money());
+
+        println!("set_status_screen_tooltip: {:?}", analysis.set_status_screen_tooltip());
+        println!("do_attack: {:?}", analysis.do_attack());
+        println!("do_attack_main: {:?}", analysis.do_attack_main());
+        println!("last_bullet_spawner: {}", format_op_operand(analysis.last_bullet_spawner()));
+
+        println!("SMemAlloc: {:?}", analysis.smem_alloc());
+        println!("SMemFree: {:?}", analysis.smem_free());
+        println!("cmdicons_ddsgrp: {}", format_op_operand(analysis.cmdicons_ddsgrp()));
+        println!("cmdbtns_ddsgrp: {}", format_op_operand(analysis.cmdbtns_ddsgrp()));
+
+        let mouse_xy = analysis.mouse_xy();
+        println!("mouse_x: {}", format_op_operand(mouse_xy.x_var));
+        println!("mouse_y: {}", format_op_operand(mouse_xy.y_var));
+        println!("get_mouse_x: {:?}", mouse_xy.x_func);
+        println!("get_mouse_y: {:?}", mouse_xy.y_func);
+
+        println!("check_unit_requirements: {:?}", analysis.check_unit_requirements());
+        println!("dat_requirement_error: {}", format_op_operand(analysis.dat_requirement_error()));
+
+        println!("grpwire_grp: {}", format_op_operand(analysis.grpwire_grp()));
+        println!("grpwire_ddsgrp: {}", format_op_operand(analysis.grpwire_ddsgrp()));
+        println!("tranwire_grp: {}", format_op_operand(analysis.tranwire_grp()));
+        println!("tranwire_ddsgrp: {}", format_op_operand(analysis.tranwire_ddsgrp()));
+        println!("status_screen: {}", format_op_operand(analysis.status_screen()));
+        println!("status_screen_event_handler: {:?}", analysis.status_screen_event_handler());
+        println!("init_status_screen: {:?}", analysis.init_status_screen());
+
+        println!("trigger_conditions: {:?}", analysis.trigger_conditions());
+        println!("trigger_actions: {:?}", analysis.trigger_actions());
+        println!("trigger_all_units_cache: {}", format_op_operand(analysis.trigger_all_units_cache()));
+        println!(
+            "trigger_completed_units_cache: {}",
+            format_op_operand(analysis.trigger_completed_units_cache()),
+        );
+
+        println!("snet_send_packets: {:?}", analysis.snet_send_packets());
+        println!("snet_recv_packets: {:?}", analysis.snet_recv_packets());
+
+        let patch = analysis.replay_minimap_unexplored_fog_patch();
+        println!(
+            "replay_minimap_unexplored_fog_patch: {:x?}",
+            patch.as_ref().map(|x| (x.address, &x.data)),
+        );
+
+        println!("crt_fastfail: {:?}", analysis.crt_fastfail());
     }
-
-    let offset = analysis.create_game_dialog_vtbl_on_multiplayer_create();
-    println!("CreateGameScreen.on_multiplayer_create offset: {:x?}", offset);
-
-    println!("Prism vertex shader sets: 0x{:x}", analysis.prism_vertex_shaders().len());
-    println!("Prism pixel shader sets: 0x{:x}", analysis.prism_pixel_shaders().len());
-    println!(
-        "Prism vertex shaders: {:x?}",
-        analysis.prism_vertex_shaders().iter().map(|x| x.as_u64()).collect::<Vec<_>>(),
-    );
-    println!(
-        "Prism pixel shaders: {:x?}",
-        analysis.prism_pixel_shaders().iter().map(|x| x.as_u64()).collect::<Vec<_>>(),
-    );
-
-    println!("ai_step_region: {:?}", analysis.ai_step_region());
-    println!("ai_spend_money: {:?}", analysis.ai_spend_money());
-
-    println!("set_status_screen_tooltip: {:?}", analysis.set_status_screen_tooltip());
-    println!("do_attack: {:?}", analysis.do_attack());
-    println!("do_attack_main: {:?}", analysis.do_attack_main());
-    println!("last_bullet_spawner: {}", format_op_operand(analysis.last_bullet_spawner()));
-
-    println!("SMemAlloc: {:?}", analysis.smem_alloc());
-    println!("SMemFree: {:?}", analysis.smem_free());
-    println!("cmdicons_ddsgrp: {}", format_op_operand(analysis.cmdicons_ddsgrp()));
-    println!("cmdbtns_ddsgrp: {}", format_op_operand(analysis.cmdbtns_ddsgrp()));
-
-    let mouse_xy = analysis.mouse_xy();
-    println!("mouse_x: {}", format_op_operand(mouse_xy.x_var));
-    println!("mouse_y: {}", format_op_operand(mouse_xy.y_var));
-    println!("get_mouse_x: {:?}", mouse_xy.x_func);
-    println!("get_mouse_y: {:?}", mouse_xy.y_func);
-
-    println!("check_unit_requirements: {:?}", analysis.check_unit_requirements());
-    println!("dat_requirement_error: {}", format_op_operand(analysis.dat_requirement_error()));
-
-    println!("grpwire_grp: {}", format_op_operand(analysis.grpwire_grp()));
-    println!("grpwire_ddsgrp: {}", format_op_operand(analysis.grpwire_ddsgrp()));
-    println!("tranwire_grp: {}", format_op_operand(analysis.tranwire_grp()));
-    println!("tranwire_ddsgrp: {}", format_op_operand(analysis.tranwire_ddsgrp()));
-    println!("status_screen: {}", format_op_operand(analysis.status_screen()));
-    println!("status_screen_event_handler: {:?}", analysis.status_screen_event_handler());
-    println!("init_status_screen: {:?}", analysis.init_status_screen());
-
-    println!("trigger_conditions: {:?}", analysis.trigger_conditions());
-    println!("trigger_actions: {:?}", analysis.trigger_actions());
-    println!("trigger_all_units_cache: {}", format_op_operand(analysis.trigger_all_units_cache()));
-    println!(
-        "trigger_completed_units_cache: {}",
-        format_op_operand(analysis.trigger_completed_units_cache()),
-    );
-
-    println!("snet_send_packets: {:?}", analysis.snet_send_packets());
-    println!("snet_recv_packets: {:?}", analysis.snet_recv_packets());
-
-    let patch = analysis.replay_minimap_unexplored_fog_patch();
-    println!(
-        "replay_minimap_unexplored_fog_patch: {:x?}",
-        patch.as_ref().map(|x| (x.address, &x.data)),
-    );
-
-    println!("crt_fastfail: {:?}", analysis.crt_fastfail());
 
     let undef = ctx.new_undef();
     println!();
