@@ -6,7 +6,7 @@ use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation};
 
 use crate::{
     AnalysisCtx, ControlExt, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
-    entry_of_until, unwrap_sext, bumpvec_with_capacity, FunctionFinder,
+    entry_of_until, unwrap_sext, bumpvec_with_capacity, FunctionFinder, if_arithmetic_eq_neq,
 };
 
 #[derive(Clone, Debug)]
@@ -696,6 +696,78 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGiveUnit<'a, 
                     }
                 }
             }
+        }
+    }
+}
+
+pub(crate) fn set_unit_player<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    give_unit: E::VirtualAddress,
+) -> Option<E::VirtualAddress> {
+    // search for set_unit_player(this = a1, a2)
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+
+    let mut analysis = FuncAnalysis::new(binary, ctx, give_unit);
+    let mut analyzer = FindSetUnitPlayer::<E> {
+        arg_cache: &actx.arg_cache,
+        result: None,
+        skipped_branch: E::VirtualAddress::from_u64(0),
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct FindSetUnitPlayer<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    skipped_branch: E::VirtualAddress,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let ctx = ctrl.ctx();
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let player = self.arg_cache.on_entry(1);
+                    let arg1_ok = arg1 == player ||
+                        arg1.if_arithmetic_or()
+                            .and_either_other(|x| x.if_arithmetic_and())
+                            .filter(|&x| x == ctx.and_const(player, 0xff))
+                            .is_some();
+                    if arg1_ok {
+                        let this = ctrl.resolve(ctx.register(1));
+                        if this == self.arg_cache.on_entry(0) {
+                            self.result = Some(dest);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Jump { condition, .. } => {
+                // Assume that player isn't 0xd (trigger current player),
+                // so that later player comparision isn't undef
+                let condition = ctrl.resolve(condition);
+                let is_player_cmp_d = if_arithmetic_eq_neq(condition)
+                    .map(|x| (x.0, x.1))
+                    .and_either_other(|x| x.if_constant().filter(|&c| c == 0xd))
+                    .filter(|&x| x == self.arg_cache.on_entry(1))
+                    .is_some();
+                if is_player_cmp_d {
+                    self.skipped_branch = ctrl.current_instruction_end();
+                }
+            }
+            _ => (),
+        }
+    }
+
+    fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if ctrl.address() == self.skipped_branch {
+            ctrl.end_branch();
         }
     }
 }

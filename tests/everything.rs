@@ -1275,6 +1275,7 @@ fn everything_1238c() {
         assert_eq!(analysis.dialog_return_code().unwrap(), ctx.mem32(ctx.constant(0x1201ef0)));
         assert_eq!(analysis.ai_spell_cast().unwrap().0, 0x0063bbe0);
         assert_eq!(analysis.give_unit().unwrap().0, 0x006623f0);
+        assert_eq!(analysis.set_unit_player().unwrap().0, 0x005b8ae0);
     })
 }
 

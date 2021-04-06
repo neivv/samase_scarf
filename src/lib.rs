@@ -261,6 +261,7 @@ results! {
         MenuSwishOut => "menu_swish_out",
         AiSpellCast => "ai_spell_cast",
         GiveUnit => "give_unit",
+        SetUnitPlayer => "set_unit_player",
     }
 }
 
@@ -718,6 +719,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             MenuSwishOut => self.menu_swish_out(),
             AiSpellCast => self.ai_spell_cast(),
             GiveUnit => self.give_unit(),
+            SetUnitPlayer => self.set_unit_player(),
         }
     }
 
@@ -1824,6 +1826,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn give_unit(&mut self) -> Option<E::VirtualAddress> {
         self.enter(AnalysisCache::give_unit)
+    }
+
+    pub fn set_unit_player(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(AnalysisCache::set_unit_player)
     }
 
     /// Mainly for tests/dump
@@ -3671,6 +3677,13 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             units::give_unit(actx, actions)
         })
     }
+
+    fn set_unit_player(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_single_address(AddressAnalysis::SetUnitPlayer, |s| {
+            let give_unit = s.give_unit(actx)?;
+            units::set_unit_player(actx, give_unit)
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -4505,6 +4518,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn give_unit(&mut self) -> Option<VirtualAddress> {
         self.0.give_unit()
+    }
+
+    pub fn set_unit_player(&mut self) -> Option<VirtualAddress> {
+        self.0.set_unit_player()
     }
 }
 
