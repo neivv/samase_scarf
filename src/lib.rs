@@ -262,6 +262,16 @@ results! {
         AiSpellCast => "ai_spell_cast",
         GiveUnit => "give_unit",
         SetUnitPlayer => "set_unit_player",
+        RemoveFromSelections => "remove_from_selections",
+        RemoveFromClientSelection => "remove_from_client_selection",
+        ClearBuildQueue => "clear_build_queue",
+        UnitChangingPlayer => "unit_changing_player",
+        UnitApplySpeedUpgrades => "unit_apply_speed_upgrades",
+        UnitUpdateSpeed => "unit_update_speed",
+        UnitUpdateSpeedIscript => "unit_update_speed_iscript",
+        UnitBuffedFlingySpeed => "unit_buffed_flingy_speed",
+        UnitBuffedAcceleration => "unit_buffed_acceleration",
+        UnitBuffedTurnSpeed => "unit_buffed_turn_speed",
     }
 }
 
@@ -720,6 +730,16 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             AiSpellCast => self.ai_spell_cast(),
             GiveUnit => self.give_unit(),
             SetUnitPlayer => self.set_unit_player(),
+            RemoveFromSelections => self.remove_from_selections(),
+            RemoveFromClientSelection => self.remove_from_client_selection(),
+            ClearBuildQueue => self.clear_build_queue(),
+            UnitChangingPlayer => self.unit_changing_player(),
+            UnitApplySpeedUpgrades => self.unit_apply_speed_upgrades(),
+            UnitUpdateSpeed => self.unit_update_speed(),
+            UnitUpdateSpeedIscript => self.unit_update_speed_iscript(),
+            UnitBuffedFlingySpeed => self.unit_buffed_flingy_speed(),
+            UnitBuffedAcceleration => self.unit_buffed_acceleration(),
+            UnitBuffedTurnSpeed => self.unit_buffed_turn_speed(),
         }
     }
 
@@ -1832,6 +1852,76 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(AnalysisCache::set_unit_player)
     }
 
+    pub fn remove_from_selections(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::RemoveFromSelections,
+            AnalysisCache::cache_set_unit_player_fns,
+        )
+    }
+
+    pub fn remove_from_client_selection(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::RemoveFromClientSelection,
+            AnalysisCache::cache_set_unit_player_fns,
+        )
+    }
+
+    pub fn clear_build_queue(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ClearBuildQueue,
+            AnalysisCache::cache_set_unit_player_fns,
+        )
+    }
+
+    pub fn unit_changing_player(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UnitChangingPlayer,
+            AnalysisCache::cache_set_unit_player_fns,
+        )
+    }
+
+    pub fn unit_apply_speed_upgrades(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UnitApplySpeedUpgrades,
+            AnalysisCache::cache_unit_speed,
+        )
+    }
+
+    pub fn unit_update_speed(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UnitUpdateSpeed,
+            AnalysisCache::cache_unit_speed,
+        )
+    }
+
+    pub fn unit_update_speed_iscript(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UnitUpdateSpeedIscript,
+            AnalysisCache::cache_unit_speed,
+        )
+    }
+
+    pub fn unit_buffed_flingy_speed(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UnitBuffedFlingySpeed,
+            AnalysisCache::cache_unit_speed,
+        )
+    }
+
+    pub fn unit_buffed_acceleration(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UnitBuffedAcceleration,
+            AnalysisCache::cache_unit_speed,
+        )
+    }
+
+    pub fn unit_buffed_turn_speed(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UnitBuffedTurnSpeed,
+            AnalysisCache::cache_unit_speed,
+        )
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -2369,6 +2459,10 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             let result = commands::selections(actx, &s.process_commands(actx));
             Some(([], [result.unique_command_user, result.selections]))
         })
+    }
+
+    fn selections(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::Selections, |s| s.cache_selections(actx))
     }
 
     fn is_replay(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
@@ -3659,7 +3753,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.cache_many(&[MenuSwishIn, MenuSwishOut], &[DialogReturnCode], |s| {
             let event_handler = s.glucmpgn_event_handler(actx)?;
             let result = dialog::analyze_glucmpgn_events(actx, event_handler);
-            Some(([result.swish_in, result.swish_out], [result.dialog_return_code],))
+            Some(([result.swish_in, result.swish_out], [result.dialog_return_code]))
         })
     }
 
@@ -3682,6 +3776,59 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.cache_single_address(AddressAnalysis::SetUnitPlayer, |s| {
             let give_unit = s.give_unit(actx)?;
             units::set_unit_player(actx, give_unit)
+        })
+    }
+
+    fn cache_set_unit_player_fns(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[
+            RemoveFromSelections,
+            RemoveFromClientSelection,
+            ClearBuildQueue,
+            UnitChangingPlayer,
+        ], &[], |s| {
+            let set_unit_player = s.set_unit_player(actx)?;
+            let selections = s.selections(actx)?;
+            let result = units::analyze_set_unit_player(actx, set_unit_player, selections);
+            Some(([
+                result.remove_from_selections, result.remove_from_client_selection,
+                result.clear_build_queue, result.unit_changing_player,
+            ], []))
+        })
+    }
+
+    fn unit_changing_player(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::UnitChangingPlayer,
+            |s| s.cache_set_unit_player_fns(actx),
+        )
+    }
+
+    fn cache_unit_speed(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[
+            UnitApplySpeedUpgrades,
+            UnitUpdateSpeed,
+            UnitUpdateSpeedIscript,
+            UnitBuffedFlingySpeed,
+            UnitBuffedAcceleration,
+            UnitBuffedTurnSpeed,
+        ], &[], |s| {
+            let unit_changing_player = s.unit_changing_player(actx)?;
+            let step_iscript = s.step_iscript(actx).step_fn?;
+            let units_dat = s.dat_virtual_address(DatType::Units, actx)?;
+            let flingy_dat = s.dat_virtual_address(DatType::Flingy, actx)?;
+            let result = units::unit_apply_speed_upgrades(
+                actx,
+                units_dat,
+                flingy_dat,
+                unit_changing_player,
+                step_iscript,
+            );
+            Some(([
+                result.apply_speed_upgrades, result.update_speed, result.update_speed_iscript,
+                result.buffed_flingy_speed, result.buffed_acceleration, result.buffed_turn_speed,
+            ], []))
         })
     }
 }
@@ -4523,6 +4670,46 @@ impl<'e> AnalysisX86<'e> {
     pub fn set_unit_player(&mut self) -> Option<VirtualAddress> {
         self.0.set_unit_player()
     }
+
+    pub fn remove_from_selections(&mut self) -> Option<VirtualAddress> {
+        self.0.remove_from_selections()
+    }
+
+    pub fn remove_from_client_selection(&mut self) -> Option<VirtualAddress> {
+        self.0.remove_from_client_selection()
+    }
+
+    pub fn clear_build_queue(&mut self) -> Option<VirtualAddress> {
+        self.0.clear_build_queue()
+    }
+
+    pub fn unit_changing_player(&mut self) -> Option<VirtualAddress> {
+        self.0.unit_changing_player()
+    }
+
+    pub fn unit_apply_speed_upgrades(&mut self) -> Option<VirtualAddress> {
+        self.0.unit_apply_speed_upgrades()
+    }
+
+    pub fn unit_update_speed(&mut self) -> Option<VirtualAddress> {
+        self.0.unit_update_speed()
+    }
+
+    pub fn unit_update_speed_iscript(&mut self) -> Option<VirtualAddress> {
+        self.0.unit_update_speed_iscript()
+    }
+
+    pub fn unit_buffed_flingy_speed(&mut self) -> Option<VirtualAddress> {
+        self.0.unit_buffed_flingy_speed()
+    }
+
+    pub fn unit_buffed_acceleration(&mut self) -> Option<VirtualAddress> {
+        self.unit_buffed_acceleration()
+    }
+
+    pub fn unit_buffed_turn_speed(&mut self) -> Option<VirtualAddress> {
+        self.unit_buffed_turn_speed()
+    }
 }
 
 pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
@@ -4874,13 +5061,34 @@ fn if_callable_const<'e, A: analysis::Analyzer<'e>>(
 /// Helper extension functions for Option<(Operand<'e>, Operand<'e>)>.
 trait OptionExt<'e> {
     /// `opt.and_either(x)` is equivalent to
-    /// `opt.and_then(|(l, r)| Operand::either(l, r, x))`
+    /// ```
+    ///     # use scarf::Operand;
+    ///     # let opt = None;
+    ///     # fn x(op: Operand<'_>) -> Option<u64> { op.if_constant() }
+    ///     let either_opt = opt.and_then(|(l, r)| Operand::either(l, r, x));
+    /// ```
     fn and_either<F, T>(self, cb: F) -> Option<(T, Operand<'e>)>
     where F: FnMut(Operand<'e>) -> Option<T>;
     /// `opt.and_either_other(x)` is equivalent to
-    /// `opt.and_then(|(l, r)| Operand::either(l, r, x)).map(|(_, other)| other)`
+    /// ```
+    ///     # use scarf::Operand;
+    ///     # let opt = None;
+    ///     # fn x(op: Operand<'_>) -> Option<u64> { op.if_constant() }
+    ///     let other_opt = opt.and_then(|(l, r)| Operand::either(l, r, x))
+    ///         .map(|(_, other)| other);
+    /// ```
     fn and_either_other<F, T>(self, cb: F) -> Option<Operand<'e>>
     where F: FnMut(Operand<'e>) -> Option<T>;
+    /// `opt.and_if_either_other(x)` is equivalent to
+    /// ```
+    ///     # use scarf::Operand;
+    ///     # let opt = None;
+    ///     # fn x(op: Operand<'_>) -> bool { op.if_constant() == Some(4) }
+    ///     let other_opt = opt.and_then(|(l, r)| Operand::either(l, r, |op| x(op).then(|| ())))
+    ///         .map(|(_, other)| other);
+    /// ```
+    fn and_if_either_other<F>(self, cb: F) -> Option<Operand<'e>>
+    where F: FnMut(Operand<'e>) -> bool;
 }
 
 impl<'e> OptionExt<'e> for Option<(Operand<'e>, Operand<'e>)> {
@@ -4894,6 +5102,12 @@ impl<'e> OptionExt<'e> for Option<(Operand<'e>, Operand<'e>)> {
     where F: FnMut(Operand<'e>) -> Option<T>
     {
         self.and_either(cb).map(|(_, other)| other)
+    }
+
+    fn and_if_either_other<F>(self, mut cb: F) -> Option<Operand<'e>>
+    where F: FnMut(Operand<'e>) -> bool
+    {
+        self.and_either(|x| cb(x).then(|| ())).map(|((), other)| other)
     }
 }
 
@@ -5067,6 +5281,8 @@ fn bumpvec_with_capacity<T>(cap: usize, bump: &Bump) -> BumpVec<'_, T> {
 
 trait ControlExt<'e, E: ExecutionStateTrait<'e>> {
     fn resolve_va(&mut self, operand: Operand<'e>) -> Option<E::VirtualAddress>;
+    /// Skips current operation, assigns undef to other volatile registers except esp.
+    fn skip_call_preserve_esp(&mut self);
 }
 
 impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
@@ -5078,5 +5294,17 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
         self.resolve(operand).if_constant()
             .filter(|&va| va >= self.binary().base().as_u64())
             .map(|x| <A::Exec as ExecutionStateTrait<'e>>::VirtualAddress::from_u64(x))
+    }
+
+    fn skip_call_preserve_esp(&mut self) {
+        self.skip_operation();
+        let ctx = self.ctx();
+        let state = self.exec_state();
+        for i in 0..3 {
+            state.move_to(
+                &scarf::DestOperand::Register64(scarf::operand::Register(i)),
+                ctx.new_undef(),
+            );
+        }
     }
 }

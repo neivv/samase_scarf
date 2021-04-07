@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
@@ -26,6 +28,22 @@ pub struct OrderIssuing<Va: VirtualAddress> {
 pub struct InitUnits<Va: VirtualAddress> {
     pub init_units: Option<Va>,
     pub load_dat: Option<Va>,
+}
+
+pub(crate) struct SetUnitPlayerFns<Va: VirtualAddress> {
+    pub remove_from_selections: Option<Va>,
+    pub remove_from_client_selection: Option<Va>,
+    pub clear_build_queue: Option<Va>,
+    pub unit_changing_player: Option<Va>,
+}
+
+pub(crate) struct UnitSpeed<Va: VirtualAddress> {
+    pub apply_speed_upgrades: Option<Va>,
+    pub update_speed: Option<Va>,
+    pub update_speed_iscript: Option<Va>,
+    pub buffed_flingy_speed: Option<Va>,
+    pub buffed_acceleration: Option<Va>,
+    pub buffed_turn_speed: Option<Va>,
 }
 
 pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
@@ -713,6 +731,8 @@ pub(crate) fn set_unit_player<'e, E: ExecutionState<'e>>(
         arg_cache: &actx.arg_cache,
         result: None,
         skipped_branch: E::VirtualAddress::from_u64(0),
+        inlining: false,
+        inline_limit: 0,
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
@@ -722,6 +742,8 @@ struct FindSetUnitPlayer<'a, 'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     skipped_branch: E::VirtualAddress,
+    inlining: bool,
+    inline_limit: u8,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer<'a, 'e, E> {
@@ -730,6 +752,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
+                if self.inlining {
+                    if self.inline_limit == 0 {
+                        ctrl.end_analysis();
+                    }
+                    self.inline_limit -= 1;
+                }
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     let ctx = ctrl.ctx();
                     let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
@@ -744,11 +772,33 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
                         if this == self.arg_cache.on_entry(0) {
                             self.result = Some(dest);
                             ctrl.end_analysis();
+                            return;
+                        }
+                    }
+                    if !self.inlining {
+                        // There's possibly almost-empty single-assert function
+                        // in middle, taking a1 = unit, a2 = player
+                        if arg1 == self.arg_cache.on_entry(0) &&
+                            ctrl.resolve(self.arg_cache.on_call(1)) == self.arg_cache.on_entry(1)
+                        {
+                            self.inlining = true;
+                            self.inline_limit = 8;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inlining = false;
+                            if self.result.is_some() {
+                                ctrl.end_analysis();
+                            }
                         }
                     }
                 }
             }
             Operation::Jump { condition, .. } => {
+                if self.inlining {
+                    if self.inline_limit == 0 {
+                        ctrl.end_analysis();
+                    }
+                    self.inline_limit -= 1;
+                }
                 // Assume that player isn't 0xd (trigger current player),
                 // so that later player comparision isn't undef
                 let condition = ctrl.resolve(condition);
@@ -768,6 +818,495 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
     fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         if ctrl.address() == self.skipped_branch {
             ctrl.end_branch();
+        }
+    }
+}
+
+pub(crate) fn analyze_set_unit_player<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    set_unit_player: E::VirtualAddress,
+    selections: Operand<'e>,
+) -> SetUnitPlayerFns<E::VirtualAddress> {
+    let mut result = SetUnitPlayerFns {
+        remove_from_selections: None,
+        remove_from_client_selection: None,
+        clear_build_queue: None,
+        unit_changing_player: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+
+    let mut analysis = FuncAnalysis::new(binary, ctx, set_unit_player);
+    let mut analyzer = SetUnitPlayerAnalyzer::<E> {
+        arg_cache: &actx.arg_cache,
+        result: &mut result,
+        state: SetUnitPlayerState::RemoveFromSelections,
+        inline_depth: 0,
+        inline_limit: 0,
+        stop_inlining: false,
+        selections,
+        current_entry: E::VirtualAddress::from_u64(0),
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum SetUnitPlayerState {
+    // Found by checking for a function accessing selections
+    RemoveFromSelections,
+    // Found by checking for a function doing unit.sprite.flags & 0x8
+    // (Or (unit.sprite.flags >> 3) & 0x1)
+    RemoveFromClientSelection,
+    // Found by checking for a function writing 0xe4 to unit_build_queue[0]
+    ClearBuildQueue,
+    // Found from call site: unit_changing_player(this = this, a1, 1)
+    UnitChangingPlayer,
+}
+
+struct SetUnitPlayerAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut SetUnitPlayerFns<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: SetUnitPlayerState,
+    inline_depth: u8,
+    // Limit depth 2 inline length to small functions
+    inline_limit: u8,
+    stop_inlining: bool,
+    selections: Operand<'e>,
+    current_entry: E::VirtualAddress,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if self.inline_depth == 0 {
+            if let Operation::Call(dest) = *op {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let is_ok = if self.state == SetUnitPlayerState::RemoveFromSelections {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        arg1 == ctx.register(1)
+                    } else {
+                        let this = ctrl.resolve(ctx.register(1));
+                        this == ctx.register(1)
+                    };
+                    if is_ok {
+                        if self.state == SetUnitPlayerState::UnitChangingPlayer {
+                            let ok = Some(())
+                                .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                                .filter(|&x| x == self.arg_cache.on_entry(0))
+                                .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                                .filter(|&x| x.if_constant() == Some(1))
+                                .is_some();
+                            if ok {
+                                self.result.unit_changing_player = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                        } else {
+                            self.inline_depth = 1;
+                            self.current_entry = dest;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.stop_inlining = false;
+                            self.inline_depth = 0;
+                        }
+                    }
+                }
+            }
+        } else {
+            if self.inline_depth == 2 {
+                match *op {
+                    Operation::Call(..) | Operation::Jump { .. } => {
+                        if self.inline_limit == 0{
+                            ctrl.end_analysis();
+                        } else {
+                            self.inline_limit -= 1;
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            if let Operation::Call(dest) = *op {
+                if self.inline_depth == 1 {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.inline_limit = 8;
+                        self.inline_depth = 2;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth = 1;
+                        if self.stop_inlining {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+                return;
+            }
+            match self.state {
+                SetUnitPlayerState::RemoveFromSelections => {
+                    if let Operation::Move(_, val, None) = *op {
+                        let val = ctrl.resolve(val);
+                        if ctrl.if_mem_word(val).filter(|&x| x == self.selections).is_some() {
+                            self.result.remove_from_selections = Some(self.current_entry);
+                            self.stop_inlining = true;
+                            self.state = SetUnitPlayerState::RemoveFromClientSelection;
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+                SetUnitPlayerState::RemoveFromClientSelection => {
+                    let val = match *op {
+                        Operation::Move(_, val, None) => ctrl.resolve(val),
+                        Operation::SetFlags(ref arith) => {
+                            if arith.ty != scarf::FlagArith::And {
+                                return;
+                            }
+                            ctx.and(ctrl.resolve(arith.left), ctrl.resolve(arith.right))
+                        }
+                        _ => return,
+                    };
+                    let ok = val.if_arithmetic_and()
+                        .and_then(|(l, r)| {
+                            let c = r.if_constant()?;
+                            // (unit.sprite.flags >> 3) & 1 or
+                            // unit.sprite.flags & 8
+                            let rest = if c == 1 {
+                                l.if_arithmetic_rsh_const(3)?
+                            } else if c == 8 {
+                                l
+                            } else {
+                                return None;
+                            };
+                            let sprite = rest.if_mem8()?
+                                .if_arithmetic_add_const(0xe)?;
+                            let unit = ctrl.if_mem_word(sprite)?
+                                .if_arithmetic_add_const(0xc)?;
+                            if unit == ctx.register(1) {
+                                Some(())
+                            } else {
+                                None
+                            }
+                        })
+                        .is_some();
+                    if ok {
+                        self.result.remove_from_client_selection = Some(self.current_entry);
+                        self.stop_inlining = true;
+                        self.state = SetUnitPlayerState::ClearBuildQueue;
+                        ctrl.end_analysis();
+                    }
+                }
+                SetUnitPlayerState::ClearBuildQueue => {
+                    if let Operation::Move(DestOperand::Memory(mem), val, None) = *op {
+                        let address = ctrl.resolve(mem.address);
+                        let addr_ok = address.if_arithmetic_add_const(0x98)
+                            .filter(|&x| x == ctx.register(1))
+                            .is_some();
+                        if addr_ok {
+                            let val_u16 = ctx.and_const(ctrl.resolve(val), 0xffff);
+                            if val_u16.if_constant() == Some(0xe4) {
+                                self.result.clear_build_queue = Some(self.current_entry);
+                                self.stop_inlining = true;
+                                self.state = SetUnitPlayerState::UnitChangingPlayer;
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+                SetUnitPlayerState::UnitChangingPlayer => (),
+            }
+        }
+    }
+}
+
+pub(crate) fn unit_apply_speed_upgrades<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    units_dat: (E::VirtualAddress, u32),
+    flingy_dat: (E::VirtualAddress, u32),
+    unit_changing_player: E::VirtualAddress,
+    step_iscript: E::VirtualAddress,
+) -> UnitSpeed<E::VirtualAddress> {
+    let mut result = UnitSpeed {
+        apply_speed_upgrades: None,
+        update_speed: None,
+        update_speed_iscript: None,
+        buffed_flingy_speed: None,
+        buffed_acceleration: None,
+        buffed_turn_speed: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+
+    let units_dat_flingy = match binary.read_address(units_dat.0 + units_dat.1 * 0x0) {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+    let flingy_dat_movement_type = match binary.read_address(flingy_dat.0 + flingy_dat.1 * 0x6) {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+    let flingy_dat_speed = match binary.read_address(flingy_dat.0 + flingy_dat.1 * 0x1) {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+    let flingy_dat_acceleration = match binary.read_address(flingy_dat.0 + flingy_dat.1 * 0x2) {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+    let flingy_dat_turn_speed = match binary.read_address(flingy_dat.0 + flingy_dat.1 * 0x4) {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+
+    // Recognize apply_speed_upgrades from it starting with a switch with
+    // cases 2 == 13 != 2a != 25
+    // update_speed is (tail) called by apply_speed_upgrades, it starts
+    // by accessing flingy_dat_movement_type[units_dat_flingy[x]]
+    let mut analysis = FuncAnalysis::new(binary, ctx, unit_changing_player);
+    let mut analyzer = UnitSpeedAnalyzer::<E> {
+        result: &mut result,
+        inline_depth: 0,
+        inline_limit: 0,
+        entry_esp: ctx.const_0(),
+        end_caller_branch: false,
+        func_entry: E::VirtualAddress::from_u64(0),
+        step_iscript,
+        units_dat_flingy: ctx.constant(units_dat_flingy.as_u64()),
+        flingy_dat_movement_type: ctx.constant(flingy_dat_movement_type.as_u64()),
+        flingy_dat_speed: ctx.constant(flingy_dat_speed.as_u64()),
+        flingy_dat_acceleration: ctx.constant(flingy_dat_acceleration.as_u64()),
+        flingy_dat_turn_speed: ctx.constant(flingy_dat_turn_speed.as_u64()),
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct UnitSpeedAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut UnitSpeed<E::VirtualAddress>,
+    inline_depth: u8,
+    inline_limit: u8,
+    end_caller_branch: bool,
+    entry_esp: Operand<'e>,
+    func_entry: E::VirtualAddress,
+    step_iscript: E::VirtualAddress,
+    flingy_dat_movement_type: Operand<'e>,
+    flingy_dat_speed: Operand<'e>,
+    flingy_dat_acceleration: Operand<'e>,
+    flingy_dat_turn_speed: Operand<'e>,
+    units_dat_flingy: Operand<'e>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitSpeedAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if self.inline_depth == 0 {
+            if let Operation::Call(dest) = *op {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let this = ctrl.resolve(ctx.register(1));
+                    if this == ctx.register(1) {
+                        self.inline_depth = 1;
+                        self.inline_limit = 8;
+                        self.func_entry = dest;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth = 0;
+                        if self.result.apply_speed_upgrades.is_some() {
+                            if self.result.update_speed == Some(E::VirtualAddress::from_u64(0)) {
+                                // Was inlined, make None
+                                self.result.update_speed = None;
+                            }
+                            ctrl.end_analysis();
+                            return;
+                        }
+                    }
+                }
+            }
+        } else {
+            if self.result.apply_speed_upgrades.is_none() {
+                if matches!(*op, Operation::Call(..) | Operation::Jump { .. }) {
+                    if self.inline_limit == 0 {
+                        ctrl.end_analysis();
+                        return;
+                    }
+                    self.inline_limit -= 1;
+                }
+                // Checking start of function to be switch on unit_id
+                if let Operation::Jump { to, condition } = *op {
+                    if condition == ctx.const_1() {
+                        let to = ctrl.resolve(to);
+                        // Just assuming u8 cases
+                        let switch_table = ctrl.if_mem_word(to)
+                            .and_then(|x| x.if_arithmetic_add())
+                            .and_then(|x| {
+                                let base_table = E::VirtualAddress::from_u64(x.1.if_constant()?);
+                                let small_table = x.0.if_arithmetic_mul_const(4)
+                                    .and_then(|x| x.if_mem8())
+                                    .and_then(|x| x.if_arithmetic_add())
+                                    .and_then(|x| x.1.if_constant())
+                                    .map(|x| E::VirtualAddress::from_u64(x))?;
+                                Some((base_table, small_table))
+                            });
+                        if let Some((base_table, table)) = switch_table {
+                            let binary = ctrl.binary();
+                            let cases = binary.slice_from_address(table, 0x40)
+                                .ok()
+                                .and_then(|x| x.try_into().ok())
+                                .filter(|x: &[_; 0x40]| {
+                                    x[2] == x[0x13] &&
+                                        x[0x2a] != x[0x2] &&
+                                        x[0x25] != x[0x2] &&
+                                        (4..15).all(|i| x[i] == x[3])
+                                });
+                            if let Some(cases) = cases {
+                                self.result.apply_speed_upgrades = Some(self.func_entry);
+                                // Continue analysis, update_speed gets called
+                                // by apply_speed_upgrades
+                                // Take case 0x36 (Devouring one)
+                                let case_n = cases[0x36];
+                                let address = base_table + 4 * case_n as u32;
+                                if let Some(dest) = binary.read_address(address).ok() {
+                                    ctrl.analyze_with_current_state(self, dest);
+                                }
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            } else if self.result.update_speed.is_none() {
+                if self.inline_depth == 1 {
+                    let dest = match *op {
+                        Operation::Call(dest) => {
+                            ctrl.resolve_va(dest)
+                                .filter(|_| ctrl.resolve(ctx.register(1)) == ctx.register(1))
+                        }
+                        _ => None,
+                    };
+                    if let Some(dest) = dest {
+                        self.inline_depth = 2;
+                        self.func_entry = dest;
+                        self.entry_esp = ctx.sub_const(
+                            ctrl.resolve(ctx.register(4)),
+                            E::VirtualAddress::SIZE.into(),
+                        );
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth = 1;
+                        if self.result.update_speed.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+                if let Operation::Call(..) = *op {
+                    ctrl.skip_call_preserve_esp();
+                }
+                if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let ok = if_arithmetic_eq_neq(condition)
+                        .map(|x| (x.0, x.1))
+                        .and_either_other(|x| x.if_constant())
+                        .and_then(|x| x.if_mem8())
+                        .and_then(|x| x.if_arithmetic_add())
+                        .and_if_either_other(|x| x == self.flingy_dat_movement_type)
+                        .and_then(|x| x.if_memory())
+                        .and_then(|x| x.address.if_arithmetic_add())
+                        .and_if_either_other(|x| x == self.units_dat_flingy)
+                        .is_some();
+                    if ok {
+                        // update_speed can be sometimes inlined :l
+                        // If inline_depth == 1 leave it as None
+                        if self.inline_depth == 2 {
+                            self.result.update_speed = Some(self.func_entry);
+                        } else {
+                            self.result.update_speed = Some(E::VirtualAddress::from_u64(0));
+                        }
+                        // Continue analysis for functions called by update_speed
+                    }
+                }
+            } else {
+                if self.inline_depth == 3 {
+                    self.check_update_speed_funcs(ctrl, op);
+                } else {
+                    if let Operation::Call(dest) = *op {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.inline_depth = 3;
+                            self.func_entry = dest;
+                            self.end_caller_branch = false;
+                            ctrl.analyze_with_current_state(self, dest);
+                            ctrl.skip_call_preserve_esp();
+                            self.inline_depth = 2;
+                            if self.end_caller_branch {
+                                ctrl.end_branch();
+                                if self.result.buffed_turn_speed.is_some() &&
+                                    self.result.update_speed_iscript.is_some()
+                                {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    } else if let Operation::Jump { to, condition } = *op {
+                        // update_speed_iscript is sometimes a tail call
+                        if condition == ctx.const_1() {
+                            if ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                                if let Some(to) = ctrl.resolve_va(to) {
+                                    self.inline_depth = 3;
+                                    self.func_entry = to;
+                                    ctrl.analyze_with_current_state(self, to);
+                                    self.inline_depth = 2;
+                                    ctrl.end_branch();
+                                    if self.result.buffed_turn_speed.is_some() &&
+                                        self.result.update_speed_iscript.is_some()
+                                    {
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> UnitSpeedAnalyzer<'a, 'e, E> {
+    fn check_update_speed_funcs(
+        &mut self,
+        ctrl: &mut Control<'e,
+        '_, '_, Self>, op: &Operation<'e>,
+    ) {
+        // Checking one of candidate funcs
+        // flingy speed / acceleration / turn rate funcs are assumed from
+        // the code reading from corresponding array
+        if let Operation::Move(_, val, None) = *op {
+            let val = ctrl.resolve(val);
+            if let Some(mem) = val.if_memory() {
+                let size = mem.size;
+                let (_, r) = match mem.address.if_arithmetic_add() {
+                    Some(s) => s,
+                    None => return,
+                };
+                let result = if r == self.flingy_dat_speed && size == MemAccessSize::Mem32 {
+                    &mut self.result.buffed_flingy_speed
+                } else if r == self.flingy_dat_acceleration && size == MemAccessSize::Mem16 {
+                    &mut self.result.buffed_acceleration
+                } else if r == self.flingy_dat_turn_speed && size == MemAccessSize::Mem8 {
+                    // Turn speed is last of these three handled, can end branch then.
+                    self.end_caller_branch = true;
+                    &mut self.result.buffed_turn_speed
+                } else {
+                    return;
+                };
+                *result = Some(self.func_entry);
+                ctrl.end_analysis();
+                return;
+            }
+        }
+        if let Operation::Call(dest) = *op {
+            // update_speed_iscript calls step_iscript
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                if dest == self.step_iscript {
+                    self.result.update_speed_iscript = Some(self.func_entry);
+                    ctrl.end_analysis();
+                    self.end_caller_branch = true;
+                }
+            }
         }
     }
 }

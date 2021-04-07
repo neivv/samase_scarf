@@ -45,6 +45,12 @@ fn everything_1208() {
         assert_eq!(analysis.menu_swish_in().unwrap().0, 0x0077a7c0);
         assert_eq!(analysis.menu_swish_out().unwrap().0, 0x00779e70);
         assert_eq!(analysis.dialog_return_code().unwrap(), ctx.mem32(ctx.constant(0x115cae4)));
+
+        assert_eq!(analysis.unit_update_speed().unwrap().0, 0x006c0570);
+        assert_eq!(analysis.unit_update_speed_iscript().unwrap().0, 0x006a4190);
+        assert_eq!(analysis.unit_buffed_flingy_speed().unwrap().0, 0x00694c70);
+        assert_eq!(analysis.unit_buffed_acceleration().unwrap().0, 0x00694bb0);
+        assert_eq!(analysis.unit_buffed_turn_speed().unwrap().0, 0x00694c10);
     });
 }
 
@@ -212,6 +218,12 @@ fn everything_1212b() {
     test_with_extra_checks(Path::new("1212b.exe"), |_ctx, analysis| {
         let commands = analysis.process_commands();
         assert_eq!(commands.process_commands.unwrap().0, 0x0069ca80);
+
+        assert_eq!(analysis.unit_update_speed(), None);
+        assert_eq!(analysis.unit_update_speed_iscript().unwrap().0, 0x0057bad0);
+        assert_eq!(analysis.unit_buffed_flingy_speed().unwrap().0, 0x005742f0);
+        assert_eq!(analysis.unit_buffed_acceleration().unwrap().0, 0x00574230);
+        assert_eq!(analysis.unit_buffed_turn_speed().unwrap().0, 0x00574290);
     })
 }
 
@@ -441,6 +453,13 @@ fn everything_1221() {
         assert_eq!(load.0, 0x0054D1E0);
 
         assert_eq!(analysis.ai_step_region().unwrap().0, 0x00619800);
+        assert_eq!(analysis.set_unit_player().unwrap().0, 0x0058b8c0);
+        assert_eq!(analysis.unit_apply_speed_upgrades().unwrap().0, 0x005af9b0);
+        assert_eq!(analysis.unit_update_speed().unwrap().0, 0x005b0230);
+        assert_eq!(analysis.unit_update_speed_iscript().unwrap().0, 0x00595160);
+        assert_eq!(analysis.unit_buffed_flingy_speed().unwrap().0, 0x0058b690);
+        assert_eq!(analysis.unit_buffed_acceleration().unwrap().0, 0x0058b5d0);
+        assert_eq!(analysis.unit_buffed_turn_speed().unwrap().0, 0x0058b630);
     })
 }
 
@@ -664,7 +683,13 @@ fn everything_1230a() {
 
 #[test]
 fn everything_1230b() {
-    test_with_extra_checks(Path::new("1230b.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1230b.exe"), |_ctx, analysis| {
+        assert_eq!(analysis.unit_apply_speed_upgrades().unwrap().0, 0x005B7A10);
+        assert_eq!(analysis.unit_update_speed().unwrap().0, 0x005B8190);
+        assert_eq!(analysis.unit_update_speed_iscript().unwrap().0, 0x005a4b30);
+        assert_eq!(analysis.unit_buffed_flingy_speed().unwrap().0, 0x0059b430);
+        assert_eq!(analysis.unit_buffed_acceleration().unwrap().0, 0x0059b370);
+        assert_eq!(analysis.unit_buffed_turn_speed().unwrap().0, 0x0059b3d0);
     })
 }
 
@@ -1276,6 +1301,16 @@ fn everything_1238c() {
         assert_eq!(analysis.ai_spell_cast().unwrap().0, 0x0063bbe0);
         assert_eq!(analysis.give_unit().unwrap().0, 0x006623f0);
         assert_eq!(analysis.set_unit_player().unwrap().0, 0x005b8ae0);
+        assert_eq!(analysis.remove_from_selections().unwrap().0, 0x00775e30);
+        assert_eq!(analysis.remove_from_client_selection().unwrap().0, 0x005b5e00);
+        assert_eq!(analysis.clear_build_queue().unwrap().0, 0x00592640);
+        assert_eq!(analysis.unit_changing_player().unwrap().0, 0x005b63f0);
+        assert_eq!(analysis.unit_apply_speed_upgrades().unwrap().0, 0x005d9490);
+        assert_eq!(analysis.unit_update_speed().unwrap().0, 0x005d9c20);
+        assert_eq!(analysis.unit_update_speed_iscript().unwrap().0, 0x005c2f40);
+        assert_eq!(analysis.unit_buffed_flingy_speed().unwrap().0, 0x005b8600);
+        assert_eq!(analysis.unit_buffed_acceleration().unwrap().0, 0x005b8540);
+        assert_eq!(analysis.unit_buffed_turn_speed().unwrap().0, 0x005b85a0);
     })
 }
 
@@ -1309,7 +1344,7 @@ fn test_nongeneric<'e>(
         use samase_scarf::AddressAnalysis::*;
         match addr {
             // special handling
-            JoinGame => continue,
+            JoinGame | UnitUpdateSpeed => continue,
             _ => (),
         }
         let result = analysis.address_analysis(addr);
@@ -1654,6 +1689,17 @@ fn test_nongeneric<'e>(
         assert!(join_game.is_some());
     } else {
         assert!(join_game.is_none());
+    }
+
+    let unit_update_speed = analysis.unit_update_speed();
+    // Some versions inline unit_update_speed
+    // The function has randomly trash added to that function which makes inlining fail,
+    // and sometimes it's small enough to be inlined.
+    match (minor_version, patch_version, revision) {
+        (21, 2, b'b') | (22, 0, b'b') | (22, 0, b'e') | (22, 0, b'g') | (22, 0, b'h') |
+            (22, 1, b'b') | (22, 2, b'b') | (22, 2, b'c') | (22, 2, b'd') | (22, 3, b'c') |
+            (22, 3, b'e') => assert!(unit_update_speed.is_none()),
+        _ => assert!(unit_update_speed.is_some()),
     }
 
     assert!(analysis.do_attack().is_some());
