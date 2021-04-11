@@ -272,6 +272,7 @@ results! {
         UnitBuffedFlingySpeed => "unit_buffed_flingy_speed",
         UnitBuffedAcceleration => "unit_buffed_acceleration",
         UnitBuffedTurnSpeed => "unit_buffed_turn_speed",
+        StartUdpServer => "start_udp_server",
     }
 }
 
@@ -740,6 +741,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             UnitBuffedFlingySpeed => self.unit_buffed_flingy_speed(),
             UnitBuffedAcceleration => self.unit_buffed_acceleration(),
             UnitBuffedTurnSpeed => self.unit_buffed_turn_speed(),
+            StartUdpServer => self.start_udp_server(),
         }
     }
 
@@ -1920,6 +1922,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             AddressAnalysis::UnitBuffedTurnSpeed,
             AnalysisCache::cache_unit_speed,
         )
+    }
+
+    pub fn start_udp_server(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(AnalysisCache::start_udp_server)
     }
 
     /// Mainly for tests/dump
@@ -3831,6 +3837,12 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             ], []))
         })
     }
+
+    fn start_udp_server(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_single_address(AddressAnalysis::StartUdpServer, |s| {
+            network::start_udp_server(actx, &s.function_finder())
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -4709,6 +4721,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn unit_buffed_turn_speed(&mut self) -> Option<VirtualAddress> {
         self.unit_buffed_turn_speed()
+    }
+
+    pub fn start_udp_server(&mut self) -> Option<VirtualAddress> {
+        self.start_udp_server()
     }
 }
 

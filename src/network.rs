@@ -2,7 +2,10 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{MemAccessSize, Operand, Operation, BinarySection, BinaryFile};
 
-use crate::{AnalysisCtx, ArgCache, single_result_assign, find_bytes, FunctionFinder};
+use crate::{
+    AnalysisCtx, ArgCache, single_result_assign, find_bytes, FunctionFinder, EntryOf, OptionExt,
+    entry_of_until, if_arithmetic_eq_neq,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SnpDefinitions<'e> {
@@ -292,6 +295,82 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SnetHandlePackets
                 }
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) fn start_udp_server<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> Option<E::VirtualAddress> {
+    // Check for a function using "Game Data Port" string,
+    // immediately checking this.x18 == 0, 4, 6
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let str_refs = functions.string_refs(actx, b"game data port");
+    let mut result = None;
+    let funcs = functions.functions();
+    for string in str_refs {
+        let new = entry_of_until(binary, funcs, string.use_address, |entry| {
+            let mut analyzer = IsStartUdpServer::<E> {
+                result: EntryOf::Retry,
+                use_address: string.use_address,
+                found: [false; 3],
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.result
+        }).into_option_with_entry();
+        if let Some((entry, ())) = new {
+            if single_result_assign(Some(entry), &mut result) {
+                break;
+            }
+        }
+    }
+    result
+}
+
+struct IsStartUdpServer<'e, E: ExecutionState<'e>> {
+    result: EntryOf<()>,
+    use_address: E::VirtualAddress,
+    found: [bool; 3],
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStartUdpServer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let address = ctrl.address();
+        if self.use_address >= address && self.use_address < ctrl.current_instruction_end() {
+            self.result = EntryOf::Stop;
+            ctrl.end_branch(); // Branch using "Game Data Port" isn't needed
+        }
+        if let Operation::Jump { condition, .. } = *op {
+            let condition = ctrl.resolve(condition);
+            let ctx = ctrl.ctx();
+            let ok = if_arithmetic_eq_neq(condition)
+                .map(|x| (x.0, x.1))
+                .and_either(|x| match x.if_constant() {
+                    Some(0) => Some(0),
+                    Some(4) => Some(1),
+                    Some(6) => Some(2),
+                    _ => None,
+                })
+                .filter(|(_, other)| {
+                    other.if_mem32()
+                        .and_then(|x| x.if_arithmetic_add())
+                        .filter(|x| x.1.if_constant().is_some())
+                        .filter(|x| x.0 == ctx.register(1))
+                        .is_some()
+                })
+                .map(|x| x.0);
+            if let Some(index) = ok {
+                self.found[index] = true;
+                if self.found == [true; 3] {
+                    self.result = EntryOf::Ok(());
+                    ctrl.end_analysis();
+                }
+            }
         }
     }
 }

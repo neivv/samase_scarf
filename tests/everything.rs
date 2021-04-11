@@ -1311,6 +1311,7 @@ fn everything_1238c() {
         assert_eq!(analysis.unit_buffed_flingy_speed().unwrap().0, 0x005b8600);
         assert_eq!(analysis.unit_buffed_acceleration().unwrap().0, 0x005b8540);
         assert_eq!(analysis.unit_buffed_turn_speed().unwrap().0, 0x005b85a0);
+        assert_eq!(analysis.start_udp_server().unwrap().0, 0x007edbc0);
     })
 }
 
@@ -1344,7 +1345,7 @@ fn test_nongeneric<'e>(
         use samase_scarf::AddressAnalysis::*;
         match addr {
             // special handling
-            JoinGame | UnitUpdateSpeed => continue,
+            JoinGame | UnitUpdateSpeed | StartUdpServer => continue,
             _ => (),
         }
         let result = analysis.address_analysis(addr);
@@ -1700,6 +1701,18 @@ fn test_nongeneric<'e>(
             (22, 1, b'b') | (22, 2, b'b') | (22, 2, b'c') | (22, 2, b'd') | (22, 3, b'c') |
             (22, 3, b'e') => assert!(unit_update_speed.is_none()),
         _ => assert!(unit_update_speed.is_some()),
+    }
+
+    // While udp server exists in older versions, it has different code that
+    // isn't caught by this analysis
+    let start_udp_server = analysis.start_udp_server();
+    if minor_version > 21 ||
+        (minor_version == 21 && patch_version > 4) ||
+        (minor_version == 21 && patch_version == 4 && revision >= b'b')
+    {
+        assert!(start_udp_server.is_some());
+    } else {
+        assert!(start_udp_server.is_none());
     }
 
     assert!(analysis.do_attack().is_some());
