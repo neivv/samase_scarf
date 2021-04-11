@@ -42,7 +42,7 @@ scopeguard = { version = "1.1", optional = true }
 
 [dependencies.scarf]
 git = "https://github.com/neivv/scarf"
-rev = "8eff293033f7ccee9a0f6429fabe871e69381de9"
+rev = "d44a27322f8d27c4df2b49c11fdfcce5bd063aad"
 
 [dev-dependencies]
 fern = "0.6"
@@ -58,3 +58,8 @@ overflow-checks = false
 
 [profile.release.package.bumpalo]
 overflow-checks = false
+
+
+
+[patch.'https://github.com/neivv/scarf']
+scarf = { path = 'C:/jotakin/src/silps/scarf' }
