@@ -4716,15 +4716,15 @@ impl<'e> AnalysisX86<'e> {
     }
 
     pub fn unit_buffed_acceleration(&mut self) -> Option<VirtualAddress> {
-        self.unit_buffed_acceleration()
+        self.0.unit_buffed_acceleration()
     }
 
     pub fn unit_buffed_turn_speed(&mut self) -> Option<VirtualAddress> {
-        self.unit_buffed_turn_speed()
+        self.0.unit_buffed_turn_speed()
     }
 
     pub fn start_udp_server(&mut self) -> Option<VirtualAddress> {
-        self.start_udp_server()
+        self.0.start_udp_server()
     }
 }
 
