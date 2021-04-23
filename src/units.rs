@@ -35,6 +35,7 @@ pub(crate) struct SetUnitPlayerFns<Va: VirtualAddress> {
     pub remove_from_client_selection: Option<Va>,
     pub clear_build_queue: Option<Va>,
     pub unit_changing_player: Option<Va>,
+    pub player_gained_upgrade: Option<Va>,
 }
 
 pub(crate) struct UnitSpeed<Va: VirtualAddress> {
@@ -832,6 +833,7 @@ pub(crate) fn analyze_set_unit_player<'e, E: ExecutionState<'e>>(
         remove_from_client_selection: None,
         clear_build_queue: None,
         unit_changing_player: None,
+        player_gained_upgrade: None,
     };
     let ctx = actx.ctx;
     let binary = actx.binary;
@@ -862,6 +864,10 @@ enum SetUnitPlayerState {
     ClearBuildQueue,
     // Found from call site: unit_changing_player(this = this, a1, 1)
     UnitChangingPlayer,
+    // Found by following into callback at transfer_upgrades(this, callback, 0)
+    // callback is expected to do just player_gained_upgrade(this = a1, a2)
+    // (With check for a3 != 0 first)
+    PlayerGainedUpgrade,
 }
 
 struct SetUnitPlayerAnalyzer<'a, 'e, E: ExecutionState<'e>> {
@@ -884,7 +890,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
         if self.inline_depth == 0 {
             if let Operation::Call(dest) = *op {
                 if let Some(dest) = ctrl.resolve_va(dest) {
-                    let is_ok = if self.state == SetUnitPlayerState::RemoveFromSelections {
+                    let is_ok = if self.state == SetUnitPlayerState::RemoveFromSelections ||
+                        self.state == SetUnitPlayerState::PlayerGainedUpgrade
+                    {
                         let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                         arg1 == ctx.register(1)
                     } else {
@@ -901,7 +909,23 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                                 .is_some();
                             if ok {
                                 self.result.unit_changing_player = Some(dest);
-                                ctrl.end_analysis();
+                                self.state = SetUnitPlayerState::PlayerGainedUpgrade;
+                            }
+                        } else if self.state == SetUnitPlayerState::PlayerGainedUpgrade {
+                            let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                            if arg3 == ctx.const_0() {
+                                if let Some(cb) = ctrl.resolve_va(self.arg_cache.on_call(1)) {
+                                    let binary = ctrl.binary();
+                                    let mut analysis = FuncAnalysis::new(binary, ctx, cb);
+                                    let mut analyzer = FindPlayerGainedUpgrade::<E> {
+                                        arg_cache: self.arg_cache,
+                                        limit: 8,
+                                        result: None,
+                                    };
+                                    analysis.analyze(&mut analyzer);
+                                    self.result.player_gained_upgrade = analyzer.result;
+                                    ctrl.end_analysis();
+                                }
                             }
                         } else {
                             self.inline_depth = 1;
@@ -1011,6 +1035,39 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                     }
                 }
                 SetUnitPlayerState::UnitChangingPlayer => (),
+                SetUnitPlayerState::PlayerGainedUpgrade => (),
+            }
+        }
+    }
+}
+
+struct FindPlayerGainedUpgrade<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    limit: u8,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindPlayerGainedUpgrade<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if matches!(*op, Operation::Call(..) | Operation::Jump { .. }) {
+            if self.limit == 0 {
+                ctrl.end_analysis();
+                return;
+            }
+            self.limit -= 1;
+        }
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                let ctx = ctrl.ctx();
+                let this = ctrl.resolve(ctx.register(1));
+                if this == self.arg_cache.on_entry(0) {
+                    if ctrl.resolve(self.arg_cache.on_call(0)) == self.arg_cache.on_entry(1) {
+                        self.result = Some(dest);
+                        ctrl.end_analysis();
+                    }
+                }
             }
         }
     }

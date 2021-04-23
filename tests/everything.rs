@@ -1312,6 +1312,7 @@ fn everything_1238c() {
         assert_eq!(analysis.unit_buffed_acceleration().unwrap().0, 0x005b8540);
         assert_eq!(analysis.unit_buffed_turn_speed().unwrap().0, 0x005b85a0);
         assert_eq!(analysis.start_udp_server().unwrap().0, 0x007edbc0);
+        assert_eq!(analysis.player_gained_upgrade().unwrap().0, 0x005da500);
     })
 }
 

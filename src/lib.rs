@@ -266,6 +266,7 @@ results! {
         RemoveFromClientSelection => "remove_from_client_selection",
         ClearBuildQueue => "clear_build_queue",
         UnitChangingPlayer => "unit_changing_player",
+        PlayerGainedUpgrade => "player_gained_upgrade",
         UnitApplySpeedUpgrades => "unit_apply_speed_upgrades",
         UnitUpdateSpeed => "unit_update_speed",
         UnitUpdateSpeedIscript => "unit_update_speed_iscript",
@@ -735,6 +736,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             RemoveFromClientSelection => self.remove_from_client_selection(),
             ClearBuildQueue => self.clear_build_queue(),
             UnitChangingPlayer => self.unit_changing_player(),
+            PlayerGainedUpgrade => self.player_gained_upgrade(),
             UnitApplySpeedUpgrades => self.unit_apply_speed_upgrades(),
             UnitUpdateSpeed => self.unit_update_speed(),
             UnitUpdateSpeedIscript => self.unit_update_speed_iscript(),
@@ -1878,6 +1880,13 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn unit_changing_player(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(
             AddressAnalysis::UnitChangingPlayer,
+            AnalysisCache::cache_set_unit_player_fns,
+        )
+    }
+
+    pub fn player_gained_upgrade(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::PlayerGainedUpgrade,
             AnalysisCache::cache_set_unit_player_fns,
         )
     }
@@ -3792,6 +3801,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             RemoveFromClientSelection,
             ClearBuildQueue,
             UnitChangingPlayer,
+            PlayerGainedUpgrade,
         ], &[], |s| {
             let set_unit_player = s.set_unit_player(actx)?;
             let selections = s.selections(actx)?;
@@ -3799,6 +3809,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             Some(([
                 result.remove_from_selections, result.remove_from_client_selection,
                 result.clear_build_queue, result.unit_changing_player,
+                result.player_gained_upgrade,
             ], []))
         })
     }
@@ -4697,6 +4708,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn unit_changing_player(&mut self) -> Option<VirtualAddress> {
         self.0.unit_changing_player()
+    }
+
+    pub fn player_gained_upgrade(&mut self) -> Option<VirtualAddress> {
+        self.0.player_gained_upgrade()
     }
 
     pub fn unit_apply_speed_upgrades(&mut self) -> Option<VirtualAddress> {
