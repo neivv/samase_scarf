@@ -71,7 +71,6 @@ pub use crate::dialog::{MouseXy, TooltipRelated};
 pub use crate::eud::{Eud, EudTable};
 pub use crate::firegraft::RequirementTables;
 pub use crate::game::{Limits};
-pub use crate::game_init::{ImagesLoaded};
 pub use crate::iscript::StepIscript;
 pub use crate::network::{SnpDefinitions};
 pub use crate::players::NetPlayers;
@@ -274,6 +273,12 @@ results! {
         UnitBuffedAcceleration => "unit_buffed_acceleration",
         UnitBuffedTurnSpeed => "unit_buffed_turn_speed",
         StartUdpServer => "start_udp_server",
+        OpenAnimSingleFile => "open_anim_single_file",
+        OpenAnimMultiFile => "open_anim_multi_file",
+        InitSkins => "init_skins",
+        AddAssetChangeCallback => "add_asset_change_callback",
+        AnimAssetChangeCb => "anim_asset_change_cb",
+        InitRealTimeLighting => "init_real_time_lighting",
     }
 }
 
@@ -357,6 +362,12 @@ results! {
         IsTargeting => "is_targeting",
         ClientSelection => "client_selection",
         DialogReturnCode => "dialog_return_code",
+        BaseAnimSet => "base_anim_set",
+        ImageGrps => "image_grps",
+        ImageOverlays => "image_overlays",
+        FireOverlayMax => "fire_overlay_max",
+        AssetScale => "asset_scale",
+        ImagesLoaded => "images_loaded",
     }
 }
 
@@ -387,12 +398,12 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     eud: Cached<Rc<EudTable<'e>>>,
     renderer_vtables: Cached<Rc<Vec<E::VirtualAddress>>>,
     init_map_from_path: Cached<Option<InitMapFromPath<E::VirtualAddress>>>,
-    images_loaded: Cached<ImagesLoaded<'e, E::VirtualAddress>>,
     step_network: Cached<Rc<StepNetwork<'e, E::VirtualAddress>>>,
     snp_definitions: Cached<Option<SnpDefinitions<'e>>>,
     sprite_struct_size: u16,
     net_player_size: u16,
     skins_size: u16,
+    anim_struct_size: u16,
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
     create_game_dialog_vtbl_on_multiplayer_create: Cached<Option<usize>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
@@ -605,12 +616,12 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 eud: Default::default(),
                 renderer_vtables: Default::default(),
                 init_map_from_path: Default::default(),
-                images_loaded: Default::default(),
                 step_network: Default::default(),
                 snp_definitions: Default::default(),
                 sprite_struct_size: 0,
                 net_player_size: 0,
                 skins_size: 0,
+                anim_struct_size: 0,
                 limits: Default::default(),
                 create_game_dialog_vtbl_on_multiplayer_create: Default::default(),
                 prism_shaders: Default::default(),
@@ -744,6 +755,12 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             UnitBuffedAcceleration => self.unit_buffed_acceleration(),
             UnitBuffedTurnSpeed => self.unit_buffed_turn_speed(),
             StartUdpServer => self.start_udp_server(),
+            OpenAnimSingleFile => self.open_anim_single_file(),
+            OpenAnimMultiFile => self.open_anim_multi_file(),
+            InitSkins => self.init_skins(),
+            AddAssetChangeCallback => self.add_asset_change_callback(),
+            AnimAssetChangeCb => self.anim_asset_change_cb(),
+            InitRealTimeLighting => self.init_real_time_lighting(),
         }
     }
 
@@ -828,6 +845,12 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             IsTargeting => self.is_targeting(),
             ClientSelection => self.client_selection(),
             DialogReturnCode => self.dialog_return_code(),
+            BaseAnimSet => self.base_anim_set(),
+            ImageGrps => self.image_grps(),
+            ImageOverlays => self.image_overlays(),
+            FireOverlayMax => self.fire_overlay_max(),
+            AssetScale => self.asset_scale(),
+            ImagesLoaded => self.images_loaded(),
         }
     }
 
@@ -1093,11 +1116,14 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn images_loaded(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.images_loaded(s))
+        self.analyze_many_op(OperandAnalysis::ImagesLoaded, AnalysisCache::cache_images_loaded)
     }
 
     pub fn init_real_time_lighting(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.init_real_time_lighting(s))
+        self.analyze_many_addr(
+            AddressAnalysis::InitRealTimeLighting,
+            AnalysisCache::cache_images_loaded,
+        )
     }
 
     pub fn local_player_name(&mut self) -> Option<Operand<'e>> {
@@ -1937,6 +1963,65 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(AnalysisCache::start_udp_server)
     }
 
+    pub fn open_anim_single_file(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::OpenAnimSingleFile,
+            AnalysisCache::cache_image_loading,
+        )
+    }
+
+    pub fn open_anim_multi_file(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::OpenAnimMultiFile,
+            AnalysisCache::cache_image_loading,
+        )
+    }
+
+    pub fn init_skins(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::InitSkins,
+            AnalysisCache::cache_image_loading,
+        )
+    }
+
+    pub fn add_asset_change_callback(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::AddAssetChangeCallback,
+            AnalysisCache::cache_image_loading,
+        )
+    }
+
+    pub fn anim_asset_change_cb(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::AnimAssetChangeCb,
+            AnalysisCache::cache_image_loading,
+        )
+    }
+
+    pub fn asset_scale(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::AssetScale, AnalysisCache::cache_images_loaded)
+    }
+
+    pub fn base_anim_set(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::BaseAnimSet, AnalysisCache::cache_image_loading)
+    }
+
+    pub fn image_grps(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::ImageGrps, AnalysisCache::cache_image_loading)
+    }
+
+    pub fn image_overlays(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::ImageOverlays, AnalysisCache::cache_image_loading)
+    }
+
+    pub fn fire_overlay_max(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::FireOverlayMax, AnalysisCache::cache_image_loading)
+    }
+
+    pub fn anim_struct_size(&mut self) -> Option<u16> {
+        self.base_anim_set().map(|_| self.cache.anim_struct_size)
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -2665,34 +2750,14 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn images_loaded_struct(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> ImagesLoaded<'e, E::VirtualAddress> {
-        if let Some(cached) = self.images_loaded.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            Some(game_init::images_loaded(actx, self.load_images(actx)?, &self.function_finder()))
-        }).unwrap_or_else(|| {
-            ImagesLoaded {
-                images_loaded: None,
-                init_real_time_lighting: None,
-            }
-        });
-        self.images_loaded.cache(&result);
-        result
-    }
-
-    fn images_loaded(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.images_loaded_struct(actx).images_loaded
-    }
-
-    fn init_real_time_lighting(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Option<E::VirtualAddress> {
-        self.images_loaded_struct(actx).init_real_time_lighting
+    fn cache_images_loaded(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[InitRealTimeLighting], &[ImagesLoaded, AssetScale], |s| {
+            let load_images = s.load_images(actx)?;
+            let result = game_init::images_loaded(actx, load_images, &s.function_finder());
+            Some(([result.init_real_time_lighting], [result.images_loaded, result.asset_scale]))
+        })
     }
 
     fn local_player_name(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
@@ -3854,6 +3919,35 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             network::start_udp_server(actx, &s.function_finder())
         })
     }
+
+    fn cache_image_loading(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[
+            OpenAnimSingleFile, OpenAnimMultiFile, InitSkins,
+            AddAssetChangeCallback, AnimAssetChangeCb,
+        ], &[
+            BaseAnimSet, ImageGrps, ImageOverlays, FireOverlayMax,
+        ], |s| {
+            let load_images = s.load_images(actx)?;
+            let load_dat = s.load_dat(actx)?;
+            let images_dat = s.dat_virtual_address(DatType::Images, actx)?;
+            let result = game_init::analyze_load_images(
+                actx,
+                load_images,
+                load_dat,
+                images_dat,
+            );
+            s.anim_struct_size = result.anim_struct_size;
+            Some(([
+                result.open_anim_single_file, result.open_anim_multi_file, result.init_skins,
+                result.add_asset_change_cb, result.anim_asset_change_cb,
+            ], [
+                result.base_anim_set, result.image_grps,
+                result.image_overlays, result.fire_overlay_max,
+            ]))
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -4740,6 +4834,50 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn start_udp_server(&mut self) -> Option<VirtualAddress> {
         self.0.start_udp_server()
+    }
+
+    pub fn open_anim_single_file(&mut self) -> Option<VirtualAddress> {
+        self.0.open_anim_single_file()
+    }
+
+    pub fn open_anim_multi_file(&mut self) -> Option<VirtualAddress> {
+        self.0.open_anim_multi_file()
+    }
+
+    pub fn init_skins(&mut self) -> Option<VirtualAddress> {
+        self.0.init_skins()
+    }
+
+    pub fn add_asset_change_callback(&mut self) -> Option<VirtualAddress> {
+        self.0.add_asset_change_callback()
+    }
+
+    pub fn anim_asset_change_cb(&mut self) -> Option<VirtualAddress> {
+        self.0.anim_asset_change_cb()
+    }
+
+    pub fn asset_scale(&mut self) -> Option<Operand<'e>> {
+        self.0.asset_scale()
+    }
+
+    pub fn base_anim_set(&mut self) -> Option<Operand<'e>> {
+        self.0.base_anim_set()
+    }
+
+    pub fn image_grps(&mut self) -> Option<Operand<'e>> {
+        self.0.image_grps()
+    }
+
+    pub fn image_overlays(&mut self) -> Option<Operand<'e>> {
+        self.0.image_overlays()
+    }
+
+    pub fn fire_overlay_max(&mut self) -> Option<Operand<'e>> {
+        self.0.fire_overlay_max()
+    }
+
+    pub fn anim_struct_size(&mut self) -> Option<u16> {
+        self.0.anim_struct_size()
     }
 }
 

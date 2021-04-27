@@ -51,6 +51,10 @@ fn everything_1208() {
         assert_eq!(analysis.unit_buffed_flingy_speed().unwrap().0, 0x00694c70);
         assert_eq!(analysis.unit_buffed_acceleration().unwrap().0, 0x00694bb0);
         assert_eq!(analysis.unit_buffed_turn_speed().unwrap().0, 0x00694c10);
+
+        assert_eq!(analysis.open_anim_single_file().unwrap().0, 0x006178c0);
+        assert_eq!(analysis.open_anim_multi_file().unwrap().0, 0x00617d80);
+        assert_eq!(analysis.base_anim_set().unwrap(), ctx.constant(0xe728d8));
     });
 }
 
@@ -375,6 +379,12 @@ fn everything_1215i() {
 fn everything_1220() {
     test_with_extra_checks(Path::new("1220.exe"), |ctx, analysis| {
         assert_eq!(analysis.vertex_buffer().unwrap(), ctx.constant(0x00d7fa08));
+        assert_eq!(analysis.base_anim_set().unwrap(), ctx.constant(0x00dce238));
+        assert_eq!(analysis.add_asset_change_callback().unwrap().0, 0x0051d430);
+        assert_eq!(analysis.anim_asset_change_cb().unwrap().0, 0x00538aa0);
+        assert_eq!(analysis.image_grps().unwrap(), ctx.constant(0xdc3890));
+        assert_eq!(analysis.image_overlays().unwrap(), ctx.constant(0xdc8380));
+        assert_eq!(analysis.fire_overlay_max().unwrap(), ctx.constant(0xdc3470));
     })
 }
 
@@ -526,6 +536,8 @@ fn everything_1222b() {
     test_with_extra_checks(Path::new("1222b.exe"), |ctx, analysis| {
         let pathing = analysis.pathing().unwrap();
         assert_eq!(pathing, ctx.mem32(ctx.constant(0x00ff1274)));
+        assert_eq!(analysis.add_asset_change_callback().unwrap().0, 0x005238d0);
+        assert_eq!(analysis.anim_asset_change_cb().unwrap().0, 0x00550cf0);
     })
 }
 
@@ -678,6 +690,7 @@ fn everything_1230a() {
         assert_eq!(first_active_unit.unwrap(), ctx.mem32(ctx.constant(0xddf144)));
         assert_eq!(first_hidden_unit.unwrap(), ctx.mem32(ctx.constant(0xddf154)));
         assert_eq!(analysis.player_unit_skins().unwrap(), ctx.constant(0x00fe9b10));
+        assert_eq!(analysis.init_skins().unwrap().0, 0x006124b0);
     })
 }
 
@@ -1313,6 +1326,16 @@ fn everything_1238c() {
         assert_eq!(analysis.unit_buffed_turn_speed().unwrap().0, 0x005b85a0);
         assert_eq!(analysis.start_udp_server().unwrap().0, 0x007edbc0);
         assert_eq!(analysis.player_gained_upgrade().unwrap().0, 0x005da500);
+        assert_eq!(analysis.open_anim_single_file().unwrap().0, 0x00539f70);
+        assert_eq!(analysis.open_anim_multi_file().unwrap().0, 0x0053a560);
+        assert_eq!(analysis.init_skins().unwrap().0, 0x00649ff0);
+        assert_eq!(analysis.add_asset_change_callback().unwrap().0, 0x0054d670);
+        assert_eq!(analysis.anim_asset_change_cb().unwrap().0, 0x0057e0a0);
+        assert_eq!(analysis.asset_scale().unwrap(), ctx.mem32(ctx.constant(0xf2cd20)));
+        assert_eq!(analysis.base_anim_set().unwrap(), ctx.constant(0xfd4448));
+        assert_eq!(analysis.image_grps().unwrap(), ctx.constant(0xfc9ab0));
+        assert_eq!(analysis.image_overlays().unwrap(), ctx.constant(0xfce598));
+        assert_eq!(analysis.fire_overlay_max().unwrap(), ctx.constant(0xfc9688));
     })
 }
 
@@ -1346,7 +1369,7 @@ fn test_nongeneric<'e>(
         use samase_scarf::AddressAnalysis::*;
         match addr {
             // special handling
-            JoinGame | UnitUpdateSpeed | StartUdpServer => continue,
+            JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins => continue,
             _ => (),
         }
         let result = analysis.address_analysis(addr);
@@ -1374,7 +1397,7 @@ fn test_nongeneric<'e>(
                 FirstActiveBullet | LastActiveBullet | ActiveIscriptUnit | UniqueCommandUser |
                 ReplayVisions | ReplayShowEntireMap | ScMainState | LocalStormPlayerId |
                 LocalUniquePlayerId | IsPaused | IsPlacingBuilding | IsTargeting |
-                DialogReturnCode =>
+                DialogReturnCode | AssetScale | ImagesLoaded =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1383,7 +1406,8 @@ fn test_nongeneric<'e>(
                 AiTransportReachabilityCachedRegion | SpriteHlines | SpriteHlinesEnd |
                 AiRegions | GraphicLayers | Selections | GlobalEventHandlers | FirstPlayerUnit |
                 NetPlayers | NetPlayerToGame | NetPlayerToUnique | GameData | Skins |
-                PlayerSkins | ClientSelection =>
+                PlayerSkins | ClientSelection | BaseAnimSet | ImageGrps | ImageOverlays |
+                FireOverlayMax =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }
@@ -1516,6 +1540,18 @@ fn test_nongeneric<'e>(
     } else {
         // Static array
         check_global_struct(sprite_array, binary, "sprite_array");
+    }
+
+    let anim_struct_size = analysis.anim_struct_size().unwrap();
+    // Size changed in 1.23.5h (Critical section to Srw lock)
+    if minor_version < 23 ||
+        (minor_version == 23 && patch_version < 5) ||
+        (minor_version == 23 && patch_version == 5 && revision < b'h') ||
+        filename_str == "1234_ptr1"
+    {
+        assert_eq!(anim_struct_size, 0x4c);
+    } else {
+        assert_eq!(anim_struct_size, 0x38);
     }
 
     let old_sprite_pos = minor_version < 23 ||
@@ -1760,10 +1796,14 @@ fn test_nongeneric<'e>(
 
     // Became a thing since 1.23.0 (carbot)
     let skins = analysis.player_unit_skins();
+    // Technically existed but wasn't similar before carbot
+    let init_skins = analysis.init_skins();
     if minor_version >= 23 {
         check_global_struct_opt(skins, binary, "player_unit_skins");
+        assert!(init_skins.is_some());
     } else {
         assert!(skins.is_none());
+        assert!(init_skins.is_none());
     }
 
     // The vertex buffer funcs / struct layout changed slightly in 1.21.2,

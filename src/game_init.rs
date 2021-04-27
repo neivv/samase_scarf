@@ -1,6 +1,10 @@
-use bumpalo::collections::Vec as BumpVec;
+use std::collections::hash_map::Entry;
+use std::convert::TryFrom;
 
-use scarf::{DestOperand, Operand, OperandCtx, Operation, BinaryFile};
+use bumpalo::collections::Vec as BumpVec;
+use fxhash::FxHashMap;
+
+use scarf::{DestOperand, Operand, OperandCtx, Operation, BinaryFile, BinarySection};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 
@@ -8,6 +12,7 @@ use crate::switch::CompleteSwitch;
 use crate::{
     AnalysisCtx, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, OperandExt,
     if_arithmetic_eq_neq, single_result_assign, bumpvec_with_capacity, FunctionFinder,
+    ControlExt,
 };
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -44,16 +49,29 @@ pub struct SelectMapEntry<'e, Va: VirtualAddress> {
     pub is_multiplayer: Option<Operand<'e>>,
 }
 
-#[derive(Clone)]
-pub struct ImagesLoaded<'e, Va: VirtualAddress> {
+pub(crate) struct ImagesLoaded<'e, Va: VirtualAddress> {
     pub images_loaded: Option<Operand<'e>>,
     pub init_real_time_lighting: Option<Va>,
+    pub asset_scale: Option<Operand<'e>>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct InitMapFromPath<Va: VirtualAddress> {
     pub init_map_from_path: Va,
     pub map_init_chk_callbacks: Va,
+}
+
+pub(crate) struct LoadImagesAnalysis<'e, Va: VirtualAddress> {
+    pub open_anim_single_file: Option<Va>,
+    pub open_anim_multi_file: Option<Va>,
+    pub init_skins: Option<Va>,
+    pub add_asset_change_cb: Option<Va>,
+    pub anim_asset_change_cb: Option<Va>,
+    pub base_anim_set: Option<Operand<'e>>,
+    pub image_grps: Option<Operand<'e>>,
+    pub image_overlays: Option<Operand<'e>>,
+    pub fire_overlay_max: Option<Operand<'e>>,
+    pub anim_struct_size: u16,
 }
 
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
@@ -396,7 +414,7 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
     ];
     let binary = analysis.binary;
     let bump = &analysis.bump;
-    let rdata = binary.section(b".rdata\0\0")?;
+    let rdata = analysis.binary_sections.rdata;
     let mut chk_data = crate::find_bytes(bump, &rdata.data, &chk_validated_sections[0][..]);
     chk_data.retain(|&rva| {
         if rva.0 & 3 != 0 {
@@ -1117,6 +1135,7 @@ pub(crate) fn images_loaded<'e, E: ExecutionState<'e>>(
     let mut result = ImagesLoaded {
         images_loaded: None,
         init_real_time_lighting: None,
+        asset_scale: None,
     };
     let ctx = analysis.ctx;
     let binary = analysis.binary;
@@ -1137,16 +1156,14 @@ pub(crate) fn images_loaded<'e, E: ExecutionState<'e>>(
         if let EntryOfResult::Ok(_, (images_loaded, else_branch)) = res {
             single_result_assign(Some(images_loaded), &mut result.images_loaded);
             let mut analyzer = FindBeginLoadingRtl::<E> {
-                result: None,
+                result: &mut result,
                 checking_func: false,
                 call_limit: 5,
+                func_returns: Vec::with_capacity(8),
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, else_branch);
             analysis.analyze(&mut analyzer);
-            if single_result_assign(
-                analyzer.result,
-                &mut result.init_real_time_lighting,
-            ) {
+            if result.init_real_time_lighting.is_some() {
                 break;
             }
         }
@@ -1154,13 +1171,14 @@ pub(crate) fn images_loaded<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct FindBeginLoadingRtl<'e, E: ExecutionState<'e>> {
-    result: Option<E::VirtualAddress>,
+struct FindBeginLoadingRtl<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut ImagesLoaded<'e, E::VirtualAddress>,
     checking_func: bool,
     call_limit: u8,
+    func_returns: Vec<E::VirtualAddress>,
 }
 
-impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingRtl<'e, E> {
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingRtl<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -1168,31 +1186,32 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingRtl<'
             // init_rtl should be called immediately at the branch
             // if images_loaded == 1
             Operation::Call(dest) => {
-                if !self.checking_func {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    if !self.checking_func {
                         self.checking_func = true;
                         ctrl.analyze_with_current_state(self, dest);
-                        if self.result.is_some() {
-                            self.result = Some(dest);
+                        if self.result.init_real_time_lighting.is_some() {
+                            self.result.init_real_time_lighting = Some(dest);
                         }
                         self.checking_func = false;
-                    }
-                    ctrl.end_analysis();
-                } else {
-                    if self.call_limit == 0 {
                         ctrl.end_analysis();
-                        return;
+                    } else {
+                        if self.call_limit == 0 {
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        self.call_limit -= 1;
+                        let ctx = ctrl.ctx();
+                        let exec = ctrl.exec_state();
+                        let idx = self.func_returns.len() as u32;
+                        let custom = ctx.custom(idx);
+                        self.func_returns.push(dest);
+                        exec.move_to(
+                            &DestOperand::Register64(scarf::operand::Register(0)),
+                            custom,
+                        );
+                        ctrl.skip_operation();
                     }
-                    self.call_limit -= 1;
-                    // Guess that a function returns Mem32[asset_scale]
-                    let ctx = ctrl.ctx();
-                    let exec = ctrl.exec_state();
-                    exec.move_to(
-                        &DestOperand::Register64(scarf::operand::Register(0)),
-                        ctx.mem32(ctx.custom(0)),
-                    );
-                    ctrl.skip_operation();
                 }
             }
             Operation::Jump { condition, .. } => {
@@ -1200,13 +1219,24 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingRtl<'
                     ctrl.end_analysis();
                 } else {
                     let condition = ctrl.resolve(condition);
-                    let ok = if_arithmetic_eq_neq(condition)
+                    let asset_scale = if_arithmetic_eq_neq(condition)
                         .map(|(l, r, _)| (l, r))
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 4))
-                        .and_then(|x| x.if_mem32())
-                        .is_some();
-                    if ok {
-                        self.result = Some(E::VirtualAddress::from_u64(0));
+                        .and_either_other(|x| x.if_constant().filter(|&c| c == 4));
+                    if let Some(scale) = asset_scale {
+                        let funcs = &self.func_returns;
+                        let ctx = ctrl.ctx();
+                        let binary = ctrl.binary();
+                        let scale = ctx.transform(scale, 8, |op| {
+                            if let Some(idx) = op.if_custom() {
+                                let func = funcs[idx as usize];
+                                analyze_func_return::<E>(func, ctx, binary)
+                            } else {
+                                None
+                            }
+                        });
+                        self.result.init_real_time_lighting =
+                            Some(E::VirtualAddress::from_u64(0));
+                        self.result.asset_scale = Some(scale);
                         ctrl.end_analysis();
                     }
                 }
@@ -1941,4 +1971,621 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindOrigPlayerTyp
             _ => (),
         }
     }
+}
+
+pub(crate) fn analyze_load_images<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    load_images: E::VirtualAddress,
+    load_dat: E::VirtualAddress,
+    images_dat: (E::VirtualAddress, u32),
+) -> LoadImagesAnalysis<'e, E::VirtualAddress> {
+    let mut result = LoadImagesAnalysis {
+        open_anim_single_file: None,
+        open_anim_multi_file: None,
+        init_skins: None,
+        add_asset_change_cb: None,
+        anim_asset_change_cb: None,
+        base_anim_set: None,
+        image_grps: None,
+        image_overlays: None,
+        fire_overlay_max: None,
+        anim_struct_size: 0,
+    };
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let images_dat_grp = match binary.read_address(images_dat.0 + images_dat.1 * 0x0) {
+        Ok(o) => ctx.constant(o.as_u64()),
+        Err(_) => return result,
+    };
+    // This isn't actually attack overlay, but can't bother to figure out which this is.
+    let images_dat_attack_overlay = match binary.read_address(images_dat.0 + images_dat.1 * 0x9) {
+        Ok(o) => ctx.constant(o.as_u64()),
+        Err(_) => return result,
+    };
+    let mut analyzer = LoadImagesAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        load_dat,
+        inline_depth: 0,
+        inline_limit: 0,
+        checking_init_skins: false,
+        func_addr_to_return_custom: FxHashMap::with_capacity_and_hasher(32, Default::default()),
+        custom_to_func_addr: Vec::with_capacity(32),
+        images_dat_grp,
+        images_dat_attack_overlay,
+        rdata: actx.binary_sections.rdata,
+        text: actx.binary_sections.text,
+        min_state: LoadImagesAnalysisState::BeforeLoadDat,
+    };
+    let exec = E::initial_state(ctx, binary);
+    let state = LoadImagesAnalysisState::BeforeLoadDat;
+    let mut analysis = FuncAnalysis::custom_state(binary, ctx, load_images, exec, state);
+    analysis.analyze(&mut analyzer);
+    analyzer.finish(ctx, binary);
+    result
+}
+
+struct LoadImagesAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut LoadImagesAnalysis<'e, E::VirtualAddress>,
+    load_dat: E::VirtualAddress,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+    inline_limit: u8,
+    checking_init_skins: bool,
+    images_dat_grp: Operand<'e>,
+    images_dat_attack_overlay: Operand<'e>,
+    func_addr_to_return_custom: FxHashMap<E::VirtualAddress, u32>,
+    // Operand is this arg, set when open_anim_single_file candidate
+    custom_to_func_addr: Vec<(E::VirtualAddress, Option<Operand<'e>>)>,
+    rdata: &'a BinarySection<E::VirtualAddress>,
+    text: &'a BinarySection<E::VirtualAddress>,
+    min_state: LoadImagesAnalysisState,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
+enum LoadImagesAnalysisState {
+    // Move forward until past load_dat call
+    BeforeLoadDat,
+    // Finds open_anim_single_file(this = &base_anim_set[1], 0, 1, 1)
+    // open_anim_multi_file(this = &base_anim_set[0], 0, 999, 1, 2, 1)
+    // Inline to 1 depth load_images_aux, stop inlining if first there call
+    // isn't func(_, "arr\\images.tbl", _, _, _)
+    // + Start keeping track of func return values, don't inline other than load_images_aux
+    FindOpenAnims,
+    // Expected to be first call after open_anim_multi_file, recognized from "/skins" const str
+    // access
+    FindInitSkins,
+    // add_asset_change_cb(&mut out_handle, func (0x14 bytes by value))
+    // func.x4 (arg3) is anim_asset_change_cb
+    FindAssetChangeCb,
+    // load_grps(image_grps, images_dat_grp, &mut out, 999)
+    // Single caller so some build may inline this??
+    // Currently not handling that.
+    FindImageGrps,
+    // load_lo_set(&image_overlays[0], images_dat_attack_overlay, &mut out, 999)
+    FindImageOverlays,
+    // Stop inlining if inline depth == 1 (since FindOpenAnims)
+    // Find move Mem8[x + undef] = x * 2
+    FindFireOverlayMax,
+}
+
+impl analysis::AnalysisState for LoadImagesAnalysisState {
+    fn merge(&mut self, newer: Self) {
+        // Merge most to smallest state possible,
+        // but there's code that skips past add_asset_change_cb so have an exception
+        // to merge that to a higher state.
+        if *self == LoadImagesAnalysisState::FindImageGrps &&
+            newer == LoadImagesAnalysisState::FindAssetChangeCb
+        {
+            // Nothing
+        } else if newer == LoadImagesAnalysisState::FindImageGrps &&
+            *self == LoadImagesAnalysisState::FindAssetChangeCb
+        {
+            *self = newer;
+        } else if *self > newer {
+            *self = newer;
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for LoadImagesAnalyzer<'a, 'e, E> {
+    type State = LoadImagesAnalysisState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *ctrl.user_state() {
+            LoadImagesAnalysisState::BeforeLoadDat => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if dest == self.load_dat {
+                            *ctrl.user_state() = LoadImagesAnalysisState::FindOpenAnims;
+                            self.min_state = LoadImagesAnalysisState::FindOpenAnims;
+                        }
+                    }
+                }
+            }
+            LoadImagesAnalysisState::FindOpenAnims => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.inline_limit != 0 {
+                            // Verify arg2 = arr\\images.tbl or exit
+                            // Older versions used arg1
+                            let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            let binary = ctrl.binary();
+                            let cmp = b"arr\\images.tbl\0";
+                            let cmp_len = cmp.len() as u32;
+                            let ok = [arg2, arg1].iter().any(|&x| {
+                                x.if_constant()
+                                    .map(E::VirtualAddress::from_u64)
+                                    .and_then(|x| binary.slice_from_address(x, cmp_len).ok())
+                                    .filter(|&x| x == cmp)
+                                    .is_some()
+                            });
+                            if ok {
+                                self.inline_limit = 0;
+                            } else {
+                                ctrl.end_analysis();
+                            }
+                            return;
+                        }
+                        let (new, ok) = self.check_open_anim_call(ctrl, dest);
+                        if ok {
+                            *ctrl.user_state() = LoadImagesAnalysisState::FindInitSkins;
+                            self.min_state = LoadImagesAnalysisState::FindInitSkins;
+                            return;
+                        }
+                        if self.inline_depth == 0 && new {
+                            // Inline
+                            self.inline_limit = 1;
+                            self.inline_depth = 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_limit = 0;
+                            self.inline_depth = 0;
+                            if self.result.open_anim_single_file.is_some() {
+                                *ctrl.user_state() = LoadImagesAnalysisState::FindFireOverlayMax;
+                                self.min_state = LoadImagesAnalysisState::FindFireOverlayMax;
+                            }
+                        }
+                    }
+                }
+            }
+            LoadImagesAnalysisState::FindInitSkins => {
+                if self.checking_init_skins {
+                    if let Operation::Move(_, val, None) = *op {
+                        let val = ctrl.resolve(val);
+                        let cmp = b"/skins";
+                        let addr = if let Some(mem) = val.if_memory() {
+                            mem.address
+                        } else {
+                            val
+                        };
+                        let binary = ctrl.binary();
+                        let ok = addr.if_constant()
+                            .map(E::VirtualAddress::from_u64)
+                            .and_then(|x| binary.slice_from_address(x, cmp.len() as u32).ok())
+                            .filter(|&x| x == cmp)
+                            .is_some();
+                        if ok {
+                            self.result.init_skins = Some(E::VirtualAddress::from_u64(0));
+                            ctrl.end_analysis();
+                        }
+                    }
+                } else {
+                    if let Operation::Call(dest) = *op {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.checking_init_skins = true;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.checking_init_skins = false;
+                            if self.result.init_skins.is_some() {
+                                self.result.init_skins = Some(dest);
+                                *ctrl.user_state() = LoadImagesAnalysisState::FindAssetChangeCb;
+                                self.min_state = LoadImagesAnalysisState::FindAssetChangeCb;
+                                return;
+                            }
+                        }
+                    }
+                    // Allow failure if init_skins is weird (old) or inlined
+                    self.check_asset_change_cb(ctrl, op);
+                }
+            }
+            LoadImagesAnalysisState::FindAssetChangeCb => {
+                self.check_asset_change_cb(ctrl, op);
+            }
+            LoadImagesAnalysisState::FindImageGrps |
+                LoadImagesAnalysisState::FindImageOverlays =>
+            {
+                // load_grps(image_grps, images_dat_grp, &mut out, 999)
+                // load_lo_set(&image_overlays[0], images_dat_attack_overlay, &mut out, 999)
+                if let Operation::Call(_) = *op {
+                    let is_find_grps =
+                        *ctrl.user_state() == LoadImagesAnalysisState::FindImageGrps;
+                    let dat_arr = match is_find_grps {
+                        true => self.images_dat_grp,
+                        false => self.images_dat_attack_overlay,
+                    };
+                    let result = Some(())
+                        .and_then(|_| ctrl.resolve(self.arg_cache.on_call(3)).if_constant())
+                        .filter(|&c| c == 999)
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                        .filter(|&x| x == dat_arr)
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call(0)));
+                    if let Some(result) = result {
+                        if is_find_grps {
+                            self.result.image_grps = Some(result);
+                            *ctrl.user_state() = LoadImagesAnalysisState::FindImageOverlays;
+                            self.min_state = LoadImagesAnalysisState::FindImageOverlays;
+                        } else {
+                            self.result.image_overlays = Some(result);
+                            *ctrl.user_state() = LoadImagesAnalysisState::FindFireOverlayMax;
+                            self.min_state = LoadImagesAnalysisState::FindFireOverlayMax;
+                            if self.inline_depth != 0 {
+                                // Go back to outer load_images
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            LoadImagesAnalysisState::FindFireOverlayMax => {
+                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size == MemAccessSize::Mem8 {
+                        let value = ctrl.resolve(value);
+                        let ok = value.if_arithmetic_and_const(0xfe)
+                            .or_else(|| Some(value))
+                            .and_then(|x| x.if_arithmetic_mul_const(0x2))
+                            .is_some();
+                        if ok {
+                            let dest = ctrl.resolve(mem.address);
+                            let base = dest.if_arithmetic_add()
+                                .and_if_either_other(|x| x.is_undefined());
+                            if let Some(base) = base {
+                                self.result.fire_overlay_max = Some(base);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if *ctrl.user_state() < self.min_state {
+            ctrl.end_branch();
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'e, E> {
+    /// First bool is true if the func hadn't been seen before,
+    /// second is true when result was found.
+    fn check_open_anim_call(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        func: E::VirtualAddress,
+    ) -> (bool, bool) {
+        let entry = self.func_addr_to_return_custom.entry(func);
+        let ctx = ctrl.ctx();
+        if let Entry::Occupied(ref e) = entry {
+            let &val = e.get();
+            let custom = ctx.custom(val);
+            ctrl.skip_operation();
+            let state = ctrl.exec_state();
+            state.move_to(&scarf::DestOperand::Register64(scarf::operand::Register(0)), custom);
+            return (false, false);
+        }
+
+        let idx = self.custom_to_func_addr.len() as u32;
+        entry.or_insert(idx);
+        let custom = ctx.custom(idx);
+        ctrl.skip_operation();
+        let state = ctrl.exec_state();
+        state.move_to(&scarf::DestOperand::Register64(scarf::operand::Register(0)), custom);
+
+        // open_anim_single_file(this = &base_anim_set[1], 0, 1, 1)
+        // open_anim_multi_file(this = &base_anim_set[0], 0, 999, 1, 2, 1)
+        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+        let is_single_file = arg1.if_constant().filter(|&c| c == 0)
+            .and_then(|_| arg2.if_constant().filter(|&c| c == 1))
+            .and_then(|_| arg3.if_constant().filter(|&c| c == 1))
+            .is_some();
+        let this = ctrl.resolve(ctx.register(1));
+        if is_single_file {
+            self.custom_to_func_addr.push((func, Some(this)));
+            return (true, false);
+        }
+        self.custom_to_func_addr.push((func, None));
+        let is_multi_file_1 = arg1.if_constant().filter(|&c| c == 0)
+            .and_then(|_| arg2.if_constant().filter(|&c| c == 999))
+            .and_then(|_| arg3.if_constant().filter(|&c| c == 1))
+            .is_some();
+        if is_multi_file_1 {
+            let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
+            let arg5 = ctrl.resolve(self.arg_cache.on_call(4));
+            let is_multi_file = arg4.if_constant().filter(|&c| c == 2)
+                .and_then(|_| arg5.if_constant().filter(|&c| c == 1))
+                .is_some();
+            if is_multi_file {
+                let (base, off) = Operand::const_offset(this, ctx)
+                    .unwrap_or_else(|| (this, 0));
+                let single_file = self.custom_to_func_addr.iter().rev()
+                    .find_map(|&(addr, single_this)| {
+                        let single_this = single_this?;
+                        let (base2, off2) = Operand::const_offset(single_this, ctx)?;
+                        if base == base2 && off2 > off {
+                            let diff = u16::try_from(off2 - off).ok()?;
+                            Some((addr, diff))
+                        } else {
+                            None
+                        }
+                    });
+                if let Some((single_file, struct_size)) = single_file {
+                    self.result.open_anim_single_file = Some(single_file);
+                    self.result.open_anim_multi_file = Some(func);
+                    self.result.anim_struct_size = struct_size;
+                    self.result.base_anim_set = Some(this);
+                    return (true, true);
+                }
+            }
+        }
+        (true, false)
+    }
+
+    /// Checks if this, arg1 makes the function call to seem like a copy, and if yes,
+    /// simulate the copy
+    fn check_simulate_func_copy(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        this: Operand<'e>,
+        arg1: Operand<'e>,
+    ) {
+        let ctx = ctrl.ctx();
+        // Dest.vtable == 0 or 1
+        let is_copy = ctrl.resolve(ctrl.mem_word(this))
+            .if_constant()
+            .filter(|&c| c <= 1)
+            .is_some();
+        if is_copy {
+            let vtbl = ctrl.resolve_va(ctrl.mem_word(arg1));
+            let param = ctrl.resolve_va(ctrl.mem_word(
+                ctrl.const_word_offset(arg1, 1)
+            ));
+            if let (Some(vtbl), Some(param)) = (vtbl, param) {
+                // Copy vtbl and param to this
+                let dest = ctrl.mem_word(this);
+                let dest2 =
+                    ctrl.mem_word(ctrl.const_word_offset(this, 1));
+                let state = ctrl.exec_state();
+                let vtbl = ctx.constant(vtbl.as_u64());
+                let param = ctx.constant(param.as_u64());
+                state.move_to(&DestOperand::from_oper(dest), vtbl);
+                state.move_to(&DestOperand::from_oper(dest2), param);
+                if E::VirtualAddress::SIZE == 4 {
+                    // Also assuming that func copy is stdcall
+                    let esp = ctrl.resolve(ctx.register(4));
+                    let state = ctrl.exec_state();
+                    state.move_to(
+                        &scarf::DestOperand::Register64(scarf::operand::Register(4)),
+                        ctx.add_const(esp, 4),
+                    );
+                }
+            }
+        }
+    }
+
+    fn check_asset_change_cb(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        op: &Operation<'e>,
+    ) {
+        if let Operation::Call(dest) = *op {
+            let ctx = ctrl.ctx();
+            let dest = ctrl.resolve(dest);
+            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+            if let Some(dest) = dest.if_constant() {
+                let dest = E::VirtualAddress::from_u64(dest);
+                let this = ctrl.resolve(ctx.register(1));
+                let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                // Check for add_asset_change_cb(&local, func_vtbl, func_cb, ...)
+                let asset_change_cb = arg2.if_constant()
+                    .map(E::VirtualAddress::from_u64)
+                    .filter(|&x| is_in_section(self.rdata, x))
+                    .and_then(|_| arg3.if_constant())
+                    .map(E::VirtualAddress::from_u64)
+                    .filter(|&x| is_in_section(self.text, x))
+                    .or_else(|| {
+                        // Alt function struct:
+                        // a2 - vtable *func_impl
+                        // a3 - vtable
+                        // a4 - param
+                        arg3.if_constant()
+                            .map(E::VirtualAddress::from_u64)
+                            .filter(|&x| is_in_section(self.rdata, x))?;
+                        let param = ctrl.resolve(self.arg_cache.on_call(3))
+                            .if_constant()
+                            .map(E::VirtualAddress::from_u64)
+                            .filter(|&x| is_in_section(self.text, x))?;
+                        let arg3_loc = self.arg_cache.on_call(2).if_memory()?.address;
+                        if arg2 != ctrl.resolve(arg3_loc) {
+                            None
+                        } else {
+                            Some(param)
+                        }
+                    });
+                if let Some(cb) = asset_change_cb {
+                    self.result.add_asset_change_cb = Some(dest);
+                    self.result.anim_asset_change_cb = Some(cb);
+                    *ctrl.user_state() = LoadImagesAnalysisState::FindImageGrps;
+                    self.min_state = LoadImagesAnalysisState::FindImageGrps;
+                    return;
+                }
+                self.check_simulate_func_copy(ctrl, this, arg1);
+            } else if E::VirtualAddress::SIZE == 4 {
+                let is_vtable_fn = ctrl.if_mem_word(dest)
+                    .and_then(|x| x.if_constant())
+                    .map(E::VirtualAddress::from_u64)
+                    .filter(|&x| is_in_section(self.rdata, x))
+                    .is_some();
+                if is_vtable_fn && arg1 == ctx.const_0() {
+                    // Assuming to be func.vtable.delete(0), add 4 to esp to
+                    // simulate stdcall
+                    let esp = ctrl.resolve(ctx.register(4));
+                    let state = ctrl.exec_state();
+                    state.move_to(
+                        &scarf::DestOperand::Register64(scarf::operand::Register(4)),
+                        ctx.add_const(esp, 4),
+                    );
+                }
+            }
+            ctrl.skip_call_preserve_esp();
+        }
+    }
+
+    fn finish(&mut self, ctx: OperandCtx<'e>, binary: &'e BinaryFile<E::VirtualAddress>) {
+        let mut ops = [
+            &mut self.result.base_anim_set,
+            &mut self.result.image_grps,
+            &mut self.result.image_overlays,
+            &mut self.result.fire_overlay_max,
+        ];
+        let funcs = &self.custom_to_func_addr;
+        for ref mut op in ops.iter_mut() {
+            if let Some(ref mut op) = *op {
+                *op = ctx.transform(*op, 8, |op| {
+                    if let Some(idx) = op.if_custom() {
+                        let (func, _) = funcs[idx as usize];
+                        analyze_func_return::<E>(func, ctx, binary)
+                    } else {
+                        None
+                    }
+                });
+            }
+        }
+        // open_anim_multi_file may be simple wrapper calling actual
+        // open_anim_multi_file(this, a1, a2, a3, a4, a5, &out_unused)
+        if let Some(func) = self.result.open_anim_multi_file {
+            if let Some(actual) =
+                check_actual_open_anim_multi_file(func, ctx, binary, self.arg_cache)
+            {
+                self.result.open_anim_multi_file = Some(actual);
+            }
+        }
+    }
+}
+
+fn analyze_func_return<'e, E: ExecutionState<'e>>(
+    func: E::VirtualAddress,
+    ctx: OperandCtx<'e>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+) -> Option<Operand<'e>> {
+    struct Analyzer<'e, E: ExecutionState<'e>> {
+        result: Option<Operand<'e>>,
+        phantom: std::marker::PhantomData<(*const E, &'e ())>,
+        prev_ins_address: E::VirtualAddress,
+    }
+
+    impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for Analyzer<'e, E> {
+        type State = analysis::DefaultState;
+        type Exec = E;
+        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+            if let Operation::Return(..) = *op {
+                let ctx = ctrl.ctx();
+                let eax = ctrl.resolve(ctx.register(0));
+                match self.result {
+                    Some(old) => {
+                        if old != eax {
+                            self.result = Some(ctx.new_undef());
+                            ctrl.end_analysis();
+                        }
+                    }
+                    None => {
+                        self.result = Some(eax);
+                    }
+                }
+            }
+            if let Operation::Call(..) = *op {
+                // Avoid security_cookie_check
+                // Detect it by prev instruction being xor ecx, ebp
+                let prev_ins_len = ctrl.address().as_u64()
+                    .wrapping_sub(self.prev_ins_address.as_u64());
+                if prev_ins_len == 2 {
+                    let binary = ctrl.binary();
+                    if let Ok(prev_ins_bytes) =
+                        binary.slice_from_address(self.prev_ins_address, 2)
+                    {
+                        if prev_ins_bytes == &[0x33, 0xcd] {
+                            ctrl.skip_operation();
+                        }
+                    }
+                }
+            }
+            self.prev_ins_address = ctrl.address();
+        }
+
+        fn branch_start(&mut self, _ctrl: &mut Control<'e, '_, '_, Self>) {
+            self.prev_ins_address = E::VirtualAddress::from_u64(0);
+        }
+    }
+    let mut analyzer = Analyzer::<E> {
+        result: None,
+        phantom: Default::default(),
+        prev_ins_address: E::VirtualAddress::from_u64(0),
+    };
+
+    let mut analysis = FuncAnalysis::new(binary, ctx, func);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+        .filter(|x| !x.is_undefined())
+}
+
+/// Check if first call of `func` takes this and 5 other arguments to this function.
+/// If yes, return that child function.
+fn check_actual_open_anim_multi_file<'e, E: ExecutionState<'e>>(
+    func: E::VirtualAddress,
+    ctx: OperandCtx<'e>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    arg_cache: &ArgCache<'e, E>,
+) -> Option<E::VirtualAddress> {
+    struct Analyzer<'a, 'e, E: ExecutionState<'e>> {
+        result: Option<E::VirtualAddress>,
+        arg_cache: &'a ArgCache<'e, E>,
+    }
+
+    impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for Analyzer<'a, 'e, E> {
+        type State = analysis::DefaultState;
+        type Exec = E;
+        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+            if let Operation::Jump { .. } = *op {
+                ctrl.end_analysis();
+                return;
+            }
+            if let Operation::Call(dest) = *op {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let ctx = ctrl.ctx();
+                    if ctx.register(1) == ctrl.resolve(ctx.register(1)) {
+                        if (0..5).all(|i| {
+                            self.arg_cache.on_entry(i) == ctrl.resolve(self.arg_cache.on_call(i))
+                        }) {
+                            self.result = Some(dest);
+                        }
+                    }
+                }
+                ctrl.end_analysis();
+            }
+        }
+    }
+    let mut analyzer = Analyzer::<E> {
+        result: None,
+        arg_cache,
+    };
+
+    let mut analysis = FuncAnalysis::new(binary, ctx, func);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+fn is_in_section<Va: VirtualAddress>(section: &BinarySection<Va>, addr: Va) -> bool {
+    section.virtual_address <= addr && section.virtual_address + section.virtual_size > addr
 }

@@ -309,6 +309,8 @@ fn main() {
 
         let sprite_array = analysis.sprite_array();
         println!("sprite_struct_size: {:?}", sprite_array.map(|x| format!("0x{:x}", x.1)));
+        let anim_struct_size = analysis.anim_struct_size();
+        println!("anim_struct_size: {:?}", anim_struct_size.map(|x| format!("0x{:x}", x)));
 
         let limits = analysis.limits();
         println!("set_limits: {:?}", limits.set_limits);
