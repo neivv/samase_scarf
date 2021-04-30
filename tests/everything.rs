@@ -55,6 +55,7 @@ fn everything_1208() {
         assert_eq!(analysis.open_anim_single_file().unwrap().0, 0x006178c0);
         assert_eq!(analysis.open_anim_multi_file().unwrap().0, 0x00617d80);
         assert_eq!(analysis.base_anim_set().unwrap(), ctx.constant(0xe728d8));
+        assert_eq!(analysis.first_invisible_unit().unwrap(), ctx.mem32(ctx.constant(0xf35350)));
     });
 }
 
@@ -87,7 +88,10 @@ fn everything_12010() {
 
 #[test]
 fn everything_12011() {
-    test(Path::new("12011.exe"));
+    test_with_extra_checks(Path::new("12011.exe"), |ctx, analysis| {
+        assert_eq!(analysis.first_dying_unit().unwrap(), ctx.mem32(ctx.constant(0xe240bc)));
+        assert_eq!(analysis.active_iscript_flingy().unwrap(), ctx.mem32(ctx.constant(0xd0891c)));
+    });
 }
 
 #[test]
@@ -139,6 +143,8 @@ fn everything_1210b() {
 
         assert_eq!(analysis.smem_alloc().unwrap().0, 0x0089ead0);
         assert_eq!(analysis.smem_free().unwrap().0, 0x0089eb10);
+        assert_eq!(analysis.first_dying_unit().unwrap(), ctx.mem32(ctx.constant(0xd48884)));
+        assert_eq!(analysis.active_iscript_flingy().unwrap(), ctx.mem32(ctx.constant(0xd3116c)));
     });
 }
 
@@ -1336,6 +1342,17 @@ fn everything_1238c() {
         assert_eq!(analysis.image_grps().unwrap(), ctx.constant(0xfc9ab0));
         assert_eq!(analysis.image_overlays().unwrap(), ctx.constant(0xfce598));
         assert_eq!(analysis.fire_overlay_max().unwrap(), ctx.constant(0xfc9688));
+        assert_eq!(analysis.vision_update_counter().unwrap(), ctx.mem32(ctx.constant(0x11ab1bc)));
+        assert_eq!(analysis.vision_updated().unwrap(), ctx.mem8(ctx.constant(0x11ab194)));
+        assert_eq!(analysis.first_dying_unit().unwrap(), ctx.mem32(ctx.constant(0xfd7260)));
+        assert_eq!(analysis.active_iscript_flingy().unwrap(), ctx.mem32(ctx.constant(0xfc967c)));
+        assert_eq!(analysis.step_active_unit_frame().unwrap().0, 0x005d8de0);
+        assert_eq!(analysis.first_revealer().unwrap(), ctx.mem32(ctx.constant(0xfd7214)));
+        assert_eq!(analysis.reveal_unit_area().unwrap().0, 0x005a7730);
+        assert_eq!(analysis.step_hidden_unit_frame().unwrap().0, 0x005d9130);
+        assert_eq!(analysis.first_invisible_unit().unwrap(), ctx.mem32(ctx.constant(0xfd74a8)));
+        assert_eq!(analysis.step_bullet_frame().unwrap().0, 0x00572100);
+        assert_eq!(analysis.active_iscript_bullet().unwrap(), ctx.mem32(ctx.constant(0xfc9680)));
     })
 }
 
@@ -1397,7 +1414,9 @@ fn test_nongeneric<'e>(
                 FirstActiveBullet | LastActiveBullet | ActiveIscriptUnit | UniqueCommandUser |
                 ReplayVisions | ReplayShowEntireMap | ScMainState | LocalStormPlayerId |
                 LocalUniquePlayerId | IsPaused | IsPlacingBuilding | IsTargeting |
-                DialogReturnCode | AssetScale | ImagesLoaded =>
+                DialogReturnCode | AssetScale | ImagesLoaded | VisionUpdateCounter |
+                VisionUpdated | FirstDyingUnit | FirstRevealer | FirstInvisibleUnit |
+                ActiveIscriptFlingy | ActiveIscriptBullet =>
             {
                 check_global_opt(result, binary, op.name());
             }

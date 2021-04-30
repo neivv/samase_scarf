@@ -1,12 +1,14 @@
 use bumpalo::collections::Vec as BumpVec;
+use fxhash::FxHashMap;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, OperandCtx, Operand, DestOperand, Operation, MemAccessSize};
 
 use crate::{
-    AnalysisCtx, OptionExt, EntryOf, FunctionFinder,
-    single_result_assign, if_callable_const, entry_of_until, ArgCache, bumpvec_with_capacity,
+    AnalysisCtx, ControlExt, OptionExt, EntryOf, FunctionFinder, if_arithmetic_eq_neq,
+    OperandExt, single_result_assign, if_callable_const, entry_of_until, ArgCache,
+    bumpvec_with_capacity,
 };
 
 #[derive(Clone)]
@@ -26,6 +28,20 @@ pub struct Limits<'e, Va: VirtualAddress> {
     pub arrays: Vec<Vec<(Operand<'e>, u32, u32)>>,
     pub smem_alloc: Option<Va>,
     pub smem_free: Option<Va>,
+}
+
+pub(crate) struct StepObjectsAnalysis<'e, Va: VirtualAddress> {
+    pub step_active_frame: Option<Va>,
+    pub step_hidden_frame: Option<Va>,
+    pub step_bullet_frame: Option<Va>,
+    pub reveal_area: Option<Va>,
+    pub vision_update_counter: Option<Operand<'e>>,
+    pub vision_updated: Option<Operand<'e>>,
+    pub first_dying_unit: Option<Operand<'e>>,
+    pub first_revealer: Option<Operand<'e>>,
+    pub first_invisible_unit: Option<Operand<'e>>,
+    pub active_iscript_flingy: Option<Operand<'e>>,
+    pub active_iscript_bullet: Option<Operand<'e>>,
 }
 
 pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
@@ -749,5 +765,551 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> SetLimitsAnalyzer<'a, 'acx, 'e, E> {
             arrays.push(Vec::new());
         }
         arrays[index].push((value, add, mul));
+    }
+}
+
+pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    step_objects: E::VirtualAddress,
+    game: Operand<'e>,
+    first_active_unit: Operand<'e>,
+    first_hidden_unit: Operand<'e>,
+    first_active_bullet: Operand<'e>,
+    active_iscript_unit: Operand<'e>,
+) -> StepObjectsAnalysis<'e, E::VirtualAddress> {
+    let mut result = StepObjectsAnalysis {
+        step_active_frame: None,
+        step_hidden_frame: None,
+        step_bullet_frame: None,
+        reveal_area: None,
+        vision_update_counter: None,
+        vision_updated: None,
+        first_dying_unit: None,
+        first_revealer: None,
+        first_invisible_unit: None,
+        active_iscript_flingy: None,
+        active_iscript_bullet: None,
+    };
+
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, step_objects);
+    let mut analyzer = StepObjectsAnalyzer::<E> {
+        result: &mut result,
+        inline_depth: 0,
+        inline_limit: 0,
+        needs_inline_verify: false,
+        game,
+        first_active_unit,
+        first_hidden_unit,
+        first_active_bullet,
+        active_iscript_unit,
+        state: StepObjectsAnalysisState::VisionUpdateCounter,
+        continue_state: None,
+        simulated_funcs: FxHashMap::with_capacity_and_hasher(64, Default::default()),
+        active_iscript_flingy_candidate: None,
+        invisible_unit_inline_depth: 0,
+        invisible_unit_checked_fns: bumpvec_with_capacity(0x10, &actx.bump),
+        first_call_of_func: false,
+    };
+    loop {
+        analysis.analyze(&mut analyzer);
+        match analyzer.continue_state.take() {
+            Some((state, addr)) => {
+                analysis =
+                    FuncAnalysis::custom_state(binary, ctx, addr, *state, Default::default());
+            }
+            _ => break,
+        }
+    }
+    result
+}
+
+struct StepObjectsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut StepObjectsAnalysis<'e, E::VirtualAddress>,
+    inline_depth: u8,
+    inline_limit: u8,
+    needs_inline_verify: bool,
+    game: Operand<'e>,
+    first_active_unit: Operand<'e>,
+    first_hidden_unit: Operand<'e>,
+    first_active_bullet: Operand<'e>,
+    active_iscript_unit: Operand<'e>,
+    state: StepObjectsAnalysisState,
+    // Used to kill all other analysis branches and continuing from there
+    // (Avoid unnecessarily deep stack from using analyze_with_current_state)
+    continue_state: Option<(Box<E>, E::VirtualAddress)>,
+    simulated_funcs: FxHashMap<E::VirtualAddress, Option<Operand<'e>>>,
+    // (Value stored, operand stored to)
+    active_iscript_flingy_candidate: Option<(Operand<'e>, Operand<'e>)>,
+    invisible_unit_inline_depth: u8,
+    invisible_unit_checked_fns: BumpVec<'acx, E::VirtualAddress>,
+    first_call_of_func: bool,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum StepObjectsAnalysisState {
+    // Search for move of 0x64 to Mem32[vision_update_counter]
+    VisionUpdateCounter,
+    // Search for move 0 to Mem8[vision_updated], followed by comparision of that
+    // against 0.
+    VisionUpdated,
+    // Inline once to depth 1 (step_units), but require the function to start with store of 0
+    // to global value (interceptor_focused_this_frame), or a call to such function.
+    // Also assume any comparision against first_active_unit != 0 to be false, as well
+    // as completed_unit_count(0xb, 0x69) (Pl12 Dweb)
+    // Assume first_dying_unit to be first write to active_iscript_unit.
+    FirstDyingUnit,
+    // First call where active_iscript_unit is set to first_active_unit and ecx is that too
+    StepActiveUnitFrame,
+    // Same as first_dying_unit, write something new to active_iscript_unit.
+    // Calls reveal_area(this = first_revealer)
+    FirstRevealer,
+    // Same as StepActiveUnitFrame for first_hidden_unit
+    StepHiddenUnitFrame,
+    // Inline one level deeper.
+    // Check for cmp Mem8[first_invisible_unit + 0x96] == 0
+    // Afterwards end inlining back to step_objects
+    FirstInvisibleUnit,
+    // Function where this == first_active_bullet, and which immediately compares this.order
+    StepBulletFrame,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    StepObjectsAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            StepObjectsAnalysisState::VisionUpdateCounter => {
+                if let Operation::Move(DestOperand::Memory(mem), value, None) = *op {
+                    if mem.size == MemAccessSize::Mem32 {
+                        let value = ctrl.resolve(value);
+                        if value.if_constant() == Some(0x64) {
+                            let addr = ctrl.resolve(mem.address);
+                            self.result.vision_update_counter = Some(ctx.mem32(addr));
+                            self.state = StepObjectsAnalysisState::VisionUpdated;
+                            self.continue_state = Some((
+                                Box::new(ctrl.exec_state().clone()),
+                                ctrl.address(),
+                            ));
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            StepObjectsAnalysisState::VisionUpdated => {
+                if let Operation::Move(DestOperand::Memory(mem), value, None) = *op {
+                    if mem.size == MemAccessSize::Mem8 {
+                        let value = ctrl.resolve(value);
+                        if value.if_constant() == Some(0) {
+                            let addr = ctrl.resolve(mem.address);
+                            if !is_stack_address(addr) {
+                                self.result.vision_updated = Some(ctx.mem8(addr));
+                                self.state = StepObjectsAnalysisState::FirstDyingUnit;
+                            }
+                        }
+                    }
+                }
+            }
+            StepObjectsAnalysisState::FirstDyingUnit => {
+                if self.needs_inline_verify {
+                    match *op {
+                        Operation::Move(DestOperand::Memory(mem), value, None) => {
+                            if mem.size == MemAccessSize::Mem32 {
+                                let value = ctrl.resolve(value);
+                                if value.if_constant() == Some(0) {
+                                    let addr = ctrl.resolve(mem.address);
+                                    if !is_stack_address(addr) {
+                                        self.needs_inline_verify = false;
+                                    }
+                                }
+                            }
+                        }
+                        Operation::Jump { .. } | Operation::Return(..) => {
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        _ => (),
+                    }
+                }
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.check_large_stack_alloc(ctrl) {
+                            return;
+                        }
+                        if self.inline_depth == 0 {
+                            self.inline_depth = 1;
+                            self.needs_inline_verify = true;
+                            self.first_call_of_func = true;
+                            ctrl.analyze_with_current_state(self, dest);
+                            while let Some((state, addr)) = self.continue_state.take() {
+                                let binary = ctrl.binary();
+                                let mut analysis = FuncAnalysis::custom_state(
+                                    binary,
+                                    ctx,
+                                    addr,
+                                    *state,
+                                    Default::default(),
+                                );
+                                analysis.analyze(self);
+                            }
+                            self.inline_depth = 0;
+                            if !self.needs_inline_verify {
+                                self.state = StepObjectsAnalysisState::StepBulletFrame;
+                            }
+                            self.needs_inline_verify = false;
+                        }
+                        if self.inline_depth == 1 && self.needs_inline_verify {
+                            // Inline once to depth 2 to find write 0 to
+                            // interceptor_focused_this_frame
+                            ctrl.analyze_with_current_state(self, dest);
+                            if self.needs_inline_verify {
+                                ctrl.end_analysis();
+                                return;
+                            }
+                        }
+                        self.simulate_func(ctrl, dest);
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((cmp, eq_zero)) = if_arithmetic_eq_neq(condition)
+                        .filter(|x| x.1 == ctx.const_0())
+                        .map(|x| (x.0, x.2))
+                    {
+                        let assume_zero = cmp == self.first_active_unit ||
+                            cmp.if_mem32().filter(|&x| x == ctx.add_const(self.game, 0x70d0))
+                                .is_some();
+                        if assume_zero {
+                            let dest = match eq_zero {
+                                true => match ctrl.resolve_va(to) {
+                                    Some(s) => s,
+                                    None => return,
+                                },
+                                false => ctrl.current_instruction_end(),
+                            };
+                            ctrl.end_branch();
+                            ctrl.add_branch_with_current_state(dest);
+                        }
+                    }
+                } else if let Operation::Move(ref dest, value, None) = *op {
+                    if let DestOperand::Memory(mem) = dest {
+                        if mem.size == E::WORD_SIZE {
+                            let address = ctrl.resolve(mem.address);
+                            let dest_op = ctrl.mem_word(address);
+                            let value = ctrl.resolve(value);
+                            if dest_op == self.active_iscript_unit {
+                                self.result.first_dying_unit = Some(value);
+                                if let Some((val2, dest2)) = self.active_iscript_flingy_candidate {
+                                    if val2 == value {
+                                        self.result.active_iscript_flingy = Some(dest2);
+                                        self.state = StepObjectsAnalysisState::StepActiveUnitFrame;
+                                    }
+                                }
+                            } else {
+                                if self.result.first_dying_unit == Some(value) {
+                                    self.result.active_iscript_flingy = Some(dest_op);
+                                    self.state = StepObjectsAnalysisState::StepActiveUnitFrame;
+                                } else {
+                                    self.active_iscript_flingy_candidate = Some((value, dest_op));
+                                }
+                            }
+                        }
+                    }
+                    if value.if_mem8().is_some() {
+                        // Aliasing memory workaround on u8 reads
+                        let value = ctrl.resolve(value);
+                        if let Some((l, r)) =
+                            value.if_mem8().and_then(|x| x.if_arithmetic_add())
+                        {
+                            fn check(op: Operand<'_>) -> bool {
+                                op.if_arithmetic(scarf::ArithOpType::Modulo)
+                                    .or_else(|| op.if_arithmetic(scarf::ArithOpType::And))
+                                    .and_then(|x| x.1.if_constant())
+                                    .filter(|&c| c > 0x400)
+                                    .is_some()
+                            }
+                            if check(l) || check(r) {
+                                ctrl.skip_operation();
+                                let state = ctrl.exec_state();
+                                state.move_to(dest, ctx.new_undef());
+                            }
+                        }
+                    }
+                }
+            }
+            StepObjectsAnalysisState::StepActiveUnitFrame |
+                StepObjectsAnalysisState::StepHiddenUnitFrame =>
+            {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ctx.register(1));
+                        let cmp = if self.state == StepObjectsAnalysisState::StepActiveUnitFrame {
+                            self.first_active_unit
+                        } else {
+                            self.first_hidden_unit
+                        };
+                        if this == cmp {
+                            let active_iscript_unit = ctrl.resolve(self.active_iscript_unit);
+                            if active_iscript_unit == cmp {
+                                if self.state == StepObjectsAnalysisState::StepActiveUnitFrame {
+                                    self.result.step_active_frame = Some(dest);
+                                    self.state = StepObjectsAnalysisState::FirstRevealer;
+                                } else {
+                                    self.result.step_hidden_frame = Some(dest);
+                                    self.inline_limit = 0;
+                                    self.state = StepObjectsAnalysisState::FirstInvisibleUnit;
+                                }
+                                if let Some(vision_updated) = self.result.vision_updated {
+                                    // Has to be done for revealer loop to run
+                                    let state = ctrl.exec_state();
+                                    state.move_to(
+                                        &DestOperand::from_oper(vision_updated),
+                                        ctx.const_1(),
+                                    );
+                                }
+                                return;
+                            }
+                        }
+                        self.simulate_func(ctrl, dest);
+                    }
+                }
+            }
+            StepObjectsAnalysisState::FirstRevealer => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ctx.register(1));
+                        let active_iscript_unit = ctrl.resolve(self.active_iscript_unit);
+                        // The not Mem[x + 4] check is to avoid confusing other_list.next
+                        // from loops.
+                        let is_unit_next = this.if_memory()
+                            .and_then(|x| {
+                                x.address.if_arithmetic_add_const(E::VirtualAddress::SIZE.into())
+                            })
+                            .is_some();
+                        if this == active_iscript_unit &&
+                            this != self.first_active_unit &&
+                            !is_unit_next &&
+                            !this.is_undefined()
+                        {
+                            self.result.first_revealer = Some(this);
+                            self.result.reveal_area = Some(dest);
+                            self.state = StepObjectsAnalysisState::StepHiddenUnitFrame;
+                            return;
+                        }
+                        self.simulate_func(ctrl, dest);
+                    }
+                }
+            }
+            StepObjectsAnalysisState::FirstInvisibleUnit => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.check_large_stack_alloc(ctrl) {
+                            return;
+                        }
+                        let simulated = self.simulate_func(ctrl, dest);
+                        if simulated {
+                            return;
+                        }
+                        if self.invisible_unit_inline_depth < 2 {
+                            if !self.invisible_unit_checked_fns.contains(&dest) {
+                                self.invisible_unit_checked_fns.push(dest);
+                                let old_depth = self.invisible_unit_inline_depth;
+                                let old_limit = self.inline_limit;
+                                self.invisible_unit_inline_depth += 1;
+                                self.inline_limit = 5;
+                                self.first_call_of_func = true;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.invisible_unit_inline_depth = old_depth;
+                                self.inline_limit = old_limit;
+                                if self.result.first_invisible_unit.is_some() {
+                                    if self.inline_depth != 0 {
+                                        ctrl.end_analysis();
+                                    } else {
+                                        self.state = StepObjectsAnalysisState::StepBulletFrame;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Operation::Jump { condition, ..} = *op {
+                    if self.inline_limit != 0 {
+                        if self.inline_limit == 1 {
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        self.inline_limit -= 1;
+                    }
+                    let condition = ctrl.resolve(condition);
+                    let result = if_arithmetic_eq_neq(condition)
+                        .filter(|x| x.1 == ctx.const_0())
+                        .and_then(|x| x.0.if_mem8()?.if_arithmetic_add_const(0x96));
+                    if let Some(result) = result {
+                        self.result.first_invisible_unit = Some(result);
+                        if self.invisible_unit_inline_depth != 0 || self.inline_depth != 0 {
+                            ctrl.end_analysis()
+                        } else {
+                            self.state = StepObjectsAnalysisState::StepBulletFrame;
+                        }
+                    }
+                }
+            }
+            StepObjectsAnalysisState::StepBulletFrame => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let simulated = self.simulate_func(ctrl, dest);
+                        if simulated {
+                            return;
+                        }
+                        if self.inline_depth < 2 {
+                            let old_inline_depth = self.inline_depth;
+                            self.inline_depth += 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = old_inline_depth;
+                            if let Some(func) = self.result.step_bullet_frame {
+                                if func.as_u64() == 0 {
+                                    self.result.step_bullet_frame = Some(dest);
+                                }
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(mem), value, None) = *op {
+                    if mem.size == E::WORD_SIZE && self.result.active_iscript_bullet.is_none() {
+                        let value = ctrl.resolve(value);
+                        if value == self.first_active_bullet {
+                            let address = ctrl.resolve(mem.address);
+                            let dest_op = ctrl.mem_word(address);
+                            if Some(dest_op) != self.result.active_iscript_flingy {
+                                self.result.active_iscript_bullet = Some(dest_op);
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let ok = condition.if_arithmetic_gt()
+                        .and_either(|x| x.if_mem8())
+                        .and_then(|x| x.0.if_arithmetic_add_const(0x4d))
+                        .filter(|&x| x == self.first_active_bullet)
+                        .is_some();
+                    if ok {
+                        self.result.step_bullet_frame = Some(E::VirtualAddress::from_u64(0));
+                    }
+                    // Only check first jump at depth 2
+                    if self.inline_depth == 2 {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepObjectsAnalyzer<'a, 'acx, 'e, E> {
+    /// Replaces a trivial function call which only returns something without side effects
+    /// with a move to eax.
+    ///
+    /// Returns true if was able to simulate.
+    fn simulate_func(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        func: E::VirtualAddress,
+    ) -> bool {
+        let entry = self.simulated_funcs.entry(func);
+        let &mut result = entry.or_insert_with(|| {
+            analyze_simulate_short::<E>(ctrl.ctx(), ctrl.binary(), func)
+        });
+        if let Some(result) = result {
+            let result = ctrl.resolve(result);
+            ctrl.skip_operation();
+            let state = ctrl.exec_state();
+            state.move_to(
+                &DestOperand::Register64(scarf::operand::Register(0)),
+                result,
+            );
+            true
+        } else {
+            false
+        }
+    }
+
+    fn check_large_stack_alloc(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) -> bool {
+        if self.first_call_of_func {
+            self.first_call_of_func = false;
+            let ctx = ctrl.ctx();
+            let maybe_stack_alloc = ctrl.resolve(ctx.register(0))
+                .if_constant()
+                .filter(|&c| c >= 0x1000)
+                .is_some();
+            if maybe_stack_alloc {
+                ctrl.skip_operation();
+                return true;
+            }
+        }
+        false
+    }
+}
+
+fn analyze_simulate_short<'e, E: ExecutionState<'e>>(
+    ctx: OperandCtx<'e>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    func: E::VirtualAddress,
+) -> Option<Operand<'e>> {
+    struct Analyzer<'e, E: ExecutionState<'e>> {
+        result: Option<Operand<'e>>,
+        phantom: std::marker::PhantomData<(*const E, &'e ())>,
+    }
+    impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for Analyzer<'e, E> {
+        type State = analysis::DefaultState;
+        type Exec = E;
+        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+            match op {
+                Operation::Jump { .. } | Operation::Call(..) => {
+                    ctrl.end_analysis();
+                }
+                Operation::Move(DestOperand::Memory(mem), _, _) => {
+                    let address = ctrl.resolve(mem.address);
+                    if !is_stack_address(address) {
+                        ctrl.end_analysis();
+                    }
+                }
+                Operation::Return(..) => {
+                    let ctx = ctrl.ctx();
+                    self.result = Some(ctrl.resolve(ctx.register(0)));
+                    ctrl.end_analysis();
+                }
+                _ => (),
+            }
+        }
+    }
+
+    let mut exec = E::initial_state(ctx, binary);
+    exec.move_resolved(
+        &DestOperand::Memory(
+            scarf::operand::MemAccess { size: E::WORD_SIZE, address: ctx.register(4) }
+        ),
+        ctx.mem_variable_rc(E::WORD_SIZE, ctx.register(4)),
+    );
+    exec.move_to(
+        &DestOperand::Register64(scarf::operand::Register(4)),
+        ctx.sub_const(ctx.register(4), E::VirtualAddress::SIZE as u64),
+    );
+    let mut analysis = FuncAnalysis::custom_state(binary, ctx, func, exec, Default::default());
+    let mut analyzer: Analyzer<E> = Analyzer {
+        result: None,
+        phantom: Default::default(),
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+fn is_stack_address(addr: Operand<'_>) -> bool {
+    if let Some((l, r)) = addr.if_arithmetic_sub() {
+        r.if_constant().is_some() && l.if_register().map(|x| x.0) == Some(4)
+    } else {
+        addr.if_register().map(|x| x.0) == Some(4)
     }
 }

@@ -279,6 +279,10 @@ results! {
         AddAssetChangeCallback => "add_asset_change_callback",
         AnimAssetChangeCb => "anim_asset_change_cb",
         InitRealTimeLighting => "init_real_time_lighting",
+        StepActiveUnitFrame => "step_active_unit_frame",
+        StepHiddenUnitFrame => "step_hidden_unit_frame",
+        StepBulletFrame => "step_bullet_frame",
+        RevealUnitArea => "reveal_unit_area",
     }
 }
 
@@ -368,6 +372,13 @@ results! {
         FireOverlayMax => "fire_overlay_max",
         AssetScale => "asset_scale",
         ImagesLoaded => "images_loaded",
+        VisionUpdateCounter => "vision_update_counter",
+        VisionUpdated => "vision_updated",
+        FirstDyingUnit => "first_dying_unit",
+        FirstRevealer => "first_revealer",
+        FirstInvisibleUnit => "first_invisible_unit",
+        ActiveIscriptFlingy => "active_iscript_flingy",
+        ActiveIscriptBullet => "active_iscript_bullet",
     }
 }
 
@@ -761,6 +772,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             AddAssetChangeCallback => self.add_asset_change_callback(),
             AnimAssetChangeCb => self.anim_asset_change_cb(),
             InitRealTimeLighting => self.init_real_time_lighting(),
+            StepActiveUnitFrame => self.step_active_unit_frame(),
+            StepHiddenUnitFrame => self.step_hidden_unit_frame(),
+            StepBulletFrame => self.step_bullet_frame(),
+            RevealUnitArea => self.reveal_unit_area(),
         }
     }
 
@@ -851,6 +866,13 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             FireOverlayMax => self.fire_overlay_max(),
             AssetScale => self.asset_scale(),
             ImagesLoaded => self.images_loaded(),
+            VisionUpdateCounter => self.vision_update_counter(),
+            VisionUpdated => self.vision_updated(),
+            FirstDyingUnit => self.first_dying_unit(),
+            FirstRevealer => self.first_revealer(),
+            FirstInvisibleUnit => self.first_invisible_unit(),
+            ActiveIscriptFlingy => self.active_iscript_flingy(),
+            ActiveIscriptBullet => self.active_iscript_bullet(),
         }
     }
 
@@ -2022,6 +2044,71 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.base_anim_set().map(|_| self.cache.anim_struct_size)
     }
 
+    pub fn step_active_unit_frame(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepActiveUnitFrame,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn step_hidden_unit_frame(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepHiddenUnitFrame,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn step_bullet_frame(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepBulletFrame,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn reveal_unit_area(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::RevealUnitArea, AnalysisCache::cache_step_objects)
+    }
+
+    pub fn vision_update_counter(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::VisionUpdateCounter,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn vision_updated(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::VisionUpdated, AnalysisCache::cache_step_objects)
+    }
+
+    pub fn first_dying_unit(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::FirstDyingUnit, AnalysisCache::cache_step_objects)
+    }
+
+    pub fn first_revealer(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::FirstRevealer, AnalysisCache::cache_step_objects)
+    }
+
+    pub fn first_invisible_unit(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FirstInvisibleUnit,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn active_iscript_flingy(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ActiveIscriptFlingy,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn active_iscript_bullet(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ActiveIscriptBullet,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -2505,6 +2592,20 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             let result = units::active_hidden_units(actx, orders_dat, &functions);
             Some(([], [result.first_active_unit, result.first_hidden_unit]))
         })
+    }
+
+    fn first_active_unit(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(
+            OperandAnalysis::FirstActiveUnit,
+            |s| s.cache_active_hidden_units(actx),
+        )
+    }
+
+    fn first_hidden_unit(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(
+            OperandAnalysis::FirstHiddenUnit,
+            |s| s.cache_active_hidden_units(actx),
+        )
     }
 
     fn cache_order_issuing(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -3076,6 +3177,14 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             Some(([result.create_bullet], [result.first_active_bullet, result.last_active_bullet,
                 result.first_free_bullet, result.last_free_bullet, result.active_iscript_unit]))
         })
+    }
+
+    fn active_iscript_unit(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::ActiveIscriptUnit, |s| s.cache_bullet_creation(actx))
+    }
+
+    fn first_active_bullet(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::FirstActiveBullet, |s| s.cache_bullet_creation(actx))
     }
 
     fn cache_net_players(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -3945,6 +4054,41 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             ], [
                 result.base_anim_set, result.image_grps,
                 result.image_overlays, result.fire_overlay_max,
+            ]))
+        })
+    }
+
+    fn cache_step_objects(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[
+            StepActiveUnitFrame, StepHiddenUnitFrame, StepBulletFrame, RevealUnitArea,
+        ], &[
+            VisionUpdateCounter, VisionUpdated, FirstDyingUnit, FirstRevealer, FirstInvisibleUnit,
+            ActiveIscriptFlingy, ActiveIscriptBullet,
+        ], |s| {
+            let step_objects = s.step_objects(actx)?;
+            let game = s.game(actx)?;
+            let first_active_unit = s.first_active_unit(actx)?;
+            let first_hidden_unit = s.first_hidden_unit(actx)?;
+            let first_active_bullet = s.first_active_bullet(actx)?;
+            let active_iscript_unit = s.active_iscript_unit(actx)?;
+            let result = game::analyze_step_objects(
+                actx,
+                step_objects,
+                game,
+                first_active_unit,
+                first_hidden_unit,
+                first_active_bullet,
+                active_iscript_unit,
+            );
+            Some(([
+                result.step_active_frame, result.step_hidden_frame, result.step_bullet_frame,
+                result.reveal_area,
+            ], [
+                result.vision_update_counter, result.vision_updated, result.first_dying_unit,
+                result.first_revealer, result.first_invisible_unit, result.active_iscript_flingy,
+                result.active_iscript_bullet,
             ]))
         })
     }
@@ -4878,6 +5022,42 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn anim_struct_size(&mut self) -> Option<u16> {
         self.0.anim_struct_size()
+    }
+
+    pub fn step_active_unit_frame(&mut self) -> Option<VirtualAddress> {
+        self.0.step_active_unit_frame()
+    }
+
+    pub fn step_hidden_unit_frame(&mut self) -> Option<VirtualAddress> {
+        self.0.step_hidden_unit_frame()
+    }
+
+    pub fn step_bullet_frame(&mut self) -> Option<VirtualAddress> {
+        self.0.step_bullet_frame()
+    }
+
+    pub fn reveal_unit_area(&mut self) -> Option<VirtualAddress> {
+        self.0.reveal_unit_area()
+    }
+
+    pub fn vision_update_counter(&mut self) -> Option<Operand<'e>> {
+        self.0.vision_update_counter()
+    }
+
+    pub fn vision_updated(&mut self) -> Option<Operand<'e>> {
+        self.0.vision_updated()
+    }
+
+    pub fn first_dying_unit(&mut self) -> Option<Operand<'e>> {
+        self.0.first_dying_unit()
+    }
+
+    pub fn first_revealer(&mut self) -> Option<Operand<'e>> {
+        self.0.first_revealer()
+    }
+
+    pub fn first_invisible_unit(&mut self) -> Option<Operand<'e>> {
+        self.0.first_invisible_unit()
     }
 }
 
