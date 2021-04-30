@@ -2010,7 +2010,7 @@ pub(crate) fn analyze_load_images<'e, E: ExecutionState<'e>>(
         inline_limit: 0,
         checking_init_skins: false,
         func_addr_to_return_custom: FxHashMap::with_capacity_and_hasher(32, Default::default()),
-        custom_to_func_addr: Vec::with_capacity(32),
+        custom_to_func_addr: bumpvec_with_capacity(32, &actx.bump),
         images_dat_grp,
         images_dat_attack_overlay,
         rdata: actx.binary_sections.rdata,
@@ -2025,7 +2025,7 @@ pub(crate) fn analyze_load_images<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct LoadImagesAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct LoadImagesAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut LoadImagesAnalysis<'e, E::VirtualAddress>,
     load_dat: E::VirtualAddress,
     arg_cache: &'a ArgCache<'e, E>,
@@ -2036,7 +2036,7 @@ struct LoadImagesAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     images_dat_attack_overlay: Operand<'e>,
     func_addr_to_return_custom: FxHashMap<E::VirtualAddress, u32>,
     // Operand is this arg, set when open_anim_single_file candidate
-    custom_to_func_addr: Vec<(E::VirtualAddress, Option<Operand<'e>>)>,
+    custom_to_func_addr: BumpVec<'acx, (E::VirtualAddress, Option<Operand<'e>>)>,
     rdata: &'a BinarySection<E::VirtualAddress>,
     text: &'a BinarySection<E::VirtualAddress>,
     min_state: LoadImagesAnalysisState,
@@ -2088,7 +2088,9 @@ impl analysis::AnalysisState for LoadImagesAnalysisState {
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for LoadImagesAnalyzer<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    LoadImagesAnalyzer<'a, 'acx, 'e, E>
+{
     type State = LoadImagesAnalysisState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -2255,7 +2257,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for LoadImagesAnalyze
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
     /// First bool is true if the func hadn't been seen before,
     /// second is true when result was found.
     fn check_open_anim_call(
@@ -2268,21 +2270,26 @@ impl<'a, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'e, E> {
         if let Entry::Occupied(ref e) = entry {
             let &val = e.get();
             let custom = ctx.custom(val);
-            ctrl.skip_operation();
-            let state = ctrl.exec_state();
-            state.move_to(&scarf::DestOperand::Register64(scarf::operand::Register(0)), custom);
+            ctrl.do_call_with_result(custom);
             return (false, false);
         }
 
         let idx = self.custom_to_func_addr.len() as u32;
         entry.or_insert(idx);
         let custom = ctx.custom(idx);
-        ctrl.skip_operation();
-        let state = ctrl.exec_state();
-        state.move_to(&scarf::DestOperand::Register64(scarf::operand::Register(0)), custom);
+        let result = self.check_new_open_anim_call(ctrl, func);
+        ctrl.do_call_with_result(custom);
+        result
+    }
 
+    fn check_new_open_anim_call(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        func: E::VirtualAddress,
+    ) -> (bool, bool) {
         // open_anim_single_file(this = &base_anim_set[1], 0, 1, 1)
         // open_anim_multi_file(this = &base_anim_set[0], 0, 999, 1, 2, 1)
+        let ctx = ctrl.ctx();
         let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
         let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
         let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
@@ -2475,7 +2482,7 @@ impl<'a, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'e, E> {
     }
 }
 
-fn analyze_func_return<'e, E: ExecutionState<'e>>(
+pub(crate) fn analyze_func_return<'e, E: ExecutionState<'e>>(
     func: E::VirtualAddress,
     ctx: OperandCtx<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,

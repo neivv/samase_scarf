@@ -4,7 +4,7 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation};
+use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, OperandCtx, Operation};
 
 use crate::{
     AnalysisCtx, ControlExt, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
@@ -45,6 +45,11 @@ pub(crate) struct UnitSpeed<Va: VirtualAddress> {
     pub buffed_flingy_speed: Option<Va>,
     pub buffed_acceleration: Option<Va>,
     pub buffed_turn_speed: Option<Va>,
+}
+
+pub(crate) struct StepActiveUnitAnalysis<'e, Va: VirtualAddress> {
+    pub step_unit_movement: Option<Va>,
+    pub should_vision_update: Option<Operand<'e>>,
 }
 
 pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
@@ -1364,6 +1369,125 @@ impl<'a, 'e, E: ExecutionState<'e>> UnitSpeedAnalyzer<'a, 'e, E> {
                     self.end_caller_branch = true;
                 }
             }
+        }
+    }
+}
+
+pub(crate) fn analyze_step_active_unit<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    step_active_unit: E::VirtualAddress,
+    reveal_area: E::VirtualAddress,
+) -> StepActiveUnitAnalysis<'e, E::VirtualAddress> {
+    let mut result = StepActiveUnitAnalysis {
+        step_unit_movement: None,
+        should_vision_update: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, step_active_unit);
+    let mut analyzer = StepActiveAnalyzer::<E> {
+        result: &mut result,
+        reveal_area,
+        custom_to_func_addr: bumpvec_with_capacity(8, &actx.bump),
+        zero_compares: bumpvec_with_capacity(8, &actx.bump),
+        checking_movement: false,
+        check_limit: 0,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.finish(ctx, binary);
+    result
+}
+
+struct StepActiveAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut StepActiveUnitAnalysis<'e, E::VirtualAddress>,
+    reveal_area: E::VirtualAddress,
+    custom_to_func_addr: BumpVec<'acx, E::VirtualAddress>,
+    zero_compares: BumpVec<'acx, (E::VirtualAddress, Operand<'e>)>,
+    checking_movement: bool,
+    check_limit: u8,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    StepActiveAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.checking_movement {
+            if let Operation::Jump { condition, .. } = *op {
+                let ok = ctrl.resolve(condition)
+                    .if_arithmetic_gt()
+                    .and_either_other(|x| x.if_constant())
+                    .and_then(|x| x.if_mem8()?.if_arithmetic_add_const(0x97)?.if_register())
+                    .filter(|x| x.0 == 1)
+                    .is_some();
+                if ok {
+                    self.result.step_unit_movement = Some(E::VirtualAddress::from_u64(0));
+                    ctrl.end_analysis();
+                    return;
+                }
+                if self.check_limit == 0 {
+                    ctrl.end_analysis();
+                } else {
+                    self.check_limit -= 1;
+                }
+            }
+            return;
+        }
+        let movement_found = self.result.step_unit_movement.is_some();
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                if !movement_found {
+                    self.checking_movement = true;
+                    self.check_limit = 8;
+                    ctrl.analyze_with_current_state(self, dest);
+                    if self.result.step_unit_movement.is_some() {
+                        self.result.step_unit_movement = Some(dest);
+                    }
+                    self.checking_movement = false;
+                } else {
+                    if dest == self.reveal_area {
+                        let address = ctrl.address();
+                        let should_vision_update = self.zero_compares.iter()
+                            .filter(|x| x.0 < address)
+                            .min_by_key(|x| x.0)
+                            .map(|x| x.1);
+                        self.result.should_vision_update = should_vision_update;
+                        ctrl.end_analysis();
+                    }
+                    let custom = ctrl.ctx().custom(self.custom_to_func_addr.len() as u32);
+                    self.custom_to_func_addr.push(dest);
+                    ctrl.do_call_with_result(custom);
+                }
+            }
+        }
+        if movement_found {
+            if let Operation::Jump { condition, .. } = *op {
+                let condition = ctrl.resolve(condition);
+                let ctx = ctrl.ctx();
+                let cmp_zero = if_arithmetic_eq_neq(condition)
+                    .filter(|x| x.1 == ctx.const_0())
+                    .map(|x| x.0);
+                if let Some(val) = cmp_zero {
+                    self.zero_compares.push((ctrl.address(), val));
+                }
+            }
+        }
+    }
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepActiveAnalyzer<'a, 'acx, 'e, E> {
+    fn finish(&mut self, ctx: OperandCtx<'e>, binary: &'e BinaryFile<E::VirtualAddress>) {
+        let funcs = &self.custom_to_func_addr;
+        if let Some(ref mut op) = self.result.should_vision_update {
+            *op = ctx.transform(*op, 8, |op| {
+                if let Some(idx) = op.if_custom() {
+                    let func = funcs[idx as usize];
+                    crate::game_init::analyze_func_return::<E>(func, ctx, binary)
+                } else {
+                    None
+                }
+            });
         }
     }
 }

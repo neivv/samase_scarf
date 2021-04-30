@@ -283,6 +283,7 @@ results! {
         StepHiddenUnitFrame => "step_hidden_unit_frame",
         StepBulletFrame => "step_bullet_frame",
         RevealUnitArea => "reveal_unit_area",
+        StepUnitMovement => "step_unit_movement",
     }
 }
 
@@ -379,6 +380,7 @@ results! {
         FirstInvisibleUnit => "first_invisible_unit",
         ActiveIscriptFlingy => "active_iscript_flingy",
         ActiveIscriptBullet => "active_iscript_bullet",
+        UnitShouldRevealArea => "unit_should_reveal_area",
     }
 }
 
@@ -776,6 +778,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             StepHiddenUnitFrame => self.step_hidden_unit_frame(),
             StepBulletFrame => self.step_bullet_frame(),
             RevealUnitArea => self.reveal_unit_area(),
+            StepUnitMovement => self.step_unit_movement(),
         }
     }
 
@@ -873,6 +876,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             FirstInvisibleUnit => self.first_invisible_unit(),
             ActiveIscriptFlingy => self.active_iscript_flingy(),
             ActiveIscriptBullet => self.active_iscript_bullet(),
+            UnitShouldRevealArea => self.unit_should_reveal_area(),
         }
     }
 
@@ -2106,6 +2110,20 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.analyze_many_op(
             OperandAnalysis::ActiveIscriptBullet,
             AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn step_unit_movement(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepUnitMovement,
+            AnalysisCache::cache_step_active_unit,
+        )
+    }
+
+    pub fn unit_should_reveal_area(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::UnitShouldRevealArea,
+            AnalysisCache::cache_step_active_unit,
         )
     }
 
@@ -4092,6 +4110,29 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             ]))
         })
     }
+
+    fn step_active_unit_frame(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::StepActiveUnitFrame, |s| s.cache_step_objects(actx))
+    }
+
+    fn reveal_unit_area(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::RevealUnitArea, |s| s.cache_step_objects(actx))
+    }
+
+    fn cache_step_active_unit(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[StepUnitMovement], &[UnitShouldRevealArea], |s| {
+            let step_active_unit = s.step_active_unit_frame(actx)?;
+            let reveal_area = s.reveal_unit_area(actx)?;
+            let result = units::analyze_step_active_unit(
+                actx,
+                step_active_unit,
+                reveal_area
+            );
+            Some(([result.step_unit_movement], [result.should_vision_update]))
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -5059,6 +5100,22 @@ impl<'e> AnalysisX86<'e> {
     pub fn first_invisible_unit(&mut self) -> Option<Operand<'e>> {
         self.0.first_invisible_unit()
     }
+
+    pub fn active_iscript_flingy(&mut self) -> Option<Operand<'e>> {
+        self.0.active_iscript_flingy()
+    }
+
+    pub fn active_iscript_bullet(&mut self) -> Option<Operand<'e>> {
+        self.0.active_iscript_bullet()
+    }
+
+    pub fn step_unit_movement(&mut self) -> Option<VirtualAddress> {
+        self.0.step_unit_movement()
+    }
+
+    pub fn unit_should_reveal_area(&mut self) -> Option<Operand<'e>> {
+        self.0.unit_should_reveal_area()
+    }
 }
 
 pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
@@ -5632,6 +5689,9 @@ trait ControlExt<'e, E: ExecutionStateTrait<'e>> {
     fn resolve_va(&mut self, operand: Operand<'e>) -> Option<E::VirtualAddress>;
     /// Skips current operation, assigns undef to other volatile registers except esp.
     fn skip_call_preserve_esp(&mut self);
+    /// Skips current operation, assigns undef to other volatile registers except esp,
+    /// and assigns `result` to eax
+    fn do_call_with_result(&mut self, result: Operand<'e>);
 }
 
 impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
@@ -5655,5 +5715,22 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
                 ctx.new_undef(),
             );
         }
+    }
+
+    fn do_call_with_result(&mut self, result: Operand<'e>) {
+        self.skip_operation();
+        let ctx = self.ctx();
+        let state = self.exec_state();
+        state.move_to(&scarf::DestOperand::Register64(scarf::operand::Register(0)), result);
+        for i in 1..3 {
+            state.move_to(
+                &scarf::DestOperand::Register64(scarf::operand::Register(i)),
+                ctx.new_undef(),
+            );
+        }
+        state.move_to(
+            &scarf::DestOperand::Register64(scarf::operand::Register(4)),
+            ctx.new_undef(),
+        );
     }
 }

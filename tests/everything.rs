@@ -544,6 +544,8 @@ fn everything_1222b() {
         assert_eq!(pathing, ctx.mem32(ctx.constant(0x00ff1274)));
         assert_eq!(analysis.add_asset_change_callback().unwrap().0, 0x005238d0);
         assert_eq!(analysis.anim_asset_change_cb().unwrap().0, 0x00550cf0);
+        assert_eq!(analysis.step_unit_movement().unwrap().0, 0x0058ec70);
+        assert_eq!(analysis.unit_should_reveal_area().unwrap(), ctx.mem32(ctx.constant(0xdf5b8c)));
     })
 }
 
@@ -1353,6 +1355,8 @@ fn everything_1238c() {
         assert_eq!(analysis.first_invisible_unit().unwrap(), ctx.mem32(ctx.constant(0xfd74a8)));
         assert_eq!(analysis.step_bullet_frame().unwrap().0, 0x00572100);
         assert_eq!(analysis.active_iscript_bullet().unwrap(), ctx.mem32(ctx.constant(0xfc9680)));
+        assert_eq!(analysis.step_unit_movement().unwrap().0, 0x005bf660);
+        assert_eq!(analysis.unit_should_reveal_area().unwrap(), ctx.mem32(ctx.constant(0xfd7284)));
     })
 }
 
@@ -1416,7 +1420,7 @@ fn test_nongeneric<'e>(
                 LocalUniquePlayerId | IsPaused | IsPlacingBuilding | IsTargeting |
                 DialogReturnCode | AssetScale | ImagesLoaded | VisionUpdateCounter |
                 VisionUpdated | FirstDyingUnit | FirstRevealer | FirstInvisibleUnit |
-                ActiveIscriptFlingy | ActiveIscriptBullet =>
+                ActiveIscriptFlingy | ActiveIscriptBullet | UnitShouldRevealArea =>
             {
                 check_global_opt(result, binary, op.name());
             }
