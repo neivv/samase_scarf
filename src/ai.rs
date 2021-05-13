@@ -390,7 +390,7 @@ fn aiscript_find_switch_loop_and_end<'e, E: ExecutionState<'e>>(
 }
 
 struct AiscriptFindSwitchLoop<'e, E: ExecutionState<'e>> {
-    first_op_jumps: ArrayVec<[E::VirtualAddress; 4]>,
+    first_op_jumps: ArrayVec<E::VirtualAddress, 4>,
     first_op: bool,
     result: Option<E::VirtualAddress>,
 }

@@ -26,7 +26,7 @@ lto = true
 overflow-checks = true
 
 [dependencies]
-arrayvec = "0.5"
+arrayvec = "0.7"
 bumpalo = { version = "3.4", features = ["collections"] }
 byteorder = "1.1.0"
 fxhash = "0.2.1"
@@ -42,7 +42,7 @@ scopeguard = { version = "1.1", optional = true }
 
 [dependencies.scarf]
 git = "https://github.com/neivv/scarf"
-rev = "ca21c1a3261a29f17388876bb7e0c8f6de8bf8af"
+rev = "8c1d3766ba7bde5283ac56c44d252602dcfca862"
 
 [dev-dependencies]
 fern = "0.6"
