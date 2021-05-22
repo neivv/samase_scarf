@@ -5,7 +5,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
 use scarf::operand::{Operand};
 use scarf::{BinaryFile, BinarySection, DestOperand, Operation};
 
-use crate::{AnalysisCtx, ArgCache, if_callable_const, FunctionFinder};
+use crate::{AnalysisCtx, ArgCache, if_callable_const, FunctionFinder, single_result_assign};
 
 struct FindLoadDat<'acx, 'e, E: ExecutionState<'e>> {
     result: BumpVec<'acx, (E::VirtualAddress, E::VirtualAddress)>,
@@ -70,7 +70,7 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
     analysis: &'acx AnalysisCtx<'e, E>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     load_dat_fn: E::VirtualAddress,
-) -> BumpVec<'acx, E::VirtualAddress> {
+) -> Option<E::VirtualAddress> {
     let arg_cache = &analysis.arg_cache;
     let rdata = analysis.binary_sections.rdata;
     let ctx = analysis.ctx;
@@ -80,7 +80,7 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
         filename_arg: Arg::Stack(0),
     }];
     let mut checked_functions = BumpVec::new_in(bump);
-    let mut result = BumpVec::new_in(bump);
+    let mut result = None;
 
     while let Some(func) = functions.pop() {
         if checked_functions.iter().any(|&x| x == func.address) {
@@ -171,7 +171,9 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
             }
         }
         if analyzer.ok {
-            result.push(func.address);
+            if single_result_assign(Some(func.address), &mut result) {
+                break;
+            }
         }
     }
     result
@@ -201,7 +203,7 @@ fn find_name_arg<'e, A: analysis::Analyzer<'e>>(
 pub(crate) fn open_file<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     functions: &FunctionFinder<'_, 'e, E>,
-) -> Vec<E::VirtualAddress> {
+) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     let bump = &analysis.bump;
     let str_refs = functions.string_refs(analysis, b"arr\\units.");
@@ -215,11 +217,16 @@ pub(crate) fn open_file<'e, E: ExecutionState<'e>>(
         })
     );
     if load_dat_fns.is_empty() {
-        return Vec::new();
+        return None;
     }
     load_dat_fns.sort_unstable();
     load_dat_fns.dedup();
-    load_dat_fns.iter().flat_map(|&addr| {
-        find_open_file_fn(analysis, binary, addr)
-    }).collect()
+    let mut result = None;
+    for &addr in &load_dat_fns {
+        let new = find_open_file_fn(analysis, binary, addr);
+        if single_result_assign(new, &mut result) {
+            break;
+        }
+    }
+    result
 }

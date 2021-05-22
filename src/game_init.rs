@@ -56,7 +56,7 @@ pub(crate) struct ImagesLoaded<'e, Va: VirtualAddress> {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub struct InitMapFromPath<Va: VirtualAddress> {
+pub(crate) struct InitMapFromPath<Va: VirtualAddress> {
     pub init_map_from_path: Va,
     pub map_init_chk_callbacks: Va,
 }

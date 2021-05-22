@@ -200,8 +200,6 @@ fn main() {
     }
 
     if filter.is_none() {
-        let open_file = analysis.file_hook();
-        println!("open_file: {:?}", open_file);
         let firegraft = analysis.firegraft_addresses();
         println!("Buttonsets: {:?}", firegraft.buttonsets);
         println!("Unit status: {:?}", firegraft.unit_status_funcs);
@@ -280,25 +278,8 @@ fn main() {
         let renderer_vtables = analysis.renderer_vtables();
         println!("renderer_vtables: {:?}", renderer_vtables);
 
-        let init_map_from_path = analysis.init_map_from_path();
-        println!("init_map_from_path: {:?}", init_map_from_path);
-
         let skins_size = analysis.skins_size().unwrap_or(0);
         println!("skins_size: {:x}", skins_size);
-
-        let images_loaded = analysis.images_loaded();
-        println!("images_loaded: {}", format_op_operand(images_loaded));
-        let init_rtl = analysis.init_real_time_lighting();
-        println!("init_real_time_lighting: {:?}", init_rtl);
-
-        let step = analysis.step_network();
-        println!("step_network: {:?}", step.step_network);
-        println!("receive_storm_turns: {:?}", step.receive_storm_turns);
-        println!("menu_screen_id: {}", format_op_operand(step.menu_screen_id));
-        println!("net_player_flags: {}", format_op_operand(step.net_player_flags));
-        println!("player_turns: {}", format_op_operand(step.player_turns));
-        println!("player_turns_size: {}", format_op_operand(step.player_turns_size));
-        println!("network_ready: {}", format_op_operand(step.network_ready));
 
         let snp_definitions = analysis.snp_definitions();
         if let Some(defs) = snp_definitions {
@@ -342,27 +323,16 @@ fn main() {
             analysis.prism_pixel_shaders().iter().map(|x| x.as_u64()).collect::<Vec<_>>(),
         );
 
-        println!("ai_step_region: {:?}", analysis.ai_step_region());
-        println!("ai_spend_money: {:?}", analysis.ai_spend_money());
-
         println!("set_status_screen_tooltip: {:?}", analysis.set_status_screen_tooltip());
-        println!("do_attack: {:?}", analysis.do_attack());
-        println!("do_attack_main: {:?}", analysis.do_attack_main());
-        println!("last_bullet_spawner: {}", format_op_operand(analysis.last_bullet_spawner()));
 
         println!("SMemAlloc: {:?}", analysis.smem_alloc());
         println!("SMemFree: {:?}", analysis.smem_free());
-        println!("cmdicons_ddsgrp: {}", format_op_operand(analysis.cmdicons_ddsgrp()));
-        println!("cmdbtns_ddsgrp: {}", format_op_operand(analysis.cmdbtns_ddsgrp()));
 
         let mouse_xy = analysis.mouse_xy();
         println!("mouse_x: {}", format_op_operand(mouse_xy.x_var));
         println!("mouse_y: {}", format_op_operand(mouse_xy.y_var));
         println!("get_mouse_x: {:?}", mouse_xy.x_func);
         println!("get_mouse_y: {:?}", mouse_xy.y_func);
-
-        println!("check_unit_requirements: {:?}", analysis.check_unit_requirements());
-        println!("dat_requirement_error: {}", format_op_operand(analysis.dat_requirement_error()));
 
         println!("grpwire_grp: {}", format_op_operand(analysis.grpwire_grp()));
         println!("grpwire_ddsgrp: {}", format_op_operand(analysis.grpwire_ddsgrp()));
@@ -379,9 +349,6 @@ fn main() {
             "trigger_completed_units_cache: {}",
             format_op_operand(analysis.trigger_completed_units_cache()),
         );
-
-        println!("snet_send_packets: {:?}", analysis.snet_send_packets());
-        println!("snet_recv_packets: {:?}", analysis.snet_recv_packets());
 
         let patch = analysis.replay_minimap_unexplored_fog_patch();
         println!(

@@ -447,8 +447,8 @@ fn everything_1221() {
         let guard_ai = analysis.first_guard_ai().unwrap();
         assert_eq!(guard_ai, ctx.constant(0x00ee41b8));
 
-        let open_file = analysis.file_hook();
-        assert_eq!(open_file[0].0, 0x00527860);
+        let open_file = analysis.open_file().unwrap();
+        assert_eq!(open_file.0, 0x00527860);
 
         let init_map_from_path = analysis.init_map_from_path().unwrap();
         assert_eq!(init_map_from_path.0, 0x006D7C30);
@@ -883,9 +883,8 @@ fn everything_1232e() {
         let local_player_name = analysis.local_player_name().unwrap();
         assert_eq!(local_player_name, ctx.constant(0x106f5b8));
 
-        let step = analysis.step_network();
-        assert_eq!(step.step_network.unwrap().0, 0x00722ce0);
-        assert_eq!(step.receive_storm_turns.unwrap().0, 0x00713370);
+        assert_eq!(analysis.step_network().unwrap().0, 0x00722ce0);
+        assert_eq!(analysis.receive_storm_turns().unwrap().0, 0x00713370);
         let val = ctx.and_const(
             ctx.xor(
                 ctx.sub(
@@ -896,11 +895,11 @@ fn everything_1232e() {
             ),
             0xffff_ffff,
         );
-        assert_eq!(step.menu_screen_id.clone().unwrap(), val);
-        assert_eq!(step.net_player_flags.unwrap(), ctx.constant(0x0106F588));
-        assert_eq!(step.player_turns.unwrap(), ctx.constant(0x01071118));
-        assert_eq!(step.player_turns_size.unwrap(), ctx.constant(0x01071148));
-        assert_eq!(step.network_ready.unwrap(), ctx.mem8(ctx.constant(0x0106F57D)));
+        assert_eq!(analysis.menu_screen_id().unwrap(), val);
+        assert_eq!(analysis.net_player_flags().unwrap(), ctx.constant(0x0106F588));
+        assert_eq!(analysis.player_turns().unwrap(), ctx.constant(0x01071118));
+        assert_eq!(analysis.player_turns_size().unwrap(), ctx.constant(0x01071148));
+        assert_eq!(analysis.network_ready().unwrap(), ctx.mem8(ctx.constant(0x0106F57D)));
 
         let init = analysis.init_game_network().unwrap();
         assert_eq!(init.0, 0x00713cb0);
@@ -918,8 +917,8 @@ fn everything_1232e() {
 #[test]
 fn everything_1233a() {
     test_with_extra_checks(Path::new("1233a.exe"), |ctx, analysis| {
-        let open_file = analysis.file_hook();
-        assert_eq!(open_file[0].0, 0x00544720);
+        let open_file = analysis.open_file().unwrap();
+        assert_eq!(open_file.0, 0x00544720);
 
         let init = analysis.init_storm_networking().unwrap();
         assert_eq!(init.0, 0x0073b2e0);
@@ -1404,7 +1403,7 @@ fn test_nongeneric<'e>(
             Units | PlayerUnitSkins | VertexBuffer | Sprites => {
                 continue;
             }
-            Game | Players => {
+            Game | Players | MenuScreenId => {
                 let result = result.unwrap_or_else(|| panic!("Didn't find {}", op.name()));
                 check_game(result, binary, op.name());
             }
@@ -1420,7 +1419,8 @@ fn test_nongeneric<'e>(
                 LocalUniquePlayerId | IsPaused | IsPlacingBuilding | IsTargeting |
                 DialogReturnCode | AssetScale | ImagesLoaded | VisionUpdateCounter |
                 VisionUpdated | FirstDyingUnit | FirstRevealer | FirstInvisibleUnit |
-                ActiveIscriptFlingy | ActiveIscriptBullet | UnitShouldRevealArea =>
+                ActiveIscriptFlingy | ActiveIscriptBullet | UnitShouldRevealArea |
+                NetworkReady | LastBulletSpawner | DatRequirementError =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1430,14 +1430,13 @@ fn test_nongeneric<'e>(
                 AiRegions | GraphicLayers | Selections | GlobalEventHandlers | FirstPlayerUnit |
                 NetPlayers | NetPlayerToGame | NetPlayerToUnique | GameData | Skins |
                 PlayerSkins | ClientSelection | BaseAnimSet | ImageGrps | ImageOverlays |
-                FireOverlayMax =>
+                FireOverlayMax | NetPlayerFlags | PlayerTurns | PlayerTurnsSize | CmdIconsDdsGrp |
+                CmdBtnsDdsGrp =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }
         }
     }
-    let results = analysis.file_hook();
-    assert_eq!(results.len(), 1);
     let results = analysis.firegraft_addresses();
     assert_eq!(results.buttonsets.len(), 1);
     assert_eq!(results.unit_status_funcs.len(), 1);
@@ -1654,9 +1653,6 @@ fn test_nongeneric<'e>(
     let run_dialog = analysis.run_dialog();
     assert_ne!(run_dialog, spawn_dialog);
 
-    let init_map_from_path = analysis.init_map_from_path();
-    assert!(init_map_from_path.is_some());
-
     let skins_size = analysis.skins_size().unwrap();
     assert_eq!(skins_size, 0x15e);
 
@@ -1664,15 +1660,6 @@ fn test_nongeneric<'e>(
     check_global(images_loaded.unwrap(), binary, "images loaded");
     let init_rtl = analysis.init_real_time_lighting();
     assert!(init_rtl.is_some());
-
-    let step = analysis.step_network();
-    assert!(step.step_network.is_some());
-    assert!(step.receive_storm_turns.is_some());
-    check_game(step.menu_screen_id.unwrap(), binary, "menu_screen_id");
-    check_global(step.network_ready.unwrap(), binary, "network ready");
-    check_global_struct_opt(step.net_player_flags, binary, "net player flags");
-    check_global_struct_opt(step.player_turns, binary, "net player turns");
-    check_global_struct_opt(step.player_turns_size, binary, "net player turns size");
 
     let snp_definitions = analysis.snp_definitions();
     if minor_version < 23 || (minor_version == 23 && patch_version < 3) {
@@ -1737,9 +1724,6 @@ fn test_nongeneric<'e>(
         assert_eq!(analysis.prism_pixel_shaders().len(), 0);
     }
 
-    assert!(analysis.ai_step_region().is_some());
-    assert!(analysis.ai_spend_money().is_some());
-
     let join_game = analysis.join_game();
     // 1233g refactored join_game/it's arguments heavily from what used to resemble 1161,
     // this analysis only finds the new format
@@ -1775,12 +1759,6 @@ fn test_nongeneric<'e>(
         assert!(start_udp_server.is_none());
     }
 
-    assert!(analysis.do_attack().is_some());
-    assert!(analysis.do_attack_main().is_some());
-    check_global(analysis.last_bullet_spawner().unwrap(), binary, "last_bullet_spawner");
-    check_global_struct(analysis.cmdicons_ddsgrp().unwrap(), binary, "cmdicons_ddsgrp");
-    check_global_struct(analysis.cmdbtns_ddsgrp().unwrap(), binary, "cmdbtns_ddsgrp");
-
     // 1.23.0 added input abstraction
     let mouse_xy = analysis.mouse_xy();
     if minor_version >= 23 {
@@ -1795,9 +1773,6 @@ fn test_nongeneric<'e>(
         assert!(mouse_xy.y_func.is_none());
     }
 
-    assert!(analysis.check_unit_requirements().is_some());
-    check_global(analysis.dat_requirement_error().unwrap(), binary, "dat_requirement_error");
-
     check_global(analysis.grpwire_grp().unwrap(), binary, "grpwire_grp");
     check_global(analysis.tranwire_grp().unwrap(), binary, "tranwire_grp");
     check_global_struct(analysis.grpwire_ddsgrp().unwrap(), binary, "grpwire_ddsgrp");
@@ -1808,8 +1783,6 @@ fn test_nongeneric<'e>(
 
     assert!(analysis.trigger_conditions().is_some());
     assert!(analysis.trigger_actions().is_some());
-    assert!(analysis.snet_send_packets().is_some());
-    assert!(analysis.snet_recv_packets().is_some());
     check_global_struct_opt(analysis.trigger_all_units_cache(), binary, "all units cache");
     check_global_struct_opt(
         analysis.trigger_completed_units_cache(),

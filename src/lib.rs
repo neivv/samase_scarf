@@ -63,7 +63,7 @@ use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 pub use scarf;
 pub use scarf::{BinarySection, VirtualAddress};
 pub use crate::ai::AiScriptHook;
-pub use crate::commands::{ProcessCommands, StepNetwork};
+pub use crate::commands::{ProcessCommands};
 pub use crate::dat::{
     DatTablePtr, DatPatch, DatPatches, DatArrayPatch, DatEntryCountPatch, DatReplaceFunc
 };
@@ -79,9 +79,7 @@ pub use crate::step_order::{SecondaryOrderHook, StepOrderHiddenHook};
 pub use crate::units::{OrderIssuing};
 
 use crate::dialog::{MultiWireframes};
-use crate::game_init::{InitMapFromPath};
 use crate::map::{RunTriggers, TriggerUnitCountCaches};
-use crate::network::{SnetHandlePackets};
 use crate::switch::{CompleteSwitch, full_switch_info};
 
 use scarf::exec_state::ExecutionState as ExecutionStateTrait;
@@ -284,6 +282,18 @@ results! {
         StepBulletFrame => "step_bullet_frame",
         RevealUnitArea => "reveal_unit_area",
         StepUnitMovement => "step_unit_movement",
+        InitMapFromPath => "init_map_from_path",
+        MapInitChkCallbacks => "map_init_chk_callbacks",
+        StepNetwork => "step_network",
+        ReceiveStormTurns => "receive_storm_turns",
+        AiStepRegion => "ai_step_region",
+        AiSpendMoney => "ai_spend_money",
+        DoAttack => "do_attack",
+        DoAttackMain => "do_attack_main",
+        CheckUnitRequirements => "check_unit_requirements",
+        SnetSendPackets => "snet_send_packets",
+        SnetRecvPackets => "snet_recv_packets",
+        OpenFile => "open_file",
     }
 }
 
@@ -381,6 +391,15 @@ results! {
         ActiveIscriptFlingy => "active_iscript_flingy",
         ActiveIscriptBullet => "active_iscript_bullet",
         UnitShouldRevealArea => "unit_should_reveal_area",
+        MenuScreenId => "menu_screen_id",
+        NetPlayerFlags => "net_player_flags",
+        PlayerTurns => "player_turns",
+        PlayerTurnsSize => "player_turns_size",
+        NetworkReady => "network_ready",
+        LastBulletSpawner => "last_bullet_spawner",
+        CmdIconsDdsGrp => "cmdicons_ddsgrp",
+        CmdBtnsDdsGrp => "cmdbtns_ddsgrp",
+        DatRequirementError => "dat_requirement_error",
     }
 }
 
@@ -392,7 +411,6 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     functions: Cached<Rc<Vec<E::VirtualAddress>>>,
     functions_with_callers: Cached<Rc<Vec<FuncCallPair<E::VirtualAddress>>>>,
     switch_tables: Cached<Rc<Vec<SwitchTable<E::VirtualAddress>>>>,
-    open_file: Cached<Rc<Vec<E::VirtualAddress>>>,
     firegraft_addresses: Cached<Rc<FiregraftAddresses<E::VirtualAddress>>>,
     aiscript_hook: Cached<Option<AiScriptHook<'e, E::VirtualAddress>>>,
     // 0 = Not calculated, 1 = Not found
@@ -410,8 +428,6 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     sprite_y_position: Option<(Operand<'e>, u32, MemAccessSize)>,
     eud: Cached<Rc<EudTable<'e>>>,
     renderer_vtables: Cached<Rc<Vec<E::VirtualAddress>>>,
-    init_map_from_path: Cached<Option<InitMapFromPath<E::VirtualAddress>>>,
-    step_network: Cached<Rc<StepNetwork<'e, E::VirtualAddress>>>,
     snp_definitions: Cached<Option<SnpDefinitions<'e>>>,
     sprite_struct_size: u16,
     net_player_size: u16,
@@ -420,17 +436,11 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
     create_game_dialog_vtbl_on_multiplayer_create: Cached<Option<usize>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
-    ai_step_frame_funcs: Cached<ai::AiStepFrameFuncs<E::VirtualAddress>>,
-    do_attack: Cached<Option<step_order::DoAttack<'e, E::VirtualAddress>>>,
     dat_patches: Cached<Option<Rc<DatPatches<'e, E::VirtualAddress>>>>,
-    button_ddsgrps: Cached<dialog::ButtonDdsgrps<'e>>,
     mouse_xy: Cached<dialog::MouseXy<'e, E::VirtualAddress>>,
-    check_unit_requirements:
-        Cached<Option<requirements::CheckUnitRequirements<'e, E::VirtualAddress>>>,
     multi_wireframes: Cached<MultiWireframes<'e, E::VirtualAddress>>,
     run_triggers: Cached<RunTriggers<E::VirtualAddress>>,
     trigger_unit_count_caches: Cached<TriggerUnitCountCaches<'e>>,
-    snet_handle_packets: Cached<SnetHandlePackets<E::VirtualAddress>>,
     replay_minimap_unexplored_fog_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
     crt_fastfail: Cached<Rc<Vec<E::VirtualAddress>>>,
     dat_tables: DatTables<'e>,
@@ -611,7 +621,6 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 functions: Default::default(),
                 functions_with_callers: Default::default(),
                 switch_tables: Default::default(),
-                open_file: Default::default(),
                 firegraft_addresses: Default::default(),
                 aiscript_hook: Default::default(),
                 address_results:
@@ -628,8 +637,6 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 sprite_y_position: Default::default(),
                 eud: Default::default(),
                 renderer_vtables: Default::default(),
-                init_map_from_path: Default::default(),
-                step_network: Default::default(),
                 snp_definitions: Default::default(),
                 sprite_struct_size: 0,
                 net_player_size: 0,
@@ -638,16 +645,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 limits: Default::default(),
                 create_game_dialog_vtbl_on_multiplayer_create: Default::default(),
                 prism_shaders: Default::default(),
-                ai_step_frame_funcs: Default::default(),
                 dat_patches: Default::default(),
-                do_attack: Default::default(),
-                button_ddsgrps: Default::default(),
                 mouse_xy: Default::default(),
-                check_unit_requirements: Default::default(),
                 multi_wireframes: Default::default(),
                 run_triggers: Default::default(),
                 trigger_unit_count_caches: Default::default(),
-                snet_handle_packets: Default::default(),
                 replay_minimap_unexplored_fog_patch: Default::default(),
                 crt_fastfail: Default::default(),
                 dat_tables: DatTables::new(),
@@ -779,6 +781,18 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             StepBulletFrame => self.step_bullet_frame(),
             RevealUnitArea => self.reveal_unit_area(),
             StepUnitMovement => self.step_unit_movement(),
+            InitMapFromPath => self.init_map_from_path(),
+            MapInitChkCallbacks => self.map_init_chk_callbacks(),
+            StepNetwork => self.step_network(),
+            ReceiveStormTurns => self.receive_storm_turns(),
+            AiStepRegion => self.ai_step_region(),
+            AiSpendMoney => self.ai_spend_money(),
+            DoAttack => self.do_attack(),
+            DoAttackMain => self.do_attack_main(),
+            CheckUnitRequirements => self.check_unit_requirements(),
+            SnetSendPackets => self.snet_send_packets(),
+            SnetRecvPackets => self.snet_recv_packets(),
+            OpenFile => self.open_file(),
         }
     }
 
@@ -877,6 +891,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ActiveIscriptFlingy => self.active_iscript_flingy(),
             ActiveIscriptBullet => self.active_iscript_bullet(),
             UnitShouldRevealArea => self.unit_should_reveal_area(),
+            MenuScreenId => self.menu_screen_id(),
+            NetPlayerFlags => self.net_player_flags(),
+            PlayerTurns => self.player_turns(),
+            PlayerTurnsSize => self.player_turns_size(),
+            NetworkReady => self.network_ready(),
+            LastBulletSpawner => self.last_bullet_spawner(),
+            CmdIconsDdsGrp => self.cmdicons_ddsgrp(),
+            CmdBtnsDdsGrp => self.cmdbtns_ddsgrp(),
+            DatRequirementError => self.dat_requirement_error(),
         }
     }
 
@@ -912,8 +935,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.dat(ty, s))
     }
 
-    pub fn file_hook(&mut self) -> Rc<Vec<E::VirtualAddress>> {
-        self.enter(|x, s| x.file_hook(s))
+    pub fn open_file(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x, s| x.open_file(s))
     }
 
     pub fn rng_seed(&mut self) -> Option<Operand<'e>> {
@@ -1025,7 +1048,14 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn init_map_from_path(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.init_map_from_path(s))
+        self.analyze_many_addr(AddressAnalysis::InitMapFromPath, AnalysisCache::cache_init_map)
+    }
+
+    pub fn map_init_chk_callbacks(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::MapInitChkCallbacks,
+            AnalysisCache::cache_init_map,
+        )
     }
 
     pub fn choose_snp(&mut self) -> Option<E::VirtualAddress> {
@@ -1156,8 +1186,35 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.local_player_name(s))
     }
 
-    pub fn step_network(&mut self) -> Rc<StepNetwork<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.step_network(s))
+    pub fn step_network(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::StepNetwork, AnalysisCache::cache_step_network)
+    }
+
+    pub fn receive_storm_turns(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ReceiveStormTurns,
+            AnalysisCache::cache_step_network,
+        )
+    }
+
+    pub fn menu_screen_id(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::MenuScreenId, AnalysisCache::cache_step_network)
+    }
+
+    pub fn net_player_flags(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::NetPlayerFlags, AnalysisCache::cache_step_network)
+    }
+
+    pub fn player_turns(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::PlayerTurns, AnalysisCache::cache_step_network)
+    }
+
+    pub fn player_turns_size(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::PlayerTurnsSize, AnalysisCache::cache_step_network)
+    }
+
+    pub fn network_ready(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::NetworkReady, AnalysisCache::cache_step_network)
     }
 
     pub fn init_game_network(&mut self) -> Option<E::VirtualAddress> {
@@ -1610,11 +1667,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn ai_step_region(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.ai_step_region(s))
+        self.analyze_many_addr(AddressAnalysis::AiStepRegion, AnalysisCache::cache_ai_step_frame)
     }
 
     pub fn ai_spend_money(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.ai_spend_money(s))
+        self.analyze_many_addr(AddressAnalysis::AiSpendMoney, AnalysisCache::cache_ai_step_frame)
     }
 
     pub fn join_game(&mut self) -> Option<E::VirtualAddress> {
@@ -1634,15 +1691,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn do_attack(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.do_attack(s))
+        self.analyze_many_addr(AddressAnalysis::DoAttack, AnalysisCache::cache_do_attack)
     }
 
     pub fn do_attack_main(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.do_attack_main(s))
+        self.analyze_many_addr(AddressAnalysis::DoAttackMain, AnalysisCache::cache_do_attack)
     }
 
     pub fn last_bullet_spawner(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.last_bullet_spawner(s))
+        self.analyze_many_op(OperandAnalysis::LastBulletSpawner, AnalysisCache::cache_do_attack)
     }
 
     pub fn smem_alloc(&mut self) -> Option<E::VirtualAddress> {
@@ -1654,11 +1711,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn cmdicons_ddsgrp(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.cmdicons_ddsgrp(s))
+        self.analyze_many_op(OperandAnalysis::CmdIconsDdsGrp, AnalysisCache::cache_cmdicons)
     }
 
     pub fn cmdbtns_ddsgrp(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.cmdbtns_ddsgrp(s))
+        self.analyze_many_op(OperandAnalysis::CmdBtnsDdsGrp, AnalysisCache::cache_cmdicons)
     }
 
     pub fn mouse_xy(&mut self) -> MouseXy<'e, E::VirtualAddress> {
@@ -1670,7 +1727,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn check_unit_requirements(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.check_unit_requirements(s))
+        self.analyze_many_addr(
+            AddressAnalysis::CheckUnitRequirements,
+            AnalysisCache::cache_unit_requirements,
+        )
     }
 
     pub fn check_dat_requirements(&mut self) -> Option<E::VirtualAddress> {
@@ -1678,7 +1738,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn dat_requirement_error(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.dat_requirement_error(s))
+        self.analyze_many_op(
+            OperandAnalysis::DatRequirementError,
+            AnalysisCache::cache_unit_requirements,
+        )
     }
 
     pub fn cheat_flags(&mut self) -> Option<Operand<'e>> {
@@ -1739,11 +1802,17 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn snet_send_packets(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.snet_send_packets(s))
+        self.analyze_many_addr(
+            AddressAnalysis::SnetSendPackets,
+            AnalysisCache::cache_snet_handle_packets,
+        )
     }
 
     pub fn snet_recv_packets(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.snet_recv_packets(s))
+        self.analyze_many_addr(
+            AddressAnalysis::SnetRecvPackets,
+            AnalysisCache::cache_snet_handle_packets,
+        )
     }
 
     pub fn chk_init_players(&mut self) -> Option<Operand<'e>> {
@@ -2523,13 +2592,10 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         result
     }
 
-    fn file_hook(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Vec<E::VirtualAddress>> {
-        if let Some(cached) = self.open_file.cached() {
-            return cached;
-        }
-        let result = Rc::new(file::open_file(actx, &self.function_finder()));
-        self.open_file.cache(&result);
-        result
+    fn open_file(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_single_address(AddressAnalysis::OpenFile, |s| {
+            file::open_file(actx, &s.function_finder())
+        })
     }
 
     fn cache_rng(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -2742,20 +2808,16 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn init_map_from_path_vars(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Option<InitMapFromPath<E::VirtualAddress>> {
-        if let Some(cached) = self.init_map_from_path.cached() {
-            return cached;
-        }
-        let result = game_init::init_map_from_path(actx, &self.function_finder());
-        self.init_map_from_path.cache(&result);
-        result
+    fn cache_init_map(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[InitMapFromPath, MapInitChkCallbacks], &[], |s| {
+            let result = game_init::init_map_from_path(actx, &s.function_finder())?;
+            Some(([Some(result.init_map_from_path), Some(result.map_init_chk_callbacks)], []))
+        })
     }
 
-    fn init_map_from_path(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.init_map_from_path_vars(actx).map(|x| x.init_map_from_path)
+    fn map_init_chk_callbacks(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::MapInitChkCallbacks, |s| s.cache_init_map(actx))
     }
 
     fn choose_snp(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -2886,30 +2948,19 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn step_network(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<StepNetwork<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.step_network.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let process_lobby_commands = self.process_lobby_commands(actx)?;
-            Some(commands::step_network(actx, process_lobby_commands, &self.function_finder()))
-        }).unwrap_or_else(|| {
-            StepNetwork {
-                step_network: None,
-                receive_storm_turns: None,
-                menu_screen_id: None,
-                net_player_flags: None,
-                player_turns: None,
-                player_turns_size: None,
-                network_ready: None,
-            }
-        });
-        let result = Rc::new(result);
-        self.step_network.cache(&result);
-        result
+    fn cache_step_network(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[StepNetwork, ReceiveStormTurns], &[
+            MenuScreenId, NetPlayerFlags, PlayerTurns, PlayerTurnsSize, NetworkReady,
+        ], |s| {
+            let process_lobby_commands = s.process_lobby_commands(actx)?;
+            let funcs = s.function_finder();
+            let result = commands::step_network(actx, process_lobby_commands, &funcs);
+            Some(([result.step_network, result.receive_storm_turns], [result.menu_screen_id,
+                result.net_player_flags, result.player_turns, result.player_turns_size,
+                result.network_ready]))
+        })
     }
 
     fn init_game_network(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -3452,33 +3503,19 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn ai_step_region(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.ai_step_frame_funcs(actx).ai_step_region
+    fn cache_ai_step_frame(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[AiStepRegion, AiSpendMoney], &[], |s| {
+            let step_objects = s.step_objects(actx)?;
+            let ai_regions = s.ai_regions(actx)?;
+            let game = s.game(actx)?;
+            let result = ai::step_frame_funcs(actx, step_objects, ai_regions, game);
+            Some(([result.ai_step_region, result.ai_spend_money], []))
+        })
     }
 
     fn ai_spend_money(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.ai_step_frame_funcs(actx).ai_spend_money
-    }
-
-    fn ai_step_frame_funcs(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> &ai::AiStepFrameFuncs<E::VirtualAddress> {
-        if self.ai_step_frame_funcs.cached_ref().is_some() {
-            return self.ai_step_frame_funcs.cached_ref().unwrap();
-        }
-        let result = Some(()).and_then(|()| {
-            let step_objects = self.step_objects(actx)?;
-            let ai_regions = self.ai_regions(actx)?;
-            let game = self.game(actx)?;
-            Some(ai::step_frame_funcs(actx, step_objects, ai_regions, game))
-        }).unwrap_or_else(|| {
-            ai::AiStepFrameFuncs {
-                ai_step_region: None,
-                ai_spend_money: None,
-            }
-        });
-        self.ai_step_frame_funcs.get_or_insert_with(|| result)
+        self.cache_many_addr(AddressAnalysis::AiSpendMoney, |s| s.cache_ai_step_frame(actx))
     }
 
     fn join_game(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -3516,32 +3553,16 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         result
     }
 
-    fn do_attack_struct(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Option<step_order::DoAttack<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.do_attack.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let step_order = self.step_order(actx)?;
+    fn cache_do_attack(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[DoAttack, DoAttackMain], &[LastBulletSpawner], |s| {
+            let step_order = s.step_order(actx)?;
             let attack_order = step_order::find_order_function(actx, step_order, 0xa)?;
-            step_order::do_attack(actx, attack_order)
-        });
-        self.do_attack.cache(&result);
-        result
-    }
-
-    fn do_attack(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.do_attack_struct(actx).map(|x| x.do_attack)
-    }
-
-    fn do_attack_main(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.do_attack_struct(actx).map(|x| x.do_attack_main)
-    }
-
-    fn last_bullet_spawner(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.do_attack_struct(actx).map(|x| x.last_bullet_spawner)
+            let result = step_order::do_attack(actx, attack_order)?;
+            Some(([Some(result.do_attack), Some(result.do_attack_main)],
+                [Some(result.last_bullet_spawner)]))
+        })
     }
 
     fn smem_alloc(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -3552,30 +3573,14 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.limits(actx).smem_free
     }
 
-    fn button_ddsgrps(&mut self, actx: &AnalysisCtx<'e, E>) -> dialog::ButtonDdsgrps<'e> {
-        if let Some(cached) = self.button_ddsgrps.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let firegraft = self.firegraft_addresses(actx);
+    fn cache_cmdicons(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(&[], &[CmdIconsDdsGrp, CmdBtnsDdsGrp], |s| {
+            let firegraft = s.firegraft_addresses(actx);
             let &status_arr = firegraft.unit_status_funcs.get(0)?;
-            Some(dialog::button_ddsgrps(actx, status_arr))
-        }).unwrap_or_else(|| {
-            dialog::ButtonDdsgrps {
-                cmdbtns: None,
-                cmdicons: None,
-            }
-        });
-        self.button_ddsgrps.cache(&result);
-        result
-    }
-
-    fn cmdicons_ddsgrp(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.button_ddsgrps(actx).cmdicons
-    }
-
-    fn cmdbtns_ddsgrp(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.button_ddsgrps(actx).cmdbtns
+            let result = dialog::button_ddsgrps(actx, status_arr);
+            Some(([], [result.cmdicons, result.cmdbtns]))
+        })
     }
 
     fn mouse_xy(&mut self, actx: &AnalysisCtx<'e, E>) -> MouseXy<'e, E::VirtualAddress> {
@@ -3604,26 +3609,15 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn check_unit_reqs_struct(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Option<requirements::CheckUnitRequirements<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.check_unit_requirements.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let units_dat = self.dat_virtual_address(DatType::Units, actx)?;
-            requirements::check_unit_requirements(actx, units_dat, &self.function_finder())
-        });
-        self.check_unit_requirements.cache(&result);
-        result
-    }
-
-    fn check_unit_requirements(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Option<E::VirtualAddress> {
-        self.check_unit_reqs_struct(actx).map(|x| x.check_unit_requirements)
+    fn cache_unit_requirements(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[CheckUnitRequirements], &[DatRequirementError], |s| {
+            let units_dat = s.dat_virtual_address(DatType::Units, actx)?;
+            let funcs = s.function_finder();
+            let result = requirements::check_unit_requirements(actx, units_dat, &funcs)?;
+            Some(([Some(result.check_unit_requirements)], [Some(result.requirement_error)]))
+        })
     }
 
     fn check_dat_requirements(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -3632,10 +3626,6 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             let functions = s.function_finder();
             requirements::check_dat_requirements(actx, techdata, &functions)
         })
-    }
-
-    fn dat_requirement_error(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.check_unit_reqs_struct(actx).map(|x| x.requirement_error)
     }
 
     fn cheat_flags(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
@@ -3753,29 +3743,17 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.trigger_unit_count_caches(actx).all_units
     }
 
-    fn snet_handle_packets(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> SnetHandlePackets<E::VirtualAddress> {
-        if let Some(cached) = self.snet_handle_packets.cached() {
-            return cached;
-        }
-        let result = network::snet_handle_packets(actx, &self.function_finder());
-        self.snet_handle_packets.cache(&result);
-        result
-    }
-
-    fn snet_send_packets(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.snet_handle_packets(actx).send_packets
-    }
-
-    fn snet_recv_packets(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.snet_handle_packets(actx).recv_packets
+    fn cache_snet_handle_packets(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[SnetSendPackets, SnetRecvPackets], &[], |s| {
+            let result = network::snet_handle_packets(actx, &s.function_finder());
+            Some(([result.send_packets, result.recv_packets], []))
+        })
     }
 
     fn chk_init_players(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::ChkInitPlayers, |s| {
-            let chk_callbacks = s.init_map_from_path_vars(actx)?.map_init_chk_callbacks;
+            let chk_callbacks = s.map_init_chk_callbacks(actx)?;
             game_init::chk_init_players(actx, chk_callbacks)
         })
     }
@@ -4152,8 +4130,8 @@ impl<'e> AnalysisX86<'e> {
         self.0.dat(ty)
     }
 
-    pub fn file_hook(&mut self) -> Rc<Vec<VirtualAddress>> {
-        self.0.file_hook()
+    pub fn open_file(&mut self) -> Option<VirtualAddress> {
+        self.0.open_file()
     }
 
     pub fn rng_seed(&mut self) -> Option<Operand<'e>> {
@@ -4253,6 +4231,10 @@ impl<'e> AnalysisX86<'e> {
         self.0.init_map_from_path()
     }
 
+    pub fn map_init_chk_callbacks(&mut self) -> Option<VirtualAddress> {
+        self.0.map_init_chk_callbacks()
+    }
+
     pub fn choose_snp(&mut self) -> Option<VirtualAddress> {
         self.0.choose_snp()
     }
@@ -4341,8 +4323,36 @@ impl<'e> AnalysisX86<'e> {
         self.0.local_player_name()
     }
 
-    pub fn step_network(&mut self) -> Rc<StepNetwork<'e, VirtualAddress>> {
+    pub fn menu_screen_id(&mut self) -> Option<Operand<'e>> {
+        self.0.menu_screen_id()
+    }
+
+    pub fn step_network(&mut self) -> Option<VirtualAddress> {
         self.0.step_network()
+    }
+
+    pub fn receive_storm_turns(&mut self) -> Option<VirtualAddress> {
+        self.0.receive_storm_turns()
+    }
+
+    pub fn menu_screen_id(&mut self) -> Option<Operand<'e>> {
+        self.0.menu_screen_id()
+    }
+
+    pub fn net_player_flags(&mut self) -> Option<Operand<'e>> {
+        self.0.net_player_flags()
+    }
+
+    pub fn player_turns(&mut self) -> Option<Operand<'e>> {
+        self.0.player_turns()
+    }
+
+    pub fn player_turns_size(&mut self) -> Option<Operand<'e>> {
+        self.0.player_turns_size()
+    }
+
+    pub fn network_ready(&mut self) -> Option<Operand<'e>> {
+        self.0.network_ready()
     }
 
     pub fn init_game_network(&mut self) -> Option<VirtualAddress> {
