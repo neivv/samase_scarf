@@ -4323,10 +4323,6 @@ impl<'e> AnalysisX86<'e> {
         self.0.local_player_name()
     }
 
-    pub fn menu_screen_id(&mut self) -> Option<Operand<'e>> {
-        self.0.menu_screen_id()
-    }
-
     pub fn step_network(&mut self) -> Option<VirtualAddress> {
         self.0.step_network()
     }
