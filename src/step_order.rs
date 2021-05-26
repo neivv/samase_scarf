@@ -6,7 +6,7 @@ use scarf::operand::OperandCtx;
 
 use crate::{
     AnalysisCtx, OptionExt, entry_of_until, single_result_assign, EntryOf, ArgCache,
-    bumpvec_with_capacity, FunctionFinder, SwitchTable,
+    bumpvec_with_capacity, FunctionFinder, SwitchTable, OperandExt
 };
 use crate::switch::{full_switch_info};
 
@@ -420,7 +420,6 @@ fn skip_past_calls<'e, E: ExecutionState<'e>>(
 pub(crate) fn step_order<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     order_init_arbiter: E::VirtualAddress,
-    switches: &[SwitchTable<E::VirtualAddress>],
     functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
@@ -431,13 +430,10 @@ pub(crate) fn step_order<'e, E: ExecutionState<'e>>(
     let mut result = None;
     for caller in init_arbiter_callers {
         let val = entry_of_until(binary, funcs, caller, |entry| {
-            let mut analyzer = IsStepOrder {
+            let mut analyzer = IsStepOrder::<E> {
                 ok: false,
                 call_found: false,
                 caller,
-                switches: &switches,
-                analysis,
-                functions,
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             analysis.analyze(&mut analyzer);
@@ -456,16 +452,13 @@ pub(crate) fn step_order<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct IsStepOrder<'a, 'e, E: ExecutionState<'e>> {
+struct IsStepOrder<'e, E: ExecutionState<'e>> {
     ok: bool,
     call_found: bool,
     caller: E::VirtualAddress,
-    switches: &'a [SwitchTable<E::VirtualAddress>],
-    analysis: &'a AnalysisCtx<'e, E>,
-    functions: &'a FunctionFinder<'a, 'e, E>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -475,24 +468,15 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'a, 'e, 
                     self.call_found = true;
                 }
             }
-            Operation::Jump { to, .. } => {
-                let to = ctrl.resolve(to);
-                self.ok = to.if_mem32()
-                    .and_then(|x| x.if_arithmetic_add())
-                    .and_either(|x| x.if_constant())
-                    .map(|(c, _)| E::VirtualAddress::from_u64(c))
-                    .and_then(|addr| {
-                        self.switches.binary_search_by_key(&addr, |x| x.address).ok()
-                            .map(|x| &self.switches[x])
-                    })
-                    .and_then(|switch| {
-                        full_switch_info(self.analysis, self.functions, switch)
-                    })
-                    .filter(|(switch, _)| switch.cases.len() >= 0xad)
+            Operation::Jump { condition, .. } => {
+                let condition = ctrl.resolve(condition);
+                // Check for this.order comparision against const
+                self.ok = condition.if_arithmetic_gt()
+                    .and_either_other(Operand::if_constant)
+                    .and_then(|x| x.if_mem8()?.if_arithmetic_add_const(0x4d)?.if_register())
+                    .filter(|x| x.0 == 1)
                     .is_some();
-                if self.ok {
-                    ctrl.end_analysis();
-                }
+                ctrl.end_analysis();
             }
             _ => (),
         }

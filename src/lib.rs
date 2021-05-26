@@ -2998,9 +2998,8 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn step_order(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::StepOrder, |s| {
             let order_init_arbiter = s.order_init_arbiter(actx)?;
-            let switches = s.switch_tables();
             let funcs = s.function_finder();
-            step_order::step_order(actx, order_init_arbiter, &switches, &funcs)
+            step_order::step_order(actx, order_init_arbiter, &funcs)
         })
     }
 
