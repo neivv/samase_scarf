@@ -3010,8 +3010,10 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         if let Some(cached) = self.step_order_hidden.cached() {
             return cached;
         }
-        let switches = self.switch_tables();
-        let result = step_order::step_order_hidden(actx, &switches, &self.function_finder());
+        let result = Some(()).and_then(|()| {
+            let step_hidden = self.step_hidden_unit_frame(actx)?;
+            Some(step_order::step_order_hidden(actx, step_hidden))
+        }).unwrap_or_else(|| Vec::new());
         let result = Rc::new(result);
         self.step_order_hidden.cache(&result);
         result
@@ -4090,6 +4092,10 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn step_active_unit_frame(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::StepActiveUnitFrame, |s| s.cache_step_objects(actx))
+    }
+
+    fn step_hidden_unit_frame(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::StepHiddenUnitFrame, |s| s.cache_step_objects(actx))
     }
 
     fn reveal_unit_area(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {

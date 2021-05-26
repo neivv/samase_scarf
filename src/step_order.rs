@@ -6,9 +6,8 @@ use scarf::operand::OperandCtx;
 
 use crate::{
     AnalysisCtx, OptionExt, entry_of_until, single_result_assign, EntryOf, ArgCache,
-    bumpvec_with_capacity, FunctionFinder, SwitchTable, OperandExt
+    bumpvec_with_capacity, FunctionFinder, OperandExt, ControlExt,
 };
-use crate::switch::{full_switch_info};
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
@@ -329,17 +328,7 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
             match *op {
                 Operation::Jump { condition, .. } => {
                     let condition = ctrl.resolve(condition);
-                    let unit_resolved = condition.iter_no_mem_addr()
-                        .find_map(|x| {
-                            // mem8[x + 4d] > b0
-                            x.if_arithmetic_gt()
-                                .and_either_other(|x| x.if_constant().filter(|&c| c == 0xb0))
-                                .and_then(|x| x.if_mem8())
-                                .and_then(|x| x.if_arithmetic_add())
-                                .filter(|x| x.1.if_constant().filter(|&c| c == 0x4d).is_some())
-                                .map(|(l, _)| l)
-                        });
-                    if let Some(unit) = unit_resolved {
+                    if let Some(unit) = find_unit_for_step_hidden_order_cmp(condition) {
                         if let Some(unresolved) = ctrl.unresolve(unit) {
                             self.result = Some((ctrl.address(), unresolved));
                         }
@@ -483,41 +472,76 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'e, E> {
     }
 }
 
-pub(crate) fn step_order_hidden<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'e, E>,
-    switches: &[SwitchTable<E::VirtualAddress>],
-    functions: &FunctionFinder<'_, 'e, E>,
-) -> Vec<StepOrderHiddenHook<'e, E::VirtualAddress>> {
-    let bump = &analysis.bump;
+fn find_unit_for_step_hidden_order_cmp<'e>(condition: Operand<'e>) -> Option<Operand<'e>> {
+    // mem8[x + 4d] > b0
+    condition.if_arithmetic_gt()
+        .filter(|x| x.1.if_constant() == Some(0xb0))
+        .and_then(|x| x.0.if_mem8()?.if_arithmetic_add())
+        .filter(|x| x.1.if_constant().filter(|&c| c == 0x4d).is_some())
+        .map(|(l, _)| l)
+}
 
-    let result = switches.iter().filter_map(|switch| {
-        if switch.cases.len() < 11 || switch.cases.len() > 12 {
-            None
-        } else {
-            full_switch_info(analysis, functions, switch)
-        }
-    }).filter(|&(ref switch, _entry)| {
-        if switch.cases.len() < 0xa8 {
-            return false;
-        }
-        let default_case = switch.cases[0x1];
-        switch.cases.iter().take(0x90).enumerate().all(|(i, &x)| {
-            match i {
-                0x0 | 0x3 | 0x4 | 0x11 | 0x16 | 0x17 | 0x18 | 0x1d | 0x53 | 0x5c | 0x61 |
-                    0x7d =>
-                {
-                    x != default_case
+pub(crate) fn step_order_hidden<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    step_hidden_frame: E::VirtualAddress,
+) -> Vec<StepOrderHiddenHook<'e, E::VirtualAddress>> {
+    struct Analyzer<'e, E: ExecutionState<'e>> {
+        entry: E::VirtualAddress,
+        result: Option<E::VirtualAddress>,
+        inlining: bool,
+    }
+
+    impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
+        type State = analysis::DefaultState;
+        type Exec = E;
+        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+            match *op {
+                Operation::Jump { condition, .. } => {
+                    let condition = ctrl.resolve(condition);
+                    if find_unit_for_step_hidden_order_cmp(condition).is_some() {
+                        self.result = Some(self.entry);
+                        ctrl.end_analysis();
+                    } else if self.inlining {
+                        // Should be first jump if inlining
+                        ctrl.end_analysis();
+                    }
                 }
-                _ => x == default_case,
+                Operation::Call(dest) => {
+                    if !self.inlining {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.inlining = true;
+                            let old_entry = self.entry;
+                            self.entry = dest;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.entry = old_entry;
+                            self.inlining = false;
+                            if self.result.is_some() {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+                _ => (),
             }
-        })
-    }).map(|(_, entry)| {
-        entry
-    });
-    let result = BumpVec::from_iter_in(result, bump);
-    let result = result.iter().filter_map(|&addr| {
-        step_order_hook_info(analysis, addr)
-    }).collect();
+        }
+    }
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut analysis = FuncAnalysis::new(binary, ctx, step_hidden_frame);
+    let mut analyzer = Analyzer::<E> {
+        entry: step_hidden_frame,
+        result: None,
+        inlining: false,
+    };
+    analysis.analyze(&mut analyzer);
+    let mut result = Vec::with_capacity(1);
+    if let Some(entry) = analyzer.result {
+        if let Some(info) = step_order_hook_info(actx, entry) {
+            result.push(info);
+        }
+    }
     result
 }
 
