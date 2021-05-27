@@ -294,6 +294,7 @@ results! {
         SnetSendPackets => "snet_send_packets",
         SnetRecvPackets => "snet_recv_packets",
         OpenFile => "open_file",
+        DrawGameLayer => "draw_game_layer",
     }
 }
 
@@ -793,6 +794,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             SnetSendPackets => self.snet_send_packets(),
             SnetRecvPackets => self.snet_recv_packets(),
             OpenFile => self.open_file(),
+            DrawGameLayer => self.draw_game_layer(),
         }
     }
 
@@ -2194,6 +2196,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             OperandAnalysis::UnitShouldRevealArea,
             AnalysisCache::cache_step_active_unit,
         )
+    }
+
+    pub fn draw_game_layer(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x, s| x.draw_game_layer(s))
     }
 
     /// Mainly for tests/dump
@@ -4116,6 +4122,13 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             Some(([result.step_unit_movement], [result.should_vision_update]))
         })
     }
+
+    fn draw_game_layer(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_single_address(AddressAnalysis::DrawGameLayer, |s| {
+            let draw_layers = s.graphic_layers(actx)?;
+            renderer::draw_game_layer(actx, draw_layers, &s.function_finder())
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -5126,6 +5139,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn unit_should_reveal_area(&mut self) -> Option<Operand<'e>> {
         self.0.unit_should_reveal_area()
+    }
+
+    pub fn draw_game_layer(&mut self) -> Option<VirtualAddress> {
+        self.0.draw_game_layer()
     }
 }
 

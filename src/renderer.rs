@@ -576,3 +576,61 @@ fn vtable_class_name<Va: VirtualAddress>(binary: &BinaryFile<Va>, vtable: Va) ->
     let end = slice.iter().position(|&x| x == 0)?;
     slice.get(..end)
 }
+
+pub(crate) fn draw_game_layer<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    draw_layers: Operand<'e>,
+    funcs: &FunctionFinder<'_, 'e, E>,
+) -> Option<E::VirtualAddress> {
+    // Find assignment to draw_layers[5].func = draw_game_layer, should be the only value
+    // that it ever is set to.
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let dest_addr_op = ctx.add_const(
+        draw_layers,
+        0x14 * 5 + 0x10,
+    );
+    let dest_addr = E::VirtualAddress::from_u64(dest_addr_op.if_constant()?);
+    let refs = funcs.find_functions_using_global(actx, dest_addr);
+    let mut result = None;
+    let functions = funcs.functions();
+    for global_ref in &refs {
+        let new = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
+            let mut analyzer = FindDrawGameLayer::<E> {
+                dest_addr: dest_addr_op,
+                result: EntryOf::Retry,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.result
+        }).into_option();
+        if single_result_assign(new, &mut result) {
+            break;
+        }
+    }
+    result
+}
+
+struct FindDrawGameLayer<'e, E: ExecutionState<'e>> {
+    dest_addr: Operand<'e>,
+    result: EntryOf<E::VirtualAddress>,
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDrawGameLayer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+                if mem.size == E::WORD_SIZE && mem.address == self.dest_addr {
+                    if let Some(value) = ctrl.resolve_va(value) {
+                        self.result = EntryOf::Ok(value);
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}

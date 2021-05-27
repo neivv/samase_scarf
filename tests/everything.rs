@@ -1356,6 +1356,7 @@ fn everything_1238c() {
         assert_eq!(analysis.active_iscript_bullet().unwrap(), ctx.mem32(ctx.constant(0xfc9680)));
         assert_eq!(analysis.step_unit_movement().unwrap().0, 0x005bf660);
         assert_eq!(analysis.unit_should_reveal_area().unwrap(), ctx.mem32(ctx.constant(0xfd7284)));
+        assert_eq!(analysis.draw_game_layer().unwrap().0, 0x0060EA70);
     })
 }
 
