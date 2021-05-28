@@ -7,9 +7,10 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::analysis::{self, Control, FuncAnalysis};
 
 use crate::add_terms::collect_arith_add_terms;
+use crate::struct_layouts;
 use crate::{
-    AnalysisCtx, ArgCache, EntryOf, OptionExt, entry_of_until, single_result_assign,
-    OperandExt, ControlExt, FunctionFinder, SwitchTable,
+    AnalysisCtx, ArgCache, EntryOf, entry_of_until, single_result_assign, OperandExt, ControlExt,
+    FunctionFinder,
 };
 
 #[derive(Clone)]
@@ -25,85 +26,6 @@ impl<Va: VirtualAddress> Default for PrismShaders<Va> {
             pixel_shaders: Rc::new(Vec::new()),
         }
     }
-}
-
-struct DrawImageEntryCheck<'e, E: ExecutionState<'e>> {
-    result: bool,
-    phantom: std::marker::PhantomData<(*const E, &'e ())>,
-}
-
-// First check in DrawImage is `if (image->flags & hidden) { return; }`
-impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DrawImageEntryCheck<'e, E> {
-    type State = analysis::DefaultState;
-    type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        match *op {
-            Operation::Call(..) => {
-                ctrl.end_analysis();
-            }
-            Operation::Jump { condition, .. } => {
-                let condition = ctrl.resolve(condition);
-                self.result = condition.iter_no_mem_addr().any(|x| {
-                    x.if_arithmetic_and()
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 0x40))
-                        .and_then(|x| x.if_memory().map(|x| &x.address))
-                        .and_then(|x| x.if_arithmetic_add())
-                        .and_either(|x| x.if_register().filter(|&r| r.0 == 1))
-                        .is_some()
-                });
-                ctrl.end_analysis();
-            }
-            _ => (),
-        }
-    }
-}
-
-pub(crate) fn draw_image<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'e, E>,
-    switches: &[SwitchTable<E::VirtualAddress>],
-    functions: &FunctionFinder<'_, 'e, E>,
-) -> Option<E::VirtualAddress> {
-    // Switch table for drawfunc-specific code.
-    // Hopefully not going to be changed. Starts from func #2 (Cloaking start)
-    let switches = switches.iter().filter(|switch| {
-        let cases = &switch.cases;
-        cases.len() == 0x10 &&
-            cases[0x0] == cases[0x2] && // Cloak start == cloak end == detected start/end
-            cases [0x0] == cases[0x3] &&
-            cases[0x0] == cases[0x5] &&
-            cases[0x1] == cases[0x6] && // Cloak == emp == remap == flag (?)
-            cases[0x1] == cases[0x7] &&
-            cases[0x1] == cases[0xc]
-    });
-    let funcs = functions.functions();
-    let binary = analysis.binary;
-    let ctx = analysis.ctx;
-    let mut result = None;
-    for table in switches {
-        let value = entry_of_until(
-            binary,
-            &funcs,
-            table.cases[0],
-            |addr| {
-                let mut analyzer = DrawImageEntryCheck::<E> {
-                    result: false,
-                    phantom: Default::default(),
-                };
-                let mut analysis = FuncAnalysis::new(binary, ctx, addr);
-                analysis.analyze(&mut analyzer);
-                if analyzer.result {
-                    EntryOf::Ok(())
-                } else {
-                    EntryOf::Retry
-                }
-            }
-        );
-        if single_result_assign(value.into_option_with_entry().map(|x| x.0), &mut result) {
-            break;
-        }
-    }
-
-    result
 }
 
 pub(crate) fn renderer_vtables<'e, E: ExecutionState<'e>>(
@@ -631,6 +553,159 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDrawGameLayer<'e, E>
                 }
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) struct DrawGameLayer<'e, E: ExecutionState<'e>> {
+    pub prepare_draw_image: Option<E::VirtualAddress>,
+    pub draw_image: Option<E::VirtualAddress>,
+    pub cursor_marker: Option<Operand<'e>>,
+}
+
+pub(crate) fn analyze_draw_game_layer<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    draw_game_layer: E::VirtualAddress,
+    sprite_size: u32,
+) -> DrawGameLayer<'e, E> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut result = DrawGameLayer {
+        prepare_draw_image: None,
+        draw_image: None,
+        cursor_marker: None,
+    };
+    let sprite_first_overlay_offset =
+        match struct_layouts::sprite_first_overlay::<E::VirtualAddress>(sprite_size)
+    {
+        Some(s) => s,
+        None => return result,
+    };
+
+    let mut analyzer = AnalyzeDrawGameLayer::<E> {
+        result: &mut result,
+        inline_depth: 0,
+        inline_limit: 0,
+        sprite_first_overlay_offset,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, draw_game_layer);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+struct AnalyzeDrawGameLayer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut DrawGameLayer<'e, E>,
+    inline_depth: u8,
+    inline_limit: u8,
+    sprite_first_overlay_offset: u32,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if let Operation::Jump { .. } = *op {
+            if self.inline_limit != 0 {
+                self.inline_limit -= 1;
+                if self.inline_limit == 0 {
+                    ctrl.end_analysis();
+                    return;
+                }
+            }
+        }
+        if self.result.draw_image.is_none() {
+            // prepare_draw_image and draw_image are from functions which are called
+            // with this = some_sprite.first_overlay and some_sprite.last_overlay
+            match *op {
+                Operation::Call(dest) => {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ctx.register(1));
+                        let overlay_offset = if self.result.prepare_draw_image.is_none() {
+                            self.sprite_first_overlay_offset
+                        } else {
+                            self.sprite_first_overlay_offset + E::VirtualAddress::SIZE
+                        };
+                        let is_overlay = ctrl.if_mem_word(this)
+                            .and_then(|x| {
+                                x.if_arithmetic_add_const(overlay_offset.into())
+                            })
+                            .is_some();
+                        if is_overlay {
+                            if self.result.prepare_draw_image.is_none() {
+                                self.result.prepare_draw_image = Some(dest);
+                            } else {
+                                self.result.draw_image = Some(dest);
+                            }
+                            if self.inline_depth != 0 {
+                                ctrl.end_analysis();
+                            }
+                        } else if self.inline_depth == 0 {
+                            self.inline_depth = 1;
+                            self.inline_limit = 12;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_limit = 0;
+                            self.inline_depth = 0;
+                        }
+                    }
+                }
+                _ => (),
+            }
+        } else if let Some(draw_image) = self.result.draw_image {
+            // Cursor marker.
+            // Search for draw_image call with this = cursor_marker.sprite.last_overlay
+            // Inline from 0 -> 1 unconditionally, 1 -> 2 if this could be cursor_marker.sprite
+            ctrl.aliasing_memory_fix(op);
+            match *op {
+                Operation::Call(dest) => {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ctx.register(1));
+                        if dest == draw_image {
+                            let cursor_marker = ctrl.if_mem_word(this)
+                                .and_then(|x| {
+                                    let offset = self.sprite_first_overlay_offset +
+                                        E::VirtualAddress::SIZE;
+                                    let sprite = x.if_arithmetic_add_const(offset.into())?;
+                                    let sprite_offset =
+                                        struct_layouts::unit_sprite::<E::VirtualAddress>();
+                                    ctrl.if_mem_word(sprite)?
+                                        .if_arithmetic_add_const(sprite_offset)
+                                });
+                            if let Some(cursor_marker) = cursor_marker {
+                                self.result.cursor_marker = Some(cursor_marker);
+                                ctrl.end_analysis();
+                            }
+                        } else {
+                            let should_inline = self.inline_depth == 0 ||
+                                (self.inline_depth == 1 && {
+                                    ctrl.if_mem_word(this)
+                                    .and_then(|x| {
+                                        let sprite_offset =
+                                            struct_layouts::unit_sprite::<E::VirtualAddress>();
+                                        x.if_arithmetic_add_const(sprite_offset)
+                                    })
+                                    .is_some()
+                                });
+                            if should_inline {
+                                self.inline_depth += 1;
+                                let old_inline_limit = self.inline_limit;
+                                if self.inline_depth == 1 {
+                                    self.inline_limit = 16;
+                                }
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                self.inline_limit = old_inline_limit;
+                                if self.result.cursor_marker.is_some() {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => (),
+            }
         }
     }
 }

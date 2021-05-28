@@ -42,6 +42,7 @@ mod rng;
 mod save;
 mod sound;
 mod step_order;
+mod struct_layouts;
 mod sprites;
 mod switch;
 mod text;
@@ -191,6 +192,7 @@ results! {
         SendCommand => "send_command",
         PrintText => "print_text",
         StepOrder => "step_order",
+        PrepareDrawImage => "prepare_draw_image",
         DrawImage => "draw_image",
         PlaySmk => "play_smk",
         AddOverlayIscript => "add_overlay_iscript",
@@ -401,6 +403,7 @@ results! {
         CmdIconsDdsGrp => "cmdicons_ddsgrp",
         CmdBtnsDdsGrp => "cmdbtns_ddsgrp",
         DatRequirementError => "dat_requirement_error",
+        CursorMarker => "cursor_marker",
     }
 }
 
@@ -691,6 +694,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             SendCommand => self.send_command(),
             PrintText => self.print_text(),
             StepOrder => self.step_order(),
+            PrepareDrawImage => self.prepare_draw_image(),
             DrawImage => self.draw_image(),
             PlaySmk => self.play_smk(),
             AddOverlayIscript => self.add_overlay_iscript(),
@@ -902,6 +906,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             CmdIconsDdsGrp => self.cmdicons_ddsgrp(),
             CmdBtnsDdsGrp => self.cmdbtns_ddsgrp(),
             DatRequirementError => self.dat_requirement_error(),
+            CursorMarker => self.cursor_marker(),
         }
     }
 
@@ -1413,8 +1418,25 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.players(s))
     }
 
+    pub fn prepare_draw_image(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::PrepareDrawImage,
+            AnalysisCache::cache_draw_game_layer,
+        )
+    }
+
     pub fn draw_image(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.draw_image(s))
+        self.analyze_many_addr(
+            AddressAnalysis::DrawImage,
+            AnalysisCache::cache_draw_game_layer,
+        )
+    }
+
+    pub fn cursor_marker(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::CursorMarker,
+            AnalysisCache::cache_draw_game_layer,
+        )
     }
 
     pub fn first_active_bullet(&mut self) -> Option<Operand<'e>> {
@@ -3236,11 +3258,18 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn draw_image(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.cache_single_address(AddressAnalysis::DrawImage, |s| {
-            let switches = s.switch_tables();
-            renderer::draw_image(actx, &switches, &s.function_finder())
+    fn cache_draw_game_layer(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[PrepareDrawImage, DrawImage], &[OperandAnalysis::CursorMarker], |s| {
+            let draw_game_layer = s.draw_game_layer(actx)?;
+            let sprite_size = s.sprite_array(actx)?.1;
+            let result = renderer::analyze_draw_game_layer(actx, draw_game_layer, sprite_size);
+            Some(([result.prepare_draw_image, result.draw_image], [result.cursor_marker]))
         })
+    }
+
+    fn draw_image(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::DrawImage, |s| s.cache_draw_game_layer(actx))
     }
 
     fn cache_bullet_creation(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -4549,8 +4578,16 @@ impl<'e> AnalysisX86<'e> {
         self.0.players()
     }
 
+    pub fn prepare_draw_image(&mut self) -> Option<VirtualAddress> {
+        self.0.prepare_draw_image()
+    }
+
     pub fn draw_image(&mut self) -> Option<VirtualAddress> {
         self.0.draw_image()
+    }
+
+    pub fn cursor_marker(&mut self) -> Option<Operand<'e>> {
+        self.0.cursor_marker()
     }
 
     pub fn first_active_bullet(&mut self) -> Option<Operand<'e>> {
@@ -5720,6 +5757,9 @@ trait ControlExt<'e, E: ExecutionStateTrait<'e>> {
     /// Skips current operation, assigns undef to other volatile registers except esp,
     /// and assigns `result` to eax
     fn do_call_with_result(&mut self, result: Operand<'e>);
+    /// Workaround for sometimes occuring memory reads which scarf isn't
+    /// able to detect as aliasing another memory location.
+    fn aliasing_memory_fix(&mut self, operation: &scarf::Operation<'e>);
 }
 
 impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
@@ -5760,5 +5800,30 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
             &scarf::DestOperand::Register64(scarf::operand::Register(4)),
             ctx.new_undef(),
         );
+    }
+
+    fn aliasing_memory_fix(&mut self, op: &scarf::Operation<'e>) {
+        if let scarf::Operation::Move(ref dest, value, None) = *op {
+            if value.if_mem8().is_some() {
+                let value = self.resolve(value);
+                if let Some((l, r)) =
+                    value.if_mem8().and_then(|x| x.if_arithmetic_add())
+                {
+                    fn check(op: Operand<'_>) -> bool {
+                        op.if_arithmetic(scarf::ArithOpType::Modulo)
+                            .or_else(|| op.if_arithmetic(scarf::ArithOpType::And))
+                            .and_then(|x| x.1.if_constant())
+                            .filter(|&c| c > 0x400)
+                            .is_some()
+                    }
+                    if check(l) || check(r) || r.if_constant() == Some(0xfff) {
+                        self.skip_operation();
+                        let ctx = self.ctx();
+                        let state = self.exec_state();
+                        state.move_to(dest, ctx.new_undef());
+                    }
+                }
+            }
+        }
     }
 }

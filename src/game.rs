@@ -935,6 +935,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         _ => (),
                     }
                 }
+                ctrl.aliasing_memory_fix(op);
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if self.check_large_stack_alloc(ctrl) {
@@ -1015,26 +1016,6 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 } else {
                                     self.active_iscript_flingy_candidate = Some((value, dest_op));
                                 }
-                            }
-                        }
-                    }
-                    if value.if_mem8().is_some() {
-                        // Aliasing memory workaround on u8 reads
-                        let value = ctrl.resolve(value);
-                        if let Some((l, r)) =
-                            value.if_mem8().and_then(|x| x.if_arithmetic_add())
-                        {
-                            fn check(op: Operand<'_>) -> bool {
-                                op.if_arithmetic(scarf::ArithOpType::Modulo)
-                                    .or_else(|| op.if_arithmetic(scarf::ArithOpType::And))
-                                    .and_then(|x| x.1.if_constant())
-                                    .filter(|&c| c > 0x400)
-                                    .is_some()
-                            }
-                            if check(l) || check(r) {
-                                ctrl.skip_operation();
-                                let state = ctrl.exec_state();
-                                state.move_to(dest, ctx.new_undef());
                             }
                         }
                     }

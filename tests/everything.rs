@@ -546,6 +546,9 @@ fn everything_1222b() {
         assert_eq!(analysis.anim_asset_change_cb().unwrap().0, 0x00550cf0);
         assert_eq!(analysis.step_unit_movement().unwrap().0, 0x0058ec70);
         assert_eq!(analysis.unit_should_reveal_area().unwrap(), ctx.mem32(ctx.constant(0xdf5b8c)));
+        assert_eq!(analysis.prepare_draw_image().unwrap().0, 0x0054c3b0);
+        assert_eq!(analysis.draw_image().unwrap().0, 0x00552810);
+        assert_eq!(analysis.cursor_marker().unwrap(), ctx.mem32(ctx.constant(0xdf5898)));
     })
 }
 
@@ -1088,13 +1091,16 @@ fn everything_1233f() {
 
 #[test]
 fn everything_1233g() {
-    test_with_extra_checks(Path::new("1233g.exe"), |_ctx, analysis| {
+    test_with_extra_checks(Path::new("1233g.exe"), |ctx, analysis| {
         let serialize = analysis.serialize_sprites().unwrap();
         assert_eq!(serialize.0, 0x0057F540);
         let deserialize = analysis.deserialize_sprites().unwrap();
         assert_eq!(deserialize.0, 0x0057E8C0);
         let join_game = analysis.join_game().unwrap();
         assert_eq!(join_game.0, 0x0089D2B0);
+        assert_eq!(analysis.prepare_draw_image().unwrap().0, 0x005747f0);
+        assert_eq!(analysis.draw_image().unwrap().0, 0x0057be50);
+        assert_eq!(analysis.cursor_marker().unwrap(), ctx.mem32(ctx.constant(0xed4994)));
     })
 }
 
@@ -1357,6 +1363,9 @@ fn everything_1238c() {
         assert_eq!(analysis.step_unit_movement().unwrap().0, 0x005bf660);
         assert_eq!(analysis.unit_should_reveal_area().unwrap(), ctx.mem32(ctx.constant(0xfd7284)));
         assert_eq!(analysis.draw_game_layer().unwrap().0, 0x0060EA70);
+        assert_eq!(analysis.prepare_draw_image().unwrap().0, 0x0057a990);
+        assert_eq!(analysis.draw_image().unwrap().0, 0x005827d0);
+        assert_eq!(analysis.cursor_marker().unwrap(), ctx.mem32(ctx.constant(0xfd70ac)));
     })
 }
 
@@ -1421,7 +1430,7 @@ fn test_nongeneric<'e>(
                 DialogReturnCode | AssetScale | ImagesLoaded | VisionUpdateCounter |
                 VisionUpdated | FirstDyingUnit | FirstRevealer | FirstInvisibleUnit |
                 ActiveIscriptFlingy | ActiveIscriptBullet | UnitShouldRevealArea |
-                NetworkReady | LastBulletSpawner | DatRequirementError =>
+                NetworkReady | LastBulletSpawner | DatRequirementError | CursorMarker =>
             {
                 check_global_opt(result, binary, op.name());
             }
