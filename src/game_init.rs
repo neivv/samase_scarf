@@ -1188,13 +1188,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingR
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     if !self.checking_func {
-                        self.checking_func = true;
-                        ctrl.analyze_with_current_state(self, dest);
-                        if self.result.init_real_time_lighting.is_some() {
-                            self.result.init_real_time_lighting = Some(dest);
-                        }
-                        self.checking_func = false;
-                        ctrl.end_analysis();
+                        self.check_func(ctrl, dest);
                     } else {
                         if self.call_limit == 0 {
                             ctrl.end_analysis();
@@ -1214,9 +1208,17 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingR
                     }
                 }
             }
-            Operation::Jump { condition, .. } => {
+            Operation::Jump { condition, to } => {
                 if !self.checking_func {
-                    ctrl.end_analysis();
+                    let ctx = ctrl.ctx();
+                    if condition == ctx.const_1() {
+                        // Assuming tail call
+                        if let Some(dest) = ctrl.resolve_va(to) {
+                            self.check_func(ctrl, dest);
+                        }
+                    } else {
+                        ctrl.end_analysis();
+                    }
                 } else {
                     let condition = ctrl.resolve(condition);
                     let asset_scale = if_arithmetic_eq_neq(condition)
@@ -1243,6 +1245,18 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingR
             }
             _ => (),
         }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> FindBeginLoadingRtl<'a, 'e, E> {
+    fn check_func(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, dest: E::VirtualAddress) {
+        self.checking_func = true;
+        ctrl.analyze_with_current_state(self, dest);
+        if self.result.init_real_time_lighting.is_some() {
+            self.result.init_real_time_lighting = Some(dest);
+        }
+        self.checking_func = false;
+        ctrl.end_analysis();
     }
 }
 

@@ -1369,6 +1369,20 @@ fn everything_1238c() {
     })
 }
 
+#[test]
+fn everything_1238d() {
+    test_with_extra_checks(Path::new("1238d.exe"), |ctx, analysis| {
+        assert_eq!(analysis.font_cache_render_ascii().unwrap().0, 0x009EFC10);
+        assert_eq!(analysis.ttf_cache_character().unwrap().0, 0x009F04C0);
+        assert_eq!(analysis.ttf_render_sdf().unwrap().0, 0x009F4A20);
+        assert_eq!(analysis.init_real_time_lighting().unwrap().0, 0x0083C750);
+        assert_eq!(analysis.asset_scale().unwrap(), ctx.mem32(ctx.constant(0xfa76f4)));
+        assert_eq!(analysis.cmdicons_ddsgrp().unwrap(), ctx.constant(0x1020AA4));
+        assert_eq!(analysis.cmdbtns_ddsgrp().unwrap(), ctx.constant(0x1020A64));
+        assert_eq!(analysis.wirefram_ddsgrp().unwrap(), ctx.constant(0x10286c8));
+    });
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
 }
@@ -1683,8 +1697,17 @@ fn test_nongeneric<'e>(
     let limits = analysis.limits();
     if extended_limits {
         assert!(limits.set_limits.is_some());
-        assert!(analysis.smem_alloc().is_some());
-        assert!(analysis.smem_free().is_some());
+        // 1238d removed (inlined?) SMemAlloc and SMemFree
+        let has_smem_alloc = minor_version < 23 ||
+            (minor_version == 23 && patch_version < 8) ||
+            (minor_version == 23 && patch_version == 8 && revision < b'd');
+        if has_smem_alloc {
+            assert!(analysis.smem_alloc().is_some());
+            assert!(analysis.smem_free().is_some());
+        } else {
+            assert!(analysis.smem_alloc().is_none());
+            assert!(analysis.smem_free().is_none());
+        }
         if minor_version < 21 || (minor_version == 21 && patch_version < 1) {
             assert_eq!(limits.arrays.len(), 7);
             assert_eq!(limits.arrays[0].len(), 1);

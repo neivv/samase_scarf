@@ -898,6 +898,18 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                             self.current_function_u16_param_set = None;
                             ctrl.inline(self, dest);
                             ctrl.skip_operation();
+                            let ctx = ctrl.ctx();
+                            let eax = ctrl.resolve(ctx.register(0));
+                            if eax.if_constant().is_some() &&
+                                ctrl.read_memory(eax, E::WORD_SIZE).is_undefined()
+                            {
+                                // hackfix to fix get_ddsgrp() static constructor
+                                // writing 0 to [ddsgrp], causing it be undefined.
+                                // Make it back [ddsgrp]
+                                let val = ctrl.mem_word(eax);
+                                let exec_state = ctrl.exec_state();
+                                exec_state.move_resolved(&DestOperand::from_oper(val), val);
+                            }
                             self.current_function_u16_param_set = u16_param_set;
                         }
                         if self.result.cmdbtns.is_some() {
@@ -1360,6 +1372,17 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyz
                         ctrl.inline(self, dest);
                         self.inline_depth -= 1;
                         ctrl.skip_operation();
+                        let eax = ctrl.resolve(ctx.register(0));
+                        if eax.if_constant().is_some() &&
+                            ctrl.read_memory(eax, E::WORD_SIZE).is_undefined()
+                        {
+                            // hackfix to fix get_ddsgrp() static constructor
+                            // writing 0 to [ddsgrp], causing it be undefined.
+                            // Make it back [ddsgrp]
+                            let val = ctrl.mem_word(eax);
+                            let exec_state = ctrl.exec_state();
+                            exec_state.move_resolved(&DestOperand::from_oper(val), val);
+                        }
                         let exec_state = ctrl.exec_state();
                         exec_state.move_resolved(
                             &DestOperand::Register64(scarf::operand::Register(4)),

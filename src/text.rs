@@ -156,7 +156,7 @@ pub(crate) fn font_render<'e, E: ExecutionState<'e>>(
         ttf_render_sdf: None,
     };
     // Find ttf init func, which reads config for "shadowOffset" and calls font_cache_render_ascii
-    // (arg 1 = fonts[i])
+    // (arg 1 = `fonts[i]`, or `fonts[i] + 14` since 1238d)
     // font_cache_render_ascii is identified by it doing a 0x20 ..= 0x7e loop
     // Last function font_cache_render_ascii calls in the loop is ttf_cache_character
     // (arg2 = char)
@@ -243,7 +243,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         let dest = E::VirtualAddress::from_u64(dest);
                         let ctx = ctrl.ctx();
                         let ecx = ctrl.resolve(ctx.register(1));
-                        let ok = ctrl.if_mem_word(ecx)
+                        let ok = ecx.if_arithmetic_add()
+                            .and_then(|(l, r)| {
+                                r.if_constant()?;
+                                Some(l)
+                            })
+                            .or_else(|| Some(ecx))
+                            .and_then(|x| ctrl.if_mem_word(x))
                             .filter(|&addr| {
                                 addr == self.fonts ||
                                     addr.if_arithmetic_add()
@@ -382,6 +388,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TtfCacheCharacterAna
                         }
                     } else {
                         // Args 4, 5, 6 are hardcoded constants. Either
+                        //  0xd, 0xb4, 13.84615 (newer)
                         //  0xd, 0xb4, 13.0 (new)
                         //  0xa, 0xb4, 18.0 (old)
                         let args_ok = Some(())
@@ -391,9 +398,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TtfCacheCharacterAna
                                 let arg4 = ctrl.resolve(self.arg_cache.on_call(3)).if_constant()?;
                                 let arg5 = ctrl.resolve(self.arg_cache.on_call(4)).if_constant()?;
                                 let arg6 = ctrl.resolve(self.arg_cache.on_call(5)).if_constant()?;
+                                let arg6_masked = arg6 & 0xfff0_0000;
                                 let ok =
-                                    (arg4 == 0xd && arg5 == 0xb4 && arg6 == 0x41500000) ||
-                                    (arg4 == 0xa && arg5 == 0xb4 && arg6 == 0x41900000);
+                                    (arg4 == 0xd && arg5 == 0xb4 && arg6_masked == 0x41500000) ||
+                                    (arg4 == 0xa && arg5 == 0xb4 && arg6_masked == 0x41900000);
                                 if ok {
                                     Some(())
                                 } else {
