@@ -1700,6 +1700,7 @@ fn test_nongeneric<'e>(
         // 1238d removed (inlined?) SMemAlloc and SMemFree
         let has_smem_alloc = minor_version < 23 ||
             (minor_version == 23 && patch_version < 8) ||
+            (minor_version == 23 && is_ptr) ||
             (minor_version == 23 && patch_version == 8 && revision < b'd');
         if has_smem_alloc {
             assert!(analysis.smem_alloc().is_some());

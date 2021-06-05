@@ -1,6 +1,6 @@
 use bumpalo::collections::Vec as BumpVec;
 
-use scarf::{BinaryFile, Operand, OperandCtx, Operation, DestOperand, OperandType};
+use scarf::{BinaryFile, Operand, OperandCtx, Operation, DestOperand, OperandType, MemAccessSize};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, Register};
@@ -281,9 +281,60 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
                                 }
                             }
                         }
+                    } else {
+                        self.check_eud_vec_push(ctrl);
                     }
                 }
                 _ => (),
+            }
+        }
+    }
+    impl<'e, E: ExecutionState<'e>> Analyzer<'e, E> {
+        fn check_eud_vec_push(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+            // Check for eud_vec_push(&vec, &eud)
+            // Eud is 0x10 bytes
+            let ctx = ctrl.ctx();
+            let arg1 = ctrl.resolve(ctx.mem32(ctx.register(4)));
+            let mut arg1_mem = [ctx.const_0(); 4];
+            for i in 0..4 {
+                let field = ctrl.read_memory(
+                    ctx.add_const(arg1, (i * 4) as u64),
+                    MemAccessSize::Mem32,
+                );
+                arg1_mem[i] = field;
+            }
+            // Sanity check address/size/flags
+            if arg1_mem[0].if_constant().filter(|&x| x >= 0x40_0000).is_none() {
+                return;
+            }
+            if arg1_mem[1].if_constant().filter(|&x| x < 0x1000_0000).is_none() {
+                return;
+            }
+            if arg1_mem[3].if_constant().is_none() {
+                return;
+            }
+
+            let vec = ctrl.resolve(ctx.register(1));
+            let vec_buffer = ctrl.read_memory(vec, E::WORD_SIZE);
+            let vec_len_addr = ctx.add_const(vec, E::VirtualAddress::SIZE.into());
+            // vec.buffer[vec.len] = eud;
+            // vec.len += 1;
+            if let Some(len) = ctrl.read_memory(vec_len_addr, E::WORD_SIZE).if_constant() {
+                let exec_state = ctrl.exec_state();
+                for i in 0..4 {
+                    let addr = ctx.add_const(
+                        vec_buffer,
+                        len.wrapping_mul(0x10).wrapping_add(i as u64 * 4),
+                    );
+                    exec_state.move_resolved(
+                        &DestOperand::from_oper(ctx.mem32(addr)),
+                        arg1_mem[i],
+                    );
+                }
+                exec_state.move_resolved(
+                    &DestOperand::from_oper(ctx.mem_variable_rc(E::WORD_SIZE, vec_len_addr)),
+                    ctx.constant(len.wrapping_add(1)),
+                );
             }
         }
     }
@@ -322,8 +373,9 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
             let mut call_reserve = 0;
             let stop = match op {
                 Operation::Move(to, from, _) => {
-                    if from.if_memory().is_some() {
-                        true
+                    if let Some(mem) = from.if_memory() {
+                        // Don't stop on fs:[0] read
+                        mem.address != ctrl.ctx().const_0()
                     } else {
                         if let DestOperand::Memory(mem) = to {
                             // Offset if this is moving to [esp + offset]
@@ -348,7 +400,7 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
                 Operation::Return(..) => true,
                 Operation::Jump { .. } => true,
                 Operation::Call(..) => {
-                    let eax = ctrl.resolve(ctrl.ctx().register_ref(0));
+                    let eax = ctrl.resolve(ctrl.ctx().register(0));
                     if let Some(c) = eax.if_constant() {
                         if c & 3 == 0 && c > 0x400 {
                             call_reserve = c;
