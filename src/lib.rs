@@ -18,6 +18,7 @@ macro_rules! test_assert_eq {
 mod add_terms;
 mod ai;
 mod bullets;
+mod call_tracker;
 mod campaign;
 mod clientside;
 mod commands;
@@ -1734,6 +1735,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.smem_free(s))
     }
 
+    pub fn allocator(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x, s| x.allocator(s))
+    }
+
     pub fn cmdicons_ddsgrp(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(OperandAnalysis::CmdIconsDdsGrp, AnalysisCache::cache_cmdicons)
     }
@@ -3448,6 +3453,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
                 arrays: Vec::new(),
                 smem_alloc: None,
                 smem_free: None,
+                allocator: None,
             }
         });
         let result = Rc::new(result);
@@ -3607,6 +3613,10 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn smem_free(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.limits(actx).smem_free
+    }
+
+    fn allocator(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.limits(actx).allocator
     }
 
     fn cache_cmdicons(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -4816,6 +4826,10 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn smem_free(&mut self) -> Option<VirtualAddress> {
         self.0.smem_free()
+    }
+
+    pub fn allocator(&mut self) -> Option<Operand<'e>> {
+        self.0.allocator()
     }
 
     pub fn cmdicons_ddsgrp(&mut self) -> Option<Operand<'e>> {

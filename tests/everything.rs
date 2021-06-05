@@ -191,6 +191,8 @@ fn everything_1211b() {
             secondary_order[0],
             samase_scarf::SecondaryOrderHook::Separate(VirtualAddress(0x005dbb00))
         );
+        assert_eq!(analysis.smem_alloc().unwrap().0, 0x00920d50);
+        assert_eq!(analysis.smem_free().unwrap().0, 0x00920D90);
     });
 }
 
@@ -1101,6 +1103,7 @@ fn everything_1233g() {
         assert_eq!(analysis.prepare_draw_image().unwrap().0, 0x005747f0);
         assert_eq!(analysis.draw_image().unwrap().0, 0x0057be50);
         assert_eq!(analysis.cursor_marker().unwrap(), ctx.mem32(ctx.constant(0xed4994)));
+        assert_eq!(analysis.allocator().unwrap(), ctx.mem32(ctx.constant(0x10fc81c)));
     })
 }
 
@@ -1380,6 +1383,7 @@ fn everything_1238d() {
         assert_eq!(analysis.cmdicons_ddsgrp().unwrap(), ctx.constant(0x1020AA4));
         assert_eq!(analysis.cmdbtns_ddsgrp().unwrap(), ctx.constant(0x1020A64));
         assert_eq!(analysis.wirefram_ddsgrp().unwrap(), ctx.constant(0x10286c8));
+        assert_eq!(analysis.allocator().unwrap(), ctx.mem32(ctx.constant(0xfb990c)));
     });
 }
 
@@ -1702,12 +1706,20 @@ fn test_nongeneric<'e>(
             (minor_version == 23 && patch_version < 8) ||
             (minor_version == 23 && is_ptr) ||
             (minor_version == 23 && patch_version == 8 && revision < b'd');
+        // Allocator as a virtual struct was added in 1233a
+        let has_allocator = minor_version > 23 ||
+            (minor_version == 23 && patch_version >= 3);
         if has_smem_alloc {
             assert!(analysis.smem_alloc().is_some());
             assert!(analysis.smem_free().is_some());
         } else {
             assert!(analysis.smem_alloc().is_none());
             assert!(analysis.smem_free().is_none());
+        }
+        if has_allocator {
+            check_global_opt(analysis.allocator(), binary, "allocator");
+        } else {
+            assert!(analysis.allocator().is_none());
         }
         if minor_version < 21 || (minor_version == 21 && patch_version < 1) {
             assert_eq!(limits.arrays.len(), 7);
@@ -1731,6 +1743,7 @@ fn test_nongeneric<'e>(
     } else {
         assert!(analysis.smem_alloc().is_none());
         assert!(analysis.smem_free().is_none());
+        assert!(analysis.allocator().is_none());
         assert!(limits.set_limits.is_none());
         assert_eq!(limits.arrays.len(), 0);
     }

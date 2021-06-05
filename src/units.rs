@@ -1483,7 +1483,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepActiveAnalyzer<'a, 'acx, 'e, E> {
             *op = ctx.transform(*op, 8, |op| {
                 if let Some(idx) = op.if_custom() {
                     let func = funcs[idx as usize];
-                    crate::game_init::analyze_func_return::<E>(func, ctx, binary)
+                    crate::call_tracker::analyze_func_return::<E>(func, ctx, binary)
                 } else {
                     None
                 }

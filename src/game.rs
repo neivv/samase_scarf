@@ -10,6 +10,7 @@ use crate::{
     OperandExt, single_result_assign, if_callable_const, entry_of_until, ArgCache,
     bumpvec_with_capacity,
 };
+use crate::call_tracker::CallTracker;
 
 #[derive(Clone)]
 pub struct Limits<'e, Va: VirtualAddress> {
@@ -28,6 +29,7 @@ pub struct Limits<'e, Va: VirtualAddress> {
     pub arrays: Vec<Vec<(Operand<'e>, u32, u32)>>,
     pub smem_alloc: Option<Va>,
     pub smem_free: Option<Va>,
+    pub allocator: Option<Operand<'e>>,
 }
 
 pub(crate) struct StepObjectsAnalysis<'e, Va: VirtualAddress> {
@@ -400,7 +402,7 @@ fn game_detect_check<'e>(ctx: OperandCtx<'e>, val: Operand<'e>) -> Option<Operan
 }
 
 pub(crate) fn limits<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'e, E>,
+    actx: &AnalysisCtx<'e, E>,
     game_loop: E::VirtualAddress,
 ) -> Limits<'e, E::VirtualAddress> {
     let mut result = Limits {
@@ -408,23 +410,75 @@ pub(crate) fn limits<'e, E: ExecutionState<'e>>(
         arrays: Vec::with_capacity(7),
         smem_alloc: None,
         smem_free: None,
+        allocator: None,
     };
 
-    let binary = analysis.binary;
-    let ctx = analysis.ctx;
-    let arg_cache = &analysis.arg_cache;
-    let bump = &analysis.bump;
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let arg_cache = &actx.arg_cache;
+    let bump = &actx.bump;
 
     let mut analysis = FuncAnalysis::new(binary, ctx, game_loop);
     let mut analyzer = FindSetLimits::<E> {
+        actx,
         result: &mut result,
         arg_cache,
         game_loop_set_local_u32s: bumpvec_with_capacity(0x8, bump),
-        bump,
         binary,
     };
     analysis.analyze(&mut analyzer);
+    if let Some(alloc) = result.smem_alloc {
+        let mut analysis = FuncAnalysis::new(binary, ctx, alloc);
+        let mut analyzer = AllocatorFromSMemAlloc::<E> {
+            limit: 24,
+            result: None,
+            phantom: Default::default(),
+        };
+        analysis.analyze(&mut analyzer);
+        result.allocator = analyzer.result;
+    }
     result
+}
+
+struct AllocatorFromSMemAlloc<'e, E: ExecutionState<'e>> {
+    limit: u8,
+    result: Option<Operand<'e>>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AllocatorFromSMemAlloc<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if matches!(*op, Operation::Call(..) | Operation::Jump { .. } ) {
+            if self.limit == 0 {
+                ctrl.end_analysis();
+                return;
+            } else {
+                self.limit -= 1;
+            }
+        }
+        if let Operation::Call(dest) = *op {
+            let dest = ctrl.resolve(dest);
+            if let Some(dest) = dest.if_constant() {
+                let dest = E::VirtualAddress::from_u64(dest);
+                ctrl.analyze_with_current_state(self, dest);
+            } else {
+                // Check for allocator.vtable.alloc(size, align)
+                let ctx = ctrl.ctx();
+                let ecx = ctrl.resolve(ctx.register(1));
+                self.result = ctrl.if_mem_word(dest)
+                    .and_then(|x| {
+                        let x = x.if_arithmetic_add_const(1 * E::VirtualAddress::SIZE as u64)?;
+                        ctrl.if_mem_word(x)
+                            .filter(|&x| x == ecx)
+                    });
+            }
+            if self.result.is_some() {
+                ctrl.end_analysis();
+            }
+        }
+    }
 }
 
 struct FindSetLimits<'a, 'acx, 'e, E: ExecutionState<'e>> {
@@ -444,7 +498,7 @@ struct FindSetLimits<'a, 'acx, 'e, E: ExecutionState<'e>> {
     //
     // sizeof 8 struct to allow generic func deduplication
     game_loop_set_local_u32s: BumpVec<'acx, U8Chunk>,
-    bump: &'acx bumpalo::Bump,
+    actx: &'acx AnalysisCtx<'e, E>,
     binary: &'e BinaryFile<E::VirtualAddress>,
 }
 
@@ -468,6 +522,7 @@ struct SetLimitsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     // We want to behave as if global_limits was only assigned arg1, so keep any
     // global arg1 stores saved and force-reapply them on function calls
     depth_0_arg1_global_stores: BumpVec<'acx, (Operand<'e>, Operand<'e>)>,
+    call_tracker: CallTracker<'acx, 'e, E>,
 }
 
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
@@ -517,7 +572,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             inlining_object_subfunc: false,
                             check_malloc_free: false,
                             redo_check_malloc_free: false,
-                            depth_0_arg1_global_stores: bumpvec_with_capacity(0x10, self.bump),
+                            depth_0_arg1_global_stores:
+                                bumpvec_with_capacity(0x10, &self.actx.bump),
+                            call_tracker: CallTracker::with_capacity(self.actx, 0x1000_0000, 32),
                         };
                         analysis.analyze(&mut analyzer);
                         let ok = self.result.arrays.iter().take(4).all(|x| !x.is_empty()) &&
@@ -583,16 +640,14 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
-            Operation::Call(dest) => {
-                let dest = match ctrl.resolve(dest).if_constant() {
-                    Some(s) => E::VirtualAddress::from_u64(s),
-                    None => return,
-                };
+            Operation::Call(dest_unres) => {
+                let dest_op = ctrl.resolve(dest_unres);
                 let ctx = ctrl.ctx();
                 let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                 let ecx = ctrl.resolve(ctx.register(1));
                 let mut inline = false;
-                if self.check_malloc_free {
+                let word_size = E::VirtualAddress::SIZE;
+                if self.check_malloc_free && self.result.allocator.is_none() {
                     // Note: Assuming this is inside image vector resize.
                     // alloc image_count * 0x40
                     let is_alloc = arg1.if_arithmetic(scarf::ArithOpType::Lsh)
@@ -600,7 +655,25 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         .filter(|&c| c == 6)
                         .is_some();
                     if is_alloc {
-                        self.result.smem_alloc = Some(dest);
+                        match dest_op.if_constant() {
+                            Some(s) => {
+                                self.result.smem_alloc = Some(E::VirtualAddress::from_u64(s));
+                            }
+                            None => {
+                                // Check for call word[word[ecx] + 4],
+                                // allocator.vtable.alloc(size, align)
+                                let allocator = ctrl.if_mem_word(dest_op)
+                                    .and_then(|x| {
+                                        let x = x.if_arithmetic_add_const(1 * word_size as u64)?;
+                                        ctrl.if_mem_word(x)
+                                            .filter(|&x| x == ecx)
+                                    });
+                                if let Some(allocator) = allocator {
+                                    self.result.allocator =
+                                        Some(self.call_tracker.resolve_calls(allocator));
+                                }
+                            }
+                        };
                         return;
                     }
                     let is_free = arg1.if_memory()
@@ -609,10 +682,18 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         })
                         .unwrap_or(false);
                     if is_free {
+                        let dest = match dest_op.if_constant() {
+                            Some(s) => E::VirtualAddress::from_u64(s),
+                            None => return,
+                        };
                         self.result.smem_free = Some(dest);
                         return;
                     }
                 }
+                let dest = match dest_op.if_constant() {
+                    Some(s) => E::VirtualAddress::from_u64(s),
+                    None => return,
+                };
                 if let Some((off, add, mul)) = self.arg1_off(arg1) {
                     if ecx.if_constant().is_some() {
                         if off & 3 != 0 {
@@ -622,7 +703,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                         self.add_result(off, add, mul, ecx);
                         // off == 0 => images
-                        if self.result.smem_alloc.is_none() && off == 0 {
+                        if self.result.smem_alloc.is_none() &&
+                            self.result.allocator.is_none() &&
+                            off == 0
+                        {
                             self.check_malloc_free = true;
                             ctrl.analyze_with_current_state(self, dest);
                             self.check_malloc_free = false;
@@ -672,6 +756,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                     }
                 }
+                if self.check_malloc_free {
+                    self.call_tracker.add_call(ctrl, dest);
+                }
             }
             Operation::Move(ref dest, value, None) => {
                 match dest {
@@ -706,7 +793,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                         ctx.sub_const(dest, E::VirtualAddress::SIZE as u64);
                                     self.add_result(off, add, mul, vector);
                                     // off == 0 => images
-                                    if self.result.smem_alloc.is_none() && off == 0 {
+                                    if self.result.smem_alloc.is_none() &&
+                                        self.result.allocator.is_none() &&
+                                        off == 0
+                                    {
                                         self.redo_check_malloc_free = true;
                                     }
                                 } else if self.inline_depth == 0 {

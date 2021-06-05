@@ -1231,7 +1231,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingR
                         let scale = ctx.transform(scale, 8, |op| {
                             if let Some(idx) = op.if_custom() {
                                 let func = funcs[idx as usize];
-                                analyze_func_return::<E>(func, ctx, binary)
+                                crate::call_tracker::analyze_func_return::<E>(func, ctx, binary)
                             } else {
                                 None
                             }
@@ -2477,7 +2477,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                 *op = ctx.transform(*op, 8, |op| {
                     if let Some(idx) = op.if_custom() {
                         let (func, _) = funcs[idx as usize];
-                        analyze_func_return::<E>(func, ctx, binary)
+                        crate::call_tracker::analyze_func_return::<E>(func, ctx, binary)
                     } else {
                         None
                     }
@@ -2494,71 +2494,6 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
             }
         }
     }
-}
-
-pub(crate) fn analyze_func_return<'e, E: ExecutionState<'e>>(
-    func: E::VirtualAddress,
-    ctx: OperandCtx<'e>,
-    binary: &'e BinaryFile<E::VirtualAddress>,
-) -> Option<Operand<'e>> {
-    struct Analyzer<'e, E: ExecutionState<'e>> {
-        result: Option<Operand<'e>>,
-        phantom: std::marker::PhantomData<(*const E, &'e ())>,
-        prev_ins_address: E::VirtualAddress,
-    }
-
-    impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for Analyzer<'e, E> {
-        type State = analysis::DefaultState;
-        type Exec = E;
-        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-            if let Operation::Return(..) = *op {
-                let ctx = ctrl.ctx();
-                let eax = ctrl.resolve(ctx.register(0));
-                match self.result {
-                    Some(old) => {
-                        if old != eax {
-                            self.result = Some(ctx.new_undef());
-                            ctrl.end_analysis();
-                        }
-                    }
-                    None => {
-                        self.result = Some(eax);
-                    }
-                }
-            }
-            if let Operation::Call(..) = *op {
-                // Avoid security_cookie_check
-                // Detect it by prev instruction being xor ecx, ebp
-                let prev_ins_len = ctrl.address().as_u64()
-                    .wrapping_sub(self.prev_ins_address.as_u64());
-                if prev_ins_len == 2 {
-                    let binary = ctrl.binary();
-                    if let Ok(prev_ins_bytes) =
-                        binary.slice_from_address(self.prev_ins_address, 2)
-                    {
-                        if prev_ins_bytes == &[0x33, 0xcd] {
-                            ctrl.skip_operation();
-                        }
-                    }
-                }
-            }
-            self.prev_ins_address = ctrl.address();
-        }
-
-        fn branch_start(&mut self, _ctrl: &mut Control<'e, '_, '_, Self>) {
-            self.prev_ins_address = E::VirtualAddress::from_u64(0);
-        }
-    }
-    let mut analyzer = Analyzer::<E> {
-        result: None,
-        phantom: Default::default(),
-        prev_ins_address: E::VirtualAddress::from_u64(0),
-    };
-
-    let mut analysis = FuncAnalysis::new(binary, ctx, func);
-    analysis.analyze(&mut analyzer);
-    analyzer.result
-        .filter(|x| !x.is_undefined())
 }
 
 /// Check if first call of `func` takes this and 5 other arguments to this function.

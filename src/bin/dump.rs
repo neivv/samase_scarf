@@ -327,6 +327,7 @@ fn main() {
 
         println!("SMemAlloc: {:?}", analysis.smem_alloc());
         println!("SMemFree: {:?}", analysis.smem_free());
+        println!("allocator: {:?}", format_op_operand(analysis.allocator()));
 
         let mouse_xy = analysis.mouse_xy();
         println!("mouse_x: {}", format_op_operand(mouse_xy.x_var));
