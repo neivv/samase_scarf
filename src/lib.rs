@@ -254,7 +254,7 @@ results! {
         GameScreenRClick => "game_screen_rclick",
         InitStormNetworking => "init_storm_networking",
         LoadSnpList => "load_snp_list",
-        SetMusic => "set_music",
+        SetBriefingMusic => "set_briefing_music",
         PreMissionGlue => "pre_mission_glue",
         ShowMissionGlue => "show_mission_glue",
         MenuSwishIn => "menu_swish_in",
@@ -298,6 +298,9 @@ results! {
         SnetRecvPackets => "snet_recv_packets",
         OpenFile => "open_file",
         DrawGameLayer => "draw_game_layer",
+        RenderScreen => "render_screen",
+        LoadPcx => "load_pcx",
+        SetMusic => "set_music",
     }
 }
 
@@ -405,6 +408,11 @@ results! {
         CmdBtnsDdsGrp => "cmdbtns_ddsgrp",
         DatRequirementError => "dat_requirement_error",
         CursorMarker => "cursor_marker",
+        MainPalette => "main_palette",
+        PaletteSet => "palette_set",
+        TfontGam => "tfontgam",
+        SyncActive => "sync_active",
+        SyncData => "sync_data",
     }
 }
 
@@ -756,7 +764,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             GameScreenRClick => self.game_screen_rclick(),
             InitStormNetworking => self.init_storm_networking(),
             LoadSnpList => self.load_snp_list(),
-            SetMusic => self.set_music(),
+            SetBriefingMusic => self.set_briefing_music(),
             PreMissionGlue => self.pre_mission_glue(),
             ShowMissionGlue => self.show_mission_glue(),
             MenuSwishIn => self.menu_swish_in(),
@@ -800,6 +808,9 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             SnetRecvPackets => self.snet_recv_packets(),
             OpenFile => self.open_file(),
             DrawGameLayer => self.draw_game_layer(),
+            RenderScreen => self.render_screen(),
+            LoadPcx => self.load_pcx(),
+            SetMusic => self.set_music(),
         }
     }
 
@@ -908,6 +919,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             CmdBtnsDdsGrp => self.cmdbtns_ddsgrp(),
             DatRequirementError => self.dat_requirement_error(),
             CursorMarker => self.cursor_marker(),
+            MainPalette => self.main_palette(),
+            PaletteSet => self.palette_set(),
+            TfontGam => self.tfontgam(),
+            SyncActive => self.sync_active(),
+            SyncData => self.sync_data(),
         }
     }
 
@@ -1194,19 +1210,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.local_player_name(s))
     }
 
-    pub fn step_network(&mut self) -> Option<E::VirtualAddress> {
-        self.analyze_many_addr(AddressAnalysis::StepNetwork, AnalysisCache::cache_step_network)
-    }
-
     pub fn receive_storm_turns(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(
             AddressAnalysis::ReceiveStormTurns,
             AnalysisCache::cache_step_network,
         )
-    }
-
-    pub fn menu_screen_id(&mut self) -> Option<Operand<'e>> {
-        self.analyze_many_op(OperandAnalysis::MenuScreenId, AnalysisCache::cache_step_network)
     }
 
     pub fn net_player_flags(&mut self) -> Option<Operand<'e>> {
@@ -1955,8 +1963,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.clamp_zoom(s))
     }
 
-    pub fn set_music(&mut self) -> Option<E::VirtualAddress> {
-        self.analyze_many_addr(AddressAnalysis::SetMusic, AnalysisCache::cache_menu_screens)
+    pub fn set_briefing_music(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::SetBriefingMusic,
+            AnalysisCache::cache_menu_screens,
+        )
     }
 
     pub fn pre_mission_glue(&mut self) -> Option<E::VirtualAddress> {
@@ -2227,6 +2238,46 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn draw_game_layer(&mut self) -> Option<E::VirtualAddress> {
         self.enter(|x, s| x.draw_game_layer(s))
+    }
+
+    pub fn menu_screen_id(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::MenuScreenId, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn step_network(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::StepNetwork, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn render_screen(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::RenderScreen, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn load_pcx(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::LoadPcx, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn set_music(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::SetMusic, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn main_palette(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::MainPalette, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn palette_set(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::PaletteSet, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn tfontgam(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::TfontGam, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn sync_active(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::SyncActive, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn sync_data(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::SyncData, AnalysisCache::cache_game_loop)
     }
 
     /// Mainly for tests/dump
@@ -2984,13 +3035,12 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn cache_step_network(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
-        self.cache_many(&[StepNetwork, ReceiveStormTurns], &[
-            MenuScreenId, NetPlayerFlags, PlayerTurns, PlayerTurnsSize, NetworkReady,
+        self.cache_many(&[ReceiveStormTurns], &[
+            NetPlayerFlags, PlayerTurns, PlayerTurnsSize, NetworkReady,
         ], |s| {
-            let process_lobby_commands = s.process_lobby_commands(actx)?;
-            let funcs = s.function_finder();
-            let result = commands::step_network(actx, process_lobby_commands, &funcs);
-            Some(([result.step_network, result.receive_storm_turns], [result.menu_screen_id,
+            let step_network = s.step_network(actx)?;
+            let result = commands::analyze_step_network(actx, step_network);
+            Some(([result.receive_storm_turns], [
                 result.net_player_flags, result.player_turns, result.player_turns_size,
                 result.network_ready]))
         })
@@ -3971,7 +4021,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn cache_menu_screens(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
-        self.cache_many(&[SetMusic, PreMissionGlue, ShowMissionGlue], &[], |s| {
+        self.cache_many(&[SetBriefingMusic, PreMissionGlue, ShowMissionGlue], &[], |s| {
             let run_menus = s.run_menus(actx)?;
             let result = dialog::analyze_run_menus(actx, run_menus);
             Some(([result.set_music, result.pre_mission_glue, result.show_mission_glue], []))
@@ -4167,6 +4217,27 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             let draw_layers = s.graphic_layers(actx)?;
             renderer::draw_game_layer(actx, draw_layers, &s.function_finder())
         })
+    }
+
+    fn cache_game_loop(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[StepNetwork, RenderScreen, LoadPcx, SetMusic],
+            &[MainPalette, PaletteSet, TfontGam, SyncActive, SyncData, MenuScreenId],
+            |s|
+        {
+            let game_loop = s.game_loop(actx)?;
+            let game = s.game(actx)?;
+            let result = game_init::analyze_game_loop(actx, game_loop, game);
+            Some(([result.step_network, result.render_screen, result.load_pcx, result.set_music],
+                [result.main_palette, result.palette_set, result.tfontgam, result.sync_active,
+                result.sync_data, result.menu_screen_id]))
+        })
+    }
+
+    fn step_network(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::StepNetwork, |s| s.cache_game_loop(actx))
     }
 }
 
@@ -5012,8 +5083,8 @@ impl<'e> AnalysisX86<'e> {
         self.0.first_player_unit()
     }
 
-    pub fn set_music(&mut self) -> Option<VirtualAddress> {
-        self.0.set_music()
+    pub fn set_briefing_music(&mut self) -> Option<VirtualAddress> {
+        self.0.set_briefing_music()
     }
 
     pub fn pre_mission_glue(&mut self) -> Option<VirtualAddress> {
@@ -5194,6 +5265,38 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn draw_game_layer(&mut self) -> Option<VirtualAddress> {
         self.0.draw_game_layer()
+    }
+
+    pub fn render_screen(&mut self) -> Option<VirtualAddress> {
+        self.0.render_screen()
+    }
+
+    pub fn load_pcx(&mut self) -> Option<VirtualAddress> {
+        self.0.load_pcx()
+    }
+
+    pub fn set_music(&mut self) -> Option<VirtualAddress> {
+        self.0.set_music()
+    }
+
+    pub fn main_palette(&mut self) -> Option<Operand<'e>> {
+        self.0.main_palette()
+    }
+
+    pub fn palette_set(&mut self) -> Option<Operand<'e>> {
+        self.0.palette_set()
+    }
+
+    pub fn tfontgam(&mut self) -> Option<Operand<'e>> {
+        self.0.tfontgam()
+    }
+
+    pub fn sync_active(&mut self) -> Option<Operand<'e>> {
+        self.0.sync_active()
+    }
+
+    pub fn sync_data(&mut self) -> Option<Operand<'e>> {
+        self.0.sync_data()
     }
 }
 

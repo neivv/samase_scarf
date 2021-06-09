@@ -56,6 +56,8 @@ fn everything_1208() {
         assert_eq!(analysis.open_anim_multi_file().unwrap().0, 0x00617d80);
         assert_eq!(analysis.base_anim_set().unwrap(), ctx.constant(0xe728d8));
         assert_eq!(analysis.first_invisible_unit().unwrap(), ctx.mem32(ctx.constant(0xf35350)));
+        assert_eq!(analysis.step_network().unwrap().0, 0x007BF740);
+        assert_eq!(analysis.render_screen().unwrap().0, 0x009CF170);
     });
 }
 
@@ -1321,7 +1323,7 @@ fn everything_1238b() {
 fn everything_1238c() {
     test_with_extra_checks(Path::new("1238c.exe"), |ctx, analysis| {
         assert_eq!(analysis.run_menus().unwrap().0, 0x006F3590);
-        assert_eq!(analysis.set_music().unwrap().0, 0x006eceb0);
+        assert_eq!(analysis.set_briefing_music().unwrap().0, 0x006eceb0);
         assert_eq!(analysis.pre_mission_glue().unwrap().0, 0x006996d0);
         assert_eq!(analysis.show_mission_glue().unwrap().0, 0x00699790);
         assert_eq!(analysis.menu_swish_in().unwrap().0, 0x006f44b0);
@@ -1384,6 +1386,16 @@ fn everything_1238d() {
         assert_eq!(analysis.cmdbtns_ddsgrp().unwrap(), ctx.constant(0x1020A64));
         assert_eq!(analysis.wirefram_ddsgrp().unwrap(), ctx.constant(0x10286c8));
         assert_eq!(analysis.allocator().unwrap(), ctx.mem32(ctx.constant(0xfb990c)));
+
+        assert_eq!(analysis.step_network().unwrap().0, 0x00819e00);
+        assert_eq!(analysis.render_screen().unwrap().0, 0x009ecd00);
+        assert_eq!(analysis.load_pcx().unwrap().0, 0x00918d70);
+        assert_eq!(analysis.set_music().unwrap().0, 0x00921BE0);
+        assert_eq!(analysis.main_palette().unwrap(), ctx.constant(0x010160B8));
+        assert_eq!(analysis.palette_set().unwrap(), ctx.constant(0x01380728));
+        assert_eq!(analysis.tfontgam().unwrap(), ctx.constant(0x137f0f0));
+        assert_eq!(analysis.sync_data().unwrap(), ctx.constant(0x1031f70));
+        assert_eq!(analysis.sync_active().unwrap(), ctx.mem32(ctx.constant(0x01030CEC)));
     });
 }
 
@@ -1448,7 +1460,8 @@ fn test_nongeneric<'e>(
                 DialogReturnCode | AssetScale | ImagesLoaded | VisionUpdateCounter |
                 VisionUpdated | FirstDyingUnit | FirstRevealer | FirstInvisibleUnit |
                 ActiveIscriptFlingy | ActiveIscriptBullet | UnitShouldRevealArea |
-                NetworkReady | LastBulletSpawner | DatRequirementError | CursorMarker =>
+                NetworkReady | LastBulletSpawner | DatRequirementError | CursorMarker |
+                SyncActive =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1459,7 +1472,7 @@ fn test_nongeneric<'e>(
                 NetPlayers | NetPlayerToGame | NetPlayerToUnique | GameData | Skins |
                 PlayerSkins | ClientSelection | BaseAnimSet | ImageGrps | ImageOverlays |
                 FireOverlayMax | NetPlayerFlags | PlayerTurns | PlayerTurnsSize | CmdIconsDdsGrp |
-                CmdBtnsDdsGrp =>
+                CmdBtnsDdsGrp | SyncData | PaletteSet | MainPalette | TfontGam =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }

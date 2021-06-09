@@ -74,6 +74,19 @@ pub(crate) struct LoadImagesAnalysis<'e, Va: VirtualAddress> {
     pub anim_struct_size: u16,
 }
 
+pub(crate) struct GameLoopAnalysis<'e, Va: VirtualAddress> {
+    pub step_network: Option<Va>,
+    pub render_screen: Option<Va>,
+    pub load_pcx: Option<Va>,
+    pub set_music: Option<Va>,
+    pub menu_screen_id: Option<Operand<'e>>,
+    pub main_palette: Option<Operand<'e>>,
+    pub palette_set: Option<Operand<'e>>,
+    pub tfontgam: Option<Operand<'e>>,
+    pub sync_data: Option<Operand<'e>>,
+    pub sync_active: Option<Operand<'e>>,
+}
+
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
     fn default() -> Self {
         SinglePlayerStart {
@@ -2544,4 +2557,337 @@ fn check_actual_open_anim_multi_file<'e, E: ExecutionState<'e>>(
 
 fn is_in_section<Va: VirtualAddress>(section: &BinarySection<Va>, addr: Va) -> bool {
     section.virtual_address <= addr && section.virtual_address + section.virtual_size > addr
+}
+
+pub(crate) fn analyze_game_loop<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    game_loop: E::VirtualAddress,
+    game: Operand<'e>,
+) -> GameLoopAnalysis<'e, E::VirtualAddress> {
+    let mut result = GameLoopAnalysis {
+        set_music: None,
+        step_network: None,
+        render_screen: None,
+        load_pcx: None,
+        main_palette: None,
+        palette_set: None,
+        tfontgam: None,
+        sync_data: None,
+        sync_active: None,
+        menu_screen_id: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = GameLoopAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        game,
+        state: GameLoopAnalysisState::SetMusic,
+        inline_depth: 0,
+        inline_limit: 0,
+        sync_active_candidate: None,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, game_loop);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum GameLoopAnalysisState {
+    // Search for call with a1 = game.music
+    // Inline to 1 deep. Any later analysis is based on inline level of
+    // this set_music call.
+    // Also worth noting that this call is slightly different from analysis's set_music,
+    // which has does call something else first (Briefing fades music out first).
+    SetMusic,
+    // Search for memcpy(palette_set[0], main_palette, 0x400)
+    // Inline once if a1 == 0 and a2 == 0x100 set_palette(idx, entry_count, source)
+    PaletteCopy,
+    // Search for storm_load_pcx("game\\tFontGam.pcx", 0, out, 0xc0, 0, 0, 0)
+    // Should be right after set_palette.
+    // Inline once.
+    // I'm assuming that the pcx may be removed at some point, so switch to next state
+    // quickly if it doesn't get found.
+    TfontGam,
+    // Inline deep 1 for enable_sync(1), and deep 2 unconditionally when there's sync_active
+    // candidate.
+    // Find memset(sync_data, 0, 0x10c0), sync_active is a global that gets set to 1 before that.
+    SyncData,
+    // Recognize StepNetwork from it immediately comparing menu_screen_id == 21 (Or more)
+    StepNetwork,
+    // Recognize render_screen(&[funcptr], 1)
+    RenderScreen,
+}
+
+struct GameLoopAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut GameLoopAnalysis<'e, E::VirtualAddress>,
+    game: Operand<'e>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: GameLoopAnalysisState,
+    inline_depth: u8,
+    inline_limit: u8,
+    sync_active_candidate: Option<Operand<'e>>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        let arg_cache = self.arg_cache;
+        match self.state {
+            GameLoopAnalysisState::SetMusic => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                        let ok = arg1.if_mem16()
+                            .and_then(|x| x.if_arithmetic_add_const(0xee))
+                            .filter(|&x| x == self.game)
+                            .is_some();
+                        if ok {
+                            self.result.set_music = Some(dest);
+                            self.inline_depth = 0;
+                            self.inline_limit = 0;
+                            self.state = GameLoopAnalysisState::PaletteCopy;
+                            ctrl.analyze_with_current_state(self, ctrl.current_instruction_end());
+                            ctrl.end_analysis();
+                        } else if self.inline_depth == 0 {
+                            self.inline_limit = 2;
+                            self.inline_depth = 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = 0;
+                            self.inline_limit = 0;
+                            if self.result.set_music.is_some() {
+                                ctrl.end_analysis();
+                            }
+                        } else {
+                            if self.inline_limit == 0 {
+                                ctrl.end_analysis();
+                            } else {
+                                self.inline_limit -= 1;
+                            }
+                        }
+                    }
+                }
+            }
+            GameLoopAnalysisState::PaletteCopy => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                        let arg2 = ctrl.resolve(arg_cache.on_call(1));
+                        let arg3 = ctrl.resolve(arg_cache.on_call(2));
+                        if arg3.if_constant() == Some(0x400) {
+                            self.result.palette_set = Some(arg1);
+                            self.result.main_palette = Some(arg2);
+                            self.state = GameLoopAnalysisState::TfontGam;
+                            if self.inline_depth != 0 {
+                                ctrl.end_analysis();
+                            }
+                        } else if self.inline_depth == 0 {
+                            if arg1 == ctx.const_0() && arg2.if_constant() == Some(0x100) {
+                                self.inline_limit = 3;
+                                self.inline_depth = 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth = 0;
+                                self.inline_limit = 0;
+                            }
+                        } else {
+                            if self.inline_limit == 0 {
+                                ctrl.end_analysis();
+                            } else {
+                                self.inline_limit -= 1;
+                            }
+                        }
+                    }
+                }
+            }
+            GameLoopAnalysisState::TfontGam => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let zero = ctx.const_0();
+                        let binary = ctrl.binary();
+                        // Search for storm_load_pcx("game\\tFontGam.pcx", 0, out, 0xc0, 0, 0, 0)
+                        let ok = [1, 4, 5, 6].iter()
+                            .all(|&x| ctrl.resolve(arg_cache.on_call(x)) == zero) &&
+                            ctrl.resolve(arg_cache.on_call(3)).if_constant() == Some(0xc0) &&
+                            ctrl.resolve_va(arg_cache.on_call(0))
+                                .filter(|&x| is_casei_cstring(binary, x, b"game\\tfontgam.pcx"))
+                                .is_some();
+                        if ok {
+                            self.result.load_pcx = Some(dest);
+                            self.result.tfontgam = Some(ctrl.resolve(arg_cache.on_call(2)));
+                            self.state = GameLoopAnalysisState::SyncData;
+                            if self.inline_depth != 0 {
+                                ctrl.end_analysis();
+                            }
+                        } else if self.inline_depth == 0 {
+                            self.inline_limit = 3;
+                            self.inline_depth = 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = 0;
+                            self.inline_limit = 0;
+                            // If it wasn't found after first inline, assume it doesn't exist
+                            self.state = GameLoopAnalysisState::SyncData;
+                        } else {
+                            if self.inline_limit == 0 {
+                                ctrl.end_analysis();
+                            } else {
+                                self.inline_limit -= 1;
+                            }
+                        }
+                    }
+                }
+            }
+            GameLoopAnalysisState::SyncData => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if let Some(sync_active) = self.sync_active_candidate {
+                            // Check memset(sync_data, 0, 0x10c0)
+                            let ok = ctrl.resolve(arg_cache.on_call(1)) == ctx.const_0() &&
+                                ctrl.resolve(arg_cache.on_call(2)).if_constant() == Some(0x10c0);
+                            if ok {
+                                self.result.sync_active = Some(sync_active);
+                                self.result.sync_data = Some(ctrl.resolve(arg_cache.on_call(0)));
+                                self.state = GameLoopAnalysisState::StepNetwork;
+                                if self.inline_depth != 0 {
+                                    ctrl.end_analysis();
+                                }
+                                return;
+                            }
+                        }
+
+                        if self.inline_depth != 0 {
+                            if self.inline_limit == 0 {
+                                ctrl.end_analysis();
+                                return;
+                            } else {
+                                self.inline_limit -= 1;
+                            }
+                        }
+                        let inline = self.sync_active_candidate.is_some() ||
+                            (self.inline_depth == 0 &&
+                                ctrl.resolve(self.arg_cache.on_call(0)) == ctx.const_1());
+                        if inline {
+                            if self.inline_depth == 0 {
+                                self.inline_limit = 4;
+                            }
+                            self.inline_depth += 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth -= 1;
+                            if self.inline_depth == 0 {
+                                self.inline_limit = 0;
+                            } else if self.state == GameLoopAnalysisState::StepNetwork {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if ctrl.resolve(value) == ctx.const_1() {
+                        let address = ctrl.resolve(mem.address);
+                        if address.if_constant().is_some() {
+                            self.sync_active_candidate =
+                                Some(ctx.mem_variable_rc(mem.size, address));
+                        }
+                    }
+                }
+            }
+            GameLoopAnalysisState::StepNetwork => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let binary = ctrl.binary();
+                        let mut analysis = FuncAnalysis::new(binary, ctx, dest);
+                        let mut analyzer = IsStepNetwork::<E> {
+                            menu_screen_id: None,
+                            inlining: false,
+                            phantom: Default::default(),
+                        };
+                        analysis.analyze(&mut analyzer);
+                        if let Some(menu_screen_id) = analyzer.menu_screen_id {
+                            self.result.step_network = Some(dest);
+                            self.result.menu_screen_id = Some(menu_screen_id);
+                            self.state = GameLoopAnalysisState::RenderScreen;
+                        }
+                    }
+                }
+            }
+            GameLoopAnalysisState::RenderScreen => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if ctrl.resolve(arg_cache.on_call(1)) == ctx.const_1() {
+                            let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                            let ok = ctrl.read_memory(arg1, E::WORD_SIZE)
+                                .if_constant()
+                                .filter(|&va| va >= ctrl.binary().base().as_u64())
+                                .is_some();
+                            if ok {
+                                self.result.render_screen = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn is_casei_cstring<Va: VirtualAddress>(
+    binary: &BinaryFile<Va>,
+    address: Va,
+    cmp: &[u8],
+) -> bool {
+    binary.slice_from_address(address, cmp.len() as u32 + 1).ok()
+        .and_then(|x| {
+            let (&zero, text) = x.split_last()?;
+            if zero == 0 && text.eq_ignore_ascii_case(cmp) {
+                Some(())
+            } else {
+                None
+            }
+        })
+        .is_some()
+}
+
+struct IsStepNetwork<'e, E: ExecutionState<'e>> {
+    menu_screen_id: Option<Operand<'e>>,
+    inlining: bool,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepNetwork<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    if !self.inlining {
+                        self.inlining = true;
+                        ctrl.inline(self, dest);
+                        self.inlining = false;
+                        ctrl.skip_operation();
+                    }
+                }
+            }
+            Operation::Jump { condition, .. } => {
+                // Recognize step_network from its first comparision being
+                // menu_screen_id == MENU_SCREEN_EXIT (0x21 currently,
+                // but allow matching higher constants, 1.16.1 had 0x19)
+                let condition = ctrl.resolve(condition);
+                let menu_screen_id = if_arithmetic_eq_neq(condition)
+                    .map(|(l, r, _)| (l, r))
+                    .and_either_other(|x| x.if_constant().filter(|&c| c > 0x20 && c < 0x80))
+                    .filter(|x| {
+                        x.iter().all(|op| !op.is_undefined() && op.if_register().is_none())
+                    });
+                if let Some(menu_screen_id) = menu_screen_id {
+                    self.menu_screen_id = Some(menu_screen_id);
+                }
+                ctrl.end_analysis();
+            }
+            _ => (),
+        }
+    }
 }

@@ -6,7 +6,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
 use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 
 use crate::{
-    AnalysisCtx, ArgCache, EntryOf, EntryOfResult, OptionExt, if_callable_const,
+    AnalysisCtx, ArgCache, EntryOf, OptionExt, if_callable_const,
     entry_of_until, single_result_assign, find_bytes, read_u32_at, if_arithmetic_eq_neq,
     bumpvec_with_capacity, OperandExt, FunctionFinder,
 };
@@ -26,9 +26,7 @@ pub struct Selections<'e> {
 
 #[derive(Clone, Debug)]
 pub struct StepNetwork<'e, Va: VirtualAddressTrait> {
-    pub step_network: Option<Va>,
     pub receive_storm_turns: Option<Va>,
-    pub menu_screen_id: Option<Operand<'e>>,
     pub net_player_flags: Option<Operand<'e>>,
     pub player_turns: Option<Operand<'e>>,
     pub player_turns_size: Option<Operand<'e>>,
@@ -673,15 +671,12 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyze
     }
 }
 
-pub(crate) fn step_network<'e, E: ExecutionState<'e>>(
+pub(crate) fn analyze_step_network<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
-    process_lobby_commands: E::VirtualAddress,
-    functions: &FunctionFinder<'_, 'e, E>,
+    step_network: E::VirtualAddress,
 ) -> StepNetwork<'e, E::VirtualAddress> {
     let mut result = StepNetwork {
-        step_network: None,
         receive_storm_turns: None,
-        menu_screen_id: None,
         net_player_flags: None,
         player_turns: None,
         player_turns_size: None,
@@ -689,112 +684,20 @@ pub(crate) fn step_network<'e, E: ExecutionState<'e>>(
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = &analysis.bump;
-    let funcs = functions.functions();
-    // step_network calls process_lobby_commands 2~3 frames deep
-    // Recognize step_network from its first comparision being
-    // menu_screen_id == MENU_SCREEN_EXIT (0x21 currently, but allow matching higher constants,
-    // 1.16.1 had 0x19)
-    let mut repeat_limit = 3;
-    let mut entries = bumpalo::vec![in bump; process_lobby_commands];
-    'outer: while repeat_limit > 0 {
-        repeat_limit -= 1;
-        let mut new_entries = bumpvec_with_capacity(8, bump);
-        for child in entries {
-            let callers = functions.find_callers(analysis, child);
-            for caller in callers {
-                let val = entry_of_until(binary, funcs, caller, |entry| {
-                    let mut analysis = FuncAnalysis::new(binary, ctx, entry);
-                    let mut analyzer = IsStepNetwork::<E> {
-                        result: EntryOf::Retry,
-                        child,
-                        inlining: false,
-                        first_branch: true,
-                    };
-                    analysis.analyze(&mut analyzer);
-                    analyzer.result
-                });
-                match val {
-                    EntryOfResult::Ok(a, menu_screen_id) => {
-                        result.step_network = Some(a);
-                        result.menu_screen_id = Some(menu_screen_id);
-                        break 'outer;
-                    }
-                    EntryOfResult::Entry(e) => {
-                        new_entries.push(e);
-                    }
-                    EntryOfResult::None => (),
-                }
-            }
-        }
-        entries = new_entries;
-        entries.sort_unstable();
-        entries.dedup();
-    }
     let arg_cache = &analysis.arg_cache;
-    if let Some(step_network) = result.step_network {
-        let exec_state = E::initial_state(ctx, binary);
-        let state = StepNetworkState {
-            after_receive_storm_turns: false,
-        };
-        let mut analysis =
-            FuncAnalysis::custom_state(binary, ctx, step_network, exec_state, state);
-        let mut analyzer = AnalyzeStepNetwork::<E> {
-            result: &mut result,
-            arg_cache,
-            inlining: false,
-        };
-        analysis.analyze(&mut analyzer);
-    }
+
+    let exec_state = E::initial_state(ctx, binary);
+    let state = StepNetworkState {
+        after_receive_storm_turns: false,
+    };
+    let mut analysis = FuncAnalysis::custom_state(binary, ctx, step_network, exec_state, state);
+    let mut analyzer = AnalyzeStepNetwork::<E> {
+        result: &mut result,
+        arg_cache,
+        inlining: false,
+    };
+    analysis.analyze(&mut analyzer);
     result
-}
-
-struct IsStepNetwork<'e, E: ExecutionState<'e>> {
-    result: EntryOf<Operand<'e>>,
-    child: E::VirtualAddress,
-    inlining: bool,
-    first_branch: bool,
-}
-
-impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepNetwork<'e, E> {
-    type State = analysis::DefaultState;
-    type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        match *op {
-            Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
-                    if self.first_branch {
-                        if !self.inlining {
-                            self.inlining = true;
-                            ctrl.inline(self, dest);
-                            self.inlining = false;
-                            ctrl.skip_operation();
-                        }
-                    } else {
-                        if self.child == dest {
-                            self.result = EntryOf::Stop;
-                            ctrl.end_analysis();
-                        }
-                    }
-                }
-            }
-            Operation::Jump { condition, .. } => {
-                if self.first_branch {
-                    let condition = ctrl.resolve(condition);
-                    let menu_screen_id = if_arithmetic_eq_neq(condition)
-                        .map(|(l, r, _)| (l, r))
-                        .and_either_other(|x| x.if_constant().filter(|&c| c > 0x20 && c < 0x80));
-                    if let Some(menu_screen_id) = menu_screen_id {
-                        self.result = EntryOf::Ok(menu_screen_id.clone());
-                        ctrl.end_analysis();
-                    }
-                    self.first_branch = false;
-                }
-            }
-            _ => (),
-        }
-    }
 }
 
 struct AnalyzeStepNetwork<'a, 'e, E: ExecutionState<'e>> {
