@@ -546,7 +546,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         }
 
         let text = analysis.binary_sections.text;
-        let step_iscript = cache.step_iscript(analysis).step_fn?;
+        let step_iscript = cache.step_iscript(analysis)?;
         let bump = &analysis.bump;
         Some(DatPatchContext {
             array_lookup: HashMap::with_capacity_and_hasher(128, Default::default()),

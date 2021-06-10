@@ -1,201 +1,154 @@
 use scarf::{
-    ArithOpType, MemAccessSize, Operand, OperandType, OperandCtx, Operation, BinaryFile,
-    DestOperand,
+    MemAccessSize, Operand, Operation, DestOperand,
 };
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::ExecutionState;
 use scarf::exec_state::VirtualAddress;
 
-use crate::{
-    AnalysisCtx, ArgCache, entry_of_until, EntryOfResult, EntryOf, FunctionFinder,
-    OptionExt, single_result_assign, SwitchTable,
-};
+use crate::{AnalysisCtx, ArgCache, ControlExt, OptionExt, OperandExt, single_result_assign};
+use crate::struct_layouts::{self, if_unit_sprite};
 
-pub struct StepIscript<'e, Va: VirtualAddress> {
-    pub step_fn: Option<Va>,
-    pub script_operand_at_switch: Option<Operand<'e>>,
+pub(crate) struct StepIscript<'e, Va: VirtualAddress> {
     pub switch_table: Option<Va>,
     pub iscript_bin: Option<Operand<'e>>,
-    pub opcode_check: Option<(Va, u32)>,
+    pub hook: Option<StepIscriptHook<'e, Va>>,
 }
 
-// Note that this returns the `*const u8` script pointer, which can be a local and differ from
-// what the iscript structure has, as it may only be written on return
-fn get_iscript_operand_from_goto<'e, E: ExecutionState<'e>>(
-    binary: &'e BinaryFile<E::VirtualAddress>,
-    ctx: OperandCtx<'e>,
-    address: E::VirtualAddress,
-) -> Option<Operand<'e>> {
-    // Goto should just read mem16[x], or possibly do a single x + 2 < y compare first
-    struct Analyzer<'e, F: ExecutionState<'e>> {
-        is_first_branch: bool,
-        is_inlining: bool,
-        result: Option<Operand<'e>>,
-        phantom: std::marker::PhantomData<*const F>,
-    }
-    impl<'e, F: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, F> {
-        type State = analysis::DefaultState;
-        type Exec = F;
-        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-            match *op {
-                Operation::Move(_, from, None) => {
-                    if let Some(mem) = from.if_memory() {
-                        if mem.size == MemAccessSize::Mem16 {
-                            self.result = Some(mem.address.clone());
-                            // Don't end on first branch if this is part of x + 2 < y comparision
-                            if !self.is_first_branch {
-                                ctrl.end_analysis();
-                                return;
-                            }
-                        }
-                    }
-                }
-                Operation::Call(dest) => {
-                    if self.is_inlining {
-                        ctrl.end_analysis();
-                        return;
-                    }
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        self.is_inlining = true;
-                        ctrl.analyze_with_current_state(self, F::VirtualAddress::from_u64(dest));
-                        if self.result.is_some() {
-                            ctrl.end_analysis();
-                            return;
-                        }
-                        self.is_inlining = false;
-                    }
-                }
-                Operation::Jump { condition, .. } => {
-                    if !self.is_first_branch {
-                        // Didn't find anything quickly, give up
-                        ctrl.end_analysis();
-                        return;
-                    }
-                    let condition = ctrl.resolve(condition);
-                    let compare = condition.iter_no_mem_addr()
-                        .filter_map(|x| x.if_arithmetic(ArithOpType::GreaterThan))
-                        .filter_map(|(l, r)| Operand::either(l, r, |x| match x.ty() {
-                            OperandType::Arithmetic(arith) => match arith.ty {
-                                ArithOpType::Add | ArithOpType::Sub => Some(x),
-                                _ => None,
-                            },
-                            _ => None,
-                        }))
-                        .filter_map(|(a, b)| Operand::either(a, b, |x| x.if_constant()))
-                        .filter(|&(c, _)| c == 2)
-                        .next();
-                    if compare.is_none() {
-                        // Not a condition that was expected
-                        ctrl.end_analysis();
-                        return;
-                    }
-                    self.is_first_branch = false;
-                }
-                _ => ()
-            }
-        }
-    }
+#[derive(Debug, Copy, Clone)]
+pub struct StepIscriptHook<'e, Va: VirtualAddress> {
+    pub script_operand_at_switch: Operand<'e>,
+    pub opcode_check: (Va, u32),
+}
 
-    let mut analyzer = Analyzer::<E> {
-        is_first_branch: true,
-        is_inlining: false,
+pub(crate) fn step_iscript<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    finish_unit_pre: E::VirtualAddress,
+    sprite_size: u32,
+) -> Option<E::VirtualAddress> {
+    // Find step_iscript from finish_unit_pre calling set_iscript_animation(0x10)
+    // Inline if arg1 == 0x10 and this == ecx or ecx.sprite or ecx.sprite_first_overlay
+    // Recognize step_iscript from
+    // this = ecx.sprite.first_overlay, a1 = ecx.sprite.first_overlay.iscript, a2 = 0, a3 = 0
+
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+
+    let mut analyzer = FindStepIscript {
         result: None,
-        phantom: Default::default(),
+        inline_limit: 0,
+        arg_cache: &actx.arg_cache,
+        sprite_first_overlay:
+            struct_layouts::sprite_first_overlay::<E::VirtualAddress>(sprite_size)?,
     };
-    let mut analysis = FuncAnalysis::new(binary, ctx, address);
+    let mut analysis = FuncAnalysis::new(binary, ctx, finish_unit_pre);
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-pub(crate) fn step_iscript<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'e, E>,
-    switch_tables: &[SwitchTable<E::VirtualAddress>],
-    functions: &FunctionFinder<'_, 'e, E>,
-) -> StepIscript<'e, E::VirtualAddress> {
-    let ctx = analysis.ctx;
-    let binary = analysis.binary;
-    let funcs = functions.functions();
-    let funcs = &funcs[..];
-    let switches = switch_tables.iter().filter_map(|switch| {
-        let cases = &switch.cases;
-        if cases.len() < 0x40 {
-            return None;
-        }
-        get_iscript_operand_from_goto::<E>(binary, ctx, cases[0x7]).map(|x| (x, switch))
-    });
-    let mut result = StepIscript {
-        step_fn: None,
-        script_operand_at_switch: None,
-        switch_table: None,
-        iscript_bin: None,
-        opcode_check: None,
-    };
-    'outer: for (script_operand, switch) in switches {
-        let users = functions.find_functions_using_global(analysis, switch.address);
-        for user in users {
-            let func_result = entry_of_until(binary, funcs, user.func_entry, |entry| {
-                let arg_cache = &analysis.arg_cache;
-                let mut analyzer = IscriptFromSwitchAnalyzer {
-                    switch_addr: switch.address,
-                    iscript_bin: None,
-                    opcode_check: None,
-                    result: EntryOf::Retry,
-                    wait_check_seen: false,
-                    arg_cache,
-                };
-                let mut analysis = FuncAnalysis::new(binary, ctx, entry);
-                analysis.analyze(&mut analyzer);
-                analyzer.result
-            });
-            if let EntryOfResult::Ok(entry, (iscript_bin, opcode_check)) = func_result {
-                if crate::test_assertions() {
-                    if let Some(step) = result.step_fn {
-                        assert_eq!(step, entry);
-                    }
-                    if let Some(ref op) = result.script_operand_at_switch {
-                        assert_eq!(*op, script_operand);
-                    }
-                    if let Some(ref op) = result.opcode_check {
-                        if let Some(ref new) = opcode_check {
-                            assert_eq!(op, new);
-                        }
-                    }
-                    if let Some(ref op) = result.iscript_bin {
-                        if let Some(ref new) = iscript_bin {
-                            assert_eq!(op, new);
-                        }
+struct FindStepIscript<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_limit: u8,
+    sprite_first_overlay: u32,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindStepIscript<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if self.inline_limit != 0 {
+                self.inline_limit -= 1;
+                if self.inline_limit == 0 {
+                    ctrl.end_analysis();
+                    return;
+                }
+            }
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                let ctx = ctrl.ctx();
+                let arg_cache = self.arg_cache;
+                let this = ctrl.resolve(ctx.register(1));
+                let arg1 = ctrl.resolve(arg_cache.on_thiscall_call(0));
+                let is_first_overlay = ctrl.if_mem_word(this)
+                    .and_then(|x| x.if_arithmetic_add_const(self.sprite_first_overlay.into()))
+                    .and_then(if_unit_sprite::<E::VirtualAddress>) == Some(ctx.register(1));
+                if is_first_overlay {
+                    let zero = ctx.const_0();
+                    let ok = ctrl.resolve(arg_cache.on_thiscall_call(1)) == zero &&
+                        ctrl.resolve(arg_cache.on_thiscall_call(2)) == zero &&
+                        arg1.if_arithmetic_add_const(
+                            struct_layouts::image_iscript::<E::VirtualAddress>()
+                        ).filter(|&x| x == this).is_some();
+                    if ok {
+                        self.result = Some(dest);
+                        ctrl.end_analysis();
+                        return;
                     }
                 }
-                result.step_fn = Some(entry);
-                result.script_operand_at_switch = Some(script_operand.clone());
-                result.iscript_bin = iscript_bin;
-                result.opcode_check = opcode_check;
-                result.switch_table = Some(switch.address);
-                if !crate::test_assertions() {
-                    break 'outer;
+                let inline = (
+                    is_first_overlay ||
+                    this == ctx.register(1) ||
+                    if_unit_sprite::<E::VirtualAddress>(this) == Some(ctx.register(1))
+                ) && arg1.if_constant() == Some(0x10);
+
+                if inline {
+                    let is_depth0 = self.inline_limit == 0;
+                    if is_depth0 {
+                        self.inline_limit = 16;
+                    }
+                    ctrl.analyze_with_current_state(self, dest);
+                    if is_depth0 {
+                        self.inline_limit = 0;
+                    } else if self.inline_limit == 0 {
+                        ctrl.end_analysis();
+                    }
+                    if self.result.is_some() {
+                        ctrl.end_analysis();
+                    }
                 }
             }
         }
     }
+}
+
+pub(crate) fn analyze_step_iscript<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    step_iscript: E::VirtualAddress,
+) -> StepIscript<'e, E::VirtualAddress> {
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+
+    let mut result = StepIscript {
+        switch_table: None,
+        iscript_bin: None,
+        hook: None,
+    };
+    let arg_cache = &analysis.arg_cache;
+    let mut analyzer = StepIscriptAnalyzer {
+        result: &mut result,
+        wait_check_seen: false,
+        opcode_check: None,
+        arg_cache,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, step_iscript);
+    analysis.analyze(&mut analyzer);
     result
 }
 
-struct IscriptFromSwitchAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    switch_addr: E::VirtualAddress,
-    iscript_bin: Option<Operand<'e>>,
-    result: EntryOf<(Option<Operand<'e>>, Option<(E::VirtualAddress, u32)>)>,
+struct StepIscriptAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut StepIscript<'e, E::VirtualAddress>,
     wait_check_seen: bool,
-    arg_cache: &'a ArgCache<'e, E>,
     opcode_check: Option<(E::VirtualAddress, u32)>,
+    arg_cache: &'a ArgCache<'e, E>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IscriptFromSwitchAnalyzer<'a, 'e, E> {
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepIscriptAnalyzer<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Move(_, val, None) => {
-                if self.iscript_bin.is_none() {
+                if self.result.iscript_bin.is_none() {
                     let val = ctrl.resolve(val);
                     let iscript_bin = val.if_mem8()
                         .and_then(|addr| addr.if_arithmetic_add())
@@ -203,31 +156,57 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IscriptFromSwitchAna
                             x.if_mem16().filter(|x| x.if_arithmetic_add().is_some())
                         });
                     if let Some(iscript_bin) = iscript_bin {
-                        self.iscript_bin = Some(iscript_bin);
+                        self.result.iscript_bin = Some(iscript_bin);
                     }
                 }
             }
             Operation::Jump { condition, to } => {
                 let to = ctrl.resolve(to);
-                let is_switch_jump = to.iter().any(|x| match x.if_constant() {
-                    Some(s) => s == self.switch_addr.as_u64(),
-                    None => false,
-                });
-                if is_switch_jump {
-                    self.result = match self.wait_check_seen {
-                        false => EntryOf::Stop,
-                        true => EntryOf::Ok((self.iscript_bin.take(), self.opcode_check.take())),
-                    };
+                let switch_jump = ctrl.if_mem_word(to)
+                    .and_then(|x| {
+                        let (l, r) = x.if_arithmetic_add()?;
+                        let switch_table = r.if_constant()?;
+                        let (switch_op, r) = l.if_arithmetic_mul()?;
+                        r.if_constant()?;
+                        let iscript_pos = switch_op.if_mem8()?;
+                        Some((E::VirtualAddress::from_u64(switch_table), iscript_pos))
+                    });
+                if let Some((switch_table, iscript_pos)) = switch_jump {
+                    if self.wait_check_seen {
+                        self.result.switch_table = Some(switch_table);
+                        if let Some(opcode_check) = self.opcode_check {
+                            let ctx = ctrl.ctx();
+                            let register_count =
+                                if E::VirtualAddress::SIZE == 4 { 8 } else { 16 };
+                            if let Some(script_operand_at_switch) = (0..register_count)
+                                .map(|i| ctx.register(i))
+                                .find(|&x| {
+                                    let val = ctrl.resolve(x);
+                                    let unwrap_increment = val.if_arithmetic_add_const(1)
+                                        .map(|x| {
+                                            x.if_arithmetic_and_const(0xffff_ffff)
+                                                .unwrap_or(x)
+                                        })
+                                        .unwrap_or(val);
+                                    unwrap_increment == iscript_pos
+                                })
+                            {
+                                self.result.hook = Some(StepIscriptHook {
+                                    script_operand_at_switch,
+                                    opcode_check,
+                                });
+                            }
+                        }
+                    }
                     ctrl.end_analysis();
                     return;
                 }
                 let condition = ctrl.resolve(condition);
                 let has_wait_check = condition.iter_no_mem_addr()
-                    .filter_map(|x| x.if_mem8())
-                    .filter_map(|x| x.if_arithmetic_add())
-                    .filter_map(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                    .filter(|&(c, other)| c == 7 && other == self.arg_cache.on_entry(0))
-                    .next().is_some();
+                    .filter_map(|x| x.if_mem8()?.if_arithmetic_add_const(7))
+                    .filter(|&other| other == self.arg_cache.on_thiscall_entry(0))
+                    .next()
+                    .is_some();
                 if has_wait_check {
                     self.wait_check_seen = true;
                 }
@@ -240,6 +219,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IscriptFromSwitchAna
                         let len =
                             ctrl.current_instruction_end().as_u64() - ctrl.address().as_u64();
                         self.opcode_check = Some((ctrl.address(), len as u32));
+                        // Skip opcode limit check to prevent making switch op undef;
+                        // should not assume the check fail is always branch but it probably
+                        // always will be.
+                        ctrl.skip_operation();
+                        ctrl.add_branch_with_current_state(ctrl.current_instruction_end());
                     }
                 }
             }

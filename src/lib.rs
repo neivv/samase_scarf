@@ -73,7 +73,7 @@ pub use crate::dialog::{MouseXy, TooltipRelated};
 pub use crate::eud::{Eud, EudTable};
 pub use crate::firegraft::RequirementTables;
 pub use crate::game::{Limits};
-pub use crate::iscript::StepIscript;
+pub use crate::iscript::StepIscriptHook;
 pub use crate::network::{SnpDefinitions};
 pub use crate::players::NetPlayers;
 pub use crate::renderer::{PrismShaders};
@@ -301,6 +301,8 @@ results! {
         RenderScreen => "render_screen",
         LoadPcx => "load_pcx",
         SetMusic => "set_music",
+        StepIscript => "step_iscript",
+        StepIscriptSwitch => "step_iscript_switch",
     }
 }
 
@@ -413,6 +415,7 @@ results! {
         TfontGam => "tfontgam",
         SyncActive => "sync_active",
         SyncData => "sync_data",
+        IscriptBin => "iscript_bin",
     }
 }
 
@@ -436,7 +439,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     process_lobby_commands: Cached<Option<(CompleteSwitch<E::VirtualAddress>, E::VirtualAddress)>>,
     step_order_hidden: Cached<Rc<Vec<StepOrderHiddenHook<'e, E::VirtualAddress>>>>,
     step_secondary_order: Cached<Rc<Vec<SecondaryOrderHook<'e, E::VirtualAddress>>>>,
-    step_iscript: Cached<Rc<StepIscript<'e, E::VirtualAddress>>>,
+    step_iscript_hook: Option<StepIscriptHook<'e, E::VirtualAddress>>,
     sprite_x_position: Option<(Operand<'e>, u32, MemAccessSize)>,
     sprite_y_position: Option<(Operand<'e>, u32, MemAccessSize)>,
     eud: Cached<Rc<EudTable<'e>>>,
@@ -515,6 +518,17 @@ impl<'e, E: ExecutionStateTrait<'e>> ArgCache<'e, E> {
         }
     }
 
+    /// Returns operand corresponding to location of nth non-this argument *before*
+    /// call instruction when calling convention is thiscall.
+    pub fn on_thiscall_call(&self, index: u8) -> Operand<'e> {
+        let is_x64 = <E::VirtualAddress as VirtualAddressTrait>::SIZE == 8;
+        if !is_x64 {
+            self.on_call(index)
+        } else {
+            self.on_call(index + 1)
+        }
+    }
+
     /// Returns operand corresponding to location of argument *on function entry*.
     pub fn on_entry(&self, index: u8) -> Operand<'e> {
         let is_x64 = <E::VirtualAddress as VirtualAddressTrait>::SIZE == 8;
@@ -538,6 +552,17 @@ impl<'e, E: ExecutionStateTrait<'e>> ArgCache<'e, E> {
                     ctx.constant((index as u64 + 1) * 8),
                 ))
             }
+        }
+    }
+
+    /// Returns operand corresponding to location of nth non-this argument *on function entry*
+    /// when calling convention is thiscall.
+    pub fn on_thiscall_entry(&self, index: u8) -> Operand<'e> {
+        let is_x64 = <E::VirtualAddress as VirtualAddressTrait>::SIZE == 8;
+        if !is_x64 {
+            self.on_entry(index)
+        } else {
+            self.on_entry(index + 1)
         }
     }
 }
@@ -645,7 +670,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 process_lobby_commands: Default::default(),
                 step_order_hidden: Default::default(),
                 step_secondary_order: Default::default(),
-                step_iscript: Default::default(),
+                step_iscript_hook: Default::default(),
                 sprite_x_position: Default::default(),
                 sprite_y_position: Default::default(),
                 eud: Default::default(),
@@ -811,6 +836,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             RenderScreen => self.render_screen(),
             LoadPcx => self.load_pcx(),
             SetMusic => self.set_music(),
+            StepIscript => self.step_iscript(),
+            StepIscriptSwitch => self.step_iscript_switch(),
         }
     }
 
@@ -924,6 +951,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             TfontGam => self.tfontgam(),
             SyncActive => self.sync_active(),
             SyncData => self.sync_data(),
+            IscriptBin => self.iscript_bin(),
         }
     }
 
@@ -1275,20 +1303,36 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.enter(|x, s| x.step_secondary_order(s))
     }
 
-    pub fn step_iscript(&mut self) -> Rc<StepIscript<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.step_iscript(s))
+    pub fn step_iscript(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(AnalysisCache::step_iscript)
+    }
+
+    pub fn step_iscript_switch(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepIscriptSwitch,
+            AnalysisCache::cache_step_iscript,
+        )
+    }
+
+    pub fn step_iscript_hook(&mut self) -> Option<StepIscriptHook<'e, E::VirtualAddress>> {
+        self.step_iscript_switch()?;
+        self.cache.step_iscript_hook
+    }
+
+    pub fn iscript_bin(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::IscriptBin, AnalysisCache::cache_step_iscript)
     }
 
     pub fn add_overlay_iscript(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.add_overlay_iscript(s))
+        self.enter(AnalysisCache::add_overlay_iscript)
     }
 
     pub fn draw_cursor_marker(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.draw_cursor_marker(s))
+        self.enter(AnalysisCache::draw_cursor_marker)
     }
 
     pub fn play_smk(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.play_smk(s))
+        self.enter(AnalysisCache::play_smk)
     }
 
     pub fn sc_main(&mut self) -> Option<E::VirtualAddress> {
@@ -3118,29 +3162,38 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         result
     }
 
-    fn step_iscript(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<StepIscript<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.step_iscript.cached() {
-            return cached;
-        }
-        let switches = self.switch_tables();
-        let result = iscript::step_iscript(actx, &switches, &self.function_finder());
-        let result = Rc::new(result);
-        self.step_iscript.cache(&result);
-        result
+    fn step_iscript(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_single_address(AddressAnalysis::StepIscript, |s| {
+            let finish_unit_pre = s.finish_unit_pre(actx)?;
+            let sprite_size = s.sprite_array(actx)?.1;
+            iscript::step_iscript(actx, finish_unit_pre, sprite_size)
+        })
+    }
+
+    fn cache_step_iscript(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[StepIscriptSwitch], &[IscriptBin], |s| {
+            let step_iscript = s.step_iscript(actx)?;
+            let result = iscript::analyze_step_iscript(actx, step_iscript);
+            s.step_iscript_hook = result.hook;
+            Some(([result.switch_table], [result.iscript_bin]))
+        })
+    }
+
+    fn step_iscript_switch(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::StepIscriptSwitch, |s| s.cache_step_iscript(actx))
     }
 
     fn add_overlay_iscript(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::AddOverlayIscript, |s| {
-            iscript::add_overlay_iscript(actx, s.step_iscript(actx).switch_table?)
+            iscript::add_overlay_iscript(actx, s.step_iscript_switch(actx)?)
         })
     }
 
     fn draw_cursor_marker(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::DrawCursorMarker, |s| {
-            iscript::draw_cursor_marker(actx, s.step_iscript(actx).switch_table?)
+            iscript::draw_cursor_marker(actx, s.step_iscript_switch(actx)?)
         })
     }
 
@@ -3333,7 +3386,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             FirstActiveBullet, LastActiveBullet, FirstFreeBullet, LastFreeBullet,
             ActiveIscriptUnit,
         ], |s| {
-            let result = bullets::bullet_creation(actx, s.step_iscript(actx).switch_table?);
+            let result = bullets::bullet_creation(actx, s.step_iscript_switch(actx)?);
             Some(([result.create_bullet], [result.first_active_bullet, result.last_active_bullet,
                 result.first_free_bullet, result.last_free_bullet, result.active_iscript_unit]))
         })
@@ -3442,6 +3495,10 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             let result = units::unit_creation(actx, order_scan);
             Some(([result.create_unit, result.finish_unit_pre, result.finish_unit_post], []))
         })
+    }
+
+    fn finish_unit_pre(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::FinishUnitPre, |s| s.cache_unit_creation(actx))
     }
 
     fn fonts(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
@@ -3871,7 +3928,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn play_sound(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::PlaySound, |s| {
-            sound::play_sound(actx, s.step_iscript(actx).switch_table?)
+            sound::play_sound(actx, s.step_iscript_switch(actx)?)
         })
     }
 
@@ -4098,7 +4155,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             UnitBuffedTurnSpeed,
         ], &[], |s| {
             let unit_changing_player = s.unit_changing_player(actx)?;
-            let step_iscript = s.step_iscript(actx).step_fn?;
+            let step_iscript = s.step_iscript(actx)?;
             let units_dat = s.dat_virtual_address(DatType::Units, actx)?;
             let flingy_dat = s.dat_virtual_address(DatType::Flingy, actx)?;
             let result = units::unit_apply_speed_upgrades(
@@ -4515,8 +4572,20 @@ impl<'e> AnalysisX86<'e> {
         self.0.step_secondary_order()
     }
 
-    pub fn step_iscript(&mut self) -> Rc<StepIscript<'e, VirtualAddress>> {
+    pub fn step_iscript(&mut self) -> Option<VirtualAddress> {
         self.0.step_iscript()
+    }
+
+    pub fn step_iscript_switch(&mut self) -> Option<VirtualAddress> {
+        self.0.step_iscript_switch()
+    }
+
+    pub fn step_iscript_hook(&mut self) -> Option<StepIscriptHook<'e, VirtualAddress>> {
+        self.0.step_iscript_hook()
+    }
+
+    pub fn iscript_bin(&mut self) -> Option<Operand<'e>> {
+        self.0.iscript_bin()
     }
 
     pub fn add_overlay_iscript(&mut self) -> Option<VirtualAddress> {

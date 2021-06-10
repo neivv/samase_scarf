@@ -256,12 +256,8 @@ fn main() {
         println!("portdata.dat: {}", format_dat(&analysis.dat(DatType::PortData)));
         println!("mapdata.dat: {}", format_dat(&analysis.dat(DatType::MapData)));
 
-        let iscript = analysis.step_iscript();
-        println!("step_iscript: {:?}", iscript.step_fn);
-        println!("step iscript script ptr: {}", format_op_operand(iscript.script_operand_at_switch));
-        println!("step iscript switch: {:?}", iscript.switch_table);
-        println!("step iscript opcode check: {:?}", iscript.opcode_check);
-        println!("iscript_bin: {}", format_op_operand(iscript.iscript_bin));
+        let iscript_hook = analysis.step_iscript_hook();
+        println!("step iscript hook: {:?}", iscript_hook);
 
         let sprite_x_position = analysis.sprite_x_position();
         let sprite_y_position = analysis.sprite_y_position();

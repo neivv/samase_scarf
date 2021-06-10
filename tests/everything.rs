@@ -218,10 +218,12 @@ fn everything_1212() {
         );
         assert_eq!(players, val);
 
-        let iscript = analysis.step_iscript();
-        assert_eq!(iscript.step_fn.unwrap().0, 0x0054a250);
-        assert_eq!(iscript.script_operand_at_switch.unwrap(), ctx.register(6));
-        assert_eq!(iscript.iscript_bin.unwrap(), ctx.mem32(ctx.constant(0xd35994)));
+        let step_iscript = analysis.step_iscript().unwrap();
+        let hook = analysis.step_iscript_hook().unwrap();
+        let iscript_bin = analysis.iscript_bin().unwrap();
+        assert_eq!(step_iscript.0, 0x0054a250);
+        assert_eq!(hook.script_operand_at_switch, ctx.register(2));
+        assert_eq!(iscript_bin, ctx.mem32(ctx.constant(0xd35994)));
 
         assert_eq!(analysis.vertex_buffer().unwrap(), ctx.constant(0xceede8));
     });
@@ -439,9 +441,10 @@ fn everything_1220g() {
 #[test]
 fn everything_1220h() {
     test_with_extra_checks(Path::new("1220h.exe"), |ctx, analysis| {
-        let iscript = analysis.step_iscript();
-        assert_eq!(iscript.step_fn.unwrap().0, 0x005474C0);
-        assert_eq!(iscript.script_operand_at_switch.unwrap(), ctx.register(6));
+        let step_iscript = analysis.step_iscript().unwrap();
+        let hook = analysis.step_iscript_hook().unwrap();
+        assert_eq!(step_iscript.0, 0x005474C0);
+        assert_eq!(hook.script_operand_at_switch, ctx.register(2));
     })
 }
 
@@ -512,9 +515,10 @@ fn everything_1221b() {
 #[test]
 fn everything_1221c() {
     test_with_extra_checks(Path::new("1221c.exe"), |ctx, analysis| {
-        let iscript = analysis.step_iscript();
-        assert_eq!(iscript.step_fn.unwrap().0, 0x00546760);
-        assert_eq!(iscript.script_operand_at_switch.unwrap(), ctx.register(7));
+        let step_iscript = analysis.step_iscript().unwrap();
+        let hook = analysis.step_iscript_hook().unwrap();
+        assert_eq!(step_iscript.0, 0x00546760);
+        assert_eq!(hook.script_operand_at_switch, ctx.register(7));
 
         let sprite_hlines = analysis.sprite_hlines();
         let sprite_hlines_end = analysis.sprite_hlines_end();
@@ -652,11 +656,12 @@ fn everything_1224b() {
 #[test]
 fn everything_1224c() {
     test_with_extra_checks(Path::new("1224c.exe"), |ctx, analysis| {
-        let iscript = analysis.step_iscript();
-        assert_eq!(iscript.step_fn.unwrap().0, 0x005409e0);
-        assert_eq!(iscript.script_operand_at_switch.unwrap(), ctx.register(6));
-        assert_eq!(iscript.iscript_bin.unwrap(), ctx.mem32(ctx.constant(0xde75c4)));
-        assert_eq!(iscript.opcode_check.unwrap(), (VirtualAddress(0x00540A2A), 2));
+        let step_iscript = analysis.step_iscript().unwrap();
+        let hook = analysis.step_iscript_hook().unwrap();
+        assert_eq!(step_iscript.0, 0x005409e0);
+        assert_eq!(hook.script_operand_at_switch, ctx.register(6));
+        assert_eq!(analysis.iscript_bin().unwrap(), ctx.mem32(ctx.constant(0xde75c4)));
+        assert_eq!(hook.opcode_check, (VirtualAddress(0x00540A2A), 2));
         let first_active_bullet = analysis.first_active_bullet();
         let last_active_bullet = analysis.last_active_bullet();
         let first_free_bullet = analysis.first_free_bullet();
@@ -1461,7 +1466,7 @@ fn test_nongeneric<'e>(
                 VisionUpdated | FirstDyingUnit | FirstRevealer | FirstInvisibleUnit |
                 ActiveIscriptFlingy | ActiveIscriptBullet | UnitShouldRevealArea |
                 NetworkReady | LastBulletSpawner | DatRequirementError | CursorMarker |
-                SyncActive =>
+                SyncActive | IscriptBin =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1586,11 +1591,7 @@ fn test_nongeneric<'e>(
         check_global_struct(units, binary, "units");
     }
 
-    let iscript = analysis.step_iscript();
-    assert!(iscript.step_fn.is_some());
-    assert!(iscript.script_operand_at_switch.is_some());
-    assert!(iscript.opcode_check.is_some());
-    check_global(iscript.iscript_bin.unwrap(), binary, "iscript_bin");
+    assert!(analysis.step_iscript_hook().is_some());
 
     let sprite_x_position = analysis.sprite_x_position();
     let sprite_y_position = analysis.sprite_y_position();
