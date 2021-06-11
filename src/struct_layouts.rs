@@ -35,3 +35,17 @@ pub fn if_unit_sprite<'e, Va: VirtualAddress>(op: Operand<'e>) -> Option<Operand
             x.address.if_arithmetic_add_const(unit_sprite::<Va>())
         })
 }
+
+pub fn ai_script_pos<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x8,
+        false => 0x10,
+    }
+}
+
+pub fn ai_script_flags<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x30,
+        false => 0x40,
+    }
+}

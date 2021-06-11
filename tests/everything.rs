@@ -58,6 +58,8 @@ fn everything_1208() {
         assert_eq!(analysis.first_invisible_unit().unwrap(), ctx.mem32(ctx.constant(0xf35350)));
         assert_eq!(analysis.step_network().unwrap().0, 0x007BF740);
         assert_eq!(analysis.render_screen().unwrap().0, 0x009CF170);
+
+        assert_eq!(analysis.first_ai_script().unwrap(), ctx.mem32(ctx.constant(0x00f5df00)));
     });
 }
 

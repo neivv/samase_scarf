@@ -116,10 +116,6 @@ impl<T: Clone> Cached<T> {
         self.0.clone()
     }
 
-    pub fn cached_ref(&self) -> Option<&T> {
-        self.0.as_ref()
-    }
-
     pub fn cache(&mut self, val: &T) {
         self.0 = Some(val.clone());
     }
@@ -428,7 +424,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     functions_with_callers: Cached<Rc<Vec<FuncCallPair<E::VirtualAddress>>>>,
     switch_tables: Cached<Rc<Vec<SwitchTable<E::VirtualAddress>>>>,
     firegraft_addresses: Cached<Rc<FiregraftAddresses<E::VirtualAddress>>>,
-    aiscript_hook: Cached<Option<AiScriptHook<'e, E::VirtualAddress>>>,
+    aiscript_hook: Option<AiScriptHook<'e, E::VirtualAddress>>,
     // 0 = Not calculated, 1 = Not found
     address_results: [E::VirtualAddress; AddressAnalysis::COUNT],
     // None = Not calculated, Custom(1234578) = Not found
@@ -1008,7 +1004,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn aiscript_hook(&mut self) -> Option<AiScriptHook<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.aiscript_hook(s))
+        self.enter(AnalysisCache::aiscript_hook)
     }
 
     pub fn get_region(&mut self) -> Option<E::VirtualAddress> {
@@ -1383,7 +1379,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn first_ai_script(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.first_ai_script(s))
+        self.analyze_many_op(OperandAnalysis::FirstAiScript, AnalysisCache::cache_ai_step_frame)
     }
 
     pub fn first_guard_ai(&mut self) -> Option<Operand<'e>> {
@@ -2754,22 +2750,15 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         &mut self,
         actx: &AnalysisCtx<'e, E>,
     ) -> Option<AiScriptHook<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.aiscript_hook.cached() {
-            return cached;
-        }
-        let result = ai::aiscript_hook(self, actx);
-        self.aiscript_hook.cache(&result);
-        result
+        self.ai_spend_money(actx)?;
+        self.aiscript_hook
     }
 
     fn aiscript_switch_table(
         &mut self,
         actx: &AnalysisCtx<'e, E>,
     ) -> Option<E::VirtualAddress> {
-        if let Some(cached) = self.aiscript_hook.cached_ref() {
-            return Some(cached.as_ref()?.switch_table);
-        }
-        Some(self.aiscript_hook(actx).as_ref()?.switch_table)
+        Some(self.aiscript_hook(actx)?.switch_table)
     }
 
     fn cache_regions(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -3265,13 +3254,6 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn first_ai_script(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.cache_single_operand(OperandAnalysis::FirstAiScript, |s| {
-            let aiscript = s.aiscript_hook(actx);
-            ai::first_ai_script(actx, aiscript.as_ref()?, &s.function_finder())
-        })
-    }
-
     fn first_guard_ai(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::FirstGuardAi, |s| {
             let units_dat = s.dat_virtual_address(DatType::Units, actx)?;
@@ -3654,12 +3636,13 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn cache_ai_step_frame(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
-        self.cache_many(&[AiStepRegion, AiSpendMoney], &[], |s| {
+        use OperandAnalysis::*;
+        self.cache_many(&[AiStepRegion, AiSpendMoney], &[FirstAiScript], |s| {
             let step_objects = s.step_objects(actx)?;
-            let ai_regions = s.ai_regions(actx)?;
             let game = s.game(actx)?;
-            let result = ai::step_frame_funcs(actx, step_objects, ai_regions, game);
-            Some(([result.ai_step_region, result.ai_spend_money], []))
+            let result = ai::step_frame_funcs(actx, step_objects, game);
+            s.aiscript_hook = result.hook;
+            Some(([result.ai_step_region, result.ai_spend_money], [result.first_ai_script]))
         })
     }
 

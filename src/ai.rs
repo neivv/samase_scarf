@@ -10,65 +10,10 @@ use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
 use crate::{
     ArgCache, OptionExt, OperandExt, single_result_assign, AnalysisCtx, unwrap_sext,
-    entry_of_until, EntryOf, ControlExt, AnalysisCache, FunctionFinder,
+    entry_of_until, EntryOf, ControlExt, FunctionFinder,
 };
 use crate::hash_map::HashSet;
-
-fn check_step_ai_scripts<'e, E: ExecutionState<'e>>(
-    binary: &'e BinaryFile<E::VirtualAddress>,
-    funcs: &[E::VirtualAddress],
-    ctx: OperandCtx<'e>,
-    call_pos: E::VirtualAddress,
-) -> Option<Operand<'e>> {
-    entry_of_until(binary, funcs, call_pos, |entry| {
-        let mut analyzer = StepAiScriptsAnalyzer::<E> {
-            first_ai_script: None,
-            phantom: Default::default(),
-        };
-        let mut analysis = FuncAnalysis::new(binary, ctx, entry);
-        analysis.analyze(&mut analyzer);
-        match analyzer.first_ai_script {
-            Some(s) => EntryOf::Ok(s),
-            None => EntryOf::Retry,
-        }
-    }).into_option()
-}
-
-struct StepAiScriptsAnalyzer<'e, E: ExecutionState<'e>> {
-    first_ai_script: Option<Operand<'e>>,
-    phantom: std::marker::PhantomData<(*const E, &'e ())>,
-}
-
-impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepAiScriptsAnalyzer<'e, E> {
-    type State = analysis::DefaultState;
-    type Exec = E;
-    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        match *op {
-            Operation::Jump { condition, .. } => {
-                let cond = ctrl.resolve(condition);
-                self.first_ai_script = cond.if_arithmetic_eq()
-                    .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                    .and_then(|(c, other)| match c {
-                        0 => Some(other),
-                        _ => None,
-                    })
-                    .and_then(|other| {
-                        if let Some((l, r)) = other.if_arithmetic_eq() {
-                            Operand::either(l, r, |x| x.if_constant())
-                                .and_then(|(c, other)| match c {
-                                    0 => Some(other.clone()),
-                                    _ => None,
-                                })
-                        } else {
-                            Some(other.clone())
-                        }
-                    });
-                ctrl.end_analysis();
-            }
-            _ => (),
-        }
-    }
-}
+use crate::struct_layouts;
 
 pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
@@ -114,7 +59,7 @@ pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct AiScriptHook<'e, Va: VirtualAddressTrait> {
     pub op_limit_hook_begin: Va,
     pub op_limit_hook_end: Va,
@@ -128,71 +73,48 @@ pub struct AiScriptHook<'e, Va: VirtualAddressTrait> {
     pub return_address: Va,
 }
 
-pub(crate) fn aiscript_hook<'e, E: ExecutionState<'e>>(
-    cache: &mut AnalysisCache<'e, E>,
-    analysis: &AnalysisCtx<'e, E>,
+fn aiscript_hook<'e, E: ExecutionState<'e>>(
+    ctx: OperandCtx<'e>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    entry: E::VirtualAddress,
+    switch_table: E::VirtualAddress,
 ) -> Option<AiScriptHook<'e, E::VirtualAddress>> {
-    let binary = analysis.binary;
-    let ctx = analysis.ctx;
+    let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+    let mut analyzer: AiscriptHookAnalyzer<E> = AiscriptHookAnalyzer {
+        aiscript_operand: None,
+        switch_state: None,
+        branch_start: entry,
+        best_def_jump: None,
+        op_default_jump: None,
+    };
+    analysis.analyze(&mut analyzer);
 
-    let switch_tables = cache.switch_tables();
-    let functions = cache.function_finder();
-    let mut result = switch_tables.iter().filter(|switch| {
-        let cases = &switch.cases;
-        // Allowing new Blizz opcodes if that ever happens..
-        // There aren't many 0x71-sized or larger tables anyways
-        cases.len() >= 0x71 &&
-            // 3 == 4 && 9 == a && 3e == 46 == 4c
-            cases[3] == cases[4] &&
-            cases[9] == cases[0xa] &&
-            cases[0x3e] == cases[0x46] &&
-            cases[0x3e] == cases[0x4c]
-    }).flat_map(|switch_table| {
-        functions.find_functions_using_global(analysis, switch_table.address)
-            .into_iter().map(move |f| (f.func_entry, switch_table.address))
-    }).filter_map(|(entry, switch_table)| {
-        let mut analysis = FuncAnalysis::new(binary, ctx, entry);
-        let mut analyzer: AiscriptHookAnalyzer<E> = AiscriptHookAnalyzer {
-            aiscript_operand: None,
-            switch_state: None,
-            branch_start: entry,
-            best_def_jump: None,
-            op_default_jump: None,
+    let tp = (analyzer.best_def_jump, analyzer.aiscript_operand, analyzer.switch_state);
+    if let (Some(default_jump), Some(script_operand_orig), Some(switch_state)) = tp {
+        let (op_limit_ok, op_limit_fail) = match default_jump.jumps_to_default {
+            true => (default_jump.branch_end, default_jump.to),
+            false => (default_jump.to, default_jump.branch_end),
         };
-        analysis.analyze(&mut analyzer);
-
-        let tp = (analyzer.best_def_jump, analyzer.aiscript_operand, analyzer.switch_state);
-        if let (Some(default_jump), Some(script_operand_orig), Some(switch_state)) = tp {
-            let (op_limit_ok, op_limit_fail) = match default_jump.jumps_to_default {
-                true => (default_jump.branch_end, default_jump.to),
-                false => (default_jump.to, default_jump.branch_end),
-            };
-            switch_state.unresolve(script_operand_orig)
-                .and_then(|at_switch| {
-                    aiscript_find_switch_loop_and_end::<E>(binary, ctx, switch_table)
-                        .map(move |(switch_loop_address, return_address)| {
-                            AiScriptHook {
-                                op_limit_hook_begin: default_jump.branch_start,
-                                op_limit_hook_end: default_jump.address,
-                                op_limit_ok,
-                                op_limit_fail,
-                                opcode_operand: default_jump.opcode,
-                                script_operand_at_switch: at_switch,
-                                switch_table,
-                                switch_loop_address,
-                                return_address,
-                            }
-                        })
-                })
-        } else {
-            None
-        }
-    });
-    let first = result.next();
-    if crate::test_assertions() && first.is_some() {
-        assert!(result.next().is_none());
+        switch_state.unresolve(script_operand_orig)
+            .and_then(|at_switch| {
+                aiscript_find_switch_loop_and_end::<E>(binary, ctx, switch_table)
+                    .map(move |(switch_loop_address, return_address)| {
+                        AiScriptHook {
+                            op_limit_hook_begin: default_jump.branch_start,
+                            op_limit_hook_end: default_jump.address,
+                            op_limit_ok,
+                            op_limit_fail,
+                            opcode_operand: default_jump.opcode,
+                            script_operand_at_switch: at_switch,
+                            switch_table,
+                            switch_loop_address,
+                            return_address,
+                        }
+                    })
+            })
+    } else {
+        None
     }
-    first
 }
 
 struct AiscriptHookAnalyzer<'e, E: ExecutionState<'e>> {
@@ -257,7 +179,6 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
                         let state = ctrl.exec_state();
                         let jumps = is_aiscript_switch_jump(ctx, resolved, state);
                         if let Some((jumps_to_default, opcode)) = jumps {
-                            trace!("Ais default jump {}", resolved);
                             self.op_default_jump = Some(OpDefaultJump {
                                 address: ctrl.address(),
                                 to: E::VirtualAddress::from_u64(to),
@@ -517,35 +438,6 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchEnd
     fn branch_end(&mut self, _ctrl: &mut Control<'e, '_, '_, Self>) {
         self.first_branch = false;
     }
-}
-
-pub(crate) fn first_ai_script<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'e, E>,
-    aiscript_hook: &AiScriptHook<'e, E::VirtualAddress>,
-    functions: &FunctionFinder<'_, 'e, E>,
-) -> Option<Operand<'e>> {
-    let binary = analysis.binary;
-    let ctx = analysis.ctx;
-
-    let funcs = functions.functions();
-    let hook_start = aiscript_hook.op_limit_hook_begin;
-
-    let result = entry_of_until(binary, &funcs, hook_start, |entry| {
-        let mut result = None;
-        let callers = functions.find_callers(analysis, entry);
-        for caller in callers {
-            let new = check_step_ai_scripts::<E>(binary, funcs, ctx, caller);
-            if single_result_assign(new, &mut result) {
-                break;
-            }
-        }
-        if let Some(res) = result {
-            EntryOf::Ok(res)
-        } else {
-            EntryOf::Retry
-        }
-    }).into_option();
-    result
 }
 
 pub(crate) fn first_guard_ai<'e, E: ExecutionState<'e>>(
@@ -896,23 +788,26 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnal
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct AiStepFrameFuncs<Va: VirtualAddressTrait> {
+pub(crate) struct AiStepFrameFuncs<'e, Va: VirtualAddressTrait> {
     pub ai_step_region: Option<Va>,
     pub ai_spend_money: Option<Va>,
+    pub first_ai_script: Option<Operand<'e>>,
+    pub hook: Option<AiScriptHook<'e, Va>>,
 }
 
 pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     step_objects: E::VirtualAddress,
-    ai_regions: Operand<'e>,
     game: Operand<'e>,
-) -> AiStepFrameFuncs<E::VirtualAddress> {
+) -> AiStepFrameFuncs<'e, E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
     let mut result = AiStepFrameFuncs {
         ai_step_region: None,
         ai_spend_money: None,
+        first_ai_script: None,
+        hook: None,
     };
 
     let arg_cache = &analysis.arg_cache;
@@ -923,53 +818,81 @@ pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
         inline_depth: 0,
         checked_functions: HashSet::with_capacity_and_hasher(0x40, Default::default()),
         binary,
-        ai_regions,
         game,
-        searching_spend_money: false,
+        state: StepAiState::StepAiScript,
         game_seconds_checked: false,
+        entry: step_objects,
     };
     analysis.analyze(&mut analyzer);
     result
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum StepAiState {
+    StepAiScript,
+    StepRegions,
+    SpendMoney,
+}
+
 struct StepRegionAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    result: &'a mut AiStepFrameFuncs<E::VirtualAddress>,
+    result: &'a mut AiStepFrameFuncs<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
     checked_functions: HashSet<Rva>,
     binary: &'e BinaryFile<E::VirtualAddress>,
-    ai_regions: Operand<'e>,
     game: Operand<'e>,
-    searching_spend_money: bool,
     game_seconds_checked: bool,
+    state: StepAiState,
+    entry: E::VirtualAddress,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyzer<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
         match *op {
-            Operation::Call(dest) if !self.searching_spend_money => {
-                if self.inline_depth < 3 {
+            Operation::Call(dest) if self.state != StepAiState::SpendMoney => {
+                let limit = match self.state {
+                    StepAiState::StepAiScript => 3,
+                    StepAiState::StepRegions => 3,
+                    StepAiState::SpendMoney => 0,
+                };
+                if self.inline_depth < limit {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let relative = dest.as_u64().checked_sub(self.binary.base.as_u64());
                         if let Some(relative) = relative {
                             let rva = Rva(relative as u32);
                             if self.checked_functions.insert(rva) {
-                                self.inline_depth += 1;
-                                let ctx = ctrl.ctx();
-                                let mut analysis = FuncAnalysis::new(self.binary, ctx, dest);
-                                analysis.analyze(self);
-                                self.inline_depth -= 1;
-                                if let Some(result) = self.result.ai_step_region {
-                                    if result.as_u64() == 0 {
-                                        self.result.ai_step_region = Some(dest);
+                                if self.state == StepAiState::StepAiScript {
+                                    self.inline_depth += 1;
+                                    let entry = self.entry;
+                                    self.entry = dest;
+                                    ctrl.analyze_with_current_state(self, dest);
+                                    self.entry = entry;
+                                    self.inline_depth -= 1;
+                                    if self.result.first_ai_script.is_some() {
+                                        if self.inline_depth > 1 {
+                                            ctrl.end_analysis();
+                                        }
                                     }
-                                    // ai_spend_money is expected to be at inline depth 1
-                                    if self.inline_depth > 1 {
-                                        ctrl.end_analysis();
-                                    } else {
-                                        self.searching_spend_money = true;
+                                } else if self.state == StepAiState::StepRegions {
+                                    // Step region is recognized from its arg1, so
+                                    // create separate analysis instead of using current state.
+                                    self.inline_depth += 1;
+                                    let mut analysis = FuncAnalysis::new(self.binary, ctx, dest);
+                                    analysis.analyze(self);
+                                    self.inline_depth -= 1;
+                                    if let Some(result) = self.result.ai_step_region {
+                                        if result.as_u64() == 0 {
+                                            self.result.ai_step_region = Some(dest);
+                                        }
+                                        // ai_spend_money is expected to be at inline depth 1
+                                        if self.inline_depth > 1 {
+                                            ctrl.end_analysis();
+                                        } else {
+                                            self.state = StepAiState::SpendMoney;
+                                        }
                                     }
                                 }
                             }
@@ -977,7 +900,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                     }
                 }
             }
-            Operation::Call(dest) if self.searching_spend_money => {
+            Operation::Call(dest) if self.state == StepAiState::SpendMoney => {
                 if self.game_seconds_checked {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         self.result.ai_spend_money = Some(dest);
@@ -989,8 +912,55 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                 // No jumps expected after game second check
                 ctrl.end_analysis();
             }
+            Operation::Jump { to, condition } if self.state == StepAiState::StepAiScript => {
+                let to = ctrl.resolve(to);
+                if let Some(to) = ctrl.if_mem_word(to) {
+                    let ok = to.if_arithmetic_add()
+                        .and_then(|(l, r)| {
+                            let switch_table = r.if_constant()?;
+                            let index = l.if_arithmetic_mul_const(4)?;
+                            let first_ai_script = index.if_mem8()?.if_arithmetic_add()
+                                .and_either(|x| {
+                                    let pos_off =
+                                        struct_layouts::ai_script_pos::<E::VirtualAddress>();
+                                    x.if_memory()?.address
+                                        .if_arithmetic_add_const(pos_off)
+                                })?.0;
+                            Some((E::VirtualAddress::from_u64(switch_table), first_ai_script))
+                        });
+                    if let Some((switch_table, first_ai_script)) = ok {
+                        self.result.first_ai_script = Some(first_ai_script);
+                        self.state = StepAiState::StepRegions;
+                        self.result.hook =
+                            aiscript_hook::<E>(ctx, ctrl.binary(), self.entry, switch_table);
+                        if self.inline_depth > 1 {
+                            ctrl.end_analysis();
+                        }
+                    }
+                } else if let Some(dest) = to.if_constant() {
+                    let condition = ctrl.resolve(condition);
+                    // Assume jumps checking Mem8[script.flags] & 1 (aiscript/bwscript)
+                    // always be taken to avoid making switch index undefined
+                    // (Doesn't matter whether it is aiscript or bwscript, just not both)
+                    let is_bwscript_check = crate::if_arithmetic_eq_neq(condition)
+                        .map(|(l, r, _)| (l, r))
+                        .and_if_either_other(|x| x.if_constant() == Some(0))
+                        .unwrap_or(condition)
+                        .if_arithmetic_and_const(1)
+                        .and_then(|op| {
+                            op.if_mem8()?.if_arithmetic_add_const(
+                                struct_layouts::ai_script_flags::<E::VirtualAddress>()
+                            )
+                        })
+                        .is_some();
+                    if is_bwscript_check {
+                        ctrl.end_branch();
+                        ctrl.add_branch_with_current_state(E::VirtualAddress::from_u64(dest));
+                    }
+                }
+            }
             Operation::Move(DestOperand::Memory(mem), val, None)
-                if self.searching_spend_money && mem.size == MemAccessSize::Mem32 =>
+                if self.state == StepAiState::SpendMoney && mem.size == MemAccessSize::Mem32 =>
             {
                 // Search for ai_spend_money by checking for a global store
                 // global = game.seconds < 4500 ? 7 : 0x25
@@ -1022,13 +992,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                         ctrl.end_analysis();
                     }
                 }
-                if self.inline_depth != 0 {
+                if self.inline_depth != 0 && self.state == StepAiState::StepRegions {
                     // First branch of ai_step_region always clears flag 0x4
                     // region = ai_regions[arg1] + arg2 * region_size;
                     // region.flags &= !0x4;
-                    //Mem8[
-                    //  Mem32[((Mem32[(rsp + 4)] * 4) + ee8c64)] + (Mem32[(rsp + 8)] * 34) + 8
-                    //  ]
                     let val = ctrl.resolve(val);
                     let dest = ctrl.resolve(mem.address);
                     let ok = val.if_arithmetic_and_const(0xfb)
@@ -1043,9 +1010,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                             x.if_memory()
                                 .map(|x| x.address)
                                 .and_then(|x| x.if_arithmetic_add())
-                                .and_either_other(|x| Some(()).filter(|()| x == self.ai_regions))
-                                .and_then(|x| x.if_arithmetic_mul())
-                                .filter(|&(l, _r)| l == self.arg_cache.on_entry(0))
+                                .and_either(|x| {
+                                    x.if_arithmetic_mul()
+                                        .filter(|&(l, _r)| l == self.arg_cache.on_entry(0))
+                                })
                         })
                         .is_some();
                     if ok {
