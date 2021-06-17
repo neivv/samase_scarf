@@ -479,13 +479,13 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CollectReturnValue
 
 pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
-    lobby_cmd_switch: &CompleteSwitch<E::VirtualAddress>,
+    lobby_cmd_switch: &CompleteSwitch<'e>,
 ) -> NetPlayers<'e, E::VirtualAddress> {
     let mut result = NetPlayers {
         net_players: None,
         init_net_player: None,
     };
-    let cmd_3f = match lobby_cmd_switch.branch(0x3f) {
+    let cmd_3f = match lobby_cmd_switch.branch(analysis.binary, 0x3f) {
         Some(s) => s,
         None => return result,
     };

@@ -1525,13 +1525,13 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitGameNetwork<'
 
 pub(crate) fn lobby_state<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
-    process_lobby_commands_switch: &CompleteSwitch<E::VirtualAddress>,
+    process_lobby_commands_switch: &CompleteSwitch<'e>,
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
     // Command 0x48 compares state == 8 at start of the function
-    let branch = process_lobby_commands_switch.branch(0x48)?;
+    let branch = process_lobby_commands_switch.branch(binary, 0x48)?;
     let mut analyzer = FindLobbyState::<E> {
         result: None,
         inlining: false,

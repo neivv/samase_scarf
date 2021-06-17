@@ -60,6 +60,9 @@ fn everything_1208() {
         assert_eq!(analysis.render_screen().unwrap().0, 0x009CF170);
 
         assert_eq!(analysis.first_ai_script().unwrap(), ctx.mem32(ctx.constant(0x00f5df00)));
+
+        assert_eq!(analysis.process_commands().unwrap().0, 0x007b84e0);
+        assert_eq!(analysis.storm_command_user().unwrap(), ctx.mem32(ctx.constant(0x00dcec10)));
     });
 }
 
@@ -167,14 +170,8 @@ fn everything_1211() {
 #[test]
 fn everything_1211b() {
     test_with_extra_checks(Path::new("1211b.exe"), |ctx, analysis| {
-        let commands = analysis.process_commands();
-        assert_eq!(commands.process_commands.unwrap().0, 0x0072D560);
-        assert_eq!(commands.storm_command_user.unwrap(), ctx.mem32(ctx.constant(0x00D61584)));
-        assert_eq!(
-            commands.switch.as_ref().unwrap().indirection.unwrap() -
-                commands.switch.as_ref().unwrap().offset,
-            VirtualAddress(0x00731270) - 5
-        );
+        assert_eq!(analysis.process_commands().unwrap().0, 0x0072D560);
+        assert_eq!(analysis.storm_command_user().unwrap(), ctx.mem32(ctx.constant(0x00D61584)));
 
         let print = analysis.print_text();
         assert_eq!(print.unwrap().0, 0x007044C0);
@@ -234,8 +231,7 @@ fn everything_1212() {
 #[test]
 fn everything_1212b() {
     test_with_extra_checks(Path::new("1212b.exe"), |_ctx, analysis| {
-        let commands = analysis.process_commands();
-        assert_eq!(commands.process_commands.unwrap().0, 0x0069ca80);
+        assert_eq!(analysis.process_commands().unwrap().0, 0x0069ca80);
 
         assert_eq!(analysis.unit_update_speed(), None);
         assert_eq!(analysis.unit_update_speed_iscript().unwrap().0, 0x0057bad0);
@@ -278,8 +274,7 @@ fn everything_1213b() {
             exit: VirtualAddress(0x00599a8e),
             unit: ctx.register(6),
         });
-        let commands = analysis.process_commands();
-        assert_eq!(commands.process_commands.unwrap().0, 0x00696d80);
+        assert_eq!(analysis.process_commands().unwrap().0, 0x00696d80);
 
         let init_game = analysis.init_game();
         let loaded_save = analysis.loaded_save();
@@ -1468,7 +1463,7 @@ fn test_nongeneric<'e>(
                 VisionUpdated | FirstDyingUnit | FirstRevealer | FirstInvisibleUnit |
                 ActiveIscriptFlingy | ActiveIscriptBullet | UnitShouldRevealArea |
                 NetworkReady | LastBulletSpawner | DatRequirementError | CursorMarker |
-                SyncActive | IscriptBin =>
+                SyncActive | IscriptBin | StormCommandUser =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1558,14 +1553,6 @@ fn test_nongeneric<'e>(
         aiscript_hook.script_operand_at_switch
     );
     assert_ne!(analysis.rng_seed().unwrap(), analysis.rng_enable().unwrap());
-
-    let commands = analysis.process_commands();
-    assert!(commands.process_commands.is_some());
-    assert!(commands.storm_command_user.is_some());
-    check_global(commands.storm_command_user.unwrap(), binary, "storm_command_user");
-
-    let lobby_commands = analysis.process_lobby_commands();
-    assert!(lobby_commands.is_some());
 
     let units_size = analysis.dat(DatType::Units).unwrap().entry_size;
     assert_eq!(analysis.dat(DatType::Weapons).unwrap().entry_size, units_size);

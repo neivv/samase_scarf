@@ -288,12 +288,11 @@ pub(crate) fn command_analysis<'a, 'acx, 'e, E: ExecutionState<'e>>(
     // Remove unit_id <= 105 check from Command_train,
     // unit_id >= 130 && unit_id <= 152 from zerg building morph
     let analysis = &dat_ctx.analysis;
-    let process_commands = dat_ctx.cache.process_commands(analysis);
-    let switch = process_commands.switch.as_ref()?;
+    let switch = dat_ctx.cache.process_commands_switch(analysis)?;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     for &case in &[0x1f, 0x35] {
-        let branch = switch.branch(case)?;
+        let branch = switch.branch(binary, case)?;
 
         let mut analyzer = CommandPatch {
             dat_ctx,

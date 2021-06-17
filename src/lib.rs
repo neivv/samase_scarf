@@ -65,7 +65,6 @@ use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 pub use scarf;
 pub use scarf::{BinarySection, VirtualAddress};
 pub use crate::ai::AiScriptHook;
-pub use crate::commands::{ProcessCommands};
 pub use crate::dat::{
     DatTablePtr, DatPatch, DatPatches, DatArrayPatch, DatEntryCountPatch, DatReplaceFunc
 };
@@ -82,7 +81,7 @@ pub use crate::units::{OrderIssuing};
 
 use crate::dialog::{MultiWireframes};
 use crate::map::{RunTriggers, TriggerUnitCountCaches};
-use crate::switch::{CompleteSwitch, full_switch_info};
+use crate::switch::{CompleteSwitch};
 
 use scarf::exec_state::ExecutionState as ExecutionStateTrait;
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
@@ -299,6 +298,8 @@ results! {
         SetMusic => "set_music",
         StepIscript => "step_iscript",
         StepIscriptSwitch => "step_iscript_switch",
+        ProcessCommands => "process_commands",
+        ProcessLobbyCommands => "process_lobby_commands",
     }
 }
 
@@ -412,6 +413,7 @@ results! {
         SyncActive => "sync_active",
         SyncData => "sync_data",
         IscriptBin => "iscript_bin",
+        StormCommandUser => "storm_command_user",
     }
 }
 
@@ -422,7 +424,6 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     relocs_with_values: Cached<Rc<Vec<RelocValues<E::VirtualAddress>>>>,
     functions: Cached<Rc<Vec<E::VirtualAddress>>>,
     functions_with_callers: Cached<Rc<Vec<FuncCallPair<E::VirtualAddress>>>>,
-    switch_tables: Cached<Rc<Vec<SwitchTable<E::VirtualAddress>>>>,
     firegraft_addresses: Cached<Rc<FiregraftAddresses<E::VirtualAddress>>>,
     aiscript_hook: Option<AiScriptHook<'e, E::VirtualAddress>>,
     // 0 = Not calculated, 1 = Not found
@@ -430,9 +431,9 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     // None = Not calculated, Custom(1234578) = Not found
     operand_results: [Option<Operand<'e>>; OperandAnalysis::COUNT],
     operand_not_found: Operand<'e>,
-    process_commands: Cached<Rc<ProcessCommands<'e, E::VirtualAddress>>>,
+    process_commands_switch: Cached<Option<CompleteSwitch<'e>>>,
+    process_lobby_commands_switch: Cached<Option<CompleteSwitch<'e>>>,
     command_lengths: Cached<Rc<Vec<u32>>>,
-    process_lobby_commands: Cached<Option<(CompleteSwitch<E::VirtualAddress>, E::VirtualAddress)>>,
     step_order_hidden: Cached<Rc<Vec<StepOrderHiddenHook<'e, E::VirtualAddress>>>>,
     step_secondary_order: Cached<Rc<Vec<SecondaryOrderHook<'e, E::VirtualAddress>>>>,
     step_iscript_hook: Option<StepIscriptHook<'e, E::VirtualAddress>>,
@@ -654,16 +655,15 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 relocs_with_values: Default::default(),
                 functions: Default::default(),
                 functions_with_callers: Default::default(),
-                switch_tables: Default::default(),
                 firegraft_addresses: Default::default(),
                 aiscript_hook: Default::default(),
                 address_results:
                     [E::VirtualAddress::from_u64(0); AddressAnalysis::COUNT],
                 operand_results: [None; OperandAnalysis::COUNT],
                 operand_not_found: ctx.custom(0x12345678),
-                process_commands: Default::default(),
+                process_commands_switch: Default::default(),
+                process_lobby_commands_switch: Default::default(),
                 command_lengths: Default::default(),
-                process_lobby_commands: Default::default(),
                 step_order_hidden: Default::default(),
                 step_secondary_order: Default::default(),
                 step_iscript_hook: Default::default(),
@@ -834,6 +834,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             SetMusic => self.set_music(),
             StepIscript => self.step_iscript(),
             StepIscriptSwitch => self.step_iscript_switch(),
+            ProcessCommands => self.process_commands(),
+            ProcessLobbyCommands => self.process_lobby_commands(),
         }
     }
 
@@ -948,6 +950,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             SyncActive => self.sync_active(),
             SyncData => self.sync_data(),
             IscriptBin => self.iscript_bin(),
+            StormCommandUser => self.storm_command_user(),
         }
     }
 
@@ -1058,8 +1061,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         )
     }
 
-    pub fn process_commands(&mut self) -> Rc<ProcessCommands<'e, E::VirtualAddress>> {
-        self.enter(|x, s| x.process_commands(s))
+    pub fn process_commands(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ProcessCommands,
+            AnalysisCache::cache_step_network,
+        )
     }
 
     pub fn command_user(&mut self) -> Option<Operand<'e>> {
@@ -1084,7 +1090,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn process_lobby_commands(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.process_lobby_commands(s))
+        self.analyze_many_addr(
+            AddressAnalysis::ProcessLobbyCommands,
+            AnalysisCache::cache_step_network,
+        )
     }
 
     pub fn send_command(&mut self) -> Option<E::VirtualAddress> {
@@ -1255,6 +1264,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn network_ready(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(OperandAnalysis::NetworkReady, AnalysisCache::cache_step_network)
+    }
+
+    pub fn storm_command_user(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::StormCommandUser, AnalysisCache::cache_step_network)
     }
 
     pub fn init_game_network(&mut self) -> Option<E::VirtualAddress> {
@@ -2639,55 +2652,6 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         result
     }
 
-    // Sorted by switch address
-    fn switch_tables(&mut self) -> Rc<Vec<SwitchTable<E::VirtualAddress>>> {
-        let binary = self.binary;
-        let text = self.text;
-        let relocs = self.relocs();
-        self.switch_tables.get_or_insert_with(|| {
-            let switches = scarf::analysis::find_switch_tables(binary, &relocs);
-            let mut table_start_index = 0;
-            let mut previous_address = E::VirtualAddress::from_u64(!0);
-            let mut result = Vec::new();
-            for i in 0..switches.len() {
-                let jump = &switches[i];
-                if jump.address != previous_address + 4 {
-                    if i - table_start_index > 2 {
-                        let cases =
-                            switches[table_start_index..i].iter().map(|x| x.callee).collect();
-                        result.push(SwitchTable {
-                            address: switches[table_start_index].address,
-                            cases,
-                        });
-                    }
-                    table_start_index = i;
-                }
-                previous_address = jump.address;
-            }
-
-            result.retain(|s| {
-                // There's microsoft directx libraries embedded with large switches for
-                // displaying error etc names, luckily their compiler produces optimized ones
-                // which are just
-                //  mov eax, text
-                //  jmp ret
-                // Why they couldn't just use a string array is beyond me :l
-                // There are some BW ones that this catches as well, but they aren't relevant
-                // at least atm. Hopefully I'll remember this filter if things change.
-                !s.cases.iter().take(6).all(|&case| {
-                    let case_relative = (case.as_u64() - text.virtual_address.as_u64()) as usize;
-                    text.data.get(case_relative..).and_then(|case_ins| {
-                        let first = *case_ins.get(0)?;
-                        let second = *case_ins.get(5)?;
-                        Some(first == 0xb8 && (second == 0xe9 || second == 0xeb))
-                    }).unwrap_or(false)
-                })
-            });
-            result.sort_unstable_by_key(|x| x.address);
-            Rc::new(result)
-        }).clone()
-    }
-
     /// Returns address and dat table struct size
     fn dat_virtual_address(
         &mut self,
@@ -2824,23 +2788,36 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::OrderInitArbiter, |s| s.cache_order_issuing(actx))
     }
 
-    fn process_commands(
+    fn process_commands_switch(
         &mut self,
         actx: &AnalysisCtx<'e, E>,
-    ) -> Rc<ProcessCommands<'e, E::VirtualAddress>> {
-        if let Some(cached) = self.process_commands.cached() {
+    ) -> Option<CompleteSwitch<'e>> {
+        if let Some(cached) = self.process_commands_switch.cached() {
             return cached;
         }
-        let switches = self.switch_tables();
-        let result = commands::process_commands(actx, &switches, &self.function_finder());
-        let result = Rc::new(result);
-        self.process_commands.cache(&result);
+        let func = self.process_commands(actx)?;
+        let result = commands::analyze_process_fn_switch(actx, func);
+        self.process_commands_switch.cache(&result);
+        result
+    }
+
+    fn process_lobby_commands_switch(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<CompleteSwitch<'e>> {
+        if let Some(cached) = self.process_lobby_commands_switch.cached() {
+            return cached;
+        }
+        let func = self.process_lobby_commands(actx)?;
+        let result = commands::analyze_process_fn_switch(actx, func);
+        self.process_lobby_commands_switch.cache(&result);
         result
     }
 
     fn command_user(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::CommandUser, |s| {
-            commands::command_user(actx, s.game(actx)?, &s.process_commands(actx))
+            let switch = s.process_commands_switch(actx)?;
+            commands::command_user(actx, s.game(actx)?, &switch)
         })
     }
 
@@ -2858,7 +2835,8 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn cache_selections(&mut self, actx: &AnalysisCtx<'e, E>) {
         use OperandAnalysis::*;
         self.cache_many(&[], &[UniqueCommandUser, Selections], |s| {
-            let result = commands::selections(actx, &s.process_commands(actx));
+            let switch = s.process_commands_switch(actx)?;
+            let result = commands::selections(actx, &switch);
             Some(([], [result.unique_command_user, result.selections]))
         })
     }
@@ -2869,48 +2847,9 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn is_replay(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::IsReplay, |s| {
-            commands::is_replay(actx, &s.process_commands(actx))
+            let switch = s.process_commands_switch(actx)?;
+            commands::is_replay(actx, &switch)
         })
-    }
-
-    fn process_lobby_commands_switch(&mut self, actx: &AnalysisCtx<'e, E>) ->
-        Option<(CompleteSwitch<E::VirtualAddress>, E::VirtualAddress)>
-    {
-        if let Some(cached) = self.process_lobby_commands.cached() {
-            return cached;
-        }
-        let mut result = None;
-        let switch_tables = self.switch_tables();
-        let switches = switch_tables.iter().filter(|switch| {
-            switch.cases.len() >= 0x10 && switch.cases.len() < 0x20
-        });
-        let funcs = self.function_finder();
-        for switch in switches {
-            let val = full_switch_info(actx, &funcs, switch)
-                .and_then(|(switch, entry)| {
-                    let ok = switch.cases.windows(0x34).enumerate().any(|(_, win)| {
-                        let first = win[0];
-                        let default = win[1];
-                        let last = win[0x33];
-                        first != last && last != default && first != default &&
-                            (&win[2..0x33]).iter().all(|&x| x == default)
-                    });
-                    if ok {
-                        Some((switch, entry))
-                    } else {
-                        None
-                    }
-                });
-            if single_result_assign(val, &mut result) {
-                break;
-            }
-        }
-        self.process_lobby_commands.cache(&result);
-        result
-    }
-
-    fn process_lobby_commands(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.process_lobby_commands_switch(actx).map(|x| x.1)
     }
 
     fn send_command(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -2921,7 +2860,8 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn print_text(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::PrintText, |s| {
-            commands::print_text(actx, &s.process_commands(actx))
+            let switch = s.process_commands_switch(actx)?;
+            commands::print_text(actx, &switch)
         })
     }
 
@@ -3068,15 +3008,26 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn cache_step_network(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
-        self.cache_many(&[ReceiveStormTurns], &[
-            NetPlayerFlags, PlayerTurns, PlayerTurnsSize, NetworkReady,
+        self.cache_many(&[ReceiveStormTurns, ProcessCommands, ProcessLobbyCommands], &[
+            NetPlayerFlags, PlayerTurns, PlayerTurnsSize, NetworkReady, StormCommandUser,
         ], |s| {
             let step_network = s.step_network(actx)?;
             let result = commands::analyze_step_network(actx, step_network);
-            Some(([result.receive_storm_turns], [
-                result.net_player_flags, result.player_turns, result.player_turns_size,
-                result.network_ready]))
+            Some(([result.receive_storm_turns, result.process_commands,
+                result.process_lobby_commands], [result.net_player_flags, result.player_turns,
+                result.player_turns_size, result.network_ready, result.storm_command_user]))
         })
+    }
+
+    fn process_commands(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::ProcessCommands, |s| s.cache_step_network(actx))
+    }
+
+    fn process_lobby_commands(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::ProcessLobbyCommands,
+            |s| s.cache_step_network(actx),
+        )
     }
 
     fn init_game_network(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -3098,7 +3049,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn lobby_state(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::LobbyState, |s| {
-            let (switch, _) = s.process_lobby_commands_switch(actx)?;
+            let switch = s.process_lobby_commands_switch(actx)?;
             game_init::lobby_state(actx, &switch)
         })
     }
@@ -3384,7 +3335,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn cache_net_players(&mut self, actx: &AnalysisCtx<'e, E>) {
         self.cache_many(&[AddressAnalysis::InitNetPlayer], &[OperandAnalysis::NetPlayers], |s| {
-            let (switch, _) = s.process_lobby_commands_switch(actx)?;
+            let switch = s.process_lobby_commands_switch(actx)?;
             let result = players::net_players(actx, &switch);
             s.net_player_size = result.net_players.map(|x| x.1).unwrap_or(0) as u16;
             Some(([result.init_net_player], [result.net_players.map(|x| x.0)]))
@@ -3972,7 +3923,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn step_replay_commands(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::StepReplayCommands, |s| {
-            let process_commands = s.process_commands(actx).process_commands?;
+            let process_commands = s.process_commands(actx)?;
             let game = s.game(actx)?;
             commands::step_replay_commands(actx, process_commands, game, &s.function_finder())
         })
@@ -3980,7 +3931,8 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn replay_data(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::ReplayData, |s| {
-            commands::replay_data(actx, s.process_commands(actx).switch.as_ref()?)
+            let switch = &s.process_commands_switch(actx)?;
+            commands::replay_data(actx, &switch)
         })
     }
 
@@ -4358,7 +4310,7 @@ impl<'e> AnalysisX86<'e> {
         self.0.do_next_queued_order()
     }
 
-    pub fn process_commands(&mut self) -> Rc<ProcessCommands<'e, VirtualAddress>> {
+    pub fn process_commands(&mut self) -> Option<VirtualAddress> {
         self.0.process_commands()
     }
 
@@ -5973,23 +5925,32 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
 
     fn aliasing_memory_fix(&mut self, op: &scarf::Operation<'e>) {
         if let scarf::Operation::Move(ref dest, value, None) = *op {
-            if value.if_mem8().is_some() {
-                let value = self.resolve(value);
-                if let Some((l, r)) =
-                    value.if_mem8().and_then(|x| x.if_arithmetic_add())
-                {
-                    fn check(op: Operand<'_>) -> bool {
-                        op.if_arithmetic(scarf::ArithOpType::Modulo)
-                            .or_else(|| op.if_arithmetic(scarf::ArithOpType::And))
-                            .and_then(|x| x.1.if_constant())
-                            .filter(|&c| c > 0x400)
-                            .is_some()
+            if let Some(mem) = value.if_memory() {
+                if mem.size == MemAccessSize::Mem8 {
+                    let value = self.resolve(value);
+                    if let Some((l, r)) =
+                        value.if_mem8().and_then(|x| x.if_arithmetic_add())
+                    {
+                        fn check(op: Operand<'_>) -> bool {
+                            op.if_arithmetic(scarf::ArithOpType::Modulo)
+                                .or_else(|| op.if_arithmetic(scarf::ArithOpType::And))
+                                .and_then(|x| x.1.if_constant())
+                                .filter(|&c| c > 0x400)
+                                .is_some()
+                        }
+                        if check(l) || check(r) || r.if_constant() == Some(0xfff) {
+                            self.skip_operation();
+                            let ctx = self.ctx();
+                            let state = self.exec_state();
+                            state.move_to(dest, ctx.new_undef());
+                        }
                     }
-                    if check(l) || check(r) || r.if_constant() == Some(0xfff) {
+                } else if mem.size == MemAccessSize::Mem32 {
+                    if self.resolve(mem.address).if_constant() == Some(0x7ffe026c) {
                         self.skip_operation();
                         let ctx = self.ctx();
                         let state = self.exec_state();
-                        state.move_to(dest, ctx.new_undef());
+                        state.move_to(dest, ctx.constant(0xa));
                     }
                 }
             }

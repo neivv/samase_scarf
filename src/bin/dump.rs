@@ -222,20 +222,9 @@ fn main() {
         println!("step_order_hidden: {:?}", step_order_hidden);
         let step_secondary = analysis.step_secondary_order();
         println!("step_secondary_order: {:?}", step_secondary);
-        let commands = analysis.process_commands();
-        println!("process_commands: {:?}", commands.process_commands);
-        println!("storm_command_user: {}", format_op_operand(commands.storm_command_user));
-        for switch in &commands.switch {
-            println!(
-                "process_commands switch: {:?} ({:?} @ {:x})",
-                switch.address, switch.indirection, switch.offset,
-            );
-        }
         let lengths = analysis.command_lengths();
         let lengths = lengths.iter().map(|&x| x as i32).collect::<Vec<_>>();
         println!("command_lengths: len {:x}, {:?}", lengths.len(), lengths);
-        let lobby_commands = analysis.process_lobby_commands();
-        println!("process_lobby_commands: {:?}", lobby_commands);
 
         let format_dat = |val: &Option<samase_scarf::DatTablePtr>| {
             if let Some(x) = val {
