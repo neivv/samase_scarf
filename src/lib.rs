@@ -5347,11 +5347,11 @@ fn first_definite_entry<Va: VirtualAddressTrait>(
         }
         // Casting to u64 -> u32 is fine as there aren't going to be 4GB binaries
         let relative = (entry.as_u64() - binary.base.as_u64()) as u32;
-        let first_bytes = match binary.slice_from(relative..relative + 3) {
-            Ok(o) => o,
-            Err(_) => return false,
-        };
         if Va::SIZE == 4 {
+            let first_bytes = match binary.slice_from(relative..relative + 3) {
+                Ok(o) => o,
+                Err(_) => return false,
+            };
             // push ebx; mov ebx, esp or push ebp; mov ebp, esp
             // Two different encodings for both
             first_bytes == [0x53, 0x8b, 0xdc] ||
@@ -5359,7 +5359,25 @@ fn first_definite_entry<Va: VirtualAddressTrait>(
                 first_bytes == [0x55, 0x8b, 0xec] ||
                 first_bytes == [0x55, 0x89, 0xe5]
         } else {
-            unimplemented!();
+            let first_bytes = match binary.slice_from(relative..relative + 5) {
+                Ok(o) => o,
+                Err(_) => return false,
+            };
+            // Check for 48, 89, xx, 24, [08|10|18|20]
+            // for mov [rsp + x], reg
+            (first_bytes[0] == 0x48 &&
+                first_bytes[1] == 0x89 &&
+                first_bytes[3] == 0x24 &&
+                first_bytes[4] & 0x7 == 0 &&
+                first_bytes[4].wrapping_sub(1) < 0x20) ||
+            // Sub rsp, constant.
+            // If the sub is at start of function it should be 8-misaligned to 16-align
+            // to fixup stack back to 16-align.
+            // (Seems that usually if there are pushs they are before stack sub)
+            (first_bytes[0] == 0x48 &&
+                matches!(first_bytes[1], 0x81 | 0x83) &&
+                first_bytes[2] == 0xec &&
+                first_bytes[3] & 0xf == 8)
         }
     }
     let mut index = funcs.binary_search_by(|&x| match x <= entry {

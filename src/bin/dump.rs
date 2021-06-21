@@ -10,7 +10,7 @@ use anyhow::{anyhow, Context, Result};
 use byteorder::{LittleEndian, ByteOrder};
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile};
+use scarf::{BinaryFile, OperandCtx};
 
 use samase_scarf::{Analysis, DatType};
 
@@ -18,149 +18,94 @@ fn format_op_operand(op: Option<scarf::Operand>) -> String {
     op.as_ref().map(|x| x.to_string()).unwrap_or_else(|| "None".into())
 }
 
+struct Args {
+    dump_shaders: bool,
+    dump_vtables: bool,
+    dump_dat_patches: bool,
+    dump_euds: bool,
+}
+
 fn main() {
     init_stdout_log();
-    let start_time = ::std::time::Instant::now();
     let exe = std::env::args_os().nth(1).unwrap();
     let arg2 = std::env::args_os().nth(2);
     let arg2 = arg2.as_ref();
-    let do_dump_shaders = arg2.and_then(|arg| {
+    let dump_shaders = arg2.and_then(|arg| {
         let ok = arg.to_str()? == "--dump-shaders";
         Some(()).filter(|()| ok)
     }).is_some();
-    let do_dump_vtables = arg2.and_then(|arg| {
+    let dump_vtables = arg2.and_then(|arg| {
         let ok = arg.to_str()? == "--dump-vtables";
         Some(()).filter(|()| ok)
     }).is_some();
-    let do_dump_dat_patches = arg2.and_then(|arg| {
+    let dump_dat_patches = arg2.and_then(|arg| {
         let ok = arg.to_str()? == "--dat-patches";
         Some(()).filter(|()| ok)
     }).is_some();
-    let do_dump_euds = arg2.and_then(|arg| {
+    let dump_euds = arg2.and_then(|arg| {
         let ok = arg.to_str()? == "--dump-euds";
         Some(()).filter(|()| ok)
     }).is_some();
 
-    let mut binary = scarf::parse(&exe).unwrap();
-    let relocs = scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary).unwrap();
-    binary.set_relocs(relocs);
-    let ctx = &scarf::OperandContext::new();
-    let mut analysis = Analysis::<scarf::ExecutionStateX86<'_>>::new(&binary, ctx);
+    let args = Args {
+        dump_shaders,
+        dump_vtables,
+        dump_dat_patches,
+        dump_euds,
+    };
 
-    if do_dump_shaders {
+    let start_time;
+    if !is_64_bit(Path::new(&exe)) {
+        let mut binary = scarf::parse(&exe).unwrap();
+        let relocs =
+            scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary).unwrap();
+        binary.set_relocs(relocs);
+        let ctx = &scarf::OperandContext::new();
+        start_time = ::std::time::Instant::now();
+        dump::<scarf::ExecutionStateX86<'_>>(&binary, ctx, &args)
+    } else {
+        let binary = scarf::parse_x86_64(&exe).unwrap();
+        let ctx = &scarf::OperandContext::new();
+        start_time = ::std::time::Instant::now();
+        dump::<scarf::ExecutionStateX86_64<'_>>(&binary, ctx, &args)
+    }
+
+    let elapsed = start_time.elapsed();
+    println!("Time taken: {}.{:09} s", elapsed.as_secs(), elapsed.subsec_nanos());
+}
+
+fn dump<'e, E: ExecutionState<'e>>(
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    ctx: OperandCtx<'e>,
+    args: &Args,
+) {
+    let mut analysis = Analysis::<E>::new(binary, ctx);
+
+    if args.dump_shaders {
         let path = std::env::args_os().nth(3).unwrap();
         if let Err(e) = dump_shaders(&binary, &mut analysis, Path::new(&path)) {
             eprintln!("Failed to dump shaders: {:?}", e);
         }
         return;
     }
-    if do_dump_vtables {
-        dump_vtables(&binary, &mut analysis);
+    if args.dump_vtables {
+        dump_vtables(binary, &mut analysis);
         return;
     }
-    if do_dump_euds {
+    if args.dump_euds {
         let euds = analysis.eud_table();
         for eud in &euds.euds {
             println!("{:08x}:{:x} = {} ({:08x})", eud.address, eud.size, eud.operand, eud.flags);
         }
         return;
     }
-    if do_dump_dat_patches {
-        if let Some(dat_patches) = analysis.dat_patches_debug_data() {
-            let mut vec = dat_patches.tables.into_iter().collect::<Vec<_>>();
-            vec.sort_by_key(|x| x.0);
-            for (dat, debug) in vec {
-                // Since Debug for VirtualAddress has the VirtualAddress(0001233) etc,
-                // it's distracting to have that much of it.
-                let mapped = debug.entry_counts.iter().map(|x| x.as_u64()).collect::<Vec<_>>();
-                println!("{:?} entry count patches: {:x?}", dat, mapped);
-                println!("{:?} array patches:", dat);
-                let orig_arrays_end = debug.array_patches.iter()
-                    .take(0x80)
-                    .rev()
-                    .position(|x| x.len() != 0)
-                    .map(|x| debug.array_patches.len().min(0x80) - x)
-                    .unwrap_or(0);
-                let print_array = |arr: &[(scarf::VirtualAddress, i32, u32)], i: usize| {
-                    let all_offsets_zero = arr.iter().all(|x| x.1 == 0 && x.2 == 0);
-                    if all_offsets_zero {
-                        let mapped = arr.iter().map(|x| x.0.as_u64()).collect::<Vec<_>>();
-                        println!("    {:02x}: {:x?}", i, mapped);
-                    } else {
-                        let mapped = arr.iter()
-                            .map(|x| format!("{:x}:{:x}+{:x}", x.0.as_u64(), x.1, x.2))
-                            .collect::<Vec<_>>();
-                        println!("    {:02x}: {:x?}", i, mapped);
-                    }
-                };
-                if orig_arrays_end != 0 {
-                    for (i, arr) in debug.array_patches.iter().enumerate().take(orig_arrays_end) {
-                        print_array(&arr, i);
-                    }
-                }
-                if debug.array_patches.len() > 0x80 {
-                    let ext_arrays_start = debug.array_patches.iter().skip(0x80)
-                        .position(|x| x.len() != 0)
-                        .map(|x| 0x80 + x)
-                        .unwrap_or(debug.array_patches.len());
-                    for (i, arr) in debug.array_patches.iter()
-                        .enumerate()
-                        .skip(ext_arrays_start)
-                    {
-                        print_array(&arr, i);
-                    }
-                }
-            }
-            println!("--- Replaces ---");
-            for (addr, val) in dat_patches.replaces {
-                println!("{:08x} = {:02x?}", addr.as_u64(), &val);
-            }
-            println!("--- Hooks ---");
-            for (addr, skip, val) in dat_patches.hooks {
-                println!("{:08x}:{:x} = {:02x?}", addr.as_u64(), skip, val);
-            }
-            println!("--- Two step hooks ---");
-            for (addr, free_space, skip, val) in dat_patches.two_step_hooks {
-                println!(
-                    "{:08x}:{:x} = {:02x?} (Free @ {:08x})",
-                    addr.as_u64(), skip, val, free_space.as_u64(),
-                );
-            }
-            println!("--- Extended array patches ---");
-            for (addr, two_step, len, ext_id, operand) in dat_patches.ext_array_patches {
-                if let Some(two_step) = two_step {
-                    println!(
-                        "{:02x}: {:?}:{:x} (Two step {:?}) = {:?}",
-                        ext_id, addr, len, two_step, operand,
-                    );
-                } else {
-                    println!("{:02x}: {:?}:{:x} = {:?}", ext_id, addr, len, operand);
-                }
-            }
-            println!("--- Extended array arg patches ---");
-            for (addr, args) in dat_patches.ext_array_args {
-                println!("{:08x}: {:?}", addr.as_u64(), args);
-            }
-            println!("--- Grp texture hooks ---");
-            for (addr, len, dest, base, index) in dat_patches.grp_texture_hooks {
-                println!("{:08x}:{:x}: {} <= {}, {}", addr.as_u64(), len, dest, base, index);
-            }
-            let mapped = dat_patches.grp_index_hooks.iter()
-                .map(|x| format!("{:08x}", x.as_u64()))
-                .collect::<Vec<_>>();
-            println!("Grp index hooks: {:?}", mapped);
-            println!("--- Func replaces ---");
-            for (addr, ty) in dat_patches.func_replaces {
-                println!("{:08x} = {:?}", addr.as_u64(), ty);
-            }
-        } else {
-            println!("Dat patches analysis failed");
-        }
-        let elapsed = start_time.elapsed();
-        println!("Time taken: {}.{:09} s", elapsed.as_secs(), elapsed.subsec_nanos());
+    if args.dump_dat_patches {
+        dump_dat_patches(&mut analysis);
         return;
     }
 
+    let arg2 = std::env::args_os().nth(2);
+    let arg2 = arg2.as_ref();
     let filter = arg2.and_then(|x| x.to_str());
 
     // Addresses
@@ -312,7 +257,7 @@ fn main() {
 
         println!("SMemAlloc: {:?}", analysis.smem_alloc());
         println!("SMemFree: {:?}", analysis.smem_free());
-        println!("allocator: {:?}", format_op_operand(analysis.allocator()));
+        println!("allocator: {}", format_op_operand(analysis.allocator()));
 
         let mouse_xy = analysis.mouse_xy();
         println!("mouse_x: {}", format_op_operand(mouse_xy.x_var));
@@ -352,9 +297,6 @@ fn main() {
         _ => 0,
     });
     println!("Interned count: {}", ctx.interned_count());
-
-    let elapsed = start_time.elapsed();
-    println!("Time taken: {}.{:09} s", elapsed.as_secs(), elapsed.subsec_nanos());
 }
 
 fn init_stdout_log() {
@@ -382,6 +324,101 @@ fn create_dir(path: &Path) -> Result<()> {
             .with_context(|| format!("Couldn't create directory '{}'", path.display()))
     } else {
         Ok(())
+    }
+}
+
+fn dump_dat_patches<'e, E: ExecutionState<'e>>(
+    analysis: &mut Analysis<'e, E>,
+) {
+    if let Some(dat_patches) = analysis.dat_patches_debug_data() {
+        let mut vec = dat_patches.tables.into_iter().collect::<Vec<_>>();
+        vec.sort_by_key(|x| x.0);
+        for (dat, debug) in vec {
+            // Since Debug for VirtualAddress has the VirtualAddress(0001233) etc,
+            // it's distracting to have that much of it.
+            let mapped = debug.entry_counts.iter().map(|x| x.as_u64()).collect::<Vec<_>>();
+            println!("{:?} entry count patches: {:x?}", dat, mapped);
+            println!("{:?} array patches:", dat);
+            let orig_arrays_end = debug.array_patches.iter()
+                .take(0x80)
+                .rev()
+                .position(|x| x.len() != 0)
+                .map(|x| debug.array_patches.len().min(0x80) - x)
+                .unwrap_or(0);
+            let print_array = |arr: &[(E::VirtualAddress, i32, u32)], i: usize| {
+                let all_offsets_zero = arr.iter().all(|x| x.1 == 0 && x.2 == 0);
+                if all_offsets_zero {
+                    let mapped = arr.iter().map(|x| x.0.as_u64()).collect::<Vec<_>>();
+                    println!("    {:02x}: {:x?}", i, mapped);
+                } else {
+                    let mapped = arr.iter()
+                        .map(|x| format!("{:x}:{:x}+{:x}", x.0.as_u64(), x.1, x.2))
+                        .collect::<Vec<_>>();
+                    println!("    {:02x}: {:x?}", i, mapped);
+                }
+            };
+            if orig_arrays_end != 0 {
+                for (i, arr) in debug.array_patches.iter().enumerate().take(orig_arrays_end) {
+                    print_array(&arr, i);
+                }
+            }
+            if debug.array_patches.len() > 0x80 {
+                let ext_arrays_start = debug.array_patches.iter().skip(0x80)
+                    .position(|x| x.len() != 0)
+                    .map(|x| 0x80 + x)
+                    .unwrap_or(debug.array_patches.len());
+                for (i, arr) in debug.array_patches.iter()
+                    .enumerate()
+                    .skip(ext_arrays_start)
+                {
+                    print_array(&arr, i);
+                }
+            }
+        }
+        println!("--- Replaces ---");
+        for (addr, val) in dat_patches.replaces {
+            println!("{:08x} = {:02x?}", addr.as_u64(), &val);
+        }
+        println!("--- Hooks ---");
+        for (addr, skip, val) in dat_patches.hooks {
+            println!("{:08x}:{:x} = {:02x?}", addr.as_u64(), skip, val);
+        }
+        println!("--- Two step hooks ---");
+        for (addr, free_space, skip, val) in dat_patches.two_step_hooks {
+            println!(
+                "{:08x}:{:x} = {:02x?} (Free @ {:08x})",
+                addr.as_u64(), skip, val, free_space.as_u64(),
+            );
+        }
+        println!("--- Extended array patches ---");
+        for (addr, two_step, len, ext_id, operand) in dat_patches.ext_array_patches {
+            if let Some(two_step) = two_step {
+                println!(
+                    "{:02x}: {:?}:{:x} (Two step {:?}) = {:?}",
+                    ext_id, addr, len, two_step, operand,
+                );
+            } else {
+                println!("{:02x}: {:?}:{:x} = {:?}", ext_id, addr, len, operand);
+            }
+        }
+        println!("--- Extended array arg patches ---");
+        for (addr, args) in dat_patches.ext_array_args {
+            println!("{:08x}: {:?}", addr.as_u64(), args);
+        }
+        println!("--- Grp texture hooks ---");
+        for (addr, len, dest, base, index) in dat_patches.grp_texture_hooks {
+            println!("{:08x}:{:x}: {} <= {}, {}", addr.as_u64(), len, dest, base, index);
+        }
+        let mapped = dat_patches.grp_index_hooks.iter()
+            .map(|x| format!("{:08x}", x.as_u64()))
+            .collect::<Vec<_>>();
+        println!("Grp index hooks: {:?}", mapped);
+        println!("--- Func replaces ---");
+        for (addr, ty) in dat_patches.func_replaces {
+            println!("{:08x} = {:?}", addr.as_u64(), ty);
+        }
+    } else {
+        println!("Dat patches analysis failed");
     }
 }
 
@@ -583,4 +620,10 @@ fn dump_vtables<'e, E: ExecutionState<'e>>(
             println!("{}: {:?}", name, vtable);
         }
     }
+}
+
+fn is_64_bit(path: &Path) -> bool {
+    let file = std::fs::read(path).unwrap();
+    let offset = LittleEndian::read_u32(&file[0x3c..]) as usize;
+    LittleEndian::read_u16(&file[offset + 4..]) == 0x8664
 }
