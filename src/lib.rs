@@ -49,6 +49,7 @@ mod switch;
 mod text;
 mod units;
 mod vtables;
+mod x86_64_globals;
 
 pub mod dat;
 
@@ -421,7 +422,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     binary: &'e BinaryFile<E::VirtualAddress>,
     text: &'e BinarySection<E::VirtualAddress>,
     relocs: Cached<Rc<Vec<E::VirtualAddress>>>,
-    relocs_with_values: Cached<Rc<Vec<RelocValues<E::VirtualAddress>>>>,
+    globals_with_values: Cached<Rc<Vec<RelocValues<E::VirtualAddress>>>>,
     functions: Cached<Rc<Vec<E::VirtualAddress>>>,
     functions_with_callers: Cached<Rc<Vec<FuncCallPair<E::VirtualAddress>>>>,
     firegraft_addresses: Cached<Rc<FiregraftAddresses<E::VirtualAddress>>>,
@@ -652,7 +653,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 binary,
                 text,
                 relocs: Default::default(),
-                relocs_with_values: Default::default(),
+                globals_with_values: Default::default(),
                 functions: Default::default(),
                 functions_with_callers: Default::default(),
                 firegraft_addresses: Default::default(),
@@ -2471,21 +2472,25 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         }).clone()
     }
 
-    fn relocs_with_values(&mut self) -> Rc<Vec<RelocValues<E::VirtualAddress>>> {
-        let result = match self.relocs_with_values.is_none() {
+    fn globals_with_values(&mut self) -> Rc<Vec<RelocValues<E::VirtualAddress>>> {
+        let result = match self.globals_with_values.is_none() {
             true => {
-                let relocs = self.relocs();
-                match scarf::analysis::relocs_with_values(self.binary, &relocs) {
-                    Ok(o) => o,
-                    Err(e) => {
-                        debug!("Error getting relocs with values: {}", e);
-                        Vec::new()
+                if E::VirtualAddress::SIZE == 4 {
+                    let relocs = self.relocs();
+                    match scarf::analysis::relocs_with_values(self.binary, &relocs) {
+                        Ok(o) => o,
+                        Err(e) => {
+                            debug!("Error getting relocs with values: {}", e);
+                            Vec::new()
+                        }
                     }
+                } else {
+                    x86_64_globals::x86_64_globals(self.binary)
                 }
             }
             false => Vec::new(),
         };
-        self.relocs_with_values.get_or_insert_with(|| {
+        self.globals_with_values.get_or_insert_with(|| {
             Rc::new(result)
         }).clone()
     }
@@ -2520,18 +2525,18 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         if self.functions.is_none() {
             self.functions();
         }
-        if self.relocs_with_values.is_none() {
-            self.relocs_with_values();
+        if self.globals_with_values.is_none() {
+            self.globals_with_values();
         }
         if self.functions_with_callers.is_none() {
             self.functions_with_callers();
         }
         let functions = self.functions.0.as_deref().unwrap();
-        let relocs_with_values = self.relocs_with_values.0.as_deref().unwrap();
+        let globals_with_values = self.globals_with_values.0.as_deref().unwrap();
         let functions_with_callers = self.functions_with_callers.0.as_deref().unwrap();
         FunctionFinder {
             functions,
-            relocs_with_values,
+            globals_with_values,
             functions_with_callers,
         }
     }
@@ -2639,7 +2644,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             return cached;
         }
         let functions = &self.function_finder();
-        let relocs = functions.relocs_with_values();
+        let relocs = functions.globals_with_values();
         let buttonsets = firegraft::find_buttonsets(actx);
         let status_funcs = firegraft::find_unit_status_funcs(actx, &functions);
         let reqs = firegraft::find_requirement_tables(actx, relocs);
@@ -5483,7 +5488,7 @@ where F: FnMut(Va) -> EntryOf<R>
 
 struct FunctionFinder<'a, 'e, E: ExecutionStateTrait<'e>> {
     functions: &'a [E::VirtualAddress],
-    relocs_with_values: &'a [RelocValues<E::VirtualAddress>],
+    globals_with_values: &'a [RelocValues<E::VirtualAddress>],
     functions_with_callers: &'a [FuncCallPair<E::VirtualAddress>],
 }
 
@@ -5492,8 +5497,8 @@ impl<'a, 'e, E: ExecutionStateTrait<'e>> FunctionFinder<'a, 'e, E> {
         &self.functions
     }
 
-    pub fn relocs_with_values(&self) -> &[RelocValues<E::VirtualAddress>] {
-        &self.relocs_with_values
+    pub fn globals_with_values(&self) -> &[RelocValues<E::VirtualAddress>] {
+        &self.globals_with_values
     }
 
     pub fn functions_with_callers(&self) -> &[FuncCallPair<E::VirtualAddress>] {
@@ -5551,7 +5556,7 @@ impl<'a, 'e, E: ExecutionStateTrait<'e>> FunctionFinder<'a, 'e, E> {
     ) -> BumpVec<'acx, GlobalRefs<E::VirtualAddress>> {
         use std::cmp::Ordering;
 
-        let relocs = self.relocs_with_values();
+        let relocs = self.globals_with_values();
         let functions = self.functions();
         let start = relocs.binary_search_by(|x| match x.value >= addr {
             true => Ordering::Greater,

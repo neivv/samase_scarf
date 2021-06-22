@@ -18,7 +18,7 @@ pub(crate) fn vtables<'e, E: ExecutionState<'e>>(
     // -> Mem32[addr + x * 4] (Base class for renderer)
     // -> Mem32[addr] (?? Indirection)
     // -> addr + 8 == b".?AVRenderer" (Base class info, in .data instead of .rdata)
-    let relocs = functions.relocs_with_values();
+    let relocs = functions.globals_with_values();
     let data = analysis.binary_sections.data;
     let bump = &analysis.bump;
     let base_class_info = relocs.iter().filter_map(|reloc| {

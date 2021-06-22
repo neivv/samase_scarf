@@ -21,7 +21,7 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
     result: &mut DatPatches<'e, E::VirtualAddress>,
 ) -> Option<()> {
     let ctx = analysis.ctx;
-    let relocs = cache.relocs_with_values();
+    let relocs = cache.globals_with_values();
     let text = analysis.binary_sections.text;
     let text_end = text.virtual_address + text.virtual_size;
     let game = cache.game(analysis)?;

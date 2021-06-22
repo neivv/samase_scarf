@@ -564,7 +564,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             techdata: dat_table(0xb),
             orders: dat_table(0x13),
             binary: analysis.binary,
-            relocs: cache.relocs_with_values(),
+            relocs: cache.globals_with_values(),
             text,
             analysis,
             cache,
