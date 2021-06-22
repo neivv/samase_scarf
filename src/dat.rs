@@ -207,9 +207,10 @@ pub(crate) fn dat_table<'e, E: ExecutionState<'e>>(
             // TODO Could check that they must be relocs?
             if let Ok(first) = binary.read_address(addr) {
                 if first.as_u64() > 0x10000 {
-                    let size = (1..10).filter_map(|offset| {
-                        match binary.read_address(addr + offset * 4) {
-                            Ok(x) if x.as_u64() > 0x10000 => Some(offset * 4),
+                    let size = (2..10).filter_map(|offset| {
+                        match binary.read_address(addr + offset * E::VirtualAddress::SIZE) {
+                            Ok(x) if x.as_u64() > 0x10000 =>
+                                Some(offset * E::VirtualAddress::SIZE),
                             _ => None,
                         }
                     }).next();
