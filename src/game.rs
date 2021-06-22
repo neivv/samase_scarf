@@ -89,7 +89,6 @@ pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
                     vision_state: VisionStepState::new(),
                     checked_vision_funcs: &mut checked_vision_funcs,
                     binary,
-                    ctx,
                     result: EntryOf::Retry,
                     rng_ref_address: addr,
                     rng_ref_seen: false,
@@ -118,7 +117,6 @@ struct IsStepObjects<'a, 'acx, 'e, E: ExecutionState<'e>> {
     vision_state: VisionStepState,
     checked_vision_funcs: &'a mut BumpVec<'acx, (E::VirtualAddress, bool)>,
     binary: &'e BinaryFile<E::VirtualAddress>,
-    ctx: OperandCtx<'e>,
     result: EntryOf<()>,
     // Can either be mem access or call
     rng_ref_address: E::VirtualAddress,
@@ -133,6 +131,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
                 self.check_rng_ref(ctrl);
@@ -147,7 +146,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let is = match cached {
                         Some(is) => is,
                         None => {
-                            let is = is_vision_step_func::<E>(self.binary, self.ctx, dest);
+                            let is = is_vision_step_func::<E>(self.binary, ctx, dest);
                             self.checked_vision_funcs.push((dest, is));
                             is
                         }
@@ -158,9 +157,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(ref dest, val, _cond) => {
+            Operation::Move(ref dest, val, None) => {
                 self.check_rng_ref(ctrl);
-                self.vision_state.update(dest, ctrl.resolve(val));
+                self.vision_state.update(dest, ctrl.resolve(val), ctx);
                 if self.vision_state.is_ok() {
                     self.result = EntryOf::Ok(());
                     ctrl.end_analysis();
@@ -251,7 +250,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsVisionStepFunc<'e, 
                 }
             }
             Operation::Move(ref dest, val, _cond) => {
-                self.vision_state.update(dest, ctrl.resolve(val));
+                let ctx = ctrl.ctx();
+                self.vision_state.update(dest, ctrl.resolve(val), ctx);
                 if self.vision_state.is_ok() {
                     ctrl.end_analysis();
                 }
@@ -281,28 +281,19 @@ impl VisionStepState {
     }
 
     /// `val` must be resolved
-    fn update<'e>(&mut self, dest: &DestOperand<'e>, val: Operand<'e>) {
+    fn update<'e>(&mut self, dest: &DestOperand<'e>, val: Operand<'e>, ctx: OperandCtx<'e>) {
         if let DestOperand::Memory(ref mem) = *dest {
             if mem.size == MemAccessSize::Mem32 {
                 if let Some(_addr) = mem.address.if_constant() {
                     if val.if_constant() == Some(0x64) {
                         self.store_64_seen = true;
                     } else {
-                        let sub_self_1 = {
-                            val.if_arithmetic_add()
-                                .and_either_other(|x| {
-                                    x.if_constant().filter(|&c| c as u32 == u32::max_value())
-                                })
-                                .and_then(|other| other.if_memory())
-                                .filter(|other| *other == mem)
-                                .is_some()
-                        } || {
-                            val.if_arithmetic_sub()
-                                .filter(|(l, r)| {
-                                    r.if_constant() == Some(1) &&
-                                        l.if_memory().filter(|m| *m == mem).is_some()
-                                }).is_some()
-                        };
+                        let sub_self_1 = val.if_arithmetic_and_const(0xffff_ffff)
+                            .unwrap_or(val)
+                            .if_arithmetic_sub()
+                            .filter(|&(l, r)| {
+                                r == ctx.const_1() && l.if_memory() == Some(mem)
+                            }).is_some();
                         if sub_self_1 {
                             self.store_sub_seen = true;
                         }
