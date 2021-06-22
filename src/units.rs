@@ -10,6 +10,7 @@ use crate::{
     AnalysisCtx, ControlExt, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
     entry_of_until, unwrap_sext, bumpvec_with_capacity, FunctionFinder, if_arithmetic_eq_neq,
 };
+use crate::struct_layouts;
 
 #[derive(Clone, Debug)]
 pub struct ActiveHiddenUnits<'e> {
@@ -130,17 +131,18 @@ struct ActiveHiddenAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     memref_address: E::VirtualAddress,
 }
 
-fn check_active_hidden_cond<'e>(condition: Operand<'e>) -> Option<Operand<'e>> {
+fn check_active_hidden_cond<'e, Va: VirtualAddress>(
+    condition: Operand<'e>,
+    ctx: OperandCtx<'e>,
+) -> Option<Operand<'e>> {
     // It's doing something comparing to subunit ptr, should have written a comment :l
     // Mem32[unit + 70] == 0
     condition.if_arithmetic_eq()
-        .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-        .and_then(|x| x.if_memory())
-        .and_then(|mem| mem.address.if_arithmetic_add())
-        .and_either_other(|x| x.if_constant().filter(|&c| c == 0x70))
-        .filter(|unit| {
-            // Ignore if contains undef
-            unit.iter().all(|x| !x.is_undefined())
+        .filter(|&(_, r)| r == ctx.const_0())
+        .and_then(|(l, _)| {
+            l.if_memory()?
+                .address.if_arithmetic_add_const(struct_layouts::unit_subunit_linked::<Va>())
+                .filter(|x| !x.contains_undefined())
         })
 }
 
@@ -175,7 +177,10 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             Operation::Jump { condition, .. } => {
                 let condition = ctrl.resolve(condition);
-                if let Some(addr) = check_active_hidden_cond(condition) {
+                let ctx = ctrl.ctx();
+                if let Some(addr) =
+                    check_active_hidden_cond::<E::VirtualAddress>(condition, ctx)
+                {
                     // A way to work around duplicates from loops.
                     // Could also check to only accept constant addr,
                     // but I'm scared that it'll change one day.

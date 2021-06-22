@@ -18,6 +18,13 @@ pub fn unit_sprite<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_subunit_linked<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x70,
+        false => 0xa0,
+    }
+}
+
 pub fn image_iscript<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x10,
