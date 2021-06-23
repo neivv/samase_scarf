@@ -5364,25 +5364,45 @@ fn first_definite_entry<Va: VirtualAddressTrait>(
                 first_bytes == [0x55, 0x8b, 0xec] ||
                 first_bytes == [0x55, 0x89, 0xe5]
         } else {
-            let first_bytes = match binary.slice_from(relative..relative + 5) {
+            let first_bytes = match binary.slice_from(relative..relative + 32) {
                 Ok(o) => o,
                 Err(_) => return false,
             };
             // Check for 48, 89, xx, 24, [08|10|18|20]
             // for mov [rsp + x], reg
-            (first_bytes[0] == 0x48 &&
+            if first_bytes[0] == 0x48 &&
                 first_bytes[1] == 0x89 &&
                 first_bytes[3] == 0x24 &&
                 first_bytes[4] & 0x7 == 0 &&
-                first_bytes[4].wrapping_sub(1) < 0x20) ||
+                first_bytes[4].wrapping_sub(1) < 0x20
+            {
+                return true;
+            }
+            // Push 0~7 registers, followed by
             // Sub rsp, constant.
             // If the sub is at start of function it should be 8-misaligned to 16-align
             // to fixup stack back to 16-align.
-            // (Seems that usually if there are pushs they are before stack sub)
-            (first_bytes[0] == 0x48 &&
-                matches!(first_bytes[1], 0x81 | 0x83) &&
-                first_bytes[2] == 0xec &&
-                first_bytes[3] & 0xf == 8)
+            let push_count = (0usize..8)
+                .take_while(|i| {
+                    let pos = i * 2;
+                    first_bytes.get(pos..pos.wrapping_add(2))
+                        .filter(|slice| slice[0] & 0xf0 == 0x40 && slice[1] & 0xf8 == 0x50)
+                        .is_some()
+                })
+                .count();
+            let misalign = if push_count & 1 == 0 { 8 } else { 0 };
+            let pos = push_count * 2;
+            if let Some(slice) = first_bytes.get(pos..pos + 4) {
+                if slice[0] == 0x48 &&
+                    matches!(slice[1], 0x81 | 0x83) &&
+                    slice[2] == 0xec &&
+                    slice[3] & 0xf == misalign
+                {
+                    return true;
+                }
+            }
+
+            false
         }
     }
     let mut index = funcs.binary_search_by(|&x| match x <= entry {

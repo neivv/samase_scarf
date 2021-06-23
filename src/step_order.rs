@@ -466,6 +466,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'e, E> {
                 let ctx = ctrl.ctx();
                 // Check for this.order comparision against const
                 self.ok = condition.if_arithmetic_gt()
+                    .or_else(|| condition.if_arithmetic_eq())
                     .and_either_other(Operand::if_constant)
                     .and_then(|x| {
                         x.if_mem8()?
