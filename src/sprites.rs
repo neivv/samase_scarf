@@ -1096,7 +1096,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 if !self.inlining {
                     if let Some(dest) = ctrl.resolve(to).if_constant() {
                         let dest = E::VirtualAddress::from_u64(dest);
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
                         let should_inline = arg2 == self.last_free_sprite_addr;
                         if should_inline {
                             ctrl.analyze_with_current_state(self, dest);
