@@ -1,15 +1,15 @@
 use bumpalo::collections::Vec as BumpVec;
 
-use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation};
+use scarf::{BinaryFile, DestOperand, Operand, Operation};
 use scarf::analysis::{self, FuncAnalysis, AnalysisState,Cfg, Control};
+use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::OperandCtx;
 
 use crate::{
     AnalysisCtx, OptionExt, entry_of_until, single_result_assign, EntryOf, ArgCache,
     bumpvec_with_capacity, FunctionFinder, OperandExt, ControlExt,
 };
-
-use scarf::exec_state::{ExecutionState, VirtualAddress};
+use crate::struct_layouts;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StepOrderHiddenHook<'e, Va: VirtualAddress> {
@@ -42,7 +42,9 @@ pub struct DoAttack<'e, Va: VirtualAddress> {
 
 // Checks for comparing secondary_order to 0x95 (Hallucination)
 // Returns the unit operand
-pub fn step_secondary_order_hallu_jump_check<'e>(condition: Operand<'e>) -> Option<Operand<'e>> {
+fn step_secondary_order_hallu_jump_check<'e, Va: VirtualAddress>(
+    condition: Operand<'e>,
+) -> Option<Operand<'e>> {
     let hallucinated_id_found = condition.iter_no_mem_addr().any(|x| {
         x.if_constant().map(|x| x == 0x95).unwrap_or(false)
     });
@@ -50,11 +52,10 @@ pub fn step_secondary_order_hallu_jump_check<'e>(condition: Operand<'e>) -> Opti
         return None;
     }
     condition.iter_no_mem_addr()
-        .filter_map(|x| x.if_memory())
-        .filter_map(|mem| mem.address.if_arithmetic_add())
-        .filter_map(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-        .filter(|&(c, _)| c == 0xa6)
-        .map(|(_, other)| other.clone())
+        .filter_map(|x| {
+            x.if_mem8()?
+                .if_arithmetic_add_const(struct_layouts::unit_secondary_order::<Va>())
+        })
         .next()
 }
 
@@ -146,14 +147,13 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
                 val: Operand<'e>,
                 ctrl: &mut Control<'e, '_, '_, Self>,
             ) -> Option<Operand<'e>> {
-                let result = val.if_memory()
-                    .and_then(|mem| mem.address.if_arithmetic_add())
-                    .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                    .and_then(|(c, other)| if c == 0xa6 && other == self.unit {
-                        Some(other)
-                    } else {
-                        None
-                    });
+                let result = val.if_mem8()
+                    .and_then(|x| {
+                        x.if_arithmetic_add_const(
+                            struct_layouts::unit_secondary_order::<G::VirtualAddress>()
+                        )
+                    })
+                    .filter(|&x| x == self.unit);
                 if let Some(unit) = result.and_then(|x| ctrl.unresolve(x)) {
                     return Some(unit);
                 }
@@ -164,15 +164,14 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
                             .and_then(|x| x.1.if_arithmetic_eq())
                             .unwrap_or((l, r))
                     })
-                    .and_then(|(l, r)| Operand::either(l, r, |x| x.if_memory()))
+                    .and_then(|(l, r)| Operand::either(l, r, |x| x.if_mem8()))
                     .filter(|&(_, c)| c.if_constant() == Some(0x95))
-                    .and_then(|(mem, _)| mem.address.if_arithmetic_add())
-                    .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                    .and_then(|(c, other)| if c == 0xa6 && other == self.unit {
-                        Some(other)
-                    } else {
-                        None
-                    });
+                    .and_then(|(addr, _)| {
+                        addr.if_arithmetic_add_const(
+                            struct_layouts::unit_secondary_order::<G::VirtualAddress>()
+                        )
+                    })
+                    .filter(|&x| x == self.unit);
                 if let Some(unit) = result.and_then(|x| ctrl.unresolve(x)) {
                     return Some(unit);
                 }
@@ -293,7 +292,10 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let mut state = E::initial_state(ctx, binary);
     let dest = DestOperand::from_oper(
-        ctx.mem8(ctx.add(ctx.register(1), ctx.constant(0x4d)))
+        ctx.mem8(ctx.add_const(
+            ctx.register(1),
+            struct_layouts::unit_order::<E::VirtualAddress>(),
+        ))
     );
     state.move_to(&dest, ctx.constant(order as u64));
     let mut analysis = FuncAnalysis::custom_state(
@@ -328,7 +330,9 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
             match *op {
                 Operation::Jump { condition, .. } => {
                     let condition = ctrl.resolve(condition);
-                    if let Some(unit) = find_unit_for_step_hidden_order_cmp(condition) {
+                    if let Some(unit) =
+                        find_unit_for_step_hidden_order_cmp::<F::VirtualAddress>(condition)
+                    {
                         if let Some(unresolved) = ctrl.unresolve(unit) {
                             self.result = Some((ctrl.address(), unresolved));
                         }
@@ -459,11 +463,17 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'e, E> {
             }
             Operation::Jump { condition, .. } => {
                 let condition = ctrl.resolve(condition);
+                let ctx = ctrl.ctx();
                 // Check for this.order comparision against const
                 self.ok = condition.if_arithmetic_gt()
                     .and_either_other(Operand::if_constant)
-                    .and_then(|x| x.if_mem8()?.if_arithmetic_add_const(0x4d)?.if_register())
-                    .filter(|x| x.0 == 1)
+                    .and_then(|x| {
+                        x.if_mem8()?
+                            .if_arithmetic_add_const(
+                                struct_layouts::unit_order::<E::VirtualAddress>()
+                            )
+                            .filter(|&x| x == ctx.register(1))
+                    })
                     .is_some();
                 ctrl.end_analysis();
             }
@@ -472,13 +482,16 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'e, E> {
     }
 }
 
-fn find_unit_for_step_hidden_order_cmp<'e>(condition: Operand<'e>) -> Option<Operand<'e>> {
+fn find_unit_for_step_hidden_order_cmp<'e, Va: VirtualAddress>(
+    condition: Operand<'e>,
+) -> Option<Operand<'e>> {
     // mem8[x + 4d] > b0
     condition.if_arithmetic_gt()
         .filter(|x| x.1.if_constant() == Some(0xb0))
-        .and_then(|x| x.0.if_mem8()?.if_arithmetic_add())
-        .filter(|x| x.1.if_constant().filter(|&c| c == 0x4d).is_some())
-        .map(|(l, _)| l)
+        .and_then(|x| {
+            x.0.if_mem8()?
+                .if_arithmetic_add_const(struct_layouts::unit_order::<Va>())
+        })
 }
 
 pub(crate) fn step_order_hidden<'e, E: ExecutionState<'e>>(
@@ -498,7 +511,9 @@ pub(crate) fn step_order_hidden<'e, E: ExecutionState<'e>>(
             match *op {
                 Operation::Jump { condition, .. } => {
                     let condition = ctrl.resolve(condition);
-                    if find_unit_for_step_hidden_order_cmp(condition).is_some() {
+                    if find_unit_for_step_hidden_order_cmp::<E::VirtualAddress>(condition)
+                        .is_some()
+                    {
                         self.result = Some(self.entry);
                         ctrl.end_analysis();
                     } else if self.inlining {
@@ -655,7 +670,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             }
             Operation::Jump { condition, .. } => {
                 let condition = ctrl.resolve(condition);
-                let unit = step_secondary_order_hallu_jump_check(condition);
+                let unit = step_secondary_order_hallu_jump_check::<E::VirtualAddress>(condition);
                 if let Some(unit) = unit.and_then(|u| ctrl.unresolve(u)) {
                     self.pre_result = Some((ctrl.address(), unit));
                 }
@@ -724,9 +739,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
                     if step == 0 {
                         // Step 0: Check for do_attack(this, 0x5)
                         let ok = Some(())
-                            .and_then(|_| ctrl.resolve(ctx.register(1)).if_register())
-                            .filter(|r| r.0 == 1)
-                            .and_then(|_| ctrl.resolve(self.arg_cache.on_call(0)).if_constant())
+                            .filter(|_| ctrl.resolve(ctx.register(1)) == ctx.register(1))
+                            .and_then(|_| {
+                                ctrl.resolve(self.arg_cache.on_thiscall_call(0)).if_constant()
+                            })
                             .filter(|&c| c == 5)
                             .is_some();
                         if ok {
@@ -745,11 +761,14 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
                     } else if step == 2 {
                         // Step 2: Check for do_attack_main(this, 2, units_dat_air_weapon[x])
                         let ok = Some(())
-                            .and_then(|_| ctrl.resolve(ctx.register(1)).if_register())
-                            .filter(|r| r.0 == 1)
-                            .and_then(|_| ctrl.resolve(self.arg_cache.on_call(0)).if_constant())
+                            .filter(|_| ctrl.resolve(ctx.register(1)) == ctx.register(1))
+                            .and_then(|_| {
+                                ctrl.resolve(self.arg_cache.on_thiscall_call(0)).if_constant()
+                            })
                             .filter(|&c| c == 2)
-                            .and_then(|_| ctrl.resolve(self.arg_cache.on_call(1)).if_mem8())
+                            .and_then(|_| {
+                                ctrl.resolve(self.arg_cache.on_thiscall_call(1)).if_mem8()
+                            })
                             .and_then(|addr| addr.if_arithmetic_add())
                             .and_then(|(_, r)| r.if_constant())
                             .is_some();
@@ -762,11 +781,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
             }
             Operation::Move(DestOperand::Memory(mem), val, None) if step == 1 => {
                 // Step 1: Look for assignment of zero to global memory
-                let word_size = match E::VirtualAddress::SIZE {
-                    4 => MemAccessSize::Mem32,
-                    _ => MemAccessSize::Mem64,
-                };
-                if mem.size == word_size {
+                if mem.size == E::WORD_SIZE {
                     let dest = ctrl.resolve(mem.address);
                     let val = ctrl.resolve(val);
                     if val.if_constant() == Some(0) && dest.if_constant().is_some() {

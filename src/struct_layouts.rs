@@ -25,6 +25,20 @@ pub fn unit_subunit_linked<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_order<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x4d,
+        false => 0x69,
+    }
+}
+
+pub fn unit_secondary_order<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xa6,
+        false => 0xea,
+    }
+}
+
 pub fn image_iscript<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x10,

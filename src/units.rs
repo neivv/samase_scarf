@@ -214,11 +214,11 @@ pub(crate) fn order_issuing<'e, E: ExecutionState<'e>>(
         let order = ctx.mem8(ctx.constant(address.as_u64()));
         let funcs = functions.find_functions_using_global(analysis, address)
             .into_iter()
-            .map(move |global_ref| (global_ref, order.clone()));
+            .map(move |global_ref| (global_ref, order));
         BumpVec::from_iter_in(funcs, bump)
     };
-    arbiter_idle_orders.sort_unstable_by_key(|x| (x.0.func_entry, x.1.clone()));
-    arbiter_idle_orders.dedup_by_key(|x| (x.0.func_entry, x.1.clone()));
+    arbiter_idle_orders.sort_unstable_by_key(|x| (x.0.func_entry, x.1));
+    arbiter_idle_orders.dedup_by_key(|x| (x.0.func_entry, x.1));
     let mut result = None;
     let arg_cache = &analysis.arg_cache;
     for (global_ref, order) in arbiter_idle_orders {
@@ -229,6 +229,7 @@ pub(crate) fn order_issuing<'e, E: ExecutionState<'e>>(
             inlining: false,
             order,
             arg_cache,
+            entry_esp: ctx.register(4),
         };
         analysis.analyze(&mut analyzer);
         if analyzer.func_results.len() == 2 {
@@ -251,6 +252,7 @@ struct OrderIssuingAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     func_results: BumpVec<'a, E::VirtualAddress>,
     inlining: bool,
     order: Operand<'e>,
+    entry_esp: Operand<'e>,
     arg_cache: &'a ArgCache<'e, E>,
 }
 
@@ -258,21 +260,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for OrderIssuingAnaly
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     if self.func_results.len() == 0 {
-                        let ok = Some(ctrl.resolve(self.arg_cache.on_call(0)))
-                            .filter(|x| *x == self.order)
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
-                            .filter(|x| x.if_constant() == Some(0))
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
-                            .filter(|x| x.if_constant() == Some(0))
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
-                            .filter(|x| x.if_constant() == Some(0xe4))
-                            .is_some();
-                        if ok {
+                        if self.is_prepare_issue_order_call(ctrl) {
                             self.func_results.push(dest);
                             return;
                         }
@@ -284,6 +277,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for OrderIssuingAnaly
 
                     if !self.inlining {
                         self.inlining = true;
+                        let esp = ctrl.resolve(ctx.register(4));
+                        self.entry_esp = ctx.sub_const(esp, E::VirtualAddress::SIZE.into());
                         ctrl.analyze_with_current_state(self, dest);
                         self.inlining = false;
                         if self.func_results.len() == 2 {
@@ -292,7 +287,48 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for OrderIssuingAnaly
                     }
                 }
             }
+            Operation::Jump { to, condition } => {
+                // Accept second call as tailcall if inlining
+                if self.func_results.len() == 1 && condition == ctx.const_1() && self.inlining {
+                    if let Some(to) = ctrl.resolve_va(to) {
+                        if ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                            self.func_results.push(to);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
             _ => (),
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> OrderIssuingAnalyzer<'a, 'e, E> {
+    fn is_prepare_issue_order_call(&self, ctrl: &mut Control<'e, '_, '_, Self>) -> bool {
+        // On x86 position_xy and target are passed by value in arg2 / 3,
+        // x86_64 passes them in arg2 as struct
+        let ctx = ctrl.ctx();
+        if E::VirtualAddress::SIZE == 4 {
+            ctrl.resolve(self.arg_cache.on_thiscall_call(0)) == self.order &&
+                ctrl.resolve(self.arg_cache.on_thiscall_call(1)) == ctx.const_0() &&
+                ctrl.resolve(self.arg_cache.on_thiscall_call(2)) == ctx.const_0() &&
+                ctrl.resolve(self.arg_cache.on_thiscall_call(3)).if_constant() == Some(0xe4)
+        } else {
+            if ctrl.resolve(self.arg_cache.on_thiscall_call(0)) != self.order {
+                return false;
+            }
+            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+            if ctrl.read_memory(arg1, MemAccessSize::Mem32) != ctx.const_0() {
+                return false;
+            }
+            let unit_pointer = ctx.add_const(arg1, 8);
+            if ctrl.read_memory(unit_pointer, MemAccessSize::Mem64) != ctx.const_0() {
+                return false;
+            }
+            if ctrl.resolve(self.arg_cache.on_thiscall_call(2)).if_constant() != Some(0xe4) {
+                return false;
+            }
+            true
         }
     }
 }
@@ -771,10 +807,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
                 }
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     let ctx = ctrl.ctx();
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let tc_arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                     let player = self.arg_cache.on_entry(1);
-                    let arg1_ok = arg1 == player ||
-                        arg1.if_arithmetic_or()
+                    let arg1_ok = tc_arg1 == player ||
+                        tc_arg1.if_arithmetic_or()
                             .and_either_other(|x| x.if_arithmetic_and())
                             .filter(|&x| x == ctx.and_const(player, 0xff))
                             .is_some();
@@ -789,6 +825,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
                     if !self.inlining {
                         // There's possibly almost-empty single-assert function
                         // in middle, taking a1 = unit, a2 = player
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                         if arg1 == self.arg_cache.on_entry(0) &&
                             ctrl.resolve(self.arg_cache.on_call(1)) == self.arg_cache.on_entry(1)
                         {
@@ -912,9 +949,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                     if is_ok {
                         if self.state == SetUnitPlayerState::UnitChangingPlayer {
                             let ok = Some(())
-                                .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
-                                .filter(|&x| x == self.arg_cache.on_entry(0))
-                                .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                                .map(|_| ctrl.resolve(self.arg_cache.on_thiscall_call(0)))
+                                .filter(|&x| x == self.arg_cache.on_thiscall_entry(0))
+                                .map(|_| ctrl.resolve(self.arg_cache.on_thiscall_call(1)))
                                 .filter(|&x| x.if_constant() == Some(1))
                                 .is_some();
                             if ok {
@@ -1073,7 +1110,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindPlayerGainedU
                 let ctx = ctrl.ctx();
                 let this = ctrl.resolve(ctx.register(1));
                 if this == self.arg_cache.on_entry(0) {
-                    if ctrl.resolve(self.arg_cache.on_call(0)) == self.arg_cache.on_entry(1) {
+                    if ctrl.resolve(self.arg_cache.on_thiscall_call(0)) ==
+                        self.arg_cache.on_entry(1)
+                    {
                         self.result = Some(dest);
                         ctrl.end_analysis();
                     }
@@ -1420,11 +1459,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if self.checking_movement {
             if let Operation::Jump { condition, .. } = *op {
+                let ctx = ctrl.ctx();
                 let ok = ctrl.resolve(condition)
                     .if_arithmetic_gt()
                     .and_either_other(|x| x.if_constant())
-                    .and_then(|x| x.if_mem8()?.if_arithmetic_add_const(0x97)?.if_register())
-                    .filter(|x| x.0 == 1)
+                    .and_then(|x| x.if_mem8()?.if_arithmetic_add_const(0x97))
+                    .filter(|&x| x == ctx.register(1))
                     .is_some();
                 if ok {
                     self.result.step_unit_movement = Some(E::VirtualAddress::from_u64(0));
