@@ -8,7 +8,7 @@ use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, OperandCtx, Operati
 
 use crate::{
     AnalysisCtx, ControlExt, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
-    entry_of_until, unwrap_sext, bumpvec_with_capacity, FunctionFinder, if_arithmetic_eq_neq,
+    entry_of_until, bumpvec_with_capacity, FunctionFinder, if_arithmetic_eq_neq,
 };
 use crate::struct_layouts;
 
@@ -604,12 +604,13 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnaly
                     if self.result.create_unit.is_none() {
                         let ok = Some(ctrl.resolve(self.arg_cache.on_call(0)))
                             .filter(|&x| x.if_constant() == Some(0x21))
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
-                            .filter(|&x| unwrap_sext(x).if_mem16().is_some())
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
-                            .filter(|&x| unwrap_sext(x).if_mem16().is_some())
                             .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
-                            .filter(|&x| x.if_mem8().is_some())
+                            .and_then(|x| {
+                                x.if_mem8()?
+                                    .if_arithmetic_add_const(
+                                        struct_layouts::unit_player::<E::VirtualAddress>()
+                                    )
+                            })
                             .is_some();
                         if ok {
                             self.result.create_unit = Some(dest);

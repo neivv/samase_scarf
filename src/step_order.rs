@@ -245,9 +245,10 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             match *op {
                 Operation::Jump { condition, to } => {
+                    let ctx = ctrl.ctx();
                     let condition = ctrl.resolve(condition);
                     if *ctrl.user_state() == State::HasSwitchJumped {
-                        if let Some(1) = condition.if_constant() {
+                        if condition == ctx.const_1() {
                             if let Some(dest) = ctrl.resolve(to).if_constant() {
                                 let seems_tail_call = (dest < self.start.as_u64()) ||
                                     (
@@ -256,7 +257,7 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
                                     );
 
                                 if seems_tail_call {
-                                    let ecx = ctrl.ctx().register(1);
+                                    let ecx = ctx.register(1);
                                     // Tail call needs to have this == orig this
                                     if ctrl.resolve(ecx) == ecx {
                                         self.result = Some(VirtualAddress::from_u64(dest));
@@ -266,7 +267,7 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
                             }
                         }
                     }
-                    if to.if_memory().is_some() {
+                    if to.if_constant().is_none() {
                         *ctrl.user_state() = State::HasSwitchJumped;
                     } else {
                         *ctrl.user_state() = State::NotSwitchJumped;

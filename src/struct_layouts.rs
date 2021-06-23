@@ -25,6 +25,13 @@ pub fn unit_subunit_linked<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_player<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x4c,
+        false => 0x68,
+    }
+}
+
 pub fn unit_order<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x4d,
