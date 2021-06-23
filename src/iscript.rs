@@ -39,6 +39,7 @@ pub(crate) fn step_iscript<'e, E: ExecutionState<'e>>(
         arg_cache: &actx.arg_cache,
         sprite_first_overlay:
             struct_layouts::sprite_first_overlay::<E::VirtualAddress>(sprite_size)?,
+        entry_esp: ctx.register(4),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, finish_unit_pre);
     analysis.analyze(&mut analyzer);
@@ -50,6 +51,7 @@ struct FindStepIscript<'a, 'e, E: ExecutionState<'e>> {
     arg_cache: &'a ArgCache<'e, E>,
     inline_limit: u8,
     sprite_first_overlay: u32,
+    entry_esp: Operand<'e>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindStepIscript<'a, 'e, E> {
@@ -65,47 +67,72 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindStepIscript<'a, 
                 }
             }
             if let Some(dest) = ctrl.resolve_va(dest) {
-                let ctx = ctrl.ctx();
-                let arg_cache = self.arg_cache;
-                let this = ctrl.resolve(ctx.register(1));
-                let arg1 = ctrl.resolve(arg_cache.on_thiscall_call(0));
-                let is_first_overlay = ctrl.if_mem_word(this)
-                    .and_then(|x| x.if_arithmetic_add_const(self.sprite_first_overlay.into()))
-                    .and_then(if_unit_sprite::<E::VirtualAddress>) == Some(ctx.register(1));
-                if is_first_overlay {
-                    let zero = ctx.const_0();
-                    let ok = ctrl.resolve(arg_cache.on_thiscall_call(1)) == zero &&
-                        ctrl.resolve(arg_cache.on_thiscall_call(2)) == zero &&
-                        arg1.if_arithmetic_add_const(
-                            struct_layouts::image_iscript::<E::VirtualAddress>()
-                        ).filter(|&x| x == this).is_some();
-                    if ok {
-                        self.result = Some(dest);
-                        ctrl.end_analysis();
-                        return;
-                    }
+                self.check_function_call(ctrl, dest, true);
+            }
+        } else if let Operation::Jump { to, condition } = *op {
+            // step_iscript may be a tail call
+            let ctx = ctrl.ctx();
+            if condition == ctx.const_1() && ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                if let Some(to) = ctrl.resolve_va(to) {
+                    self.check_function_call(ctrl, to, false);
                 }
-                let inline = (
-                    is_first_overlay ||
-                    this == ctx.register(1) ||
-                    if_unit_sprite::<E::VirtualAddress>(this) == Some(ctx.register(1))
-                ) && arg1.if_constant() == Some(0x10);
+            }
+        }
+    }
+}
 
-                if inline {
-                    let is_depth0 = self.inline_limit == 0;
-                    if is_depth0 {
-                        self.inline_limit = 16;
-                    }
-                    ctrl.analyze_with_current_state(self, dest);
-                    if is_depth0 {
-                        self.inline_limit = 0;
-                    } else if self.inline_limit == 0 {
-                        ctrl.end_analysis();
-                    }
-                    if self.result.is_some() {
-                        ctrl.end_analysis();
-                    }
-                }
+impl<'a, 'e, E: ExecutionState<'e>> FindStepIscript<'a, 'e, E> {
+    fn check_function_call(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        dest: E::VirtualAddress,
+        consider_inline: bool,
+    ) {
+        let ctx = ctrl.ctx();
+        let arg_cache = self.arg_cache;
+        let this = ctrl.resolve(ctx.register(1));
+        let arg1 = ctrl.resolve(arg_cache.on_thiscall_call(0));
+        let is_first_overlay = ctrl.if_mem_word(this)
+            .and_then(|x| x.if_arithmetic_add_const(self.sprite_first_overlay.into()))
+            .and_then(if_unit_sprite::<E::VirtualAddress>) == Some(ctx.register(1));
+        if is_first_overlay {
+            let zero = ctx.const_0();
+            let ok = ctrl.resolve(arg_cache.on_thiscall_call(1)) == zero &&
+                ctrl.resolve(arg_cache.on_thiscall_call(2)) == zero &&
+                arg1.if_arithmetic_add_const(
+                    struct_layouts::image_iscript::<E::VirtualAddress>()
+                ).filter(|&x| x == this).is_some();
+            if ok {
+                self.result = Some(dest);
+                ctrl.end_analysis();
+                return;
+            }
+        }
+        let inline = consider_inline && (
+            is_first_overlay ||
+            this == ctx.register(1) ||
+            if_unit_sprite::<E::VirtualAddress>(this) == Some(ctx.register(1))
+        ) && ctx.and_const(arg1, 0xff).if_constant() == Some(0x10);
+
+        if inline {
+            let is_depth0 = self.inline_limit == 0;
+            if is_depth0 {
+                self.inline_limit = 16;
+            }
+            let old_esp = self.entry_esp;
+            self.entry_esp = ctx.sub_const(
+                ctrl.resolve(ctx.register(4)),
+                E::VirtualAddress::SIZE.into(),
+            );
+            ctrl.analyze_with_current_state(self, dest);
+            self.entry_esp = old_esp;
+            if is_depth0 {
+                self.inline_limit = 0;
+            } else if self.inline_limit == 0 {
+                ctrl.end_analysis();
+            }
+            if self.result.is_some() {
+                ctrl.end_analysis();
             }
         }
     }

@@ -7,6 +7,7 @@ pub fn sprite_first_overlay<Va: VirtualAddress>(sprite_size: u32) -> Option<u32>
     match (sprite_size, Va::SIZE) {
         (0x24, 4) => Some(0x1c),
         (0x28, 4) => Some(0x20),
+        (0x48, 8) => Some(0x38),
         _ => None,
     }
 }
