@@ -61,6 +61,20 @@ pub fn unit_secondary_order<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_current_tech<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xc8,
+        false => 0x114,
+    }
+}
+
+pub fn unit_current_upgrade<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xc9,
+        false => 0x115,
+    }
+}
+
 pub fn image_iscript<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x10,
@@ -104,5 +118,26 @@ pub fn button_linked<Va: VirtualAddress>() -> u32 {
     match Va::SIZE == 4 {
         true => 0x8,
         false => 0x10,
+    }
+}
+
+pub fn bullet_weapon_id<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x60,
+        false => 0x88,
+    }
+}
+
+pub fn status_screen_stat_dat<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x8,
+        false => 0xc,
+    }
+}
+
+pub fn control_ptr_value<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x40,
+        false => 0x58,
     }
 }

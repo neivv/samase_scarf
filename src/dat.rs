@@ -52,6 +52,7 @@ use crate::{
 };
 use crate::hash_map::{HashMap, HashSet};
 use crate::range_list::RangeList;
+use crate::struct_layouts;
 
 static UNIT_ARRAY_WIDTHS: &[u8] = &[
     1, 2, 2, 2, 4, 1, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1,
@@ -1764,6 +1765,20 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         Err(())
     }
 
+    fn is_status_screen_data(&self, op: Operand<'e>) -> bool {
+        // Mem32[arg1 + 0x40]
+        let arg_cache = &self.dat_ctx.analysis.arg_cache;
+        op.if_memory()
+            .filter(|mem| mem.size == E::WORD_SIZE)
+            .and_then(|mem| {
+                mem.address.if_arithmetic_add_const(
+                    struct_layouts::control_ptr_value::<E::VirtualAddress>()
+                )
+            })
+            .filter(|&base| base == arg_cache.on_entry(0))
+            .is_some()
+    }
+
     fn check_mem_widen_value(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
@@ -1772,16 +1787,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         size: MemAccessSize,
         dat: DatType,
     ) -> Result<(), ()> {
-        fn is_status_screen_data(op: Operand<'_>) -> bool {
-            // Mem32[arg1 + 0x40]
-            op.if_mem32()
-                .and_then(|addr| addr.if_arithmetic_add_const(0x40))
-                .and_then(|base| base.if_mem32())
-                .and_then(|x| x.if_arithmetic_add_const(4))
-                .and_then(|x| x.if_register())
-                .filter(|x| x.0 == 4)
-                .is_some()
-        }
 
         let is_stack = base.if_register().filter(|x| x.0 == 4).is_some();
         if is_stack {
@@ -1793,16 +1798,24 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             return Ok(());
         }
         if size == MemAccessSize::Mem8 {
-            if offset == 0x60 && dat == DatType::Weapons {
+            if offset == struct_layouts::bullet_weapon_id::<E::VirtualAddress>() &&
+                dat == DatType::Weapons
+            {
                 // Most likely Bullet.weapon_id, todo
                 return Ok(());
-            } else if offset == 0xc8 && dat == DatType::TechData {
+            } else if offset == struct_layouts::unit_current_tech::<E::VirtualAddress>() &&
+                dat == DatType::TechData
+            {
                 // Unit.building_union.current_tech, todo
                 return Ok(());
-            } else if offset == 0xc9 && dat == DatType::Upgrades {
+            } else if offset == struct_layouts::unit_current_upgrade::<E::VirtualAddress>() &&
+                dat == DatType::Upgrades
+            {
                 // Unit.building_union.current_upgrade, todo
                 return Ok(());
-            } else if offset == 8 && dat == DatType::Weapons && is_status_screen_data(base) {
+            } else if offset == struct_layouts::status_screen_stat_dat::<E::VirtualAddress>() &&
+                dat == DatType::Weapons && self.is_status_screen_data(base)
+            {
                 // This is a bit hacky, especially limiting to only ArrayIndex,
                 // but without it this would quit too eagerly in func
                 // arg analysis and cause extra work in the end.
