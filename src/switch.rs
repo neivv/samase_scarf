@@ -75,3 +75,15 @@ impl<'e> CompleteSwitch<'e> {
         binary.read_address(table + index.checked_mul(Va::SIZE)?).ok()
     }
 }
+
+pub fn simple_switch_branch<Va: VirtualAddress>(
+    binary: &BinaryFile<Va>,
+    switch: Va,
+    branch: u32,
+) -> Option<Va> {
+    if Va::SIZE == 4 {
+        binary.read_address(switch + 4 * branch).ok()
+    } else {
+        Some(binary.base + binary.read_u32(switch + 4 * branch).ok()?)
+    }
+}

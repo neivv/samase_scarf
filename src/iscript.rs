@@ -7,6 +7,7 @@ use scarf::exec_state::VirtualAddress;
 
 use crate::{AnalysisCtx, ArgCache, ControlExt, OptionExt, OperandExt, single_result_assign};
 use crate::struct_layouts::{self, if_unit_sprite};
+use crate::switch;
 
 pub(crate) struct StepIscript<'e, Va: VirtualAddress> {
     pub switch_table: Option<Va>,
@@ -190,6 +191,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepIscriptAnalyzer<
             Operation::Jump { condition, to } => {
                 let to = ctrl.resolve(to);
                 let switch_jump = ctrl.if_mem_word(to)
+                    .or_else(|| {
+                        // 64-bit switch
+                        let (l, r) = to.if_arithmetic_add()?;
+                        r.if_constant()?;
+                        l.if_mem32()
+                    })
                     .and_then(|x| {
                         let (l, r) = x.if_arithmetic_add()?;
                         let switch_table = r.if_constant()?;
@@ -269,8 +276,7 @@ pub(crate) fn add_overlay_iscript<'e, E: ExecutionState<'e>>(
     // iscript opcode 8 (imgol)
     // Sprite is actually unused, but checking for it anyway as the function signature
     // changing isn't anticipated.
-    let word_size = <E::VirtualAddress as VirtualAddress>::SIZE;
-    let case_8 = binary.read_address(step_iscript_switch + word_size * 8).ok()?;
+    let case_8 = switch::simple_switch_branch(binary, step_iscript_switch, 8)?;
 
     let mut analyzer = AddOverlayAnalyzer::<E> {
         result: None,
@@ -294,7 +300,7 @@ impl<'e, 'b, Exec: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyze
         match *op {
             Operation::Jump { to, .. } => {
                 let to = ctrl.resolve(to);
-                let is_switch_jump = to.if_memory().is_some();
+                let is_switch_jump = to.if_constant().is_none();
                 if is_switch_jump {
                     ctrl.end_branch();
                     return;
@@ -344,9 +350,7 @@ pub(crate) fn draw_cursor_marker<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     // hide_cursor_marker is iscript opcode 0x2d
-    let case = binary.read_address(
-        iscript_switch_table + 0x2d * <E::VirtualAddress as VirtualAddress>::SIZE
-    ).ok()?;
+    let case = switch::simple_switch_branch(binary, iscript_switch_table, 0x2d)?;
 
     let mut analyzer = FindDrawCursorMarker::<E> {
         result: None,

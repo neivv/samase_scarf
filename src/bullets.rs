@@ -6,6 +6,7 @@ use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::{AnalysisCtx, ArgCache, OptionExt, bumpvec_with_capacity};
+use crate::switch;
 
 pub struct BulletCreation<'e, Va: VirtualAddress> {
     pub first_active_bullet: Option<Operand<'e>>,
@@ -266,10 +267,9 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let bump = &analysis.bump;
-    let word_size = E::VirtualAddress::SIZE;
-    let useweapon = match binary.read_address(iscript_switch + 0x28 * word_size) {
-        Ok(o) => o,
-        Err(_) => return result,
+    let useweapon = match switch::simple_switch_branch(binary, iscript_switch, 0x28) {
+        Some(o) => o,
+        None => return result,
     };
     let mut analyzer = FindCreateBullet {
         is_inlining: false,
