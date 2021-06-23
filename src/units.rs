@@ -544,9 +544,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FinishUnitAnalyze
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
-                let ctx = ctrl.ctx();
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
                     let this = ctx.register(1);
@@ -564,7 +564,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FinishUnitAnalyze
                 }
             }
             Operation::Jump { condition, to } => {
-                if ctrl.resolve(condition).if_constant().filter(|&c| c != 0).is_some() {
+                if ctrl.resolve(condition) == ctx.const_1() {
                     // Tail call finish_unit_post
                     if {
                         self.result.finish_unit_pre.is_some() &&
@@ -622,6 +622,15 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnaly
                             );
                         }
                     } else {
+                        if Some(dest) == self.result.create_unit {
+                            ctrl.skip_operation();
+                            let exec_state = ctrl.exec_state();
+                            exec_state.move_to(
+                                &DestOperand::Register64(scarf::operand::Register(0)),
+                                ctx.custom(0),
+                            );
+                            return;
+                        }
                         if ctrl.resolve(ctx.register(1)) == ctx.custom(0) {
                             if self.result.finish_unit_pre.is_none() {
                                 self.result.finish_unit_pre = Some(dest);

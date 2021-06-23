@@ -279,6 +279,7 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
                             self.result = Some(VirtualAddress::from_u64(dest));
                         }
                     }
+                    ctrl.skip_call_preserve_esp();
                 }
                 _ => (),
             }
