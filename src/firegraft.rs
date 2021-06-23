@@ -8,6 +8,7 @@ use crate::{
     AnalysisCtx, OptionExt, read_u32_at, find_bytes, FunctionFinder, entry_of_until,
     bumpvec_with_capacity,
 };
+use crate::struct_layouts;
 
 const BUTTONSET_BUTTON_COUNTS: [u8; 13] = [6, 9, 6, 5, 0, 7, 0, 9, 7, 8, 6, 7, 6];
 /// Buttonsets are in format { button_count, pointer, linked (0xffff usually) },
@@ -21,10 +22,12 @@ pub(crate) fn find_buttonsets<'e, E: ExecutionState<'e>>(
     let first = [BUTTONSET_BUTTON_COUNTS[0], 0, 0, 0];
     let mut result = find_bytes(bump, &data.data, &first[..]);
     result.retain(|&rva| {
+        let button_size = struct_layouts::button_size::<E::VirtualAddress>();
+        let linked_offset = struct_layouts::button_linked::<E::VirtualAddress>();
         for (index, &expected) in BUTTONSET_BUTTON_COUNTS.iter().enumerate() {
             let index = index as u32;
-            let button_count = read_u32_at(data, rva + index * 0xc);
-            let linked = read_u32_at(data, rva + index * 0xc + 8);
+            let button_count = read_u32_at(data, rva + index * button_size);
+            let linked = read_u32_at(data, rva + index * button_size + linked_offset);
             if button_count != Some(u32::from(expected)) || linked != Some(0xffff) {
                 return false;
             }

@@ -77,3 +77,17 @@ pub fn ai_script_flags<Va: VirtualAddress>() -> u64 {
         false => 0x40,
     }
 }
+
+pub fn button_size<Va: VirtualAddress>() -> u32 {
+    match Va::SIZE == 4 {
+        true => 0xc,
+        false => 0x18,
+    }
+}
+
+pub fn button_linked<Va: VirtualAddress>() -> u32 {
+    match Va::SIZE == 4 {
+        true => 0x8,
+        false => 0x10,
+    }
+}
