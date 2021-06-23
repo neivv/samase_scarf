@@ -245,12 +245,8 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
                     state.calling_create_string = true;
                     state.path_string = Some(arg1);
                 }
-                let size = match E::VirtualAddress::SIZE == 4 {
-                    true => MemAccessSize::Mem32,
-                    false => MemAccessSize::Mem64,
-                };
-                let arg3_value = ctrl.read_memory(arg3, size);
-                let arg3_inner = ctrl.read_memory(arg3_value, size);
+                let arg3_value = ctrl.read_memory(arg3, E::WORD_SIZE);
+                let arg3_inner = ctrl.read_memory(arg3_value, E::WORD_SIZE);
                 // Can be join(String *out, String *path1, String *path2)
                 let arg3_is_string_struct_ptr = arg3_inner.if_memory()
                     .map(|x| x.address)
@@ -331,8 +327,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
         }
         match *op {
             Operation::Call(_dest) => {
-                let addr_const = self.ctx.constant(self.str_ref.string_address.as_u64());
-                if value_in_call_args(ctrl, addr_const) {
+                let string_in_args = (0..4).any(|i| {
+                    ctrl.resolve(self.args.on_call(i)).if_constant() ==
+                        Some(self.str_ref.string_address.as_u64())
+                });
+                if string_in_args {
                     let arg2 = ctrl.resolve(self.args.on_call(1));
                     let arg4 = ctrl.resolve(self.args.on_call(3));
                     let arg4_is_string_ptr = arg4.if_constant()
@@ -350,12 +349,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
                     }
                 } else {
                     let arg3 = ctrl.resolve(self.args.on_call(2));
-                    let size = match E::VirtualAddress::SIZE == 4 {
-                        true => MemAccessSize::Mem32,
-                        false => MemAccessSize::Mem64,
-                    };
-                    let arg3_value = ctrl.read_memory(arg3, size);
-                    let arg3_inner = ctrl.read_memory(arg3_value, size);
+                    let arg3_value = ctrl.read_memory(arg3, E::WORD_SIZE);
+                    let arg3_inner = ctrl.read_memory(arg3_value, E::WORD_SIZE);
                     // Can be join(String *out, String *path1, String *path2)
                     let arg3_is_string_struct_ptr = arg3_inner.if_memory()
                         .map(|x| x.address)
@@ -382,23 +377,6 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
             _ => (),
         }
     }
-}
-
-fn value_in_call_args<'exec, A: analysis::Analyzer<'exec>>(
-    ctrl: &mut Control<'exec, '_, '_, A>,
-    value: Operand<'exec>,
-) -> bool {
-    let ctx = ctrl.ctx();
-    let esp = ctx.register(4);
-
-    (0..8).map(|i| {
-        ctx.mem32(ctx.add(esp, ctx.constant(i * 4)))
-    }).chain({
-        [1].iter().cloned().map(|reg| ctx.register(reg))
-    }).filter(|&oper| {
-        let oper = ctrl.resolve(oper);
-        oper == value
-    }).next().is_some()
 }
 
 pub(crate) fn spawn_dialog<'e, E: ExecutionState<'e>>(

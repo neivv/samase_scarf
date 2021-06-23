@@ -5432,6 +5432,7 @@ pub struct GlobalRefs<Va: VirtualAddressTrait> {
     pub func_entry: Va,
 }
 
+#[derive(Debug)]
 pub enum EntryOf<R> {
     Ok(R),
     Retry,

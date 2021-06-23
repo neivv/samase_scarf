@@ -5,7 +5,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operation};
 
 use crate::{
-    AnalysisCtx, OptionExt, read_u32_at, find_bytes, FunctionFinder, entry_of_until,
+    AnalysisCtx, OperandExt, OptionExt, read_u32_at, find_bytes, FunctionFinder, entry_of_until,
     bumpvec_with_capacity,
 };
 use crate::struct_layouts;
@@ -106,16 +106,12 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitStatusFuncU
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
+                let word_size = E::VirtualAddress::SIZE as u64;
                 let dest = ctrl.resolve(dest);
                 let val = dest.if_memory()
                     .and_then(|mem| mem.address.if_arithmetic_add())
-                    .and_either(|x| x.if_constant())
-                    .filter(|(_address, other)| {
-                        other.if_arithmetic_mul()
-                            .and_either(|x| x.if_constant().filter(|&c| c == 0xc))
-                            .is_some()
-                    })
-                    .map(|(address, _index_mul)| address);
+                    .and_either_other(|x| x.if_arithmetic_mul_const(word_size * 3))
+                    .and_then(|x| x.if_constant());
                 if let Some(address) = val {
                     // An valid address, check if there's another +/- 4 bytes
                     // from it, if yes, return result
@@ -126,13 +122,13 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitStatusFuncU
                             (address as i64).checked_sub(part as i64)
                                 .map(|x| (i, x))
                         })
-                        .find(|&(_, diff)| diff.abs() == 4);
+                        .find(|&(_, diff)| diff.abs() == word_size as i64);
                     if let Some((idx, diff)) = part_index {
                         self.parts.remove(idx);
-                        if diff == 4 {
-                            self.result.push(E::VirtualAddress::from_u64(address - 8));
+                        if diff == word_size as i64 {
+                            self.result.push(E::VirtualAddress::from_u64(address - word_size * 2));
                         } else {
-                            self.result.push(E::VirtualAddress::from_u64(address - 4));
+                            self.result.push(E::VirtualAddress::from_u64(address - word_size));
                         }
                     } else {
                         self.parts.push(address);
