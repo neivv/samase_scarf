@@ -247,9 +247,9 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
                 Operation::Jump { condition, to } => {
                     let ctx = ctrl.ctx();
                     let condition = ctrl.resolve(condition);
-                    if *ctrl.user_state() == State::HasSwitchJumped {
-                        if condition == ctx.const_1() {
-                            if let Some(dest) = ctrl.resolve(to).if_constant() {
+                    if condition == ctx.const_1() {
+                        if let Some(dest) = ctrl.resolve(to).if_constant() {
+                            if *ctrl.user_state() == State::HasSwitchJumped {
                                 let seems_tail_call = (dest < self.start.as_u64()) ||
                                     (
                                         dest > ctrl.address().as_u64() + 0x400 &&
@@ -258,12 +258,19 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
 
                                 if seems_tail_call {
                                     let ecx = ctx.register(1);
+                                    let esp = ctx.register(4);
                                     // Tail call needs to have this == orig this
-                                    if ctrl.resolve(ecx) == ecx {
+                                    if ctrl.resolve(ecx) == ecx && ctrl.resolve(esp) == esp {
                                         self.result = Some(VirtualAddress::from_u64(dest));
                                         ctrl.end_analysis();
                                     }
                                 }
+                            } else {
+                                // Assume "switch jump" if the condition is always true,
+                                // as the small 4-case switch at start isn't necessarily
+                                // a switch table but just chained comparisions.
+                                *ctrl.user_state() = State::HasSwitchJumped;
+                                return;
                             }
                         }
                     }

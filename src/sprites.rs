@@ -8,10 +8,11 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{MemAccess, Register};
 
 use crate::{
-    ArgCache, AnalysisCtx, OptionExt, single_result_assign, entry_of_until, EntryOf,
-    bumpvec_with_capacity, FunctionFinder,
+    ArgCache, AnalysisCtx, ControlExt, EntryOf, FunctionFinder, OperandExt, OptionExt,
+    entry_of_until, single_result_assign, bumpvec_with_capacity,
 };
 use crate::hash_map::HashMap;
+use crate::struct_layouts;
 
 pub struct Sprites<'e, Va: VirtualAddress> {
     pub sprite_hlines: Option<Operand<'e>>,
@@ -85,7 +86,6 @@ pub(crate) fn sprites<'e, E: ExecutionState<'e>>(
         is_checking_active_list_candidate: None,
         active_list_candidate_head: None,
         active_list_candidate_tail: None,
-        ecx: ctx.register(1),
         create_lone_sprite: None,
         function_to_custom_map: HashMap::with_capacity_and_hasher(16, Default::default()),
         custom_to_function_map: bumpvec_with_capacity(16, bump),
@@ -154,7 +154,6 @@ struct SpriteAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     is_checking_active_list_candidate: Option<Operand<'e>>,
     active_list_candidate_head: Option<Operand<'e>>,
     active_list_candidate_tail: Option<Operand<'e>>,
-    ecx: Operand<'e>,
     create_lone_sprite: Option<E::VirtualAddress>,
     // Dest, arg1, arg2 if Mem32[x] where the resolved value is a constant
     function_to_custom_map: HashMap<(Rva, Option<u64>, Option<u64>), u32>,
@@ -177,56 +176,55 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(to) => {
-                if let Some(dest) = ctrl.resolve(to).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                    if let Some(c) = arg1.if_constant() {
+                if let Some(dest) = ctrl.resolve_va(to) {
+                    let arg_cache = self.arg_cache;
+                    let ctx = ctrl.ctx();
+                    let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                    if arg1.if_constant() == Some(0xe7) {
                         // Nuke dot sprite, either calling create lone or create sprite
                         // Their args are the same though, so cannot verify much here.
-                        if c == 0xe7 {
-                            let old_state = self.state;
-                            self.state = match self.state {
-                                FindSpritesState::NukeTrack => FindSpritesState::CreateLone,
-                                FindSpritesState::CreateLone => FindSpritesState::CreateSprite,
-                                FindSpritesState::CreateSprite => {
-                                    // Going to inline this, likely initialize_sprite
-                                    // which will contain x/y pos
-                                    FindSpritesState::CreateSprite
-                                }
-                                FindSpritesState::CreateLone_Post => {
-                                    ctrl.end_analysis();
-                                    return;
-                                }
-                            };
-                            if self.state == FindSpritesState::CreateLone {
-                                self.create_lone_sprite = Some(dest);
+                        let old_state = self.state;
+                        self.state = match self.state {
+                            FindSpritesState::NukeTrack => FindSpritesState::CreateLone,
+                            FindSpritesState::CreateLone => FindSpritesState::CreateSprite,
+                            FindSpritesState::CreateSprite => {
+                                // Going to inline this, likely initialize_sprite
+                                // which will contain x/y pos
+                                FindSpritesState::CreateSprite
                             }
-                            ctrl.analyze_with_current_state(self, dest);
-                            match old_state {
-                                FindSpritesState::NukeTrack | FindSpritesState::CreateLone_Post =>
-                                {
-                                    ctrl.end_analysis();
-                                }
-                                FindSpritesState::CreateLone => {
-                                    self.state = FindSpritesState::CreateLone_Post;
-                                }
-                                // Guess nothing changed
-                                FindSpritesState::CreateSprite => (),
+                            FindSpritesState::CreateLone_Post => {
+                                ctrl.end_analysis();
+                                return;
                             }
-                            return;
+                        };
+                        if self.state == FindSpritesState::CreateLone {
+                            self.create_lone_sprite = Some(dest);
                         }
+                        ctrl.analyze_with_current_state(self, dest);
+                        match old_state {
+                            FindSpritesState::NukeTrack | FindSpritesState::CreateLone_Post =>
+                            {
+                                ctrl.end_analysis();
+                            }
+                            FindSpritesState::CreateLone => {
+                                self.state = FindSpritesState::CreateLone_Post;
+                            }
+                            // Guess nothing changed
+                            FindSpritesState::CreateSprite => (),
+                        }
+                        return;
                     }
-                    let ecx = ctrl.resolve(self.ecx);
-                    if self.is_list_call(arg1, ecx) {
+                    let ecx = ctrl.resolve(ctx.register(1));
+                    let tc_arg1 = ctrl.resolve(arg_cache.on_thiscall_call(0));
+                    if self.is_list_call(tc_arg1, ecx) {
                         ctrl.analyze_with_current_state(self, dest);
                     } else {
                         if self.state == FindSpritesState::CreateSprite {
-                            let ctx = ctrl.ctx();
                             // Check for fn(&mut val1, &mut val2) where
                             // val1 and val2 were inited with constants
                             let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                            let arg1_c = ctrl.resolve(ctx.mem32(arg1)).if_constant();
-                            let arg2_c = ctrl.resolve(ctx.mem32(arg2)).if_constant();
+                            let arg1_c = ctrl.read_memory(arg1, E::WORD_SIZE).if_constant();
+                            let arg2_c = ctrl.read_memory(arg2, E::WORD_SIZE).if_constant();
                             // Use custom(x) to keep track of called child functions
                             let rva = Rva((dest.as_u64() - self.binary.base.as_u64()) as u32);
                             let new_id = (self.function_to_custom_map.len() as u32 + 1) * 0x10;
@@ -250,14 +248,14 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                                     address: arg1,
                                     size: MemAccessSize::Mem32,
                                 });
-                                state.move_to(&dest, ctx.custom(custom_id + 1));
+                                state.move_resolved(&dest, ctx.custom(custom_id + 1));
                             }
                             if arg2_c.is_some() {
                                 let dest = DestOperand::Memory(MemAccess {
                                     address: arg2,
                                     size: MemAccessSize::Mem32,
                                 });
-                                state.move_to(&dest, ctx.custom(custom_id + 2));
+                                state.move_resolved(&dest, ctx.custom(custom_id + 2));
                             }
                             ctrl.skip_operation();
                         }
@@ -270,7 +268,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                 if self.state == FindSpritesState::CreateSprite {
                     self.check_position_store(ctrl, dest_addr, mem.size, value);
                 }
-                if mem.size != MemAccessSize::Mem32 {
+                if mem.size != E::WORD_SIZE {
                     return;
                 }
                 let ctx = ctrl.ctx();
@@ -288,7 +286,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                 }
                 // last_free_sprite = (*first_free_sprite).prev
                 // But not (*(*first_free_sprite).next).prev = (*first_free_sprite).prev
-                if let Some(inner) = value.if_mem32().and_then(|x| x.if_mem32()) {
+                if let Some(inner) = ctrl.if_mem_word(value).and_then(|x| ctrl.if_mem_word(x)) {
                     if dest_addr.iter().all(|x| x != inner) {
                         if self.is_unpaired_first_ptr(inner) {
                             self.set_last_ptr(dest_addr);
@@ -329,18 +327,15 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                     FindSpritesState::CreateLone_Post | FindSpritesState::CreateSprite => (),
                     FindSpritesState::CreateLone | FindSpritesState::NukeTrack => return,
                 }
+                let ctx = ctrl.ctx();
                 let condition = ctrl.resolve(condition);
                 let dest_addr = match ctrl.resolve(to).if_constant() {
                     Some(s) => VirtualAddress::from_u64(s),
                     None => return,
                 };
-                fn if_arithmetic_eq_zero<'e>(op: Operand<'e>) -> Option<Operand<'e>> {
-                    op.if_arithmetic_eq()
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                }
                 // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
-                let (val, jump_if_null) = match if_arithmetic_eq_zero(condition) {
-                    Some(other) => match if_arithmetic_eq_zero(other) {
+                let (val, jump_if_null) = match if_arithmetic_eq_zero(ctx, condition) {
+                    Some(other) => match if_arithmetic_eq_zero(ctx, other) {
                         Some(other) => (other, false),
                         None => (other, true),
                     }
@@ -373,15 +368,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
     fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         // Since hlines should be [hlines + 4 * x]
         // Prefer 4 * undefined as an 4 * (x - 1) offset will change base
-        fn hlines_base<'e>(val: Operand<'e>) -> Option<Operand<'e>> {
+        fn hlines_base<'e, Va: VirtualAddress>(val: Operand<'e>) -> Option<Operand<'e>> {
             val.if_arithmetic_add()
-                .and_either(|x| x.if_arithmetic_mul())
-                .filter(|&((l, r), _)| {
-                    Operand::either(l, r, |x| x.if_constant().filter(|&x| x == 4))
-                        .filter(|(_, other)| other.is_undefined() || other.if_custom().is_some())
-                        .is_some()
+                .and_either_other(|x| {
+                    x.if_arithmetic_mul_const(Va::SIZE.into())
+                        .filter(|idx| idx.is_undefined() || idx.if_custom().is_some())
                 })
-                .map(|(_, base)| base)
         }
 
         if let Some(_) = self.is_checking_active_list_candidate.take() {
@@ -390,8 +382,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
             if let (Some(head), Some(tail)) = (head, tail) {
                 match self.state {
                     FindSpritesState::CreateSprite => {
-                        let head = hlines_base(head);
-                        let tail = hlines_base(tail);
+                        let head = hlines_base::<E::VirtualAddress>(head);
+                        let tail = hlines_base::<E::VirtualAddress>(tail);
                         if let (Some(head), Some(tail)) = (head, tail) {
                             self.hlines.head = Some(head);
                             self.hlines.tail = Some(tail);
@@ -418,14 +410,16 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
         dest_size: MemAccessSize,
         value: Operand<'e>,
     ) {
-        fn mem16_related_offset(op: Operand<'_>) -> Option<u32> {
+        fn mem16_related_offset<'e, E: ExecutionState<'e>>(op: Operand<'e>) -> Option<u32> {
             // Check for Mem16[Mem32[rcx + 80] + offset]
             // (unit.related.order_target.x)
             let (l, r) = op.if_mem16()?.if_arithmetic_add()?;
             let offset: u32 = r.if_constant().and_then(|x| x.try_into().ok())?;
-            let (rcx, rcx_add) = l.if_mem32()?.if_arithmetic_add()?;
+            let rcx = l.if_memory().filter(|mem| mem.size == E::WORD_SIZE)?
+                .address.if_arithmetic_add_const(
+                    struct_layouts::unit_related::<E::VirtualAddress>()
+                )?;
             rcx.if_register().filter(|r| r.0 == 1)?;
-            rcx_add.if_constant().filter(|&c| c == 0x80)?;
             Some(offset)
         }
 
@@ -446,7 +440,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
             return;
         }
         let related_unit_offset = value.iter()
-            .find_map(|op| mem16_related_offset(op));
+            .find_map(|op| mem16_related_offset::<E>(op));
         let mut ok = true;
         if let Some(off) = related_unit_offset {
             let value = ctx.transform(value, 16, |op| {
@@ -456,7 +450,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
                         ok = false;
                     }
                     val
-                } else if mem16_related_offset(op) == Some(off) {
+                } else if mem16_related_offset::<E>(op) == Some(off) {
                     Some(ctx.custom(0))
                 } else {
                     None
@@ -464,15 +458,12 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
             });
             if ok {
                 let result = (value, offset, dest_size);
-                match off {
-                    // order_target_pos.x
-                    0x58 => {
-                        single_result_assign(Some(result), &mut self.sprite_x_position);
-                    }
-                    0x5a => {
-                        single_result_assign(Some(result), &mut self.sprite_y_position);
-                    }
-                    _ => (),
+                let order_target_offset =
+                    struct_layouts::unit_order_target_pos::<E::VirtualAddress>() as u32;
+                if off == order_target_offset {
+                    single_result_assign(Some(result), &mut self.sprite_x_position);
+                } else if off == order_target_offset + 2 {
+                    single_result_assign(Some(result), &mut self.sprite_y_position);
                 }
             }
         }
@@ -498,15 +489,11 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
 
         let mut exec_state = E::initial_state(ctx, binary);
         let state = Default::default();
-        let word_size = match E::VirtualAddress::SIZE == 4 {
-            true => MemAccessSize::Mem32,
-            false => MemAccessSize::Mem64,
-        };
         if let Some(ret) = return_addr {
             exec_state.move_to(
                 &DestOperand::Memory(MemAccess {
                     address: ctx.register(4),
-                    size: word_size,
+                    size: E::WORD_SIZE,
                 }),
                 ctx.constant(ret.as_u64()),
             );
@@ -522,7 +509,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
             exec_state.move_to(
                 &DestOperand::Memory(MemAccess {
                     address: ctx.custom(0),
-                    size: word_size,
+                    size: E::WORD_SIZE,
                 }),
                 ctx.constant(arg1),
             );
@@ -535,7 +522,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
             exec_state.move_to(
                 &DestOperand::Memory(MemAccess {
                     address: ctx.custom(1),
-                    size: word_size,
+                    size: E::WORD_SIZE,
                 }),
                 ctx.constant(arg2),
             );
@@ -599,7 +586,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
     }
 
     fn last_ptr_first_known(&self, first: Operand<'e>) -> Option<Operand<'e>> {
-        self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1.clone())
+        self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1)
     }
 
     fn is_unpaired_first_ptr(&self, first: Operand<'e>) -> bool {
@@ -737,10 +724,7 @@ fn required_return_addr<'e, E: ExecutionState<'e>>(
     exec_state.move_to(
         &DestOperand::Memory(MemAccess {
             address: ctx.register(4),
-            size: match E::VirtualAddress::SIZE == 4 {
-                true => MemAccessSize::Mem32,
-                false => MemAccessSize::Mem64,
-            },
+            size: E::WORD_SIZE,
         }),
         ctx.custom(0),
     );
@@ -974,13 +958,10 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                     Some(s) => VirtualAddress::from_u64(s),
                     None => return,
                 };
-                fn if_arithmetic_eq_zero<'e>(op: Operand<'e>) -> Option<Operand<'e>> {
-                    op.if_arithmetic_eq()
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                }
+                let ctx = ctrl.ctx();
                 // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
-                let (val, jump_if_null) = match if_arithmetic_eq_zero(condition) {
-                    Some(other) => match if_arithmetic_eq_zero(other) {
+                let (val, jump_if_null) = match if_arithmetic_eq_zero(ctx, condition) {
+                    Some(other) => match if_arithmetic_eq_zero(ctx, other) {
                         Some(other) => (other, false),
                         None => (other, true),
                     }
@@ -1176,4 +1157,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             _ => (),
         }
     }
+}
+
+fn if_arithmetic_eq_zero<'e>(ctx: OperandCtx<'e>, op: Operand<'e>) -> Option<Operand<'e>> {
+    op.if_arithmetic_eq()
+        .filter(|x| x.1 == ctx.const_0())
+        .map(|x| x.0)
 }
