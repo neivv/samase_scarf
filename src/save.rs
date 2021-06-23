@@ -1,11 +1,11 @@
-use scarf::{Operand, Operation, DestOperand, Rva};
+use scarf::{Operand, OperandCtx, Operation, DestOperand, Rva};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::add_terms::collect_arith_add_terms;
 use crate::{
     ArgCache, AnalysisCtx, single_result_assign, entry_of_until, EntryOf, FunctionFinder,
-    bumpvec_with_capacity,
+    bumpvec_with_capacity, OperandExt,
 };
 
 #[derive(Clone)]
@@ -147,22 +147,19 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             Operation::Move(DestOperand::Memory(mem), value, None) => {
                 let value = ctrl.resolve(value);
                 let dest = ctrl.resolve(mem.address);
+                let ctx = ctrl.ctx();
                 if dest == self.last_y_hline {
                     if let Some(mut terms) = collect_arith_add_terms(value, self.bump) {
                         let ok = terms.remove_one(|op, _neg| {
-                            op.if_arithmetic_mul()
-                                .filter(|(_, r)| {
-                                    r.if_constant().filter(|&c| c == self.sprite_size as u64)
-                                        .is_some()
-                                })
-                                .filter(|&(l, _)| {
+                            op.if_arithmetic_mul_const(self.sprite_size as u64)
+                                .filter(|&x| {
                                     // addr == self.last_y_hline or undefined; convert in place
                                     // in older patches,
                                     // [esp - x + game.map_height_tiles] in newer.
-                                    l.is_undefined() ||
-                                        ctrl.if_mem_word(l)
+                                    x.is_undefined() ||
+                                        x.if_mem32()
                                             .filter(|&addr| {
-                                                self.is_stack_temp_hlines(addr) ||
+                                                self.is_stack_temp_hlines(ctx, addr) ||
                                                     addr == self.last_y_hline
                                             })
                                             .is_some()
@@ -178,7 +175,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             ctrl.end_analysis();
                         }
                     }
-                } else if !self.had_file_call && self.is_stack_temp_hlines(dest) {
+                } else if !self.had_file_call && self.is_stack_temp_hlines(ctx, dest) {
                     if value.iter().any(|x| x == self.last_y_hline) {
                         self.result = EntryOf::Ok(SpriteSerializationFunc::Serialize);
                         ctrl.end_analysis();
@@ -191,24 +188,16 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
 }
 impl<'a, 'e, E: ExecutionState<'e>> SpriteSerializationAnalysis<'a, 'e, E>
 {
-    fn is_stack_temp_hlines(&self, addr: Operand<'e>) -> bool {
+    fn is_stack_temp_hlines(&self, ctx: OperandCtx<'e>, addr: Operand<'e>) -> bool {
         collect_arith_add_terms(addr, self.bump)
             .as_mut()
             .map(|terms| {
-                let ok = terms.remove_one(|op, _neg| {
-                    // rsp
-                    op.if_register()
-                        .filter(|x| x.0 == 4)
-                        .is_some()
-                });
+                let ok = terms.remove_one(|op, _neg| op == ctx.register(4));
                 if !ok {
                     return false;
                 }
                 terms.remove_one(|op, _neg| {
-                    op.if_arithmetic_mul()
-                        .filter(|x| x.1.if_constant() == Some(4))
-                        .filter(|x| x.0 == self.map_height_tiles)
-                        .is_some()
+                    op.if_arithmetic_mul_const(4) == Some(self.map_height_tiles)
                 })
             })
             .unwrap_or(false)
