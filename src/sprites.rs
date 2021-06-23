@@ -801,7 +801,6 @@ pub(crate) fn fow_sprites<'e, E: ExecutionState<'e>>(
         is_checking_free_list_candidate: None,
         free_list_candidate_head: None,
         free_list_candidate_tail: None,
-        ecx: ctx.register(1),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, step_objects);
     analysis.analyze(&mut analyzer);
@@ -837,7 +836,6 @@ struct FowSpriteAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     is_checking_free_list_candidate: Option<Operand<'e>>,
     free_list_candidate_head: Option<Operand<'e>>,
     free_list_candidate_tail: Option<Operand<'e>>,
-    ecx: Operand<'e>,
     first_lone: Operand<'e>,
 }
 
@@ -880,7 +878,8 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                             }
                         }
                         FowSpritesState::StepLoneSpritesFound => {
-                            let ecx = ctrl.resolve(self.ecx);
+                            let ctx = ctrl.ctx();
+                            let ecx = ctrl.resolve(ctx.register(1));
                             if ctrl.if_mem_word(ecx).is_none() {
                                 return;
                             }
@@ -921,7 +920,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                 }
                 // last_active_sprite = (*first_active_sprite).prev
                 // But not (*(*first_active_sprite).next).prev = (*first_active_sprite).prev
-                if let Some(inner) = value.if_mem32().and_then(|x| x.if_mem32()) {
+                if let Some(inner) = ctrl.if_mem_word(value).and_then(|x| ctrl.if_mem_word(x)) {
                     if dest_addr.iter().all(|x| x != inner) {
                         if self.is_unpaired_first_ptr(inner) {
                             self.active.tail = Some(dest_value);
@@ -953,30 +952,29 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                 if self.state != FowSpritesState::StepLoneSpritesFound {
                     return;
                 }
-                let condition = ctrl.resolve(condition);
-                let dest_addr = match ctrl.resolve(to).if_constant() {
-                    Some(s) => VirtualAddress::from_u64(s),
-                    None => return,
-                };
-                let ctx = ctrl.ctx();
-                // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
-                let (val, jump_if_null) = match if_arithmetic_eq_zero(ctx, condition) {
-                    Some(other) => match if_arithmetic_eq_zero(ctx, other) {
-                        Some(other) => (other, false),
-                        None => (other, true),
-                    }
-                    None => return,
-                };
-                if ctrl.if_mem_word(val).is_some() {
-                    let addr = match jump_if_null {
-                        true => dest_addr,
-                        false => ctrl.current_instruction_end(),
+                if let Some(dest_addr) = ctrl.resolve_va(to) {
+                    let condition = ctrl.resolve(condition);
+                    let ctx = ctrl.ctx();
+                    // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
+                    let (val, jump_if_null) = match if_arithmetic_eq_zero(ctx, condition) {
+                        Some(other) => match if_arithmetic_eq_zero(ctx, other) {
+                            Some(other) => (other, false),
+                            None => (other, true),
+                        }
+                        None => return,
                     };
-                    self.free_list_candidate_branches.insert(addr, val);
+                    if ctrl.if_mem_word(val).is_some() {
+                        let addr = match jump_if_null {
+                            true => dest_addr,
+                            false => ctrl.current_instruction_end(),
+                        };
+                        self.free_list_candidate_branches.insert(addr, val);
+                    }
                 }
             }
             _ => (),
         }
+        ctrl.aliasing_memory_fix(op);
     }
 
     fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
