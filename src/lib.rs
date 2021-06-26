@@ -415,6 +415,11 @@ results! {
         SyncData => "sync_data",
         IscriptBin => "iscript_bin",
         StormCommandUser => "storm_command_user",
+        FirstFreeOrder => "first_free_order",
+        LastFreeOrder => "last_free_order",
+        AllocatedOrderCount => "allocated_order_count",
+        ReplayBfix => "replay_bfix",
+        ReplayGcfg => "replay_gcfg",
     }
 }
 
@@ -952,6 +957,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             SyncData => self.sync_data(),
             IscriptBin => self.iscript_bin(),
             StormCommandUser => self.storm_command_user(),
+            FirstFreeOrder => self.first_free_order(),
+            LastFreeOrder => self.last_free_order(),
+            AllocatedOrderCount => self.allocated_order_count(),
+            ReplayBfix => self.replay_bfix(),
+            ReplayGcfg => self.replay_gcfg(),
         }
     }
 
@@ -2334,6 +2344,41 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.analyze_many_op(OperandAnalysis::SyncData, AnalysisCache::cache_game_loop)
     }
 
+    pub fn first_free_order(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FirstFreeOrder,
+            AnalysisCache::cache_prepare_issue_order,
+        )
+    }
+
+    pub fn last_free_order(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::LastFreeOrder,
+            AnalysisCache::cache_prepare_issue_order,
+        )
+    }
+
+    pub fn allocated_order_count(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::AllocatedOrderCount,
+            AnalysisCache::cache_prepare_issue_order,
+        )
+    }
+
+    pub fn replay_bfix(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ReplayBfix,
+            AnalysisCache::cache_prepare_issue_order,
+        )
+    }
+
+    pub fn replay_gcfg(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ReplayGcfg,
+            AnalysisCache::cache_prepare_issue_order,
+        )
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -2787,6 +2832,10 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             Some(([result.order_init_arbiter, result.prepare_issue_order,
                 result.do_next_queued_order], []))
         })
+    }
+
+    fn prepare_issue_order(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::PrepareIssueOrder, |s| s.cache_order_issuing(actx))
     }
 
     fn order_init_arbiter(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -4236,6 +4285,20 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn step_network(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::StepNetwork, |s| s.cache_game_loop(actx))
     }
+
+    fn cache_prepare_issue_order(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[],
+            &[FirstFreeOrder, LastFreeOrder, AllocatedOrderCount, ReplayBfix, ReplayGcfg],
+            |s|
+        {
+            let prepare_issue_order = s.prepare_issue_order(actx)?;
+            let result = units::analyze_prepare_issue_order(actx, prepare_issue_order);
+            Some(([], [result.first_free_order, result.last_free_order,
+                result.allocated_order_count, result.replay_bfix, result.replay_gcfg]))
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -5307,6 +5370,27 @@ impl<'e> AnalysisX86<'e> {
     pub fn sync_data(&mut self) -> Option<Operand<'e>> {
         self.0.sync_data()
     }
+
+    pub fn first_free_order(&mut self) -> Option<Operand<'e>> {
+        self.0.first_free_order()
+    }
+
+    pub fn last_free_order(&mut self) -> Option<Operand<'e>> {
+        self.0.last_free_order()
+    }
+
+    pub fn allocated_order_count(&mut self) -> Option<Operand<'e>> {
+        self.0.allocated_order_count()
+    }
+
+    pub fn replay_bfix(&mut self) -> Option<Operand<'e>> {
+        self.0.replay_bfix()
+    }
+
+    pub fn replay_gcfg(&mut self) -> Option<Operand<'e>> {
+        self.0.replay_gcfg()
+    }
+
 }
 
 pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {

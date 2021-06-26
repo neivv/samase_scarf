@@ -141,3 +141,10 @@ pub fn control_ptr_value<Va: VirtualAddress>() -> u64 {
         false => 0x58,
     }
 }
+
+pub fn order_id<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x8,
+        false => 0x10,
+    }
+}

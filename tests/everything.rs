@@ -690,6 +690,10 @@ fn everything_1224c() {
         assert_eq!(analysis.font_cache_render_ascii().unwrap().0, 0x008FCFF0);
         assert_eq!(analysis.ttf_cache_character().unwrap().0, 0x009036B0);
         assert_eq!(analysis.ttf_render_sdf().unwrap().0, 0x00907980);
+
+        assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32(ctx.constant(0x0df3f98)));
+        assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32(ctx.constant(0x0df3f9c)));
+        assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32(ctx.constant(0x0df3fb0)));
     })
 }
 
@@ -845,7 +849,10 @@ fn everything_1232b() {
 
 #[test]
 fn everything_1232c() {
-    test_with_extra_checks(Path::new("1232c.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1232c.exe"), |ctx, analysis| {
+        assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32(ctx.constant(0x0e9a850)));
+        assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32(ctx.constant(0x0e9a854)));
+        assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32(ctx.constant(0x0e9a868)));
     })
 }
 
@@ -973,6 +980,10 @@ fn everything_1233c() {
         assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xeaa090), 0, 0)));
         assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xeb1750), 1, 0)));
         assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xeb1760), 0, 0)));
+
+        assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32(ctx.constant(0x0ea9d60)));
+        assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32(ctx.constant(0x0ea9d64)));
+        assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32(ctx.constant(0x0ea9d78)));
     })
 }
 
@@ -1403,7 +1414,12 @@ fn everything_1238d() {
 
 #[test]
 fn everything_1238e() {
-    test_with_extra_checks(Path::new("1238e.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1238e.exe"), |ctx, analysis| {
+        assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32(ctx.constant(0x011b5ac0)));
+        assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32(ctx.constant(0x011b5ac4)));
+        assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32(ctx.constant(0x011b5ad4)));
+        assert_eq!(analysis.replay_bfix().unwrap(), ctx.constant(0x00F8B790));
+        assert_eq!(analysis.replay_gcfg().unwrap(), ctx.constant(0x01009788));
     });
 }
 
@@ -1448,7 +1464,7 @@ fn test_nongeneric<'e>(
         let result = analysis.operand_analysis(op);
         match op {
             // special handling
-            Units | PlayerUnitSkins | VertexBuffer | Sprites => {
+            Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg => {
                 continue;
             }
             Game | Players | MenuScreenId => {
@@ -1469,7 +1485,8 @@ fn test_nongeneric<'e>(
                 VisionUpdated | FirstDyingUnit | FirstRevealer | FirstInvisibleUnit |
                 ActiveIscriptFlingy | ActiveIscriptBullet | UnitShouldRevealArea |
                 NetworkReady | LastBulletSpawner | DatRequirementError | CursorMarker |
-                SyncActive | IscriptBin | StormCommandUser =>
+                SyncActive | IscriptBin | StormCommandUser | FirstFreeOrder | LastFreeOrder |
+                AllocatedOrderCount =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1865,6 +1882,20 @@ fn test_nongeneric<'e>(
         check_global_struct_opt(vertex_buffer, binary, "vertex_buffer");
     } else {
         assert!(vertex_buffer.is_none());
+    }
+
+    let replay_bfix = analysis.replay_bfix();
+    let replay_gcfg = analysis.replay_gcfg();
+    // Only from 1.23.3e forward
+    if minor_version >= 24 ||
+        (minor_version == 23 && patch_version >= 4) ||
+        (minor_version == 23 && patch_version == 3 && revision >= b'e')
+    {
+        check_global_struct_opt(replay_bfix, binary, "replay_bfix");
+        check_global_struct_opt(replay_gcfg, binary, "replay_gcfg");
+    } else {
+        assert!(replay_bfix.is_none());
+        assert!(replay_gcfg.is_none());
     }
 
     assert_eq!(analysis.crt_fastfail().len(), 0x5);

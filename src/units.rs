@@ -53,6 +53,14 @@ pub(crate) struct StepActiveUnitAnalysis<'e, Va: VirtualAddress> {
     pub should_vision_update: Option<Operand<'e>>,
 }
 
+pub(crate) struct PrepareIssueOrderAnalysis<'e> {
+    pub first_free_order: Option<Operand<'e>>,
+    pub last_free_order: Option<Operand<'e>>,
+    pub allocated_order_count: Option<Operand<'e>>,
+    pub replay_bfix: Option<Operand<'e>>,
+    pub replay_gcfg: Option<Operand<'e>>,
+}
+
 pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     orders_dat: (E::VirtualAddress, u32),
@@ -1544,5 +1552,298 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepActiveAnalyzer<'a, 'acx, 'e, E> {
                 }
             });
         }
+    }
+}
+
+pub(crate) fn analyze_prepare_issue_order<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    prepare_issue_order: E::VirtualAddress,
+) -> PrepareIssueOrderAnalysis<'e> {
+    let mut result = PrepareIssueOrderAnalysis {
+        first_free_order: None,
+        last_free_order: None,
+        allocated_order_count: None,
+        replay_bfix: None,
+        replay_gcfg: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, prepare_issue_order);
+    let mut analyzer = PrepareIssueOrderAnalyzer::<E> {
+        result: &mut result,
+        inline_depth: 0,
+        inline_limit: 0,
+        arg_cache: &actx.arg_cache,
+        state: PrepareIssueOrderState::Bfix,
+        inline_result: None,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct PrepareIssueOrderAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut PrepareIssueOrderAnalysis<'e>,
+    inline_depth: u8,
+    inline_limit: u8,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: PrepareIssueOrderState,
+    inline_result: Option<Operand<'e>>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum PrepareIssueOrderState {
+    // Search for branch on Mem8[x] & 4,
+    // Inline 1 depth if arg1 == this.order, or with low limit 2 depth unconditionally.
+    Bfix,
+    // Search for branch on Mem8[x + 10] == 5
+    // Inline once from current position
+    Gcfg,
+    FirstFreeOrder,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    PrepareIssueOrderAnalyzer<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if self.inline_limit != 0 {
+            if let Operation::Return(..) = *op {
+                let result = ctrl.resolve(ctx.register(0));
+                if let Some(old) = self.inline_result {
+                    if old != result {
+                        self.inline_result = None;
+                        ctrl.end_analysis();
+                    }
+                } else {
+                    self.inline_result = Some(result);
+                }
+                return;
+            }
+            if matches!(*op, Operation::Call(..) | Operation::Jump { .. }) {
+                self.inline_limit -= 1;
+            }
+            if self.inline_limit == 0 {
+                ctrl.end_analysis();
+                return;
+            }
+        }
+        match self.state {
+            PrepareIssueOrderState::Bfix | PrepareIssueOrderState::Gcfg => {
+                let is_bfix = self.state == PrepareIssueOrderState::Bfix;
+                if let Operation::Call(dest) = *op {
+                    if is_bfix && self.seems_append_order(ctrl) {
+                        // Wasn't able to find replay sections, skip them.
+                        self.state = PrepareIssueOrderState::FirstFreeOrder;
+                        self.state_order_alloc(ctrl, op);
+                        return;
+                    }
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let inline = match is_bfix {
+                            true => self.inline_depth < 2,
+                            false => self.inline_limit == 0,
+                        };
+                        if !inline {
+                            return;
+                        }
+
+                        let mut inline_limit = 4;
+                        if is_bfix && self.inline_depth == 0 {
+                            let arg1 =
+                                ctx.and_const(ctrl.resolve(self.arg_cache.on_call(0)), 0xff);
+                            let is_this_order = arg1.if_mem8()
+                                .and_then(|x| {
+                                    x.if_arithmetic_add_const(
+                                        struct_layouts::unit_order::<E::VirtualAddress>()
+                                    )
+                                })
+                                .filter(|&x| x == ctx.register(1))
+                                .is_some();
+                            if is_this_order {
+                                inline_limit = 0;
+                            }
+                        }
+                        let old_limit = self.inline_limit;
+                        self.inline_depth += 1;
+                        self.inline_limit = inline_limit;
+                        self.inline_result = None;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth -= 1;
+                        if let Some(result) = self.inline_result.take() {
+                            ctrl.do_call_with_result(result);
+                        }
+                        if self.result.first_free_order.is_some() {
+                            // May happen if we inline and then realize the replay sections
+                            // can't be found.
+                            ctrl.end_analysis();
+                        }
+                        self.inline_limit = old_limit;
+                    }
+                } else if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if is_bfix {
+                        let result = if_arithmetic_eq_neq(condition)
+                            .and_then(|(l, r, _)| {
+                                if r != ctx.const_0() {
+                                    return None;
+                                }
+                                l.if_arithmetic_and_const(4)?.if_mem8()
+                            });
+                        if let Some(result) = result {
+                            self.result.replay_bfix = Some(result);
+                            self.state = PrepareIssueOrderState::Gcfg;
+                        }
+                    } else {
+                        let result = if_arithmetic_eq_neq(condition)
+                            .and_then(|(l, r, _)| {
+                                if r.if_constant() != Some(5) {
+                                    return None;
+                                }
+                                l.if_mem8().map(|x| ctx.sub_const(x, 0x10))
+                            });
+                        if let Some(result) = result {
+                            self.result.replay_gcfg = Some(result);
+                            self.state = PrepareIssueOrderState::FirstFreeOrder;
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    // Block moves to Mem[esp + x]; a string initialized to
+                    // stack and then moving to heap, followed by string.ptr[constant] = 0
+                    // caused issues.
+                    let address = ctrl.resolve(mem.address);
+                    let block = address.if_arithmetic_add()
+                        .filter(|x| x.0 == ctx.register(4))
+                        .is_some();
+                    if block {
+                        ctrl.skip_operation();
+                    }
+                    // Another check to skip replay operand analysis,
+                    // if append_order call is inlined.
+                    if is_bfix && mem.size == MemAccessSize::Mem8 {
+                        let value = ctrl.resolve(value);
+                        if let Some(val) = self.find_first_free_order(ctrl, address, value) {
+                            self.result.first_free_order = Some(val);
+                            self.inline_limit = 0;
+                            self.state = PrepareIssueOrderState::FirstFreeOrder;
+                            self.state_order_alloc(ctrl, op);
+                        }
+                    }
+                }
+            }
+            PrepareIssueOrderState::FirstFreeOrder => self.state_order_alloc(ctrl, op),
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
+    /// Returns true if the call seems like a call to append_order(), which is
+    /// done after any replay compatibility checks and needs to be inlined to
+    /// for order allocation vars.
+    fn seems_append_order(&self, ctrl: &mut Control<'e, '_, '_, Self>) -> bool {
+        // append_order(this = this, a1, a2, a3, a4, 0),
+        // -- In 64bit it is append_order(this = this, a1, a2, a3, 0) (I think)
+        let ctx = ctrl.ctx();
+        let arg_cache = self.arg_cache;
+        if self.inline_depth != 0 {
+            return false;
+        }
+        if ctrl.resolve(ctx.register(1)) != ctx.register(1) {
+            return false;
+        }
+        if ctrl.resolve(arg_cache.on_thiscall_call(4)) != ctx.const_0() {
+            return false;
+        }
+        if ctx.and_const(ctrl.resolve(arg_cache.on_thiscall_call(0)), 0xff) !=
+            ctx.and_const(arg_cache.on_thiscall_entry(0), 0xff)
+        {
+            return false;
+        }
+        (1..3).all(|i| {
+            ctrl.resolve(arg_cache.on_thiscall_call(i)) == arg_cache.on_thiscall_entry(i)
+        })
+    }
+
+    fn state_order_alloc(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if self.inline_depth < 3 {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let seems_append_order = self.seems_append_order(ctrl);
+                    let had_first_free_order = self.result.first_free_order.is_some();
+                    let inline_limit = if seems_append_order || had_first_free_order {
+                        0
+                    } else if self.inline_limit == 0 {
+                        16
+                    } else {
+                        self.inline_limit
+                    };
+
+                    let old_limit = self.inline_limit;
+                    self.inline_depth += 1;
+                    self.inline_limit = inline_limit;
+                    self.inline_result = None;
+                    ctrl.analyze_with_current_state(self, dest);
+                    self.inline_depth -= 1;
+                    self.inline_limit = old_limit;
+                    if !had_first_free_order && self.result.first_free_order.is_some() {
+                        ctrl.end_analysis();
+                    }
+                    if self.result.allocated_order_count.is_some() {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+        } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+            let value = ctrl.resolve(value);
+            if self.result.first_free_order.is_none() {
+                if mem.size == MemAccessSize::Mem8 {
+                    let address = ctrl.resolve(mem.address);
+                    if let Some(val) = self.find_first_free_order(ctrl, address, value) {
+                        self.result.first_free_order = Some(val);
+                        self.inline_limit = 0;
+                    }
+                }
+            } else if self.result.last_free_order.is_some() {
+                // Check for allocated_order_count += 1
+                if let Some(base) = Operand::and_masked(value).0
+                    .if_arithmetic_add_const(1)
+                {
+                    if let Some(base_mem) = base.if_memory() {
+                        if base_mem.address == ctrl.resolve(mem.address) {
+                            self.result.allocated_order_count = Some(base);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+        } else if let Operation::Jump { condition, .. } = *op {
+            if self.result.last_free_order.is_none() {
+                if let Some(first_free) = self.result.first_free_order {
+                    let condition = ctrl.resolve(condition);
+                    let result = if_arithmetic_eq_neq(condition)
+                        .map(|x| (x.0, x.1))
+                        .and_if_either_other(|x| x == first_free)
+                        .filter(|&x| ctrl.if_mem_word(x).is_some());
+                    if let Some(result) = result {
+                        self.result.last_free_order = Some(result);
+                    }
+                }
+            }
+        }
+    }
+
+    fn find_first_free_order(
+        &self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        address: Operand<'e>,
+        value: Operand<'e>,
+    ) -> Option<Operand<'e>> {
+        let ctx = ctrl.ctx();
+        if value == ctx.and_const(self.arg_cache.on_thiscall_entry(0), 0xff) {
+            return address.if_arithmetic_add_const(
+                struct_layouts::order_id::<E::VirtualAddress>()
+            );
+        }
+        None
     }
 }
