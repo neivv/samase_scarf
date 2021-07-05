@@ -301,6 +301,7 @@ results! {
         StepIscriptSwitch => "step_iscript_switch",
         ProcessCommands => "process_commands",
         ProcessLobbyCommands => "process_lobby_commands",
+        StepAiScript => "step_ai_script",
     }
 }
 
@@ -842,6 +843,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             StepIscriptSwitch => self.step_iscript_switch(),
             ProcessCommands => self.process_commands(),
             ProcessLobbyCommands => self.process_lobby_commands(),
+            StepAiScript => self.step_ai_script(),
         }
     }
 
@@ -1404,6 +1406,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn first_ai_script(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(OperandAnalysis::FirstAiScript, AnalysisCache::cache_ai_step_frame)
+    }
+
+    pub fn step_ai_script(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::StepAiScript, AnalysisCache::cache_ai_step_frame)
     }
 
     pub fn first_guard_ai(&mut self) -> Option<Operand<'e>> {
@@ -3642,17 +3648,22 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn cache_ai_step_frame(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
-        self.cache_many(&[AiStepRegion, AiSpendMoney], &[FirstAiScript], |s| {
+        self.cache_many(&[AiStepRegion, AiSpendMoney, StepAiScript], &[FirstAiScript], |s| {
             let step_objects = s.step_objects(actx)?;
             let game = s.game(actx)?;
             let result = ai::step_frame_funcs(actx, step_objects, game);
             s.aiscript_hook = result.hook;
-            Some(([result.ai_step_region, result.ai_spend_money], [result.first_ai_script]))
+            Some(([result.ai_step_region, result.ai_spend_money, result.step_ai_script],
+                [result.first_ai_script]))
         })
     }
 
     fn ai_spend_money(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::AiSpendMoney, |s| s.cache_ai_step_frame(actx))
+    }
+
+    fn step_ai_script(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::StepAiScript, |s| s.cache_ai_step_frame(actx))
     }
 
     fn join_game(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {

@@ -304,6 +304,11 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     }
 
     dat_ctx.add_patches_from_code_refs();
+    // Always analyze step_ai_script as it has checks for unit ids in every opcode,
+    // and the function is hard to reach otherwise.
+    if let Some(step_ai_script) = dat_ctx.cache.step_ai_script(dat_ctx.analysis) {
+        dat_ctx.analyze_function_without_goal(step_ai_script);
+    }
     while !dat_ctx.funcs_needing_retval_patch.is_empty() ||
         dat_ctx.u8_funcs_pos != dat_ctx.u8_funcs.len() ||
         !dat_ctx.func_arg_widen_queue.is_empty()
@@ -853,6 +858,16 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         self.required_stable_addresses.add_back(entry_rva, rsa);
         self.analyzed_functions.insert(entry_rva, state);
         result
+    }
+
+    /// Analyzes function to see if anything can be patched.
+    /// Useful for removing dat_id >= max check if the function is known to be
+    /// hard to find from other analysis.
+    fn analyze_function_without_goal(&mut self, entry: E::VirtualAddress) {
+        let entry_rva = Rva((entry.as_u64() - self.binary.base.as_u64()) as u32);
+        if !self.analyzed_functions.contains_key(&entry_rva) {
+            self.analyze_function(entry, entry, DatFuncAnalysisMode::ArrayIndex);
+        }
     }
 
     fn add_u8_func_patches(&mut self) {

@@ -791,6 +791,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnal
 pub(crate) struct AiStepFrameFuncs<'e, Va: VirtualAddressTrait> {
     pub ai_step_region: Option<Va>,
     pub ai_spend_money: Option<Va>,
+    pub step_ai_script: Option<Va>,
     pub first_ai_script: Option<Operand<'e>>,
     pub hook: Option<AiScriptHook<'e, Va>>,
 }
@@ -806,6 +807,7 @@ pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
     let mut result = AiStepFrameFuncs {
         ai_step_region: None,
         ai_spend_money: None,
+        step_ai_script: None,
         first_ai_script: None,
         hook: None,
     };
@@ -930,6 +932,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                         });
                     if let Some((switch_table, first_ai_script)) = ok {
                         self.result.first_ai_script = Some(first_ai_script);
+                        self.result.step_ai_script = Some(self.entry);
                         self.state = StepAiState::StepRegions;
                         self.result.hook =
                             aiscript_hook::<E>(ctx, ctrl.binary(), self.entry, switch_table);
