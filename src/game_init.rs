@@ -79,12 +79,20 @@ pub(crate) struct GameLoopAnalysis<'e, Va: VirtualAddress> {
     pub render_screen: Option<Va>,
     pub load_pcx: Option<Va>,
     pub set_music: Option<Va>,
+    pub step_game_loop: Option<Va>,
+    pub step_game_logic: Option<Va>,
+    pub process_events: Option<Va>,
     pub menu_screen_id: Option<Operand<'e>>,
     pub main_palette: Option<Operand<'e>>,
     pub palette_set: Option<Operand<'e>>,
     pub tfontgam: Option<Operand<'e>>,
     pub sync_data: Option<Operand<'e>>,
     pub sync_active: Option<Operand<'e>>,
+    pub continue_game_loop: Option<Operand<'e>>,
+    pub anti_troll: Option<Operand<'e>>,
+    pub step_game_frames: Option<Operand<'e>>,
+    pub next_game_step_tick: Option<Operand<'e>>,
+    pub replay_seek_frame: Option<Operand<'e>>,
 }
 
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
@@ -2568,6 +2576,9 @@ pub(crate) fn analyze_game_loop<'e, E: ExecutionState<'e>>(
         set_music: None,
         step_network: None,
         render_screen: None,
+        step_game_loop: None,
+        step_game_logic: None,
+        process_events: None,
         load_pcx: None,
         main_palette: None,
         palette_set: None,
@@ -2575,6 +2586,11 @@ pub(crate) fn analyze_game_loop<'e, E: ExecutionState<'e>>(
         sync_data: None,
         sync_active: None,
         menu_screen_id: None,
+        continue_game_loop: None,
+        anti_troll: None,
+        step_game_frames: None,
+        next_game_step_tick: None,
+        replay_seek_frame: None,
     };
 
     let binary = actx.binary;
@@ -2587,9 +2603,26 @@ pub(crate) fn analyze_game_loop<'e, E: ExecutionState<'e>>(
         inline_depth: 0,
         inline_limit: 0,
         sync_active_candidate: None,
+        step_game_loop_inlined: false,
+        step_game_loop_first_cond_jump: true,
+        current_entry: game_loop,
+        step_game_loop_analysis_start: None,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, game_loop);
     analysis.analyze(&mut analyzer);
+    if let Some(step_game_loop) = analyzer.step_game_loop_analysis_start {
+        let mut analyzer = StepGameLoopAnalyzer::<E> {
+            result: &mut result,
+            game,
+            next_call_custom: 0x1000,
+            state: StepGameLoopAnalysisState::NextGameStepTick,
+            inlining: false,
+            current_entry: None,
+            inline_limit: 0,
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, step_game_loop);
+        analysis.analyze(&mut analyzer);
+    }
     result
 }
 
@@ -2601,6 +2634,8 @@ enum GameLoopAnalysisState {
     // Also worth noting that this call is slightly different from analysis's set_music,
     // which has does call something else first (Briefing fades music out first).
     SetMusic,
+    // Move of 1 to Mem8. Hopefully no conflicts.
+    ContinueGameLoop,
     // Search for memcpy(palette_set[0], main_palette, 0x400)
     // Inline once if a1 == 0 and a2 == 0x100 set_palette(idx, entry_count, source)
     PaletteCopy,
@@ -2618,6 +2653,22 @@ enum GameLoopAnalysisState {
     StepNetwork,
     // Recognize render_screen(&[funcptr], 1)
     RenderScreen,
+    // Find comparision against continue_game_loop != 0, inline once
+    StepGameLoop,
+    // If the first call has arg1 = 3, step_game_loop got inlined and it is call
+    // to process_events.
+    // Otherwise iniline once and expect the first function to be call to process_events(3).
+    StepGameLoopAfterContinue,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum StepGameLoopAnalysisState {
+    // Find (current_tick - next_tick) < 0 jump
+    // Call results are made Custom(x) so current_tick should be custom.
+    // Due to it being signed comparision it shows up as a sign bit check condition.
+    NextGameStepTick,
+    StepGame,
+    StepGameFrames,
 }
 
 struct GameLoopAnalyzer<'a, 'e, E: ExecutionState<'e>> {
@@ -2628,6 +2679,22 @@ struct GameLoopAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     inline_depth: u8,
     inline_limit: u8,
     sync_active_candidate: Option<Operand<'e>>,
+    step_game_loop_inlined: bool,
+    step_game_loop_first_cond_jump: bool,
+    current_entry: E::VirtualAddress,
+    // Address to start analyzing step_game_loop.
+    // In middle of function, but should be fine as it does not take arguments.
+    step_game_loop_analysis_start: Option<E::VirtualAddress>,
+}
+
+struct StepGameLoopAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut GameLoopAnalysis<'e, E::VirtualAddress>,
+    game: Operand<'e>,
+    next_call_custom: u32,
+    state: StepGameLoopAnalysisState,
+    inlining: bool,
+    current_entry: Option<E::VirtualAddress>,
+    inline_limit: u8,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<'a, 'e, E> {
@@ -2649,7 +2716,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                             self.result.set_music = Some(dest);
                             self.inline_depth = 0;
                             self.inline_limit = 0;
-                            self.state = GameLoopAnalysisState::PaletteCopy;
+                            self.state = GameLoopAnalysisState::ContinueGameLoop;
                             ctrl.analyze_with_current_state(self, ctrl.current_instruction_end());
                             ctrl.end_analysis();
                         } else if self.inline_depth == 0 {
@@ -2668,6 +2735,15 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                                 self.inline_limit -= 1;
                             }
                         }
+                    }
+                }
+            }
+            GameLoopAnalysisState::ContinueGameLoop => {
+                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size == MemAccessSize::Mem8 && ctrl.resolve(value) == ctx.const_1() {
+                        self.result.continue_game_loop =
+                            Some(ctx.mem8(ctrl.resolve(mem.address)));
+                        self.state = GameLoopAnalysisState::PaletteCopy;
                     }
                 }
             }
@@ -2822,6 +2898,89 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                                 .is_some();
                             if ok {
                                 self.result.render_screen = Some(dest);
+                                if let Some(continue_loop) = self.result.continue_game_loop {
+                                    let state = ctrl.exec_state();
+                                    state.move_resolved(
+                                        &DestOperand::from_oper(continue_loop),
+                                        ctx.custom(0),
+                                    );
+                                    self.state = GameLoopAnalysisState::StepGameLoop;
+                                    ctrl.analyze_with_current_state(
+                                        self,
+                                        ctrl.current_instruction_end(),
+                                    );
+                                }
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            GameLoopAnalysisState::StepGameLoop => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if condition != ctx.const_1() && self.step_game_loop_first_cond_jump {
+                        self.step_game_loop_first_cond_jump = false;
+                        return;
+                    }
+                    if let Some(jump_if_zero) = if_arithmetic_eq_neq(condition)
+                        .filter(|x| {
+                            x.1 == ctx.const_0() &&
+                                Operand::and_masked(x.0).0.if_custom() == Some(0)
+                        })
+                        .map(|x| x.2)
+                    {
+                        self.state = GameLoopAnalysisState::StepGameLoopAfterContinue;
+                        let addr = match jump_if_zero {
+                            true => ctrl.current_instruction_end(),
+                            false => match ctrl.resolve_va(to) {
+                                Some(s) => s,
+                                None => {
+                                    ctrl.end_analysis();
+                                    return;
+                                }
+                            },
+                        };
+                        self.inline_depth = 0;
+                        ctrl.analyze_with_current_state(self, addr);
+                        ctrl.end_analysis();
+                    }
+                }
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if Some(dest) == self.result.step_network {
+                            ctrl.end_branch();
+                            return;
+                        }
+                        // Only inline once
+                        if !self.step_game_loop_inlined {
+                            self.step_game_loop_inlined = true;
+                            ctrl.analyze_with_current_state(self, dest);
+                            if self.result.process_events.is_some() {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            GameLoopAnalysisState::StepGameLoopAfterContinue => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if ctrl.resolve(self.arg_cache.on_call(0)).if_constant() == Some(3) {
+                            self.result.process_events = Some(dest);
+                            if self.inline_depth != 0 {
+                                self.result.step_game_loop = Some(self.current_entry);
+                            }
+                            self.step_game_loop_analysis_start =
+                                Some(ctrl.current_instruction_end());
+                            ctrl.end_analysis();
+                        } else {
+                            if self.inline_depth == 0 {
+                                self.inline_depth = 1;
+                                self.current_entry = dest;
+                                ctrl.analyze_with_current_state(self, dest);
+                                ctrl.end_analysis();
+                            } else {
                                 ctrl.end_analysis();
                             }
                         }
@@ -2829,6 +2988,129 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                 }
             }
         }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            StepGameLoopAnalysisState::NextGameStepTick => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let result = if_arithmetic_eq_neq(condition)
+                        .filter(|x| x.1 == ctx.const_0())
+                        .and_then(|x| {
+                            let (l, r) = x.0.if_arithmetic_and_const(0x8000_0000)?
+                                .if_arithmetic_sub()?;
+                            l.if_custom()?;
+                            Some((r, x.2))
+                        });
+                    if let Some((next_tick, jump_to_do_step)) = result {
+                        self.result.next_game_step_tick = Some(next_tick);
+                        let continue_pos = match jump_to_do_step {
+                            true => match ctrl.resolve_va(to) {
+                                Some(s) => s,
+                                None => return,
+                            },
+                            false => ctrl.current_instruction_end(),
+                        };
+                        self.state = StepGameLoopAnalysisState::StepGame;
+                        ctrl.analyze_with_current_state(self, continue_pos);
+                        ctrl.end_analysis();
+                    }
+                } else if let Operation::Call(..) = *op {
+                    // Don't use default call retval for these, as undefined ends up
+                    // being a poor choice due to its special handling value merging.
+                    ctrl.do_call_with_result(ctx.custom(self.next_call_custom));
+                    self.next_call_custom += 1;
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    // Skip stores that may be to next_game_step_tick
+                    let value = ctrl.resolve(value);
+                    if value.if_custom().is_some() && is_global(ctrl.resolve(mem.address)) {
+                        ctrl.skip_operation();
+                    }
+                }
+            }
+            StepGameLoopAnalysisState::StepGame => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if !self.inlining {
+                            self.inlining = true;
+                            self.current_entry = Some(dest);
+                            self.inline_limit = 10;
+                            ctrl.inline(self, dest);
+                            ctrl.skip_operation();
+                            self.inline_limit = 0;
+                            self.current_entry = None;
+                            self.inlining = false;
+                            if self.result.replay_seek_frame.is_some() {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if self.result.anti_troll.is_none() {
+                        let anti_troll = if_arithmetic_eq_neq(condition)
+                            .filter(|x| x.1 == ctx.const_0())
+                            .and_then(|x| x.0.if_mem8())
+                            .map(|x| ctx.sub_const(x, 0x1a));
+                        self.result.anti_troll = anti_troll;
+                    }
+                    // Check for game.frame_count >= replay_seek_frame
+                    // (x >= y should be (x > y) | (x == y)
+                    let replay_seek_frame = condition.if_arithmetic_or()
+                        .and_either(|x| x.if_arithmetic_eq())
+                        .map(|x| x.0)
+                        .and_either_other(|x| {
+                            x.if_mem32()
+                                .and_then(|x| x.if_arithmetic_add_const(0x14c))
+                                .filter(|&x| x == self.game)
+                        });
+                    if let Some(replay_seek_frame) = replay_seek_frame {
+                        self.result.step_game_logic = self.current_entry;
+                        self.result.replay_seek_frame = Some(replay_seek_frame);
+                        self.state = StepGameLoopAnalysisState::StepGameFrames;
+                        if let Some(to) = ctrl.resolve_va(to) {
+                            ctrl.analyze_with_current_state(self, to);
+                        }
+                        ctrl.end_analysis();
+                    } else if self.inlining {
+                        if self.inline_limit == 0 {
+                            ctrl.end_analysis();
+                        } else {
+                            self.inline_limit -= 1;
+                        }
+                    }
+                }
+            }
+            StepGameLoopAnalysisState::StepGameFrames => {
+                if let Operation::Move(_, value, None) = *op {
+                    let value = ctrl.resolve(value);
+                    if let Some(val) = value.if_arithmetic_sub_const(1) {
+                        self.result.step_game_frames = Some(val);
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Return true if all parts of operand are constants/arith
+fn is_global(op: Operand<'_>) -> bool {
+    if op.if_constant().is_some() {
+        true
+    } else if let OperandType::Arithmetic(arith) = op.ty() {
+        // Nicer for tail calls to check right first as it doesn't recurse in operand chains
+        is_global(arith.right) && is_global(arith.left)
+    } else if let OperandType::Memory(ref mem) = op.ty() {
+        is_global(mem.address)
+    } else {
+        false
     }
 }
 

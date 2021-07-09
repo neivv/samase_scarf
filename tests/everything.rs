@@ -12,7 +12,10 @@ use samase_scarf::{DatType, Eud};
 
 #[test]
 fn everything_1207() {
-    test(Path::new("1207.exe"));
+    test_with_extra_checks(Path::new("1207.exe"), |ctx, analysis| {
+        assert_eq!(analysis.process_events().unwrap().0, 0x00732760);
+        assert_eq!(analysis.next_game_step_tick().unwrap(), ctx.mem32(ctx.constant(0x10f8628)));
+    })
 }
 
 #[test]
@@ -1420,6 +1423,15 @@ fn everything_1238e() {
         assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32(ctx.constant(0x011b5ad4)));
         assert_eq!(analysis.replay_bfix().unwrap(), ctx.constant(0x00F8B790));
         assert_eq!(analysis.replay_gcfg().unwrap(), ctx.constant(0x01009788));
+
+        assert_eq!(analysis.step_game_loop().unwrap().0, 0x00766530);
+        assert_eq!(analysis.step_game_logic().unwrap().0, 0x00766860);
+        assert_eq!(analysis.process_events().unwrap().0, 0x0075EC90);
+        assert_eq!(analysis.continue_game_loop().unwrap(), ctx.mem8(ctx.constant(0x01009A95)));
+        assert_eq!(analysis.anti_troll().unwrap(), ctx.constant(0x010098F0));
+        assert_eq!(analysis.step_game_frames().unwrap(), ctx.mem32(ctx.constant(0x00F8B9D4)));
+        assert_eq!(analysis.next_game_step_tick().unwrap(), ctx.mem32(ctx.constant(0x1009a90)));
+        assert_eq!(analysis.replay_seek_frame().unwrap(), ctx.mem32(ctx.constant(0x1007a98)));
     });
 }
 
@@ -1453,7 +1465,7 @@ fn test_nongeneric<'e>(
         use samase_scarf::AddressAnalysis::*;
         match addr {
             // special handling
-            JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins => continue,
+            JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins | StepGameLoop => continue,
             _ => (),
         }
         let result = analysis.address_analysis(addr);
@@ -1464,7 +1476,8 @@ fn test_nongeneric<'e>(
         let result = analysis.operand_analysis(op);
         match op {
             // special handling
-            Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg => {
+            Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg |
+                AntiTroll => {
                 continue;
             }
             Game | Players | MenuScreenId => {
@@ -1486,7 +1499,8 @@ fn test_nongeneric<'e>(
                 ActiveIscriptFlingy | ActiveIscriptBullet | UnitShouldRevealArea |
                 NetworkReady | LastBulletSpawner | DatRequirementError | CursorMarker |
                 SyncActive | IscriptBin | StormCommandUser | FirstFreeOrder | LastFreeOrder |
-                AllocatedOrderCount =>
+                AllocatedOrderCount | ContinueGameLoop | StepGameFrames | ReplaySeekFrame |
+                NextGameStepTick =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1510,7 +1524,7 @@ fn test_nongeneric<'e>(
     let minor_version = (&filename_str[1..3]).parse::<u32>().unwrap();
     let is_ptr = filename_str.contains("ptr");
     let (patch_version, revision) = if is_ptr {
-        (!0u32, b'a')
+        ((filename_str[3..4]).parse::<u32>().unwrap(), b'a')
     } else {
         if let Ok(o) = (&filename_str[3..]).parse::<u32>() {
             (o, b'a')
@@ -1899,6 +1913,26 @@ fn test_nongeneric<'e>(
     }
 
     assert_eq!(analysis.crt_fastfail().len(), 0x5);
+
+    // Exists from 1.22.4 forward
+    let anti_troll = analysis.anti_troll();
+    if minor_version >= 23 ||
+        (minor_version == 22 && patch_version >= 4)
+    {
+        check_global_struct_opt(anti_troll, binary, "anti_troll");
+    } else {
+        assert!(anti_troll.is_none());
+    }
+
+    // Inlined before 1.22.2
+    let step_game_loop = analysis.step_game_loop();
+    if minor_version >= 23 ||
+        (minor_version == 22 && patch_version >= 2)
+    {
+        assert!(step_game_loop.is_some());
+    } else {
+        assert!(step_game_loop.is_none());
+    }
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

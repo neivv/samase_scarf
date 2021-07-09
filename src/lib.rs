@@ -302,6 +302,9 @@ results! {
         ProcessCommands => "process_commands",
         ProcessLobbyCommands => "process_lobby_commands",
         StepAiScript => "step_ai_script",
+        StepGameLoop => "step_game_loop",
+        StepGameLogic => "step_game_logic",
+        ProcessEvents => "process_events",
     }
 }
 
@@ -421,6 +424,11 @@ results! {
         AllocatedOrderCount => "allocated_order_count",
         ReplayBfix => "replay_bfix",
         ReplayGcfg => "replay_gcfg",
+        ContinueGameLoop => "continue_game_loop",
+        AntiTroll => "anti_troll",
+        StepGameFrames => "step_game_frames",
+        NextGameStepTick => "next_game_step_tick",
+        ReplaySeekFrame => "replay_seek_frame",
     }
 }
 
@@ -844,6 +852,9 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ProcessCommands => self.process_commands(),
             ProcessLobbyCommands => self.process_lobby_commands(),
             StepAiScript => self.step_ai_script(),
+            StepGameLoop => self.step_game_loop(),
+            StepGameLogic => self.step_game_logic(),
+            ProcessEvents => self.process_events(),
         }
     }
 
@@ -964,6 +975,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             AllocatedOrderCount => self.allocated_order_count(),
             ReplayBfix => self.replay_bfix(),
             ReplayGcfg => self.replay_gcfg(),
+            ContinueGameLoop => self.continue_game_loop(),
+            AntiTroll => self.anti_troll(),
+            StepGameFrames => self.step_game_frames(),
+            NextGameStepTick => self.next_game_step_tick(),
+            ReplaySeekFrame => self.replay_seek_frame(),
         }
     }
 
@@ -2322,6 +2338,18 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.analyze_many_addr(AddressAnalysis::RenderScreen, AnalysisCache::cache_game_loop)
     }
 
+    pub fn step_game_loop(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::StepGameLoop, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn process_events(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::ProcessEvents, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn step_game_logic(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::StepGameLogic, AnalysisCache::cache_game_loop)
+    }
+
     pub fn load_pcx(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(AddressAnalysis::LoadPcx, AnalysisCache::cache_game_loop)
     }
@@ -2348,6 +2376,26 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn sync_data(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(OperandAnalysis::SyncData, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn continue_game_loop(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::ContinueGameLoop, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn anti_troll(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::AntiTroll, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn step_game_frames(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::StepGameFrames, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn next_game_step_tick(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::NextGameStepTick, AnalysisCache::cache_game_loop)
+    }
+
+    pub fn replay_seek_frame(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::ReplaySeekFrame, AnalysisCache::cache_game_loop)
     }
 
     pub fn first_free_order(&mut self) -> Option<Operand<'e>> {
@@ -4280,16 +4328,21 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
         self.cache_many(
-            &[StepNetwork, RenderScreen, LoadPcx, SetMusic],
-            &[MainPalette, PaletteSet, TfontGam, SyncActive, SyncData, MenuScreenId],
+            &[StepNetwork, RenderScreen, LoadPcx, SetMusic, StepGameLoop, ProcessEvents,
+            StepGameLogic],
+            &[MainPalette, PaletteSet, TfontGam, SyncActive, SyncData, MenuScreenId,
+            ContinueGameLoop, AntiTroll, StepGameFrames, NextGameStepTick, ReplaySeekFrame],
             |s|
         {
             let game_loop = s.game_loop(actx)?;
             let game = s.game(actx)?;
             let result = game_init::analyze_game_loop(actx, game_loop, game);
-            Some(([result.step_network, result.render_screen, result.load_pcx, result.set_music],
+            Some(([result.step_network, result.render_screen, result.load_pcx, result.set_music,
+                result.step_game_loop, result.process_events, result.step_game_logic],
                 [result.main_palette, result.palette_set, result.tfontgam, result.sync_active,
-                result.sync_data, result.menu_screen_id]))
+                result.sync_data, result.menu_screen_id, result.continue_game_loop,
+                result.anti_troll, result.step_game_frames, result.next_game_step_tick,
+                result.replay_seek_frame]))
         })
     }
 
