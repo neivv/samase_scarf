@@ -1480,7 +1480,7 @@ fn test_nongeneric<'e>(
                 AntiTroll => {
                 continue;
             }
-            Game | Players | MenuScreenId => {
+            Game | Players | MenuScreenId | BnetController => {
                 let result = result.unwrap_or_else(|| panic!("Didn't find {}", op.name()));
                 check_game(result, binary, op.name());
             }
@@ -1933,6 +1933,8 @@ fn test_nongeneric<'e>(
     } else {
         assert!(step_game_loop.is_none());
     }
+
+    assert_eq!(analysis.bnet_message_vtable_type(), Some(4));
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {

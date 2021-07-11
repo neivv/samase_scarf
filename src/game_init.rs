@@ -95,6 +95,13 @@ pub(crate) struct GameLoopAnalysis<'e, Va: VirtualAddress> {
     pub replay_seek_frame: Option<Operand<'e>>,
 }
 
+pub(crate) struct ProcessEventsAnalysis<'e, Va: VirtualAddress> {
+    pub bnet_controller: Option<Operand<'e>>,
+    pub step_bnet_controller: Option<Va>,
+    pub bnet_message_switch: Option<CompleteSwitch<'e>>,
+    pub message_vtable_type: u16,
+}
+
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
     fn default() -> Self {
         SinglePlayerStart {
@@ -3170,6 +3177,163 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepNetwork<'e, E> 
                 ctrl.end_analysis();
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) fn analyze_process_events<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    process_events: E::VirtualAddress,
+) -> ProcessEventsAnalysis<'e, E::VirtualAddress> {
+    let mut result = ProcessEventsAnalysis {
+        bnet_controller: None,
+        step_bnet_controller: None,
+        bnet_message_switch: None,
+        message_vtable_type: 0,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = ProcessEventsAnalyzer::<E> {
+        result: &mut result,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, process_events);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct ProcessEventsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut ProcessEventsAnalysis<'e, E::VirtualAddress>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ProcessEventsAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                let ctx = ctrl.ctx();
+                let ecx = ctrl.resolve(ctx.register(1));
+                if is_global(ecx) {
+                    let binary = ctrl.binary();
+                    let mut analyzer = IsStepBnetController::<E> {
+                        result: self.result,
+                        state: StepBnetControllerState::FindServiceStep,
+                        inline_depth: 0,
+                    };
+                    let mut analysis = FuncAnalysis::new(binary, ctx, dest);
+                    analysis.analyze(&mut analyzer);
+                    if analyzer.state != StepBnetControllerState::FindServiceStep {
+                        self.result.bnet_controller = Some(ecx);
+                        self.result.step_bnet_controller = Some(dest);
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum StepBnetControllerState {
+    FindServiceStep,
+    FindEvents,
+}
+
+struct IsStepBnetController<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut ProcessEventsAnalysis<'e, E::VirtualAddress>,
+    state: StepBnetControllerState,
+    inline_depth: u8,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetController<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            StepBnetControllerState::FindServiceStep => {
+                if let Operation::Call(dest) = *op {
+                    let dest = ctrl.resolve(dest);
+                    // Check for this.services[0].vtable.step()
+                    let ok = ctrl.if_mem_word(dest)
+                        .and_then(|x| {
+                            let x = x.struct_offset().0;
+                            let x = ctrl.if_mem_word(ctrl.if_mem_word(ctrl.if_mem_word(x)?)?)?;
+                            let x = x.struct_offset().0;
+                            match x == ctx.register(1) {
+                                true => Some(()),
+                                false => None,
+                            }
+                        })
+                        .is_some();
+                    if ok {
+                        self.state = StepBnetControllerState::FindEvents;
+                        ctrl.analyze_with_current_state(self, ctrl.address());
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            StepBnetControllerState::FindEvents => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ctx.register(1));
+                        let ok = ctrl.if_mem_word(this)
+                            .and_then(|x| {
+                                let x = ctrl.if_mem_word(x)?;
+                                let x = x.struct_offset().0;
+                                match x == ctx.register(1) {
+                                    true => Some(()),
+                                    false => None,
+                                }
+                            })
+                            .is_some();
+                        if ok && self.inline_depth < 3 {
+                            self.inline_depth += 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth -= 1;
+                            if self.result.bnet_message_switch.is_some() {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    } else {
+                        if let Some(addr) = ctrl.if_mem_word(dest) {
+                            let offset = addr.struct_offset().1;
+                            ctrl.do_call_with_result(ctx.custom(offset));
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    if ctrl.resolve(condition) == ctx.const_1() {
+                        let to = ctrl.resolve(to);
+                        if let Some(to) = ctrl.if_mem_word(to) {
+                            let exec_state = ctrl.exec_state();
+                            if let Some(switch) = CompleteSwitch::new(to, exec_state) {
+                                if let Some(idx) = switch.index_operand::<E::VirtualAddress>() {
+                                    if let Some(vtable_offset) = idx.if_custom() {
+                                        self.result.bnet_message_switch = Some(switch);
+                                        self.result.message_vtable_type = vtable_offset as u16;
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Operation::Move(ref dest, value, None) = *op {
+                    // Skips moves of val.x4 = val to prevent some the analysis
+                    // from assuming that a binary tree stays empty
+                    if let DestOperand::Memory(ref mem) = *dest {
+                        if mem.size == E::WORD_SIZE {
+                            let addr = ctrl.resolve(mem.address);
+                            let value = ctrl.resolve(value);
+                            if addr == ctx.add_const(value, E::VirtualAddress::SIZE as u64) {
+                                let state = ctrl.exec_state();
+                                state.move_to(dest, ctx.new_undef());
+                                ctrl.skip_operation();
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

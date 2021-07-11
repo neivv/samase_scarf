@@ -17,6 +17,8 @@ pub struct CompleteSwitch<'e> {
 }
 
 impl<'e> CompleteSwitch<'e> {
+    /// `dest` should be address of the switch table, e.g. the execution should be jumping
+    /// to `MemWord[dest]`.
     pub fn new<E: ExecutionState<'e>>(
         dest: Operand<'e>,
         exec_state: &mut E,
@@ -73,6 +75,24 @@ impl<'e> CompleteSwitch<'e> {
             })
             .unwrap_or(branch);
         binary.read_address(table + index.checked_mul(Va::SIZE)?).ok()
+    }
+
+    pub fn index_operand<Va: VirtualAddress>(&self) -> Option<Operand<'e>> {
+        let (l, _) = self.dest.if_arithmetic_add()?;
+        let index = l.if_arithmetic_mul_const(Va::SIZE as u64)?;
+        let index = index.if_memory()
+            .filter(|x| matches!(x.size, MemAccessSize::Mem8 | MemAccessSize::Mem16))
+            .and_then(|mem| {
+                let (l, r) = mem.address.if_arithmetic_add()?;
+                r.if_constant()?;
+                if mem.size == MemAccessSize::Mem8 {
+                    Some(l)
+                } else {
+                    l.if_arithmetic_mul_const(2)
+                }
+            })
+            .unwrap_or(index);
+        Some(index)
     }
 }
 

@@ -305,6 +305,7 @@ results! {
         StepGameLoop => "step_game_loop",
         StepGameLogic => "step_game_logic",
         ProcessEvents => "process_events",
+        StepBnetController => "step_bnet_controller",
     }
 }
 
@@ -429,6 +430,7 @@ results! {
         StepGameFrames => "step_game_frames",
         NextGameStepTick => "next_game_step_tick",
         ReplaySeekFrame => "replay_seek_frame",
+        BnetController => "bnet_controller",
     }
 }
 
@@ -448,6 +450,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     operand_not_found: Operand<'e>,
     process_commands_switch: Cached<Option<CompleteSwitch<'e>>>,
     process_lobby_commands_switch: Cached<Option<CompleteSwitch<'e>>>,
+    bnet_message_switch: Option<CompleteSwitch<'e>>,
     command_lengths: Cached<Rc<Vec<u32>>>,
     step_order_hidden: Cached<Rc<Vec<StepOrderHiddenHook<'e, E::VirtualAddress>>>>,
     step_secondary_order: Cached<Rc<Vec<SecondaryOrderHook<'e, E::VirtualAddress>>>>,
@@ -461,6 +464,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     net_player_size: u16,
     skins_size: u16,
     anim_struct_size: u16,
+    bnet_message_vtable_type: u16,
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
     create_game_dialog_vtbl_on_multiplayer_create: Cached<Option<usize>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
@@ -678,6 +682,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 operand_not_found: ctx.custom(0x12345678),
                 process_commands_switch: Default::default(),
                 process_lobby_commands_switch: Default::default(),
+                bnet_message_switch: Default::default(),
                 command_lengths: Default::default(),
                 step_order_hidden: Default::default(),
                 step_secondary_order: Default::default(),
@@ -691,6 +696,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 net_player_size: 0,
                 skins_size: 0,
                 anim_struct_size: 0,
+                bnet_message_vtable_type: 0,
                 limits: Default::default(),
                 create_game_dialog_vtbl_on_multiplayer_create: Default::default(),
                 prism_shaders: Default::default(),
@@ -855,6 +861,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             StepGameLoop => self.step_game_loop(),
             StepGameLogic => self.step_game_logic(),
             ProcessEvents => self.process_events(),
+            StepBnetController => self.step_bnet_controller(),
         }
     }
 
@@ -980,6 +987,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             StepGameFrames => self.step_game_frames(),
             NextGameStepTick => self.next_game_step_tick(),
             ReplaySeekFrame => self.replay_seek_frame(),
+            BnetController => self.bnet_controller(),
         }
     }
 
@@ -2431,6 +2439,23 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             OperandAnalysis::ReplayGcfg,
             AnalysisCache::cache_prepare_issue_order,
         )
+    }
+
+    pub fn step_bnet_controller(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepBnetController,
+            AnalysisCache::cache_process_events,
+        )
+    }
+
+    pub fn bnet_controller(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::BnetController, AnalysisCache::cache_process_events)
+    }
+
+    pub fn bnet_message_vtable_type(&mut self) -> Option<u16> {
+        self.bnet_controller()?;
+        self.cache.bnet_message_switch?;
+        Some(self.cache.bnet_message_vtable_type)
     }
 
     /// Mainly for tests/dump
@@ -4350,6 +4375,10 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::StepNetwork, |s| s.cache_game_loop(actx))
     }
 
+    fn process_events(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::ProcessEvents, |s| s.cache_game_loop(actx))
+    }
+
     fn cache_prepare_issue_order(&mut self, actx: &AnalysisCtx<'e, E>) {
         use OperandAnalysis::*;
         self.cache_many(
@@ -4361,6 +4390,22 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             let result = units::analyze_prepare_issue_order(actx, prepare_issue_order);
             Some(([], [result.first_free_order, result.last_free_order,
                 result.allocated_order_count, result.replay_bfix, result.replay_gcfg]))
+        })
+    }
+
+    fn cache_process_events(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[StepBnetController],
+            &[BnetController],
+            |s|
+        {
+            let process_events = s.process_events(actx)?;
+            let result = game_init::analyze_process_events(actx, process_events);
+            s.bnet_message_switch = result.bnet_message_switch;
+            s.bnet_message_vtable_type = result.message_vtable_type;
+            Some(([result.step_bnet_controller], [result.bnet_controller]))
         })
     }
 }
@@ -5963,6 +6008,11 @@ trait OperandExt<'e> {
     fn if_arithmetic_rsh_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_gt_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_float(self, ty: ArithOpType) -> Option<(Operand<'e>, Operand<'e>)>;
+    /// Returns `(x, const_off)` if `self` is `x + const_off`, else returns `(self, 0)`
+    /// Meant for going from struct offset to struct base, when the offset is unknown
+    /// and may be 0.
+    /// If the offset is known `op.if_arithmetic_add_const(offset)` is better.
+    fn struct_offset(self) -> (Operand<'e>, u32);
 }
 
 impl<'e> OperandExt<'e> for Operand<'e> {
@@ -6052,6 +6102,16 @@ impl<'e> OperandExt<'e> for Operand<'e> {
                 if arith.ty == ty => Some((arith.left, arith.right)),
             _ => None,
         }
+    }
+
+    fn struct_offset(self) -> (Operand<'e>, u32) {
+        use std::convert::TryFrom;
+        self.if_arithmetic_add()
+            .and_then(|x| {
+                let off = u32::try_from(x.1.if_constant()?).ok()?;
+                Some((x.0, off))
+            })
+            .unwrap_or((self, 0))
     }
 }
 
