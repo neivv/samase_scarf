@@ -606,18 +606,31 @@ fn dump_vtables<'e, E: ExecutionState<'e>>(
     println!("{} vtables", vtables.len());
     for vtable in vtables {
         let name = binary.read_address(vtable - E::VirtualAddress::SIZE).ok()
-            .and_then(|x| binary.read_address(x + 0xc).ok())
-            .map(|x| x + 8)
             .and_then(|x| {
-                let section = binary.section_by_addr(x)?;
-                let relative = x.as_u64() - section.virtual_address.as_u64();
-                let slice = section.data.get(relative as usize..)?;
-                let end = slice.iter().position(|&x| x == 0)?;
-                Some(&slice[..end])
-            })
-            .and_then(|name_u8| std::str::from_utf8(name_u8).ok());
-        if let Some(name) = name {
-            println!("{}: {:?}", name, vtable);
+                let offset = binary.read_u32(x + 0x4).ok()?;
+                let main_name = read_vtable_address(binary, x + 0xc)? + 8;
+                let inherits = read_vtable_address(binary, x + 0x10)?;
+                let inherit_count = binary.read_u32(inherits + 0x8).ok()?;
+                let inherit_list = read_vtable_address(binary, inherits + 0xc)?;
+
+                let name = read_cstring(binary, main_name)?;
+
+                let mut inherits = Vec::with_capacity(inherit_count as usize);
+                for i in 0..inherit_count {
+                    let inherited = read_vtable_address(binary, inherit_list + 4 * i)?;
+                    let name = read_vtable_address(binary, inherited)? + 8;
+                    let name = read_cstring(binary, name)?;
+                    let parent_count = binary.read_u32(inherited + 0x4).ok()?;
+                    let offset = binary.read_u32(inherited + 0x8).ok()?;
+                    inherits.push((name, parent_count, offset));
+                }
+                Some((name, offset, inherits))
+            });
+        if let Some((name, offset, inherits)) = name {
+            println!("{}: {:08x} @ {:x}", name, vtable.as_u64(), offset);
+            for (name, parent_count, offset) in inherits {
+                println!("    {}: {:x} @ {:x}", name, parent_count, offset);
+            }
         }
     }
 }
@@ -626,4 +639,19 @@ fn is_64_bit(path: &Path) -> bool {
     let file = std::fs::read(path).unwrap();
     let offset = LittleEndian::read_u32(&file[0x3c..]) as usize;
     LittleEndian::read_u16(&file[offset + 4..]) == 0x8664
+}
+
+fn read_cstring<Va: VirtualAddress>(binary: &BinaryFile<Va>, address: Va) -> Option<&str> {
+    let slice = binary.slice_from_address_to_end(address).ok()?;
+    let end = slice.iter().position(|&x| x == 0)?;
+    let name_u8 = &slice[..end];
+    std::str::from_utf8(name_u8).ok()
+}
+
+fn read_vtable_address<Va: VirtualAddress>(binary: &BinaryFile<Va>, address: Va) -> Option<Va> {
+    if Va::SIZE == 4 {
+        binary.read_address(address).ok()
+    } else {
+        binary.read_u32(address).ok().map(|x| binary.base + x)
+    }
 }
