@@ -1435,6 +1435,12 @@ fn everything_1238e() {
     });
 }
 
+#[test]
+fn everything_1238f() {
+    test_with_extra_checks(Path::new("1238f.exe"), |_ctx, _analysis| {
+    });
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
 }
@@ -1745,7 +1751,8 @@ fn test_nongeneric<'e>(
         let has_smem_alloc = minor_version < 23 ||
             (minor_version == 23 && patch_version < 8) ||
             (minor_version == 23 && is_ptr) ||
-            (minor_version == 23 && patch_version == 8 && revision < b'd');
+            (minor_version == 23 && patch_version == 8 && revision < b'd') ||
+            (minor_version == 23 && patch_version == 8 && revision >= b'f');
         // Allocator as a virtual struct was added in 1233a
         let has_allocator = minor_version > 23 ||
             (minor_version == 23 && patch_version >= 3);
