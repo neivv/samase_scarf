@@ -12,8 +12,9 @@ use crate::switch::CompleteSwitch;
 use crate::{
     AnalysisCtx, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, OperandExt,
     if_arithmetic_eq_neq, single_result_assign, bumpvec_with_capacity, FunctionFinder,
-    ControlExt,
+    ControlExt, is_stack_address,
 };
+use crate::call_tracker::CallTracker;
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
@@ -100,6 +101,14 @@ pub(crate) struct ProcessEventsAnalysis<'e, Va: VirtualAddress> {
     pub step_bnet_controller: Option<Va>,
     pub bnet_message_switch: Option<CompleteSwitch<'e>>,
     pub message_vtable_type: u16,
+}
+
+pub(crate) struct SelectMapEntryAnalysis<Va: VirtualAddress> {
+    pub create_game_multiplayer: Option<Va>,
+    pub mde_load_map: Option<Va>,
+    pub mde_load_replay: Option<Va>,
+    pub mde_load_save: Option<Va>,
+    pub create_game_dialog_vtbl_on_multiplayer_create: u16,
 }
 
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
@@ -1700,54 +1709,283 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-pub(crate) fn create_game_dialog_vtbl_on_multiplayer_create<'e, E: ExecutionState<'e>>(
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum SelectMapEntryState {
+    // Find map/save/replay load functions by updating branch state
+    // based on jumps with map_dir_entry.flags
+    // Keep map load function state and afterwards continue from that with
+    // setting map_dir_entry.flags = 0x2 (Map)
+    LoadMapDirEntry,
+    CreateGameMultiplayer,
+    OnMultiplayerCreate,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum MapEntryState {
+    Unknown,
+    Map,
+    Save,
+    Replay,
+}
+
+impl analysis::AnalysisState for MapEntryState {
+    fn merge(&mut self, newer: Self) {
+        if *self != newer {
+            *self = MapEntryState::Unknown;
+        }
+    }
+}
+
+pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     select_map_entry: E::VirtualAddress,
-) -> Option<usize> {
-    struct Analyzer<'a, 'e, E: ExecutionState<'e>> {
+) -> SelectMapEntryAnalysis<E::VirtualAddress> {
+    struct Analyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
         arg_cache: &'a ArgCache<'e, E>,
-        result: Option<usize>,
+        result: &'a mut SelectMapEntryAnalysis<E::VirtualAddress>,
+        state: SelectMapEntryState,
+        call_tracker: CallTracker<'acx, 'e, E>,
+        load_map_entry_state: Option<(E, E::VirtualAddress)>,
+        map_entry_flags_offset: Option<u32>,
+        ctx: OperandCtx<'e>,
     }
 
-    impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for Analyzer<'a, 'e, E> {
-        type State = analysis::DefaultState;
+    impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+        Analyzer<'a, 'acx, 'e, E>
+    {
+        type State = MapEntryState;
         type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-            match *op {
-                Operation::Call(dest) => {
-                    let dest = ctrl.resolve(dest);
-                    let offset = ctrl.if_mem_word(dest)
-                        .and_then(|addr| addr.if_arithmetic_add())
-                        .and_then(|(l, r)| {
-                            ctrl.if_mem_word(l)
-                                .filter(|&l| {
-                                    l == self.arg_cache.on_entry(1) ||
-                                        l.if_register().filter(|r| r.0 == 1).is_some()
-                                })
-                                .and_then(|_| r.if_constant())
-                                .map(|x| x as usize)
-                                .filter(|&x| x > 0x40)
-                        });
-                    if let Some(offset) = offset {
-                        self.result = Some(offset);
-                        ctrl.end_analysis();
+            let ctx = ctrl.ctx();
+            let arg_cache = self.arg_cache;
+            match self.state {
+                SelectMapEntryState::LoadMapDirEntry => match *op {
+                    Operation::Call(dest) => {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let state = *ctrl.user_state();
+                            if state != MapEntryState::Unknown {
+                                let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                                if self.is_map_entry(arg1) {
+                                    let result = &mut self.result;
+                                    let result_fn = match state {
+                                        MapEntryState::Map => &mut result.mde_load_map,
+                                        MapEntryState::Save => &mut result.mde_load_save,
+                                        MapEntryState::Replay => &mut result.mde_load_replay,
+                                        MapEntryState::Unknown => return,
+                                    };
+                                    single_result_assign(Some(dest), result_fn);
+                                    if state == MapEntryState::Map {
+                                        let address = ctrl.address();
+                                        let state = ctrl.exec_state().clone();
+                                        self.load_map_entry_state = Some((state, address));
+                                    }
+                                    let done = result.mde_load_map.is_some() &&
+                                        result.mde_load_save.is_some() &&
+                                        result.mde_load_replay.is_some();
+                                    if done {
+                                        if let Some((mut state, address)) =
+                                            self.load_map_entry_state.take()
+                                        {
+                                            self.state =
+                                                SelectMapEntryState::CreateGameMultiplayer;
+                                            let dest_addr = ctx.add_const(
+                                                arg_cache.on_entry(2),
+                                                self.map_entry_flags_offset.unwrap_or(0) as u64,
+                                            );
+                                            state.move_resolved(
+                                                &DestOperand::from_oper(ctx.mem32(dest_addr)),
+                                                ctx.constant(2),
+                                            );
+                                            let binary = ctrl.binary();
+                                            let mut analysis = FuncAnalysis::custom_state(
+                                                binary,
+                                                ctx,
+                                                address,
+                                                state,
+                                                MapEntryState::Unknown,
+                                            );
+                                            analysis.analyze(self);
+                                        }
+                                        ctrl.end_analysis();
+                                    } else {
+                                        ctrl.end_branch();
+                                    }
+                                    return;
+                                }
+                            }
+                            let this = ctrl.resolve(ctx.register(1));
+                            if self.is_map_entry(this) {
+                                self.call_tracker.add_call_resolve(ctrl, dest);
+                            }
+                        }
                     }
+                    Operation::Jump { condition, to } => {
+                        if *ctrl.user_state() != MapEntryState::Unknown {
+                            ctrl.end_branch();
+                            return;
+                        }
+                        let to = match ctrl.resolve_va(to) {
+                            Some(s) => s,
+                            None => return,
+                        };
+                        let condition = ctrl.resolve(condition);
+                        let flag_bits = if_arithmetic_eq_neq(condition)
+                            .filter(|x| x.1 == ctx.const_0())
+                            .and_then(|x| {
+                                let (l, r) = x.0.if_arithmetic_and()?;
+                                let bits = r.if_constant()? as u8;
+                                let (l, r) = l.if_mem8()?.if_arithmetic_add()?;
+                                let offset = r.if_constant().and_then(|x| u32::try_from(x).ok())?;
+                                if !self.is_map_entry(l) {
+                                    return None;
+                                }
+                                Some((bits, offset, x.2))
+                            });
+                        if let Some((flag_bits, offset, jump_if_clear)) = flag_bits {
+                            match self.map_entry_flags_offset {
+                                Some(s) => {
+                                    if s != offset {
+                                        return;
+                                    }
+                                }
+                                None => {
+                                    self.map_entry_flags_offset = Some(offset);
+                                }
+                            }
+                            let state = match flag_bits {
+                                1 => MapEntryState::Save,
+                                2 => MapEntryState::Map,
+                                4 => MapEntryState::Replay,
+                                _ => return,
+                            };
+                            let (set_addr, unset_addr) = match jump_if_clear {
+                                false => (to, ctrl.current_instruction_end()),
+                                true => (ctrl.current_instruction_end(), to),
+                            };
+                            ctrl.end_branch();
+                            ctrl.add_branch_with_current_state(unset_addr);
+                            *ctrl.user_state() = state;
+                            ctrl.add_branch_with_current_state(set_addr);
+                        }
+                    }
+                    _ => (),
                 }
-                _ => (),
+                SelectMapEntryState::CreateGameMultiplayer => match *op {
+                    Operation::Call(dest) => {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            // Check for arg1 = stack var,
+                            // arg2 = a1.x0_string.pointer,
+                            // arg6 = arg1.turn_rate
+                            // Arg5~8 is a 16byte struct passed by value,
+                            // on 64-bit check (arg5 >> 32) = arg1.turn_rate
+                            let ok = Some(ctrl.resolve(arg_cache.on_call(0)))
+                                .filter(|&x| is_stack_address(x))
+                                .map(|_| ctrl.resolve(arg_cache.on_call(1)))
+                                .and_then(|x| ctrl.if_mem_word(x))
+                                .filter(|&x| self.is_game_name(x))
+                                .filter(|_| {
+                                    // Some older versions only have 8byte by-value struct,
+                                    // to support those too also check arg5 instead of arg6.
+                                    [1u8, 0].iter().any(|&i| {
+                                        let op = match E::VirtualAddress::SIZE {
+                                            4 => ctrl.resolve(arg_cache.on_call(4 + i)),
+                                            _ => ctx.rsh_const(
+                                                ctrl.resolve(arg_cache.on_call(4)),
+                                                i as u64 * 32,
+                                            ),
+                                        };
+                                        Some(op).and_then(|x| {
+                                            let (l, r) = x.if_mem32()?.if_arithmetic_add()?;
+                                            r.if_constant()?;
+                                            if self.is_game_input(l) {
+                                                Some(())
+                                            } else {
+                                                None
+                                            }
+                                        }).is_some()
+                                    })
+                                })
+                                .is_some();
+                            if ok {
+                                self.result.create_game_multiplayer = Some(dest);
+                                self.state = SelectMapEntryState::OnMultiplayerCreate;
+                            }
+                        }
+                    }
+                    _ => (),
+                },
+                SelectMapEntryState::OnMultiplayerCreate => match *op {
+                    Operation::Call(dest) => {
+                        let dest = ctrl.resolve(dest);
+                        let offset = ctrl.if_mem_word(dest)
+                            .and_then(|addr| addr.if_arithmetic_add())
+                            .and_then(|(l, r)| {
+                                ctrl.if_mem_word(l)
+                                    .filter(|&l| self.is_create_dialog(l))
+                                    .and_then(|_| r.if_constant())
+                                    .map(|x| x as usize)
+                                    .filter(|&x| x > 0x40)
+                            });
+                        if let Some(offset) = offset {
+                            self.result.create_game_dialog_vtbl_on_multiplayer_create =
+                                offset as u16;
+                            ctrl.end_analysis();
+                        }
+                    }
+                    _ => (),
+                },
             }
         }
     }
+
+    impl<'a, 'acx, 'e, E: ExecutionState<'e>> Analyzer<'a, 'acx, 'e, E> {
+        // Note: Support two different func arg orders:
+        // Older: select_map_entry(this = create_game_dlg, a1 = map_entry, a2 = game_name)
+        //      with game_input being part of create_game_dlg
+        // Newer: select_map_entry(a1 = game_input, a2 = create_game_dlg, a3 = map_entry)
+        //      with game_name being part of game_input
+        fn is_map_entry(&self, op: Operand<'e>) -> bool {
+            op == self.arg_cache.on_entry(2) || op == self.arg_cache.on_thiscall_entry(0)
+        }
+
+        fn is_game_input(&self, op: Operand<'e>) -> bool {
+            op == self.arg_cache.on_entry(0) || op == self.ctx.register(1)
+        }
+
+        fn is_game_name(&self, op: Operand<'e>) -> bool {
+            op == self.arg_cache.on_entry(0) || op == self.arg_cache.on_thiscall_entry(1)
+        }
+
+        fn is_create_dialog(&self, op: Operand<'e>) -> bool {
+            op == self.arg_cache.on_entry(1) || op == self.ctx.register(1)
+        }
+    }
+
     // select_map_entry arg2 is CreateGameScreen; and it calls this relevant function
     // For some older versions it also has been arg ecx
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let mut analyzer = Analyzer::<E> {
-        result: None,
-        arg_cache: &analysis.arg_cache,
+    let mut result = SelectMapEntryAnalysis {
+        mde_load_map: None,
+        mde_load_replay: None,
+        mde_load_save: None,
+        create_game_multiplayer: None,
+        create_game_dialog_vtbl_on_multiplayer_create: 0,
     };
-    let mut analysis = FuncAnalysis::new(binary, ctx, select_map_entry);
+    let mut analyzer = Analyzer::<E> {
+        result: &mut result,
+        arg_cache: &analysis.arg_cache,
+        state: SelectMapEntryState::LoadMapDirEntry,
+        call_tracker: CallTracker::with_capacity(analysis, 0, 0x20),
+        load_map_entry_state: None,
+        map_entry_flags_offset: None,
+        ctx,
+    };
+    let exec = E::initial_state(ctx, binary);
+    let state = MapEntryState::Unknown;
+    let mut analysis = FuncAnalysis::custom_state(binary, ctx, select_map_entry, exec, state);
     analysis.analyze(&mut analyzer);
-    analyzer.result
+    result
 }
 
 pub(crate) fn join_game<'e, E: ExecutionState<'e>>(

@@ -306,6 +306,10 @@ results! {
         StepGameLogic => "step_game_logic",
         ProcessEvents => "process_events",
         StepBnetController => "step_bnet_controller",
+        CreateGameMultiplayer => "create_game_multiplayer",
+        MapEntryLoadMap => "map_entry_load_map",
+        MapEntryLoadSave => "map_entry_load_save",
+        MapEntryLoadReplay => "map_entry_load_replay",
     }
 }
 
@@ -465,8 +469,8 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     skins_size: u16,
     anim_struct_size: u16,
     bnet_message_vtable_type: u16,
+    create_game_dialog_vtbl_on_multiplayer_create: u16,
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
-    create_game_dialog_vtbl_on_multiplayer_create: Cached<Option<usize>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
     dat_patches: Cached<Option<Rc<DatPatches<'e, E::VirtualAddress>>>>,
     mouse_xy: Cached<dialog::MouseXy<'e, E::VirtualAddress>>,
@@ -697,8 +701,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 skins_size: 0,
                 anim_struct_size: 0,
                 bnet_message_vtable_type: 0,
+                create_game_dialog_vtbl_on_multiplayer_create: 0,
                 limits: Default::default(),
-                create_game_dialog_vtbl_on_multiplayer_create: Default::default(),
                 prism_shaders: Default::default(),
                 dat_patches: Default::default(),
                 mouse_xy: Default::default(),
@@ -862,6 +866,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             StepGameLogic => self.step_game_logic(),
             ProcessEvents => self.process_events(),
             StepBnetController => self.step_bnet_controller(),
+            CreateGameMultiplayer => self.create_game_multiplayer(),
+            MapEntryLoadMap => self.map_entry_load_map(),
+            MapEntryLoadSave => self.map_entry_load_save(),
+            MapEntryLoadReplay => self.map_entry_load_replay(),
         }
     }
 
@@ -1732,7 +1740,9 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     /// Offset to CreateGameScreen.OnMultiplayerGameCreate in the dialog's vtable
     pub fn create_game_dialog_vtbl_on_multiplayer_create(&mut self) -> Option<usize> {
-        self.enter(|x, s| x.create_game_dialog_vtbl_on_multiplayer_create(s))
+        self.create_game_multiplayer();
+        Some(self.cache.create_game_dialog_vtbl_on_multiplayer_create as usize)
+            .filter(|&x| x != 0)
     }
 
     pub fn tooltip_draw_func(&mut self) -> Option<Operand<'e>> {
@@ -2456,6 +2466,34 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.bnet_controller()?;
         self.cache.bnet_message_switch?;
         Some(self.cache.bnet_message_vtable_type)
+    }
+
+    pub fn create_game_multiplayer(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::CreateGameMultiplayer,
+            AnalysisCache::cache_select_map_entry_children,
+        )
+    }
+
+    pub fn map_entry_load_map(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::MapEntryLoadMap,
+            AnalysisCache::cache_select_map_entry_children,
+        )
+    }
+
+    pub fn map_entry_load_save(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::MapEntryLoadSave,
+            AnalysisCache::cache_select_map_entry_children,
+        )
+    }
+
+    pub fn map_entry_load_replay(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::MapEntryLoadReplay,
+            AnalysisCache::cache_select_map_entry_children,
+        )
     }
 
     /// Mainly for tests/dump
@@ -3654,17 +3692,20 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn create_game_dialog_vtbl_on_multiplayer_create(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Option<usize> {
-        if let Some(cached) = self.create_game_dialog_vtbl_on_multiplayer_create.cached() {
-            return cached;
-        }
-        let result = self.select_map_entry(actx)
-            .and_then(|x| game_init::create_game_dialog_vtbl_on_multiplayer_create(actx, x));
-        self.create_game_dialog_vtbl_on_multiplayer_create.cache(&result);
-        result
+    fn cache_select_map_entry_children(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[CreateGameMultiplayer, MapEntryLoadMap, MapEntryLoadReplay, MapEntryLoadSave],
+            &[],
+            |s| {
+                let select_map_entry = s.select_map_entry(actx)?;
+                let result = game_init::analyze_select_map_entry(actx, select_map_entry);
+                s.create_game_dialog_vtbl_on_multiplayer_create =
+                    result.create_game_dialog_vtbl_on_multiplayer_create;
+                Some(([result.create_game_multiplayer, result.mde_load_map,
+                        result.mde_load_replay, result.mde_load_save], []))
+            },
+        );
     }
 
     fn cache_tooltip_related(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -6121,6 +6162,14 @@ fn bumpvec_with_capacity<T>(cap: usize, bump: &Bump) -> BumpVec<'_, T> {
     let mut vec = BumpVec::new_in(bump);
     vec.reserve(cap);
     vec
+}
+
+fn is_stack_address(addr: Operand<'_>) -> bool {
+    if let Some((l, r)) = addr.if_arithmetic_sub() {
+        r.if_constant().is_some() && l.if_register().map(|x| x.0) == Some(4)
+    } else {
+        addr.if_register().map(|x| x.0) == Some(4)
+    }
 }
 
 trait ControlExt<'e, E: ExecutionStateTrait<'e>> {

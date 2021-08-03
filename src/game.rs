@@ -8,7 +8,7 @@ use scarf::{BinaryFile, OperandCtx, Operand, DestOperand, Operation, MemAccessSi
 use crate::{
     AnalysisCtx, ControlExt, OptionExt, EntryOf, FunctionFinder, if_arithmetic_eq_neq,
     OperandExt, single_result_assign, if_callable_const, entry_of_until, ArgCache,
-    bumpvec_with_capacity,
+    bumpvec_with_capacity, is_stack_address,
 };
 use crate::call_tracker::CallTracker;
 
@@ -1366,12 +1366,4 @@ fn analyze_simulate_short<'e, E: ExecutionState<'e>>(
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
-}
-
-fn is_stack_address(addr: Operand<'_>) -> bool {
-    if let Some((l, r)) = addr.if_arithmetic_sub() {
-        r.if_constant().is_some() && l.if_register().map(|x| x.0) == Some(4)
-    } else {
-        addr.if_register().map(|x| x.0) == Some(4)
-    }
 }

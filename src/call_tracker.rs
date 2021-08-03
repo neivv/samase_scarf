@@ -54,6 +54,27 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         ctrl.do_call_with_result(custom);
     }
 
+    /// Registers and simulates a call to specific address, resolving immeditaly
+    /// instead of add_call which produces Custom(x). Also skips current operation.
+    ///
+    /// Note that this mean it clobbers volatile registers, usually Analyzer::operation() wants
+    /// to do this after everything else at call operation has been checked.
+    pub fn add_call_resolve<A: scarf::Analyzer<'e>>(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, A>,
+        address: E::VirtualAddress,
+    ) {
+        let ctx = ctrl.ctx();
+        let entry = self.func_to_id.entry(address);
+        let id_to_func = &mut self.id_to_func;
+        let new_id = id_to_func.len() as u32 + self.first_custom;
+        let &mut custom = entry.or_insert_with(|| {
+            id_to_func.push((address, None));
+            ctx.custom(new_id)
+        });
+        ctrl.do_call_with_result(self.resolve_calls(custom));
+    }
+
     pub fn resolve_calls(&mut self, val: Operand<'e>) -> Operand<'e> {
         self.ctx.transform(val, 8, |op| {
             if let Some(idx) = op.if_custom() {

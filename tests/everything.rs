@@ -66,6 +66,11 @@ fn everything_1208() {
 
         assert_eq!(analysis.process_commands().unwrap().0, 0x007b84e0);
         assert_eq!(analysis.storm_command_user().unwrap(), ctx.mem32(ctx.constant(0x00dcec10)));
+
+        assert_eq!(analysis.map_entry_load_map().unwrap().0, 0x00988510);
+        assert_eq!(analysis.map_entry_load_save().unwrap().0, 0x00988060);
+        assert_eq!(analysis.map_entry_load_replay().unwrap().0, 0x00987a30);
+        assert_eq!(analysis.create_game_multiplayer().unwrap().0, 0x007b0330);
     });
 }
 
@@ -1106,6 +1111,11 @@ fn everything_1233f() {
         assert_eq!(analysis.ttf_cache_character().unwrap().0, 0x00963c40);
         assert_eq!(analysis.ttf_render_sdf().unwrap().0, 0x00968010);
         assert_eq!(analysis.ttf_malloc().unwrap().0, 0x00C2A08B);
+
+        assert_eq!(analysis.map_entry_load_map().unwrap().0, 0x005fda80);
+        assert_eq!(analysis.map_entry_load_save().unwrap().0, 0x005fd5c0);
+        assert_eq!(analysis.map_entry_load_replay().unwrap().0, 0x005fcc00);
+        assert_eq!(analysis.create_game_multiplayer().unwrap().0, 0x00721030);
     })
 }
 
@@ -1437,7 +1447,11 @@ fn everything_1238e() {
 
 #[test]
 fn everything_1238f() {
-    test_with_extra_checks(Path::new("1238f.exe"), |_ctx, _analysis| {
+    test_with_extra_checks(Path::new("1238f.exe"), |_ctx, analysis| {
+        assert_eq!(analysis.map_entry_load_map().unwrap().0, 0x005fcfd0);
+        assert_eq!(analysis.map_entry_load_save().unwrap().0, 0x005fcba0);
+        assert_eq!(analysis.map_entry_load_replay().unwrap().0, 0x005fc2f0);
+        assert_eq!(analysis.create_game_multiplayer().unwrap().0, 0x0072fa70);
     });
 }
 
