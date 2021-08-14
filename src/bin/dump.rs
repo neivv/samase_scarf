@@ -56,18 +56,34 @@ fn main() {
 
     let start_time;
     if !is_64_bit(Path::new(&exe)) {
-        let mut binary = scarf::parse(&exe).unwrap();
-        let relocs =
-            scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary).unwrap();
-        binary.set_relocs(relocs);
-        let ctx = &scarf::OperandContext::new();
-        start_time = ::std::time::Instant::now();
-        dump::<scarf::ExecutionStateX86<'_>>(&binary, ctx, &args)
+        #[cfg(feature = "binaries_32")]
+        {
+            let mut binary = scarf::parse(&exe).unwrap();
+            let relocs =
+                scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary).unwrap();
+            binary.set_relocs(relocs);
+            let ctx = &scarf::OperandContext::new();
+            start_time = ::std::time::Instant::now();
+            dump::<scarf::ExecutionStateX86<'_>>(&binary, ctx, &args)
+        }
+        #[cfg(not(feature = "binaries_32"))]
+        {
+            println!("32-bit support wasn't enabled");
+            start_time = ::std::time::Instant::now();
+        }
     } else {
-        let binary = scarf::parse_x86_64(&exe).unwrap();
-        let ctx = &scarf::OperandContext::new();
-        start_time = ::std::time::Instant::now();
-        dump::<scarf::ExecutionStateX86_64<'_>>(&binary, ctx, &args)
+        #[cfg(feature = "binaries_64")]
+        {
+            let binary = scarf::parse_x86_64(&exe).unwrap();
+            let ctx = &scarf::OperandContext::new();
+            start_time = ::std::time::Instant::now();
+            dump::<scarf::ExecutionStateX86_64<'_>>(&binary, ctx, &args)
+        }
+        #[cfg(not(feature = "binaries_64"))]
+        {
+            println!("64-bit support wasn't enabled");
+            start_time = ::std::time::Instant::now();
+        }
     }
 
     let elapsed = start_time.elapsed();

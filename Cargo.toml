@@ -51,6 +51,8 @@ fern = "0.6"
 test_assertions = []
 x86 = []
 binaries = ['fern', 'anyhow', 'winapi', 'scopeguard']
+binaries_32 = ['binaries']
+binaries_64 = ['binaries']
 
 [profile.dev.package.bumpalo]
 opt-level = 3
