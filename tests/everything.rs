@@ -1759,14 +1759,16 @@ fn test_nongeneric<'e>(
     }
 
     let limits = analysis.limits();
+    // Currently 1238d, 1238e, but not 1238f.
+    // Assuming that 1239a or 1240a will be built on that branch too.
+    let is_major_2021_patch =
+        (minor_version == 23 && patch_version == 8 && revision >= b'd' && revision <= b'e') ||
+        (minor_version == 23 && patch_version >= 9) ||
+        (minor_version >= 24);
     if extended_limits {
         assert!(limits.set_limits.is_some());
         // 1238d removed (inlined?) SMemAlloc and SMemFree
-        let has_smem_alloc = minor_version < 23 ||
-            (minor_version == 23 && patch_version < 8) ||
-            (minor_version == 23 && is_ptr) ||
-            (minor_version == 23 && patch_version == 8 && revision < b'd') ||
-            (minor_version == 23 && patch_version == 8 && revision >= b'f');
+        let has_smem_alloc = !is_major_2021_patch;
         // Allocator as a virtual struct was added in 1233a
         let has_allocator = minor_version > 23 ||
             (minor_version == 23 && patch_version >= 3);
@@ -1833,15 +1835,22 @@ fn test_nongeneric<'e>(
     }
 
     let join_game = analysis.join_game();
+    let join_param_variant_type_offset = analysis.join_param_variant_type_offset();
     // 1233g refactored join_game/it's arguments heavily from what used to resemble 1161,
     // this analysis only finds the new format
-    if minor_version > 23 ||
+    let has_join_game = minor_version > 23 ||
         (minor_version == 23 && patch_version > 3) ||
-        (minor_version == 23 && patch_version == 3 && revision >= b'g')
-    {
+        (minor_version == 23 && patch_version == 3 && revision >= b'g');
+    if has_join_game {
         assert!(join_game.is_some());
+        if is_major_2021_patch {
+            assert_eq!(join_param_variant_type_offset, Some(0x20));
+        } else {
+            assert_eq!(join_param_variant_type_offset, Some(0));
+        }
     } else {
         assert!(join_game.is_none());
+        assert!(join_param_variant_type_offset.is_none());
     }
 
     let unit_update_speed = analysis.unit_update_speed();

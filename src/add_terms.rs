@@ -56,18 +56,23 @@ impl<'acx, 'e> AddTerms<'acx, 'e> {
 
     /// If exactly one term returns true from callback, remove it and return true.
     /// Otherwise do nothing and return false.
-    pub fn remove_one<F>(&mut self, mut func: F) -> bool
+    pub fn remove_one<F>(&mut self, func: F) -> bool
+    where F: FnMut(Operand<'e>, bool) -> bool
+    {
+        self.remove_get(func).is_some()
+    }
+
+    pub fn remove_get<F>(&mut self, mut func: F) -> Option<Operand<'e>>
     where F: FnMut(Operand<'e>, bool) -> bool
     {
         let remove_index = match self.terms.iter().position(|x| func(x.0, x.1)) {
             Some(s) => s,
-            None => return false,
+            None => return None,
         };
         if self.terms.iter().skip(remove_index + 1).any(|x| func(x.0, x.1)) {
-            return false;
+            return None;
         }
-        self.terms.remove(remove_index);
-        true
+        Some(self.terms.remove(remove_index).0)
     }
 
     pub fn join(&self, ctx: OperandCtx<'e>) -> Operand<'e> {

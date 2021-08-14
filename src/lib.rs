@@ -470,6 +470,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     anim_struct_size: u16,
     bnet_message_vtable_type: u16,
     create_game_dialog_vtbl_on_multiplayer_create: u16,
+    join_param_variant_type_offset: u16,
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
     dat_patches: Cached<Option<Rc<DatPatches<'e, E::VirtualAddress>>>>,
@@ -702,6 +703,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 anim_struct_size: 0,
                 bnet_message_vtable_type: 0,
                 create_game_dialog_vtbl_on_multiplayer_create: 0,
+                join_param_variant_type_offset: u16::MAX,
                 limits: Default::default(),
                 prism_shaders: Default::default(),
                 dat_patches: Default::default(),
@@ -2494,6 +2496,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             AddressAnalysis::MapEntryLoadReplay,
             AnalysisCache::cache_select_map_entry_children,
         )
+    }
+
+    pub fn join_param_variant_type_offset(&mut self) -> Option<usize> {
+        self.enter(AnalysisCache::join_param_variant_type_offset)
     }
 
     /// Mainly for tests/dump
@@ -4448,6 +4454,17 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             s.bnet_message_vtable_type = result.message_vtable_type;
             Some(([result.step_bnet_controller], [result.bnet_controller]))
         })
+    }
+
+    fn join_param_variant_type_offset(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<usize> {
+        if self.join_param_variant_type_offset == u16::MAX {
+            self.join_param_variant_type_offset = 0xfffe;
+            let join_game = self.join_game(actx)?;
+            if let Some(result) = game_init::join_param_variant_type_offset(actx, join_game) {
+                self.join_param_variant_type_offset = result;
+            }
+        }
+        Some(self.join_param_variant_type_offset).filter(|&x| x < 0xfffe).map(|x| x as usize)
     }
 }
 

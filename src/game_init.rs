@@ -1,6 +1,7 @@
 use std::collections::hash_map::Entry;
 use std::convert::TryFrom;
 
+use bumpalo::Bump;
 use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashMap;
 
@@ -14,6 +15,7 @@ use crate::{
     if_arithmetic_eq_neq, single_result_assign, bumpvec_with_capacity, FunctionFinder,
     ControlExt, is_stack_address,
 };
+use crate::add_terms::collect_arith_add_terms;
 use crate::call_tracker::CallTracker;
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -3573,5 +3575,230 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
                 }
             }
         }
+    }
+}
+
+pub(crate) fn join_param_variant_type_offset<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    join_game: E::VirtualAddress,
+) -> Option<u16> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut analyzer = JoinParamVariantTypeOffset::<E> {
+        result: None,
+        arg_cache: &actx.arg_cache,
+        inline_depth: 0,
+        state: JoinParamState::FindGetSaveGameId,
+        custom_pos: 0,
+        first_branch: false,
+        current_variant: ctx.const_0(),
+        current_arg1: actx.arg_cache.on_entry(0),
+        bump: &actx.bump,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, join_game);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct JoinParamVariantTypeOffset<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: Option<u16>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+    state: JoinParamState,
+    custom_pos: u32,
+    first_branch: bool,
+    current_variant: Operand<'e>,
+    current_arg1: Operand<'e>,
+    bump: &'acx Bump,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum JoinParamState {
+    // Inline the first call when this = arg1,
+    // stop analysis there.
+    // Inline second time if the first call at depth1 also has this = arg1,
+    // otherwise assume current function as get_save_game_id
+    FindGetSaveGameId,
+    // Go forward until a call where this = arg1, arg1 = local, inline there
+    BeforeVariantGet,
+    // Find more calls where this = arg1, arg1 = local,
+    // set [arg1] value to Custom.
+    // Whenever a call with this or arg1 = `Custom + x` (x nonzero, 4-aligned) happens,
+    // analyze it with FindVariantType
+    FindVariant,
+    // Check for comparision of x == 4 or jump/call with x where x is Mem[custom + y]
+    FindVariantType,
+}
+
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    JoinParamVariantTypeOffset<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            JoinParamState::FindGetSaveGameId | JoinParamState::BeforeVariantGet => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ctx.register(1));
+                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        if self.state == JoinParamState::FindGetSaveGameId {
+                            if self.inline_depth != 0 {
+                                self.state = JoinParamState::BeforeVariantGet;
+                            }
+                            if this == self.current_arg1 {
+                                self.inline_depth += 1;
+                                if self.state == JoinParamState::BeforeVariantGet {
+                                    self.current_arg1 = ctx.register(1);
+                                    let mut analysis =
+                                        FuncAnalysis::new(ctrl.binary(), ctx, dest);
+                                    analysis.analyze(self);
+                                } else {
+                                    ctrl.analyze_with_current_state(self, dest);
+                                }
+                                ctrl.end_analysis();
+                            }
+                        } else if self.state == JoinParamState::BeforeVariantGet {
+                            if this == self.current_arg1 && is_stack_address(arg1) {
+                                self.state = JoinParamState::FindVariant;
+                                let mut analysis = FuncAnalysis::new(ctrl.binary(), ctx, dest);
+                                analysis.analyze(self);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            JoinParamState::FindVariant => {
+                self.check_variant_type(ctrl, op);
+                if self.result.is_some() {
+                    return;
+                }
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ctx.register(1));
+                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        if this == ctx.register(1) && is_stack_address(arg1) {
+                            ctrl.analyze_with_current_state(self, dest);
+                            if self.result.is_some() {
+                                ctrl.end_analysis();
+                                return;
+                            }
+                            let dest = DestOperand::from_oper(ctrl.mem_word(arg1));
+                            let state = ctrl.exec_state();
+                            state.move_resolved(&dest, ctx.custom(self.custom_pos));
+                            self.custom_pos += 1;
+                        } else {
+                            let custom_off = [this, arg1].iter().find_map(|&op| {
+                                let (l, r) = op.if_arithmetic_add()?;
+                                l.if_custom()?;
+                                r.if_constant().filter(|&c| c & 3 == 0)?;
+                                Some(op)
+                            });
+                            if let Some(custom) = custom_off {
+                                self.state = JoinParamState::FindVariantType;
+                                self.current_variant = custom;
+                                self.first_branch = true;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.first_branch = false;
+                                self.state = JoinParamState::FindVariant;
+                                if self.result.is_some() {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                    ctrl.skip_call_preserve_esp();
+                }
+            }
+            JoinParamState::FindVariantType => {
+                self.check_variant_type(ctrl, op);
+            }
+        }
+    }
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, 'e, E> {
+    fn check_variant_type(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if let Operation::Call(dest) = *op {
+            let dest = ctrl.resolve(dest);
+            if let Some(addr) = ctrl.if_mem_word(dest) {
+                if let Some(value) = self.extract_index_from_jump_call(addr) {
+                    let offset = ctx.sub(self.current_variant, value).if_constant()
+                        .or_else(|| {
+                            (0..3).find_map(|i| {
+                                let arg = ctrl.resolve(self.arg_cache.on_call(i));
+                                ctx.sub(value, arg).if_constant()
+                            })
+                        });
+                    if let Some(c) = offset {
+                        if let Ok(c) = u16::try_from(c) {
+                            self.result = Some(c);
+                            ctrl.end_analysis();
+                            return;
+                        }
+                    }
+                }
+            }
+            if self.first_branch {
+                self.first_branch = false;
+                if let Some(dest) = dest.if_constant() {
+                    let dest = E::VirtualAddress::from_u64(dest);
+                    ctrl.analyze_with_current_state(self, dest);
+                    if self.result.is_some() {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+        } else if let Operation::Jump { condition, to } = *op {
+            if self.state == JoinParamState::FindVariantType {
+                self.first_branch = false;
+                let condition = ctrl.resolve(condition);
+                let compare = if_arithmetic_eq_neq(condition)
+                    .filter(|x| x.1.if_constant() == Some(4))
+                    .map(|x| x.0)
+                    .and_then(|x| ctrl.if_mem_word(x));
+                if let Some(op) = compare {
+                    if let Some(c) = ctx.sub(op, self.current_variant).if_constant() {
+                        if let Ok(c) = u16::try_from(c) {
+                            self.result = Some(c);
+                            ctrl.end_analysis();
+                            return;
+                        }
+                    }
+                }
+                let to = ctrl.resolve(to);
+                if let Some(addr) = ctrl.if_mem_word(to) {
+                    if let Some(value) = self.extract_index_from_jump_call(addr) {
+                        if let Some(c) = ctx.sub(value, self.current_variant).if_constant() {
+                            if let Ok(c) = u16::try_from(c) {
+                                self.result = Some(c);
+                                ctrl.end_analysis();
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn extract_index_from_jump_call(&self, op: Operand<'e>) -> Option<Operand<'e>> {
+        let mut ops = collect_arith_add_terms(op, self.bump)?;
+        let op = ops.remove_get(|x, is_sub| {
+            !is_sub && x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into()).is_some()
+        })?;
+        op.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
+            .and_then(|x| {
+                let addr = x.if_memory().filter(|x| x.size == E::WORD_SIZE)?.address;
+                let (l, r) = addr.if_arithmetic_add()?;
+                r.if_constant()?;
+                l.if_custom()?;
+                Some(addr)
+            })
     }
 }

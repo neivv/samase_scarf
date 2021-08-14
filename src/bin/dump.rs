@@ -90,6 +90,15 @@ fn main() {
     println!("Time taken: {}.{:09} s", elapsed.as_secs(), elapsed.subsec_nanos());
 }
 
+fn check_filter(filter: &Option<&str>, compare: &str) -> bool {
+    if let Some(ref filter) = filter {
+        if !compare.contains(filter) {
+            return false;
+        }
+    }
+    true
+}
+
 fn dump<'e, E: ExecutionState<'e>>(
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: OperandCtx<'e>,
@@ -127,10 +136,8 @@ fn dump<'e, E: ExecutionState<'e>>(
     // Addresses
     let mut lines = Vec::new();
     for address_op in samase_scarf::AddressAnalysis::iter() {
-        if let Some(ref filter) = filter {
-            if !address_op.name().contains(filter) {
-                continue;
-            }
+        if !check_filter(&filter, address_op.name()) {
+            continue;
         }
         let result = analysis.address_analysis(address_op);
         lines.push((address_op.name(), result));
@@ -147,10 +154,8 @@ fn dump<'e, E: ExecutionState<'e>>(
     // Operands
     let mut lines = Vec::new();
     for op in samase_scarf::OperandAnalysis::iter() {
-        if let Some(ref filter) = filter {
-            if !op.name().contains(filter) {
-                continue;
-            }
+        if !check_filter(&filter, op.name()) {
+            continue;
         }
         let result = analysis.operand_analysis(op);
         lines.push((op.name(), result));
@@ -158,6 +163,15 @@ fn dump<'e, E: ExecutionState<'e>>(
     lines.sort_unstable_by_key(|x| x.0);
     for &(name, val) in &lines {
         println!("{}: {}", name, format_op_operand(val));
+    }
+
+    if check_filter(&filter, "join_param_variant_type_offset") {
+        println!(
+            "join_param_variant_type_offset: {}",
+            analysis.join_param_variant_type_offset()
+                .map(|x| format!("{:x}", x))
+                .unwrap_or_else(|| String::from("None")),
+        );
     }
 
     if filter.is_none() {
