@@ -146,6 +146,7 @@ pub(crate) fn play_smk<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let bump = &analysis.bump;
+    let arg_cache = &analysis.arg_cache;
     let funcs = functions.functions();
 
     // Find ref for char *smk_filenames[0x1c]; smk_filenames[0] == "smk\\blizzard.webm"
@@ -158,16 +159,20 @@ pub(crate) fn play_smk<'e, E: ExecutionState<'e>>(
     });
     let data_rvas = BumpVec::from_iter_in(data_rvas, bump);
     let global_refs = data_rvas.iter().flat_map(|&rva| {
+        let smk_names = ctx.constant((data.virtual_address + rva.0).as_u64());
         functions.find_functions_using_global(analysis, data.virtual_address + rva.0)
+            .into_iter()
+            .map(move |x| (x, smk_names))
     });
     let global_refs = BumpVec::from_iter_in(global_refs, bump);
 
     let mut result = None;
-    for global in global_refs {
+    for (global, smk_names) in global_refs {
         let new = entry_of_until(binary, funcs, global.use_address, |entry| {
             let mut analyzer = IsPlaySmk::<E> {
                 result: EntryOf::Retry,
-                use_address: global.use_address,
+                arg_cache,
+                smk_names,
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             analysis.analyze(&mut analyzer);
@@ -182,42 +187,30 @@ pub(crate) fn play_smk<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct IsPlaySmk<'e, E: ExecutionState<'e>> {
+struct IsPlaySmk<'a, 'e, E: ExecutionState<'e>> {
     result: EntryOf<()>,
-    use_address: E::VirtualAddress,
+    arg_cache: &'a ArgCache<'e, E>,
+    smk_names: Operand<'e>,
 }
 
-impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsPlaySmk<'e, E> {
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsPlaySmk<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        let address = ctrl.address();
-        if address.as_u64() > self.use_address.as_u64() - 8 && address < self.use_address {
-            if let Operation::Move(_, value, None) = *op {
-                let value = ctrl.resolve(value);
-                let ok = value.if_mem32()
-                    .and_then(|x| x.if_arithmetic_add())
-                    .and_either(|x| x.if_arithmetic_mul())
-                    .map(|((l, r), _)| (l, r))
-                    .and_either_other(|x| x.if_constant().filter(|&c| c == 4))
-                    .filter(|&x| is_arg1(x))
-                    .is_some();
-                if ok {
-                    self.result = EntryOf::Ok(());
-                    ctrl.end_analysis();
-                }
+        if let Operation::Move(_, value, None) = *op {
+            let value = ctrl.resolve(value);
+            let ok = ctrl.if_mem_word(value)
+                .and_then(|x| x.if_arithmetic_add())
+                .and_if_either_other(|x| x == self.smk_names)
+                .and_then(|x| x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into()))
+                .filter(|&x| Operand::and_masked(x).0 == self.arg_cache.on_entry(0))
+                .is_some();
+            if ok {
+                self.result = EntryOf::Ok(());
+                ctrl.end_analysis();
             }
         }
     }
-}
-
-fn is_arg1(operand: Operand<'_>) -> bool {
-    operand.if_memory()
-        .and_then(|x| x.address.if_arithmetic_add())
-        .and_either_other(|x| x.if_constant().filter(|&c| c == 4))
-        .and_then(|x| x.if_register())
-        .filter(|x| x.0 == 4)
-        .is_some()
 }
 
 pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
