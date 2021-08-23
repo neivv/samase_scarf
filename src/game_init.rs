@@ -9,7 +9,6 @@ use scarf::{DestOperand, Operand, OperandCtx, Operation, BinaryFile, BinarySecti
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 
-use crate::switch::CompleteSwitch;
 use crate::{
     AnalysisCtx, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, OperandExt,
     if_arithmetic_eq_neq, single_result_assign, bumpvec_with_capacity, FunctionFinder,
@@ -17,6 +16,8 @@ use crate::{
 };
 use crate::add_terms::collect_arith_add_terms;
 use crate::call_tracker::CallTracker;
+use crate::switch::CompleteSwitch;
+use crate::vtables::Vtables;
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
@@ -594,6 +595,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsInitMapFromPath
 pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     functions: &FunctionFinder<'_, 'e, E>,
+    vtables: &Vtables<'e, E::VirtualAddress>,
 ) -> Option<E::VirtualAddress> {
     // Search for vtable of AVSelectConnectionScreen, whose event handler (Fn vtable + 0x18)
     // with arg1 == 9 calls a child function doing
@@ -608,8 +610,8 @@ pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
     // but the difference isn't really important. choose_snp is only called
     // as is for provider 0, and choose_snp_for_net just immediately calls
     // choose_snp if provider id isn't BNET.
-    let vtables =
-        crate::vtables::vtables(analysis, functions, b".?AVSelectConnectionScreen@glues@@\0");
+    let vtables = vtables.vtables_starting_with(b".?AVSelectConnectionScreen@glues@@\0")
+        .map(|x| x.address);
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let funcs = functions.functions();
@@ -1348,16 +1350,18 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindImagesLoade
 pub(crate) fn local_player_name<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     relocs: &[E::VirtualAddress],
-    functions: &FunctionFinder<'_, 'e, E>,
+    vtables: &Vtables<'e, E::VirtualAddress>,
 ) -> Option<Operand<'e>> {
     #[allow(bad_style)]
     let VA_SIZE: u32 = E::VirtualAddress::SIZE;
 
-    let mut vtables =
-        crate::vtables::vtables(analysis, functions, b".?AVCreateGameScreen@glues@@\0");
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let bump = &analysis.bump;
+
+    let vtables = vtables.vtables_starting_with(b".?AVCreateGameScreen@glues@@\0")
+        .map(|x| x.address);
+    let mut vtables = BumpVec::from_iter_in(vtables, bump);
     let vtable_lengths = vtables.iter().map(|&addr| {
         let reloc_pos = match relocs.binary_search(&addr) {
             Ok(o) => o,
@@ -1469,9 +1473,10 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheckLocalPlayerName<
 pub(crate) fn init_game_network<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     local_storm_player: Operand<'e>,
-    functions: &FunctionFinder<'_, 'e, E>,
+    vtables: &Vtables<'e, E::VirtualAddress>,
 ) -> Option<E::VirtualAddress> {
-    let vtables = crate::vtables::vtables(analysis, functions, b".?AVGameLobbyScreen@glues@@\0");
+    let vtables = vtables.vtables_starting_with(b".?AVGameLobbyScreen@glues@@\0")
+        .map(|x| x.address);
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     // Lobby screen vtable's Control::init calls init_game_network,

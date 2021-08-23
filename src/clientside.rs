@@ -10,6 +10,7 @@ use crate::{
     single_result_assign, OptionExt, if_arithmetic_eq_neq, FunctionFinder,
 };
 use crate::hash_map::HashMap;
+use crate::vtables::Vtables;
 
 pub enum ResultOrEntries<'acx, T, Va: VirtualAddress> {
     Result(T),
@@ -461,7 +462,7 @@ pub(crate) fn misc_clientside<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     is_multiplayer: Operand<'e>,
     scmain_state: Operand<'e>,
-    functions: &FunctionFinder<'_, 'e, E>,
+    vtables: &Vtables<'e, E::VirtualAddress>,
 ) -> MiscClientSide<'e> {
     let mut result = MiscClientSide {
         is_paused: None,
@@ -486,7 +487,8 @@ pub(crate) fn misc_clientside<'e, E: ExecutionState<'e>>(
     //     end_targeting()
     //   }
     // }
-    let vtables = crate::vtables::vtables(analysis, functions, b".?AVOptionsMenuPopup@glues@@\0");
+    let vtables = vtables.vtables_starting_with(b".?AVOptionsMenuPopup@glues@@\0")
+        .map(|x| x.address);
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let vtable_fn_result_op = ctx.custom(0);

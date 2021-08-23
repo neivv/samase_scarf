@@ -28,13 +28,6 @@ impl<Va: VirtualAddress> Default for PrismShaders<Va> {
     }
 }
 
-pub(crate) fn renderer_vtables<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'e, E>,
-    functions: &FunctionFinder<'_, 'e, E>,
-) -> Vec<E::VirtualAddress> {
-    crate::vtables::vtables(analysis, functions, b".?AVRenderer@@\0")
-}
-
 pub(crate) fn prism_shaders<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     renderer_vtables: &[E::VirtualAddress],

@@ -1,3 +1,5 @@
+use bumpalo::collections::Vec as BumpVec;
+
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{MemAccessSize, Operand, Operation, BinarySection, BinaryFile};
@@ -6,6 +8,7 @@ use crate::{
     AnalysisCtx, ArgCache, single_result_assign, find_bytes, FunctionFinder, EntryOf, OptionExt,
     entry_of_until, if_arithmetic_eq_neq,
 };
+use crate::vtables::Vtables;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SnpDefinitions<'e> {
@@ -63,7 +66,7 @@ pub(crate) fn snp_definitions<'e, E: ExecutionState<'e>>(
 
 pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
-    functions: &FunctionFinder<'_, 'e, E>,
+    vtables: &Vtables<'e, E::VirtualAddress>,
 ) -> InitStormNetworking<E::VirtualAddress> {
     let mut result = InitStormNetworking {
         init_storm_networking: None,
@@ -72,8 +75,8 @@ pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
 
     // Init function of AVSelectConnectionScreen calls init_storm_networking,
     // init_storm_networking calls load_snp_list(&[fnptr, fnptr], 1)
-    let vtables =
-        crate::vtables::vtables(analysis, functions, b".?AVSelectConnectionScreen@glues@@\0");
+    let vtables = vtables.vtables_starting_with(b".?AVSelectConnectionScreen@glues@@\0")
+        .map(|x| x.address);
     let binary = analysis.binary;
     let text = analysis.binary_sections.text;
     let ctx = analysis.ctx;
@@ -172,8 +175,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetw
 
 pub(crate) fn snet_handle_packets<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
-    functions: &FunctionFinder<'_, 'e, E>,
+    vtables: &Vtables<'e, E::VirtualAddress>,
 ) -> SnetHandlePackets<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let bump = &analysis.bump;
+
     let mut result = SnetHandlePackets {
         send_packets: None,
         recv_packets: None,
@@ -181,9 +188,10 @@ pub(crate) fn snet_handle_packets<'e, E: ExecutionState<'e>>(
     // Look for snet functions in packet received handler of UdpServer (vtable fn #3)
     // First one - receive - immediately calls a function pointer to receive the packets,
     // send calls a send_packet function for a ping (?) - send_packet(_, 0, 4, _, 4)
-    let vtables = crate::vtables::vtables(analysis, functions, b".?AVUdpServer@");
-    let binary = analysis.binary;
-    let ctx = analysis.ctx;
+    let vtables = BumpVec::from_iter_in(
+        vtables.vtables_starting_with(b".?AVUdpServer@").map(|x| x.address),
+        bump,
+    );
     let arg_cache = &analysis.arg_cache;
     for root_inline_limit in 0..2 {
         for &vtable in &vtables {

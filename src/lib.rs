@@ -83,6 +83,7 @@ pub use crate::units::{OrderIssuing};
 use crate::dialog::{MultiWireframes};
 use crate::map::{RunTriggers, TriggerUnitCountCaches};
 use crate::switch::{CompleteSwitch};
+use crate::vtables::Vtables;
 
 use scarf::exec_state::ExecutionState as ExecutionStateTrait;
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
@@ -445,6 +446,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     globals_with_values: Cached<Rc<Vec<RelocValues<E::VirtualAddress>>>>,
     functions: Cached<Rc<Vec<E::VirtualAddress>>>,
     functions_with_callers: Cached<Rc<Vec<FuncCallPair<E::VirtualAddress>>>>,
+    vtables: Cached<Rc<Vtables<'e, E::VirtualAddress>>>,
     firegraft_addresses: Cached<Rc<FiregraftAddresses<E::VirtualAddress>>>,
     aiscript_hook: Option<AiScriptHook<'e, E::VirtualAddress>>,
     // 0 = Not calculated, 1 = Not found
@@ -679,6 +681,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 globals_with_values: Default::default(),
                 functions: Default::default(),
                 functions_with_callers: Default::default(),
+                vtables: Default::default(),
                 firegraft_addresses: Default::default(),
                 aiscript_hook: Default::default(),
                 address_results:
@@ -1171,7 +1174,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn vtables(&mut self) -> Vec<E::VirtualAddress> {
-        self.enter(|x, s| x.vtables(s))
+        self.enter(|x, s| x.all_vtables(s))
     }
 
     pub fn vtables_for_class(&mut self, name: &[u8]) -> Vec<E::VirtualAddress> {
@@ -2663,6 +2666,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         }).clone()
     }
 
+    /// Sorted by address
     fn relocs(&mut self) -> Rc<Vec<E::VirtualAddress>> {
         let relocs = match self.relocs.is_none() {
             true => match scarf::analysis::find_relocs::<E>(self.binary) {
@@ -3056,21 +3060,39 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn choose_snp(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::ChooseSnp, |s| {
-            game_init::choose_snp(actx, &s.function_finder())
+            let vtables = s.vtables(actx);
+            game_init::choose_snp(actx, &s.function_finder(), &vtables)
         })
     }
 
-    fn renderer_vtables(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Vec<E::VirtualAddress>> {
-        if let Some(cached) = self.renderer_vtables.cached() {
+    fn renderer_vtables(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Vec<E::VirtualAddress>> { if let Some(cached) = self.renderer_vtables.cached() {
             return cached;
         }
-        let result = Rc::new(renderer::renderer_vtables(actx, &self.function_finder()));
+        let vtables = self.vtables(actx);
+        let result = Rc::new(
+            vtables.vtables_starting_with(b".?AVRenderer@@\0").map(|x| x.address).collect()
+        );
         self.renderer_vtables.cache(&result);
         result
     }
 
-    fn vtables(&mut self, actx: &AnalysisCtx<'e, E>) -> Vec<E::VirtualAddress> {
-        self.vtables_for_class(b".?AV", actx)
+    fn vtables(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Vtables<'e, E::VirtualAddress>> {
+        if let Some(cached) = self.vtables.cached() {
+            return cached;
+        }
+        let relocs = self.relocs();
+        let result = Rc::new(vtables::vtables(actx, &relocs));
+        self.vtables.cache(&result);
+        result
+    }
+
+    fn all_vtables(&mut self, actx: &AnalysisCtx<'e, E>) -> Vec<E::VirtualAddress> {
+        let mut result = self.vtables(actx).all_vtables().iter()
+            .map(|x| x.address)
+            .collect::<Vec<_>>();
+        result.sort_unstable();
+        result.dedup();
+        result
     }
 
     fn vtables_for_class(
@@ -3078,10 +3100,13 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         name: &[u8],
         actx: &AnalysisCtx<'e, E>,
     ) -> Vec<E::VirtualAddress> {
-        let mut vtables = vtables::vtables(actx, &self.function_finder(), name);
-        vtables.sort_unstable();
-        vtables.dedup();
-        vtables
+        let vtables = self.vtables(actx);
+        let mut result = vtables.vtables_starting_with(name)
+            .map(|x| x.address)
+            .collect::<Vec<_>>();
+        result.sort_unstable();
+        result.dedup();
+        result
     }
 
     fn cache_single_player_start(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -3177,8 +3202,9 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn local_player_name(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::LocalPlayerName, |s| {
+            let vtables = s.vtables(actx);
             let relocs = s.relocs();
-            game_init::local_player_name(actx, &relocs, &s.function_finder())
+            game_init::local_player_name(actx, &relocs, &vtables)
         })
     }
 
@@ -3210,8 +3236,8 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn init_game_network(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::InitGameNetwork, |s| {
             let local_storm_player_id = s.local_storm_player_id(actx)?;
-            let functions = s.function_finder();
-            game_init::init_game_network(actx, local_storm_player_id, &functions)
+            let vtables = s.vtables(actx);
+            game_init::init_game_network(actx, local_storm_player_id, &vtables)
         })
     }
 
@@ -3234,7 +3260,8 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn cache_init_storm_networking(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(&[InitStormNetworking, LoadSnpList], &[], |s| {
-            let result = network::init_storm_networking(actx, &s.function_finder());
+            let vtables = s.vtables(actx);
+            let result = network::init_storm_networking(actx, &vtables);
             Some(([result.init_storm_networking, result.load_snp_list], []))
         })
     }
@@ -3351,8 +3378,9 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.cache_many(&[], &[IsPaused, IsPlacingBuilding, IsTargeting], |s| {
             let is_multiplayer = s.is_multiplayer(actx)?;
             let scmain_state = s.scmain_state(actx)?;
-            let funcs = s.function_finder();
-            let result = clientside::misc_clientside(actx, is_multiplayer, scmain_state, &funcs);
+            let vtables = s.vtables(actx);
+            let result =
+                clientside::misc_clientside(actx, is_multiplayer, scmain_state, &vtables);
             Some(([], [result.is_paused, result.is_placing_building, result.is_targeting]))
         })
     }
@@ -4018,7 +4046,8 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn cache_snet_handle_packets(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(&[SnetSendPackets, SnetRecvPackets], &[], |s| {
-            let result = network::snet_handle_packets(actx, &s.function_finder());
+            let vtables = s.vtables(actx);
+            let result = network::snet_handle_packets(actx, &vtables);
             Some(([result.send_packets, result.recv_packets], []))
         })
     }

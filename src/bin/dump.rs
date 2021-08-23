@@ -637,8 +637,12 @@ fn dump_vtables<'e, E: ExecutionState<'e>>(
     for vtable in vtables {
         let name = binary.read_address(vtable - E::VirtualAddress::SIZE).ok()
             .and_then(|x| {
+                let name_offset = match E::VirtualAddress::SIZE == 4 {
+                    true => 0x8,
+                    false => 0x10,
+                };
                 let offset = binary.read_u32(x + 0x4).ok()?;
-                let main_name = read_vtable_address(binary, x + 0xc)? + 8;
+                let main_name = read_vtable_address(binary, x + 0xc)? + name_offset;
                 let inherits = read_vtable_address(binary, x + 0x10)?;
                 let inherit_count = binary.read_u32(inherits + 0x8).ok()?;
                 let inherit_list = read_vtable_address(binary, inherits + 0xc)?;
@@ -648,7 +652,7 @@ fn dump_vtables<'e, E: ExecutionState<'e>>(
                 let mut inherits = Vec::with_capacity(inherit_count as usize);
                 for i in 0..inherit_count {
                     let inherited = read_vtable_address(binary, inherit_list + 4 * i)?;
-                    let name = read_vtable_address(binary, inherited)? + 8;
+                    let name = read_vtable_address(binary, inherited)? + name_offset;
                     let name = read_cstring(binary, name)?;
                     let parent_count = binary.read_u32(inherited + 0x4).ok()?;
                     let offset = binary.read_u32(inherited + 0x8).ok()?;
