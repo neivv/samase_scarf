@@ -256,8 +256,6 @@ pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
     if let Some(sc_main) = result.sc_main {
         let mut analyzer = ScMainAnalyzer {
             result: &mut result,
-            binary,
-            make_undef: None,
         };
         let exec_state = E::initial_state(ctx, binary);
         let mut analysis = FuncAnalysis::custom_state(
@@ -315,8 +313,6 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsScMain<'a, 'e, 
 
 struct ScMainAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut GameInit<'e, E::VirtualAddress>,
-    binary: &'e BinaryFile<E::VirtualAddress>,
-    make_undef: Option<DestOperand<'e>>,
 }
 
 #[allow(bad_style)]
@@ -339,11 +335,6 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
     type State = ScMainAnalyzerState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        if let Some(to) = self.make_undef.take() {
-            let ctx = ctrl.ctx();
-            let exec_state = ctrl.exec_state();
-            exec_state.move_to(&to, ctx.new_undef());
-        }
         match *op {
             Operation::Jump { to, condition } => {
                 if let ScMainAnalyzerState::SwitchJumped(..) = *ctrl.user_state() {
@@ -354,27 +345,18 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
                 let condition = ctrl.resolve(condition);
                 if condition.if_constant().unwrap_or(0) != 0 {
                     let to = ctrl.resolve(to);
-                    if to.if_memory().is_some() {
+                    if to.if_constant().is_none() {
                         // Switch jump, follow cases 3 & 4 if searching for game loop,
                         // switch expression is also scmain_state then
                         if *ctrl.user_state() == ScMainAnalyzerState::SearchingGameLoop {
-                            let base_offset = to.if_mem32()
-                                .and_then(|x| x.if_arithmetic_add())
-                                .and_either(|x| x.if_constant())
-                                .and_then(|(switch_table, other)| {
-                                    other.if_arithmetic_mul()
-                                        .and_either_other(|x| x.if_constant().filter(|&c| c == 4))
-                                        .map(|o| (switch_table, o))
-                                });
-                            if let Some((base, offset)) = base_offset {
-                                let addr_size = <E::VirtualAddress as VirtualAddress>::SIZE;
+                            let switch = CompleteSwitch::new(to, ctrl.exec_state());
+                            if let Some(switch) = switch {
+                                if let Some(index) = switch.index_operand::<E::VirtualAddress>() {
+                                    self.result.scmain_state = Some(index);
+                                }
                                 for case_n in 3..5 {
-                                    let case = E::VirtualAddress::from_u64(base) +
-                                        case_n as u32 * addr_size;
-                                    if let Ok(addr) = self.binary.read_address(case) {
-                                        let offset = ctrl.unresolve_memory(offset)
-                                            .unwrap_or_else(|| offset.clone());
-                                        self.result.scmain_state = Some(offset);
+                                    let binary = ctrl.binary();
+                                    if let Some(addr) = switch.branch(binary, case_n as u32) {
                                         *ctrl.user_state() =
                                             ScMainAnalyzerState::SwitchJumped(case_n);
                                         ctrl.analyze_with_current_state(self, addr);
@@ -415,11 +397,13 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
                     }
                 }
             }
-            Operation::Move(ref to @ DestOperand::Memory(..), val, _) => {
+            Operation::Move(DestOperand::Memory(ref mem), val, _) => {
                 // Skip any moves of constant 4 to memory as it is likely scmain_state write
                 if *ctrl.user_state() == ScMainAnalyzerState::SearchingEntryHook {
                     if ctrl.resolve(val).if_constant() == Some(4) {
-                        self.make_undef = Some(to.clone());
+                        if !is_stack_address(ctrl.resolve(mem.address)) {
+                            ctrl.skip_operation();
+                        }
                     }
                 }
             }
@@ -3543,7 +3527,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
                 } else if let Operation::Jump { condition, to } = *op {
                     if ctrl.resolve(condition) == ctx.const_1() {
                         let to = ctrl.resolve(to);
-                        if let Some(to) = ctrl.if_mem_word(to) {
+                        if to.if_constant().is_none() {
                             let exec_state = ctrl.exec_state();
                             if let Some(switch) = CompleteSwitch::new(to, exec_state) {
                                 if let Some(idx) = switch.index_operand::<E::VirtualAddress>() {

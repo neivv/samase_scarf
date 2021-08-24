@@ -7,9 +7,13 @@ use crate::{OperandExt};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct CompleteSwitch<'e> {
-    /// Address of the switch jump,
-    /// e.g. expecting there to be `Operation::Jump` with `to == MemWord[dest]`
-    dest: Operand<'e>,
+    /// Base address added to values from table.
+    base: u64,
+    /// Address of the switch jump table.
+    table: Operand<'e>,
+    /// Size of the values in switch table.
+    /// Should be word sized if base is zero. Otherwise can be u32 (Or technically even smaller)
+    size: MemAccessSize,
     /// Minimum possible value for the switch jump
     low: u32,
     /// Maximum possible value (inclusive) for the switch jump
@@ -17,17 +21,26 @@ pub struct CompleteSwitch<'e> {
 }
 
 impl<'e> CompleteSwitch<'e> {
-    /// `dest` should be address of the switch table, e.g. the execution should be jumping
-    /// to `MemWord[dest]`.
+    /// `dest` should be the operand jumped to.
+    /// If it can be understood as a switch, Some(switch) is returned.
     pub fn new<E: ExecutionState<'e>>(
         dest: Operand<'e>,
         exec_state: &mut E,
     ) -> Option<CompleteSwitch<'e>> {
+        let (base, table, size) = match dest.if_memory() {
+            Some(mem) if mem.size == E::WORD_SIZE => (0, mem.address, mem.size),
+            _ => {
+                let (l, r) = dest.if_arithmetic_add()?;
+                let base = r.if_constant()?;
+                let mem = l.if_memory()?;
+                (base, mem.address, mem.size)
+            }
+        };
         // Recognize `table + index * SIZE`, and if
         // `index` is `Mem8/16[secondary_table + index * word_size]` unwrap that too.
-        let (l, r) = dest.if_arithmetic_add()?;
+        let (l, r) = table.if_arithmetic_add()?;
         let _table = r.if_constant()?;
-        let index = l.if_arithmetic_mul_const(E::VirtualAddress::SIZE as u64)?;
+        let index = l.if_arithmetic_mul_const((size.bits() / 8) as u64)?;
         let index = index.if_memory()
             .filter(|x| matches!(x.size, MemAccessSize::Mem8 | MemAccessSize::Mem16))
             .and_then(|mem| {
@@ -42,7 +55,9 @@ impl<'e> CompleteSwitch<'e> {
             .unwrap_or(index);
         let limits = exec_state.value_limits(index);
         Some(CompleteSwitch {
-            dest,
+            base,
+            table,
+            size,
             low: limits.0.try_into().ok()?,
             high: limits.1.try_into().unwrap_or(u32::MAX),
         })
@@ -58,8 +73,9 @@ impl<'e> CompleteSwitch<'e> {
         }
         // Recognize `table + index * SIZE`, and if
         // `index` is `Mem8/16[secondary_table + index * word_size]` unwrap that too.
-        let (l, r) = self.dest.if_arithmetic_add()?;
-        let index = l.if_arithmetic_mul_const(Va::SIZE as u64)?;
+        let (l, r) = self.table.if_arithmetic_add()?;
+        let main_index_size = self.size.bits() / 8;
+        let index = l.if_arithmetic_mul_const(main_index_size as u64)?;
         let table = Va::from_u64(r.if_constant()?);
         let index = index.if_memory()
             .filter(|x| matches!(x.size, MemAccessSize::Mem8 | MemAccessSize::Mem16))
@@ -74,12 +90,15 @@ impl<'e> CompleteSwitch<'e> {
                 }
             })
             .unwrap_or(branch);
-        binary.read_address(table + index.checked_mul(Va::SIZE)?).ok()
+        let value = self.base.wrapping_add(
+            binary.read_u64(table + index.checked_mul(main_index_size)?).ok()? & self.size.mask()
+        );
+        Some(Va::from_u64(value))
     }
 
     pub fn index_operand<Va: VirtualAddress>(&self) -> Option<Operand<'e>> {
-        let (l, _) = self.dest.if_arithmetic_add()?;
-        let index = l.if_arithmetic_mul_const(Va::SIZE as u64)?;
+        let (l, _) = self.table.if_arithmetic_add()?;
+        let index = l.if_arithmetic_mul_const((self.size.bits() / 8) as u64)?;
         let index = index.if_memory()
             .filter(|x| matches!(x.size, MemAccessSize::Mem8 | MemAccessSize::Mem16))
             .and_then(|mem| {
@@ -92,6 +111,12 @@ impl<'e> CompleteSwitch<'e> {
                 }
             })
             .unwrap_or(index);
+        // Remove useless sign extend if high is below the extended value
+        if let scarf::operand::OperandType::SignExtend(val, from, _to) = *index.ty() {
+            if self.high as u64 <= (from.mask() / 2)  && self.high >= self.low {
+                return Some(val);
+            }
+        }
         Some(index)
     }
 }

@@ -259,9 +259,9 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeFirstSwitch<'e
         ctrl.aliasing_memory_fix(op);
         if let Operation::Jump { to, .. } = *op {
             let to = ctrl.resolve(to);
-            if let Some(addr) = ctrl.if_mem_word(to) {
+            if to.if_constant().is_none() {
                 let exec_state = ctrl.exec_state();
-                self.result = CompleteSwitch::new(addr, exec_state);
+                self.result = CompleteSwitch::new(to, exec_state);
                 ctrl.end_analysis();
             }
         } else {

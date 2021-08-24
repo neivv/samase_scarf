@@ -6079,10 +6079,7 @@ fn if_arithmetic_eq_neq<'e>(op: Operand<'e>) -> Option<(Operand<'e>, Operand<'e>
 }
 
 fn unwrap_sext<'e>(operand: Operand<'e>) -> Operand<'e> {
-    match *operand.ty() {
-        scarf::operand::OperandType::SignExtend(val, ..) => val,
-        _ => operand,
-    }
+    operand.unwrap_sext()
 }
 
 trait OperandExt<'e> {
@@ -6100,6 +6097,8 @@ trait OperandExt<'e> {
     /// and may be 0.
     /// If the offset is known `op.if_arithmetic_add_const(offset)` is better.
     fn struct_offset(self) -> (Operand<'e>, u32);
+    /// If `self` is SignExtend(x), returns `x`. Otherwise resturns `self`
+    fn unwrap_sext(self) -> Operand<'e>;
 }
 
 impl<'e> OperandExt<'e> for Operand<'e> {
@@ -6199,6 +6198,13 @@ impl<'e> OperandExt<'e> for Operand<'e> {
                 Some((x.0, off))
             })
             .unwrap_or((self, 0))
+    }
+
+    fn unwrap_sext(self) -> Operand<'e> {
+        match *self.ty() {
+            scarf::operand::OperandType::SignExtend(val, ..) => val,
+            _ => self,
+        }
     }
 }
 
