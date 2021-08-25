@@ -2135,71 +2135,131 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 return;
             }
         };
-        let ins_len = lde::X86::ld(imm_bytes) as u8;
+        let ins_len = if E::VirtualAddress::SIZE == 4 {
+            lde::X86::ld(imm_bytes) as u8
+        } else {
+            lde::X64::ld(imm_bytes) as u8
+        };
         if ins_len >= 16 {
             dat_warn!(self, "Instruction is too long ({})", ins_len);
             return;
         }
         let imm_bytes = &imm_bytes[..16];
-        let mut bytes = [0x90u8; 16];
+        let mut full_bytes = [0x90u8; 16];
         for i in 0..ins_len {
-            bytes[i as usize] = imm_bytes[i as usize];
+            full_bytes[i as usize] = imm_bytes[i as usize];
         }
-        match bytes {
+        let (rex_off, bytes) =
+            if E::VirtualAddress::SIZE == 8 && full_bytes[0] & 0xf0 == 0x40
+        {
+            (1, &mut full_bytes[1..])
+        } else {
+            (0, &mut full_bytes[..])
+        };
+        // To hopefully remove later range checks
+        if bytes.len() < 15 || rex_off > 1 {
+            debug_assert!(false);
+            return;
+        }
+        match *bytes {
             // movzx to mov
             [0x0f, 0xb6, ..] => {
                 if widen_index_size || !is_struct_field_rm(&bytes[1..]) {
-                    bytes[0] = 0x90;
-                    bytes[1] = 0x8b;
-                    self.add_rm_patch(address, &mut bytes, 1, ins_len, ins_len, widen_index_size);
+                    if rex_off == 0 {
+                        full_bytes[1] = 0x8b;
+                    } else {
+                        full_bytes[1] = bytes[0];
+                        full_bytes[2] = 0x8b;
+                    }
+                    full_bytes[0] = 0x90;
+                    self.add_rm_patch(
+                        address,
+                        &mut full_bytes,
+                        rex_off + 1,
+                        ins_len,
+                        ins_len,
+                        widen_index_size,
+                    );
                 }
             }
             // add rm8, r8; cmp r8, rm8; cmp rm8, r8
             [0x00, ..] | [0x3a, ..] | [0x38, ..] => {
                 if widen_index_size || !is_struct_field_rm(&bytes) {
                     bytes[0] += 1;
-                    self.add_rm_patch(address, &mut bytes, 0, ins_len, ins_len, widen_index_size);
+                    self.add_rm_patch(
+                        address,
+                        &mut full_bytes,
+                        rex_off,
+                        ins_len,
+                        ins_len,
+                        widen_index_size,
+                    );
                 }
             }
-            // cmp al, constant
+            // cmp al, constant u8
             // I think it's safe to assume it's never going to be a signed gt/lt
-            [0x3c, constant, ..] => {
-                let patch = &[0x3d, constant, 0x00, 0x00, 0x00];
-                self.add_hook(address, 2, patch);
+            [0x3c, ..] => {
+                bytes[0] = 0x3d;
+                bytes[2] = 0x00;
+                bytes[3] = 0x00;
+                bytes[4] = 0x00;
+                self.add_hook(address, ins_len, &full_bytes[..(rex_off + 5)]);
             }
-            // arith rm32, constant
+            // arith rm32, const8
             [0x80, ..] => {
                 bytes[0] = 0x81;
                 for i in ins_len..(ins_len + 3) {
-                    bytes[i as usize] = 0x00;
+                    full_bytes[i as usize] = 0x00;
                 }
-                self.add_rm_patch(address, &mut bytes, 0, ins_len + 3, ins_len, widen_index_size);
+                self.add_rm_patch(
+                    address,
+                    &mut full_bytes,
+                    rex_off,
+                    ins_len + 3,
+                    ins_len,
+                    widen_index_size,
+                );
             }
             // test rm8, r8
             [0x84, second, ..] => {
                 // Going to only support test r8low with itself for now
                 if second & 0xc0 == 0xc0 && second & 0x7 == (second >> 3) & 0x7 {
-                    self.add_patch(address, &[0x85, second], ins_len);
+                    bytes[0] = 0x85;
+                    self.add_patch(address, &full_bytes, ins_len);
                 }
             }
             // mov r8, rm8, to mov r32, rm32
             [0x8a, ..] => {
                 if !widen_index_size && is_struct_field_rm(&bytes) {
                     // Convert to movzx r32, rm8
-                    bytes.copy_within(0..15, 1);
-                    bytes[0] = 0x0f;
-                    bytes[1] = 0xb6;
-                    self.add_hook(address, ins_len, &bytes[..(ins_len as usize + 1)]);
+                    full_bytes.copy_within(rex_off..15, rex_off + 1);
+                    full_bytes[rex_off + 0] = 0x0f;
+                    full_bytes[rex_off + 1] = 0xb6;
+                    self.add_hook(address, ins_len, &full_bytes[..ins_len as usize + 1]);
                 } else {
                     bytes[0] = 0x8b;
-                    self.add_rm_patch(address, &mut bytes, 0, ins_len, ins_len, widen_index_size);
+                    self.add_rm_patch(
+                        address,
+                        &mut full_bytes,
+                        rex_off,
+                        ins_len,
+                        ins_len,
+                        widen_index_size,
+                    );
                 }
             }
             // mov rm8, r8
             [0x88, ..] => {
                 if widen_index_size || !is_struct_field_rm(&bytes) {
                     bytes[0] = 0x89;
-                    self.add_rm_patch(address, &mut bytes, 0, ins_len, ins_len, widen_index_size);
+                    self.add_rm_patch(
+                        address,
+                        &mut full_bytes,
+                        rex_off,
+                        ins_len,
+                        ins_len,
+                        widen_index_size,
+                    );
                 }
             }
             // mov rm8, const8
@@ -2207,12 +2267,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 if widen_index_size || !is_struct_field_rm(&bytes) {
                     bytes[0] = 0xc7;
                     for i in ins_len..(ins_len + 3) {
-                        bytes[i as usize] = 0x00;
+                        full_bytes[i as usize] = 0x00;
                     }
                     self.add_rm_patch(
                         address,
-                        &mut bytes,
-                        0,
+                        &mut full_bytes,
+                        rex_off,
                         ins_len + 3,
                         ins_len,
                         widen_index_size,
@@ -2220,32 +2280,40 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 }
             }
             // mov r8, const8
-            [0xb0, ..] | [0xb1, ..] | [0xb2, ..] | [0xb3, ..] => {
-                let mut patch = [0x00; 5];
-                patch[0] = bytes[0] + 8;
-                patch[1] = bytes[1];
-                self.add_hook(address, ins_len, &patch);
+            [0xb0..=0xb7, ..] => {
+                bytes[0] += 8;
+                bytes[2] = 0;
+                bytes[3] = 0;
+                bytes[4] = 0;
+                self.add_hook(address, ins_len, &full_bytes[..ins_len as usize + 3]);
             }
             // Already u32 cmp
             [0x3d, ..] => (),
             // Already u32 arith
-            [0x81, ..] | [0x83, ..] => (),
+            [0x03, ..] | [0x81, ..] | [0x83, ..] => (),
+            // Lea
+            [0x8d, ..] => (),
             // Already u32 moves
             [0x89, ..] | [0xc7, ..] => (),
             // Push, pop reg
             [x, ..] if x >= 0x50 && x < 0x60 => (),
             // mov r32, rm32
             [0x8b, ..] => {
-                if !widen_index_size {
-                    self.add_rm_patch_if_stack_relocated(address, &bytes[..(ins_len as usize)]);
+                // add_rm_patch_if_stack_relocated assumes rm instruction start 0 atm
+                // Also not sure if the ebp relocation is useful in 64bit so leaving this
+                // only for non-rex opcodes for now.
+                if !widen_index_size && rex_off == 0 {
+                    self.add_rm_patch_if_stack_relocated(address, &full_bytes[..(ins_len as usize)]);
                 }
             }
             // Push any
             [0xff, x, ..] if (x >> 3) & 7 == 6 => {
-                if !widen_index_size {
-                    self.add_rm_patch_if_stack_relocated(address, &bytes[..(ins_len as usize)]);
+                if !widen_index_size && rex_off == 0 {
+                    self.add_rm_patch_if_stack_relocated(address, &full_bytes[..(ins_len as usize)]);
                 }
             }
+            // Movzx from u16
+            [0x0f, 0xb7] => (),
             // Hoping that u16 is fine
             [0x66, ..] => (),
             _ => dat_warn!(self, "Can't widen instruction @ {:?}", address),
@@ -3022,7 +3090,11 @@ fn unresolve<'e, E: ExecutionState<'e>>(
 
 fn instruction_length<Va: VirtualAddress>(binary: &BinaryFile<Va>, address: Va) -> Option<u8> {
     let bytes = binary.slice_from_address(address, 0x10).ok()?;
-    Some(lde::X86::ld(bytes) as u8)
+    if Va::SIZE == 4 {
+        Some(lde::X86::ld(bytes) as u8)
+    } else {
+        Some(lde::X64::ld(bytes) as u8)
+    }
 }
 
 /// Data required to build hooks for a function
@@ -3154,7 +3226,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'acx, 'e, E> {
             let mut len = 0;
             while len < 0xa {
                 let slice = bytes.get(len as usize..)?;
-                len += lde::X86::ld(slice);
+                let new_len = if E::VirtualAddress::SIZE == 4 {
+                    lde::X86::ld(slice)
+                } else {
+                    lde::X64::ld(slice)
+                };
+                len += new_len;
             }
             self.add_required_stable_address_for_patch(cand, cand + len);
         }
