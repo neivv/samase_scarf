@@ -6270,10 +6270,12 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
                 ctx.new_undef(),
             );
         }
-        state.move_to(
-            &scarf::DestOperand::Register64(scarf::operand::Register(4)),
-            ctx.new_undef(),
-        );
+        if A::Exec::WORD_SIZE == MemAccessSize::Mem32 {
+            state.move_to(
+                &scarf::DestOperand::Register64(scarf::operand::Register(4)),
+                ctx.new_undef(),
+            );
+        }
     }
 
     fn aliasing_memory_fix(&mut self, op: &scarf::Operation<'e>) {

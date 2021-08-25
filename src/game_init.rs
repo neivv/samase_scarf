@@ -2836,6 +2836,7 @@ pub(crate) fn analyze_game_loop<'e, E: ExecutionState<'e>>(
         step_game_loop_first_cond_jump: true,
         current_entry: game_loop,
         step_game_loop_analysis_start: None,
+        entry_esp: ctx.register(4),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, game_loop);
     analysis.analyze(&mut analyzer);
@@ -2860,13 +2861,13 @@ enum GameLoopAnalysisState {
     // Search for call with a1 = game.music
     // Inline to 1 deep. Any later analysis is based on inline level of
     // this set_music call.
-    // Also worth noting that this call is slightly different from analysis's set_music,
+    // Also worth noting that this call is slightly different from analysis's set_briefing_music,
     // which has does call something else first (Briefing fades music out first).
     SetMusic,
     // Move of 1 to Mem8. Hopefully no conflicts.
     ContinueGameLoop,
     // Search for memcpy(palette_set[0], main_palette, 0x400)
-    // Inline once if a1 == 0 and a2 == 0x100 set_palette(idx, entry_count, source)
+    // Inline once if a1 == 0 and word(a2) == 0x100 set_palette(idx, entry_count, source)
     PaletteCopy,
     // Search for storm_load_pcx("game\\tFontGam.pcx", 0, out, 0xc0, 0, 0, 0)
     // Should be right after set_palette.
@@ -2914,6 +2915,7 @@ struct GameLoopAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     // Address to start analyzing step_game_loop.
     // In middle of function, but should be fine as it does not take arguments.
     step_game_loop_analysis_start: Option<E::VirtualAddress>,
+    entry_esp: Operand<'e>,
 }
 
 struct StepGameLoopAnalyzer<'a, 'e, E: ExecutionState<'e>> {
@@ -2990,9 +2992,15 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                                 ctrl.end_analysis();
                             }
                         } else if self.inline_depth == 0 {
-                            if arg1 == ctx.const_0() && arg2.if_constant() == Some(0x100) {
+                            if arg1 == ctx.const_0() &&
+                                ctx.and_const(arg2, 0xffff).if_constant() == Some(0x100)
+                            {
                                 self.inline_limit = 3;
                                 self.inline_depth = 1;
+                                self.entry_esp = ctx.sub_const(
+                                    ctrl.resolve(ctx.register(4)),
+                                    E::VirtualAddress::SIZE.into(),
+                                );
                                 ctrl.analyze_with_current_state(self, dest);
                                 self.inline_depth = 0;
                                 self.inline_limit = 0;
@@ -3002,6 +3010,21 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                                 ctrl.end_analysis();
                             } else {
                                 self.inline_limit -= 1;
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { condition, .. } = *op {
+                    if self.inline_depth != 0 && condition == ctx.const_1() {
+                        // Check for tail call memcpy
+                        if ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                            let arg3 = ctrl.resolve(arg_cache.on_call(2));
+                            if arg3.if_constant() == Some(0x400) {
+                                let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                                let arg2 = ctrl.resolve(arg_cache.on_call(1));
+                                self.result.palette_set = Some(arg1);
+                                self.result.main_palette = Some(arg2);
+                                self.state = GameLoopAnalysisState::TfontGam;
+                                ctrl.end_analysis();
                             }
                         }
                     }
@@ -3258,7 +3281,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnaly
                 } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     // Skip stores that may be to next_game_step_tick
                     let value = ctrl.resolve(value);
-                    if value.if_custom().is_some() && is_global(ctrl.resolve(mem.address)) {
+                    if Operand::and_masked(value).0.if_custom().is_some() &&
+                        is_global(ctrl.resolve(mem.address))
+                    {
                         ctrl.skip_operation();
                     }
                 }
@@ -3304,7 +3329,16 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnaly
                         self.result.replay_seek_frame = Some(replay_seek_frame);
                         self.state = StepGameLoopAnalysisState::StepGameFrames;
                         if let Some(to) = ctrl.resolve_va(to) {
-                            ctrl.analyze_with_current_state(self, to);
+                            let binary = ctrl.binary();
+                            let exec_state = ctrl.exec_state().clone();
+                            let mut analysis = FuncAnalysis::custom_state(
+                                binary,
+                                ctx,
+                                to,
+                                exec_state,
+                                Default::default(),
+                            );
+                            analysis.analyze(self);
                         }
                         ctrl.end_analysis();
                     } else if self.inlining {
