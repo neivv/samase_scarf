@@ -2,13 +2,14 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
-use scarf::operand::{MemAccess, MemAccessSize, Register};
+use scarf::operand::{MemAccessSize, Register};
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::add_terms::collect_arith_add_terms;
+use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
-use crate::{AnalysisCtx, ArgCache, OptionExt, bumpvec_with_capacity};
+use crate::{AnalysisCtx, ArgCache, OptionExt, OperandExt, bumpvec_with_capacity};
 
 pub struct NetPlayers<'e, Va: VirtualAddress> {
     // Array, struct size
@@ -197,29 +198,31 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
         type State = State;
         type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-            fn is_maybe_player_op(mem: &MemAccess) -> bool {
-                let has_add = mem.address.if_arithmetic_add()
-                    .and_either(|x| x.if_constant().filter(|&c| c == 0x4c))
-                    .is_some();
-                mem.size == MemAccessSize::Mem8 && has_add
-            }
-
             match *op {
                 Operation::Jump { condition, .. } => {
                     if let State::PlayerFieldAccessSeen = ctrl.user_state() {
                         let condition = ctrl.resolve(condition);
                         let local_player_id = crate::if_arithmetic_eq_neq(condition)
-                            .and_then(|(l, r, _eq)| {
-                                // if the comparision ends up being
-                                // [local_player_id] == [unit + 0x4c], check for
-                                // 0x4c add in address
-                                Operand::either(l, r, |x| {
-                                    x.if_memory()
-                                        .filter(|mem| !is_maybe_player_op(mem))
-                                        .map(|_| x)
-                                })
+                            .and_then(|(l, r, _)| {
+                                Some((l, r))
+                                    .and_either_other(|x| {
+                                        // Check for [local_player_id] == player
+                                        x.if_mem8()?
+                                            .if_arithmetic_add_const(
+                                                struct_layouts::unit_player::<E::VirtualAddress>()
+                                            )
+                                    })
+                                    .or_else(|| {
+                                        // Check for [local_player_id] == 0xff or undef
+                                        Some((l, r))
+                                            .and_if_either_other(|x| {
+                                                x.if_constant() == Some(0xff) ||
+                                                    x.is_undefined()
+                                            })
+                                    })
+
                             })
-                            .map(|(mem, _)| mem.clone());
+                            .filter(|x| x.if_memory().is_some());
                         if crate::single_result_assign(local_player_id, &mut self.result) {
                             ctrl.end_analysis();
                         } else {
@@ -250,11 +253,12 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
                             let has_player_field_access = val.iter_no_mem_addr()
                                 .any(|x| {
                                     x.if_mem8()
-                                        .and_then(|addr| addr.if_arithmetic_add())
-                                        .and_either_other(|x| {
-                                            x.if_constant().filter(|&c| c == 0x4c)
+                                        .and_then(|addr| {
+                                            addr.if_arithmetic_add_const(
+                                                struct_layouts::unit_player::<E::VirtualAddress>()
+                                            )
                                         })
-                                        .and_then(|x| x.if_mem32())
+                                        .and_then(|x| ctrl.if_mem_word(x))
                                         .is_some()
                                 });
                             if has_player_field_access {
