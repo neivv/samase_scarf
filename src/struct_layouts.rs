@@ -54,6 +54,13 @@ pub fn unit_order<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_id<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x64,
+        false => 0x8c,
+    }
+}
+
 pub fn unit_secondary_order<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xa6,

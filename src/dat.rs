@@ -47,7 +47,7 @@ use scarf::{
 
 use crate::{
     ArgCache, AnalysisCtx, EntryOf, StringRefs, DatType, entry_of_until, single_result_assign,
-    if_callable_const, OperandExt, OptionExt, bumpvec_with_capacity, AnalysisCache,
+    if_callable_const, OperandExt, bumpvec_with_capacity, AnalysisCache,
     FunctionFinder,
 };
 use crate::hash_map::{HashMap, HashSet};
@@ -2950,7 +2950,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             .and_then(|(_, r)| r.if_constant())
                             .filter(|&c| c < 0x400);
                         if let Some(offset) = this_field {
-                            if offset == 0x70 {
+                            if offset == struct_layouts::unit_subunit_linked
+                                ::<E::VirtualAddress>()
+                            {
                                 self.flags |= SUBUNIT_READ;
                             }
                         }
@@ -2972,10 +2974,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 Operation::Jump { condition, .. } => {
                     let condition = ctrl.resolve(condition);
                     let inf_kerry_cmp = crate::if_arithmetic_eq_neq(condition)
-                        .map(|(l, r, _)| (l, r))
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 0x33))
-                        .and_then(|x| x.if_mem16())
-                        .and_then(|x| x.if_arithmetic_add_const(0x64))
+                        .filter(|x| x.1.if_constant() == Some(0x33))
+                        .and_then(|x| x.0.if_mem16())
+                        .and_then(|x| {
+                            x.if_arithmetic_add_const(
+                                struct_layouts::unit_id::<E::VirtualAddress>()
+                            )
+                        })
                         .is_some();
                     if inf_kerry_cmp {
                         self.flags |= UNIT_ID_IS_INF_KERRIGAN;
