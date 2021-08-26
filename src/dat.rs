@@ -852,7 +852,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             }
         };
         analysis.analyze(&mut analyzer);
-        analyzer.generate_needed_patches(analysis);
+        analyzer.generate_needed_patches(analysis, entry);
         let result = analyzer.result;
         let state = analyzer.state;
         self.required_stable_addresses.add_back(entry_rva, rsa);
@@ -1013,23 +1013,44 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         }
         let result = match *op.ty() {
             OperandType::Arithmetic(ref arith) => {
+                let is_and_ff = arith.ty == ArithOpType::And &&
+                    arith.right.if_constant() == Some(0xff);
+                if E::VirtualAddress::SIZE == 8 {
+                    // Check 64 bit register args
+                    if is_and_ff {
+                        if let Some(reg) = arith.left.if_register() {
+                            let result = match reg.0 {
+                                1 => Some(U8Operand::Arg(0)),
+                                2 => Some(U8Operand::Arg(1)),
+                                8 => Some(U8Operand::Arg(2)),
+                                9 => Some(U8Operand::Arg(3)),
+                                _ => None,
+                            };
+                            self.operand_to_u8_op.insert(key, result);
+                            return result;
+                        }
+                    }
+                }
+
                 let left = self.contains_u8_operand(arith.left);
-                let right = self.contains_u8_operand(arith.right);
-                if arith.ty == ArithOpType::And && arith.right.if_constant() == Some(0xff) {
-                    left
-                } else if left == right {
+                if is_and_ff {
                     left
                 } else {
-                    None
+                    let right = self.contains_u8_operand(arith.right);
+                    if left == right {
+                        left
+                    } else {
+                        None
+                    }
                 }
             }
             OperandType::Custom(c) => Some(U8Operand::Return(c)),
             OperandType::Memory(ref mem) if mem.size == MemAccessSize::Mem8 => {
                 mem.address.if_arithmetic_add()
                     .and_then(|(l, r)| {
+                        l.if_register().filter(|r| r.0 == 4)?;
                         let constant = r.if_constant()?;
-                        if let Some(arg_n) = arg_n_from_offset(constant) {
-                            l.if_register().filter(|r| r.0 == 4)?;
+                        if let Some(arg_n) = arg_n_from_offset::<E>(constant) {
                             Some(U8Operand::Arg(arg_n))
                         } else {
                             None
@@ -1073,7 +1094,7 @@ struct DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
     state: Box<DatFuncAnalysisState<'acx, 'e, E>>,
     ref_address: E::VirtualAddress,
-    needed_stack_params: [Option<DatType>; 16],
+    needed_func_params: [Option<DatType>; 16],
     needed_func_results: HashSet<u32>,
     needed_cfg_analysis:
         BumpVec<'acx, (E::VirtualAddress, E::VirtualAddress, Option<Operand<'e>>, DatType)>,
@@ -1367,7 +1388,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         DatReferringFuncAnalysis {
             dat_ctx,
             ref_address,
-            needed_stack_params: [None; 16],
+            needed_func_params: [None; 16],
             needed_func_results: Default::default(),
             needed_cfg_analysis: BumpVec::new_in(bump),
             result: EntryOf::Retry,
@@ -1412,7 +1433,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         DatReferringFuncAnalysis {
             dat_ctx,
             ref_address: E::VirtualAddress::from_u64(0),
-            needed_stack_params: [None; 16],
+            needed_func_params: [None; 16],
             needed_func_results: Default::default(),
             needed_cfg_analysis: BumpVec::new_in(bump),
             result: EntryOf::Retry,
@@ -1762,6 +1783,26 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             return self.check_mem_widen_value(ctrl, base, offset, size, dat)
                 .map(|()| None);
         }
+        // -- Check 64bit register args --
+        if E::VirtualAddress::SIZE == 8 {
+            let reg = value.if_arithmetic_and()
+                .and_then(|(l, r)| {
+                    r.if_constant()?;
+                    l.if_register()
+                })
+                .or_else(|| value.if_register());
+            if let Some(reg) = reg {
+                let arg_n = match reg.0 {
+                    1 => 0,
+                    2 => 1,
+                    8 => 2,
+                    9 => 3,
+                    _ => return Err(()),
+                };
+                self.needed_func_params[arg_n] = Some(dat);
+                return Ok(None);
+            }
+        }
         // -- Check return value --
         let custom = value.if_arithmetic_and_const(0xff)
             .and_then(|x| x.if_custom())
@@ -1805,9 +1846,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
 
         let is_stack = base.if_register().filter(|x| x.0 == 4).is_some();
         if is_stack {
-            if let Some(arg) = arg_n_from_offset(offset).map(|x| x as usize) {
-                if arg < self.needed_stack_params.len() {
-                    self.needed_stack_params[arg] = Some(dat);
+            if let Some(arg) = arg_n_from_offset::<E>(offset).map(|x| x as usize) {
+                if arg < self.needed_func_params.len() {
+                    self.needed_func_params[arg] = Some(dat);
                 }
             }
             return Ok(());
@@ -1928,6 +1969,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     fn generate_needed_patches(
         &mut self,
         analysis: FuncAnalysis<'e, E, analysis::DefaultState>,
+        entry: E::VirtualAddress,
     ) {
         if self.is_update_status_screen_tooltip {
             self.dat_ctx.result.patches.push(
@@ -1948,7 +1990,15 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             for (branch_start, address, op, dat) in needed_cfg_analysis {
                 if !checked_addresses.contains(&address) {
                     checked_addresses.push(address);
-                    self.do_cfg_analysis(&cfg, &predecessors, branch_start, address, op, dat);
+                    self.do_cfg_analysis(
+                        &cfg,
+                        &predecessors,
+                        entry,
+                        branch_start,
+                        address,
+                        op,
+                        dat,
+                    );
                 }
             }
         }
@@ -1958,7 +2008,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     fn generate_noncfg_patches(&mut self) {
         let binary = self.binary;
         let bump = &self.dat_ctx.analysis.bump;
-        let needed_stack_params = self.needed_stack_params;
+        let needed_func_params = self.needed_func_params;
         let needed_func_results = mem::replace(&mut self.needed_func_results, Default::default());
         let u8_instruction_lists = mem::replace(
             &mut self.state.u8_instruction_lists,
@@ -1968,7 +2018,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 used_addresses: Default::default(),
             },
         );
-        for (i, dat) in needed_stack_params.iter()
+        for (i, dat) in needed_func_params.iter()
             .enumerate()
             .filter_map(|x| Some((x.0, (*x.1)?)))
         {
@@ -1992,6 +2042,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         &mut self,
         cfg: &Cfg<'e, E, analysis::DefaultState>,
         predecessors: &scarf::cfg::Predecessors,
+        entry: E::VirtualAddress,
         branch: E::VirtualAddress,
         final_address: E::VirtualAddress,
         needed_operand: Option<Operand<'e>>,
@@ -2009,6 +2060,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         let mut analyzer = CfgAnalyzer {
             branch,
             final_address,
+            func_entry: entry,
             needed_operand,
             resolved_dest_address: None,
             unchecked_branches: bumpvec_with_capacity(32, bump),
@@ -2313,7 +2365,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 }
             }
             // Movzx from u16
-            [0x0f, 0xb7] => (),
+            [0x0f, 0xb7, ..] => (),
             // Hoping that u16 is fine
             [0x66, ..] => (),
             _ => dat_warn!(self, "Can't widen instruction @ {:?}", address),
@@ -2499,6 +2551,7 @@ struct CfgAnalyzer<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> {
     branch: E::VirtualAddress,
     // Only used for the first branch when needed_operand is None
     final_address: E::VirtualAddress,
+    func_entry: E::VirtualAddress,
     // Used if doing CFG analysis for function argument instead of array index
     needed_operand: Option<Operand<'e>>,
     resolved_dest_address: Option<Operand<'e>>,
@@ -2657,7 +2710,11 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
         }
     }
 
+    /// Called when at instruction self.final_address (needed_operand not set)
+    /// `op` is supposed to be a operand which is being read from
+    /// (Expected dat_array[index]), from where the index will be cheked and handled.
     fn check_final_op(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: Operand<'e>) {
+        // Match Mem[index + C], Mem[index * C2 + C]
         let index = match op.if_memory()
             .and_then(|x| x.address.if_arithmetic_add())
             .filter(|(_, r)| r.if_constant().is_some())
@@ -2677,6 +2734,10 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
         self.finishing_branch(index);
     }
 
+    /// Called at end of the branch (And entire scarf analyze() run due to CfgAnalyzer
+    /// only running for the one branch at a time)
+    /// `op` should be the resolved dat array index/other value that is being tracked for
+    /// this current analyze() run.
     fn finishing_branch(&mut self, op: Operand<'e>) {
         if let Some(address) = self.assigning_instruction.take() {
             self.parent.widen_instruction(address, false);
@@ -2686,7 +2747,20 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
             return;
         }
         match *Operand::and_masked(op).0.ty() {
-            OperandType::Register(_) => (),
+            OperandType::Register(reg) => {
+                if E::VirtualAddress::SIZE == 8 && self.branch == self.func_entry {
+                    let arg = match reg.0 {
+                        1 => 0,
+                        2 => 1,
+                        8 => 2,
+                        9 => 3,
+                        _ => 4,
+                    };
+                    if arg < 4 {
+                        self.parent.needed_func_params[arg] = Some(self.dat);
+                    }
+                }
+            }
             OperandType::Memory(mem) => {
                 let stack_offset = Some(())
                     .and_then(|()| {
@@ -2701,12 +2775,12 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
                     .or_else(|| Some((mem.address.if_register()?, 0)))
                     .filter(|&x| x.0.0 == 4 || x.0.0 == 5);
                 match stack_offset {
-                    Some((r, s)) if r.0 == 4 => {
+                    Some((r, s)) if r.0 == 4 && self.branch == self.func_entry => {
                         // If this is an argument, then request all of its uses to be widened
                         // for parent.
-                        if let Some(arg) = arg_n_from_offset(s).map(|x| x as usize) {
-                            if arg < self.parent.needed_stack_params.len() {
-                                self.parent.needed_stack_params[arg] = Some(self.dat);
+                        if let Some(arg) = arg_n_from_offset::<E>(s).map(|x| x as usize) {
+                            if arg < self.parent.needed_func_params.len() {
+                                self.parent.needed_func_params[arg] = Some(self.dat);
                             }
                         }
                     }
@@ -3003,11 +3077,19 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> RecognizeDatPatchFunc<'a, 'b, 'acx
 /// Convert `esp + constant` to argument number if it is one.
 /// Return value is 0-based.
 /// E.g. First argument is at esp + 4, so arg_n_from_offset(4) == Some(0)
-fn arg_n_from_offset(constant: u64) -> Option<u8> {
-    if constant < 0x40 && constant & 3 == 0 && constant != 0 {
-        Some(constant as u8 / 4 - 1)
+fn arg_n_from_offset<'e, E: ExecutionState<'e>>(constant: u64) -> Option<u8> {
+    if E::VirtualAddress::SIZE == 4 {
+        if constant < 0x40 && constant & 3 == 0 && constant != 0 {
+            Some(constant as u8 / 4 - 1)
+        } else {
+            None
+        }
     } else {
-        None
+        if constant < 0x60 && constant & 7 == 0 && constant >= 0x28 {
+            Some(constant as u8 / 8 - 1)
+        } else {
+            None
+        }
     }
 }
 
