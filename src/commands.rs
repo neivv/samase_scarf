@@ -462,24 +462,17 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         .and_then(|mem| mem.address.if_arithmetic_add())
                         .and_then(|(l, r)| Operand::either(l, r, |x| x.if_arithmetic_mul()));
                     if let Some(((l, r), selections)) = x {
-                        let unique_command_user = Operand::either(l, r, |x| x.if_constant())
-                            .and_then(|(c, other)| match c == 4 {
-                                true => Some(other),
+                        let unique_command_user = r.if_constant()
+                            .and_then(|c| match c == E::VirtualAddress::SIZE.into() {
+                                true => Some(l),
                                 false => None,
                             })
                             .and_then(|other| other.if_arithmetic_add())
-                            .and_then(|(l, r)| {
-                                Operand::either(l, r, |x| match x == selection_pos {
-                                    true => Some(()),
-                                    false => None,
-                                })
-                            })
-                            .and_then(|((), other)| other.if_arithmetic_mul())
-                            .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                            .and_then(|(c, other)| match c == 0xc {
-                                true => Some(other),
+                            .and_either_other(|x| match x == selection_pos {
+                                true => Some(()),
                                 false => None,
-                            });
+                            })
+                            .and_then(|x| x.if_arithmetic_mul_const(0xc));
                         if let Some(unique_command_user) = unique_command_user {
                             single_result_assign(
                                 Some(unique_command_user.clone()),
