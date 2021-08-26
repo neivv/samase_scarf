@@ -1075,13 +1075,25 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSelectMapEntr
                     self.first_branch = false;
                 } else {
                     let condition = ctrl.resolve(condition);
+                    let ctx = ctrl.ctx();
                     let mem_byte = crate::if_arithmetic_eq_neq(condition)
-                        .map(|(l, r, _)| (l, r))
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                        .and_then(|x| x.if_mem8());
+                        .filter(|x| x.1 == ctx.const_0())
+                        .and_then(|x| x.0.if_mem8());
                     if let Some(addr) = mem_byte {
-                        self.mem_byte_conds.push((ctrl.address(), addr.clone()));
+                        self.mem_byte_conds.push((ctrl.address(), addr));
                     }
+                }
+            }
+            Operation::Call(_) => {
+                let ctx = ctrl.ctx();
+                let seems_large_stack_alloc = self.first_branch &&
+                    ctrl.resolve(ctx.register(0))
+                        .if_constant()
+                        .filter(|&c| c > 0x1000 && c < 0x10000)
+                        .is_some();
+                if seems_large_stack_alloc {
+                    // Skip to avoid clobbering registers
+                    ctrl.skip_operation();
                 }
             }
             Operation::Move(ref dest, _, _) => {
@@ -1769,6 +1781,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
         load_map_entry_state: Option<(E, E::VirtualAddress)>,
         map_entry_flags_offset: Option<u32>,
         ctx: OperandCtx<'e>,
+        first_call: bool,
     }
 
     impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
@@ -1782,6 +1795,18 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
             match self.state {
                 SelectMapEntryState::LoadMapDirEntry => match *op {
                     Operation::Call(dest) => {
+                        if self.first_call {
+                            self.first_call = false;
+                            let seems_large_stack_alloc = ctrl.resolve(ctx.register(0))
+                                    .if_constant()
+                                    .filter(|&c| c > 0x1000 && c < 0x10000)
+                                    .is_some();
+                            if seems_large_stack_alloc {
+                                // Skip to avoid clobbering registers
+                                ctrl.skip_operation();
+                                return;
+                            }
+                        }
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             let state = *ctrl.user_state();
                             if state != MapEntryState::Unknown {
@@ -1898,7 +1923,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                             // arg2 = a1.x0_string.pointer,
                             // arg6 = arg1.turn_rate
                             // Arg5~8 is a 16byte struct passed by value,
-                            // on 64-bit check (arg5 >> 32) = arg1.turn_rate
+                            // on 64-bit check arg5.x4 = arg1.turn_rate (It is passed by pointer)
                             let ok = Some(ctrl.resolve(arg_cache.on_call(0)))
                                 .filter(|&x| is_stack_address(x))
                                 .map(|_| ctrl.resolve(arg_cache.on_call(1)))
@@ -1907,24 +1932,24 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                                 .filter(|_| {
                                     // Some older versions only have 8byte by-value struct,
                                     // to support those too also check arg5 instead of arg6.
-                                    [1u8, 0].iter().any(|&i| {
-                                        let op = match E::VirtualAddress::SIZE {
-                                            4 => ctrl.resolve(arg_cache.on_call(4 + i)),
-                                            _ => ctx.rsh_const(
-                                                ctrl.resolve(arg_cache.on_call(4)),
-                                                i as u64 * 32,
-                                            ),
-                                        };
-                                        Some(op).and_then(|x| {
-                                            let (l, r) = x.if_mem32()?.if_arithmetic_add()?;
-                                            r.if_constant()?;
-                                            if self.is_game_input(l) {
-                                                Some(())
-                                            } else {
-                                                None
-                                            }
-                                        }).is_some()
-                                    })
+                                    if E::VirtualAddress::SIZE == 4 {
+                                        [1u8, 0].iter().any(|&i| {
+                                            let op = ctrl.resolve(arg_cache.on_call(4 + i));
+                                            self.is_game_input_turn_rate(op)
+                                        })
+                                    } else {
+                                        let op = ctrl.resolve(arg_cache.on_call(4));
+                                        // The old versions that had 8-byte may not even
+                                        // have 64-bit builds, but supporting it instead
+                                        // of checking that.
+                                        [4u8, 0u8].iter().any(|&off| {
+                                            let val = ctrl.read_memory(
+                                                ctx.add_const(op, off as u64),
+                                                MemAccessSize::Mem32,
+                                            );
+                                            self.is_game_input_turn_rate(val)
+                                        })
+                                    }
                                 })
                                 .is_some();
                             if ok {
@@ -1973,6 +1998,17 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
             op == self.arg_cache.on_entry(0) || op == self.ctx.register(1)
         }
 
+        fn is_game_input_turn_rate(&self, op: Operand<'e>) -> bool {
+            op.if_mem32()
+                .and_then(|x| {
+                    let (l, r) = x.if_arithmetic_add()?;
+                    r.if_constant()?;
+                    Some(l)
+                })
+                .filter(|&x| self.is_game_input(x))
+                .is_some()
+        }
+
         fn is_game_name(&self, op: Operand<'e>) -> bool {
             op == self.arg_cache.on_entry(0) || op == self.arg_cache.on_thiscall_entry(1)
         }
@@ -1994,6 +2030,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
         create_game_dialog_vtbl_on_multiplayer_create: 0,
     };
     let mut analyzer = Analyzer::<E> {
+        first_call: true,
         result: &mut result,
         arg_cache: &analysis.arg_cache,
         state: SelectMapEntryState::LoadMapDirEntry,
