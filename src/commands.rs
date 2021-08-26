@@ -757,7 +757,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwor
                                     self.storm_command_user_candidate.is_none()
                             } else {
                                 // Inline if
-                                //   this == player_turns, arg1 == 1, arg2(u8) == 0
+                                //   this == player_turns, arg1(u8) == 1, arg2(u8) == 0
                                 // or (depth 2)
                                 //   this == player_turns, arg1(u8) == 0
                                 let this_ok = Some(ctrl.resolve(ctx.register(1))) ==
@@ -767,7 +767,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwor
                                 let arg2 =
                                     ctrl.resolve(self.arg_cache.on_thiscall_call(1));
                                 if this_ok {
-                                    (arg1 == ctx.const_1() &&
+                                    (ctx.and_const(arg1, 0xff) == ctx.const_1() &&
                                         self.process_command_inline_depth < 1 &&
                                         ctx.and_const(arg2, 0xff) == ctx.const_0()) ||
                                     (self.process_command_inline_depth < 2 &&
