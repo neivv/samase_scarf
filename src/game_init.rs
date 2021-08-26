@@ -2065,7 +2065,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsJoinGame<'a, 'e
             Operation::Call(_) => {
                 let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                 let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
-                let ok = arg1.if_mem32()
+                let ok = ctrl.if_mem_word(arg1)
                     .filter(|&val| val == self.arg_cache.on_entry(1))
                     .and_then(|_| arg4.if_constant())
                     .filter(|&c| c == self.local_storm_id.as_u64())
