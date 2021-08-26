@@ -752,7 +752,7 @@ pub(crate) fn single_player_start<'e, E: ExecutionState<'e>>(
                 arg_cache,
                 local_player_id: &local_player_id,
                 inlining: false,
-                ctx,
+                inline_limit: 0,
             };
             let exec = E::initial_state(ctx, binary);
             let state = SinglePlayerStartState::SearchingStorm101;
@@ -777,7 +777,7 @@ struct SinglePlayerStartAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     arg_cache: &'a ArgCache<'e, E>,
     local_player_id: &'a Operand<'e>,
     inlining: bool,
-    ctx: OperandCtx<'e>,
+    inline_limit: u8,
 }
 
 /// These are ordered from first step to last
@@ -812,19 +812,21 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         match *ctrl.user_state() {
             SinglePlayerStartState::SearchingStorm101 => {
                 if let Operation::Call(_) = op {
+                    let ctx = ctrl.ctx();
+                    let zero = ctx.const_0();
                     let ok = Some(ctrl.resolve(self.arg_cache.on_call(3)))
-                        .filter(|x| x.if_constant() == Some(0))
+                        .filter(|&x| x == zero)
                         .map(|_| ctrl.resolve(self.arg_cache.on_call(4)))
-                        .filter(|x| x.if_constant() == Some(0))
+                        .filter(|&x| x == zero)
                         .map(|_| ctrl.resolve(self.arg_cache.on_call(5)))
-                        .filter(|x| x.if_constant() == Some(0))
+                        .filter(|&x| ctx.and_const(x, 0xffff_ffff) == zero)
                         .map(|_| ctrl.resolve(self.arg_cache.on_call(6)))
-                        .filter(|x| x.if_mem8().is_some())
+                        .filter(|&x| ctx.and_const(x, 0xffff_ffff).if_mem8().is_some())
                         .is_some();
                     if ok {
                         let arg10 = ctrl.resolve(self.arg_cache.on_call(9));
                         *ctrl.user_state() = SinglePlayerStartState::AssigningPlayerMappings;
-                        self.result.local_storm_player_id = Some(self.ctx.mem32(arg10));
+                        self.result.local_storm_player_id = Some(ctx.mem32(arg10));
                     }
                 }
             }
@@ -841,8 +843,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                     }
                     if !self.inlining {
-                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                            let dest = E::VirtualAddress::from_u64(dest);
+                        if let Some(dest) = ctrl.resolve_va(dest) {
                             self.inlining = true;
                             ctrl.analyze_with_current_state(self, dest);
                             self.inlining = false;
@@ -854,29 +855,50 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let dest_addr = ctrl.resolve(mem.address);
                         let is_move_to_u32_arr = dest_addr.if_arithmetic_add()
                             .and_either(|x| {
-                                x.if_arithmetic_mul()
-                                    .filter(|(_l, r)| r.if_constant() == Some(4))
-                                    .map(|(l, _r)| l)
+                                x.if_arithmetic_mul_const(4)
+                                    .map(|x| x.unwrap_sext())
                             });
                         if let Some((index, base)) = is_move_to_u32_arr {
                             if let Some(storm_id) = self.result.local_storm_player_id {
                                 if index == storm_id {
                                     if val == *self.local_player_id {
-                                        self.result.net_player_to_game = Some(base.clone());
+                                        self.result.net_player_to_game = Some(base);
                                     } else {
-                                        self.result.net_player_to_unique = Some(base.clone());
-                                        self.result.local_unique_player_id = Some(val.clone());
+                                        self.result.net_player_to_unique = Some(base);
+                                        self.result.local_unique_player_id = Some(val);
                                     }
                                 }
+                            }
+                        }
+                        // Check for copy through unrolled moves of u32 or larger;
+                        // [game_data + x] = [arg1 + x], where x >= 0x80 && x < 0x8c
+                        // (Inside game_data.got)
+                        // to avoid catching just unintended other reads from game_data
+                        let offset = val.if_memory()
+                            .filter(|x| x.size.bits() >= 32 && x.size == mem.size)
+                            .and_then(|x| {
+                                let (l, r) = x.address.if_arithmetic_add()?;
+                                if l != self.arg_cache.on_entry(0) {
+                                    return None;
+                                }
+                                let offset = r.if_constant().filter(|&c| c >= 0x80 && c < 0x8c)?;
+                                Some(offset)
+                            });
+                        if let Some(offset) = offset {
+                            let ctx = ctrl.ctx();
+                            let game_data = ctx.sub_const(dest_addr, offset);
+                            if is_global(game_data) {
+                                self.result.game_data = Some(game_data);
                             }
                         }
                     }
                 } else if let Operation::Special(ref bytes) = op {
                     // (Rep) movs dword
                     if &bytes[..] == &[0xf3, 0xa5] {
-                        let len = ctrl.resolve(self.ctx.register_ref(1));
-                        let from = ctrl.resolve(self.ctx.register_ref(6));
-                        let dest = ctrl.resolve(self.ctx.register_ref(7));
+                        let ctx = ctrl.ctx();
+                        let len = ctrl.resolve(ctx.register(1));
+                        let from = ctrl.resolve(ctx.register(6));
+                        let dest = ctrl.resolve(ctx.register(7));
                         if len.if_constant() == Some(0x23) {
                             if from == self.arg_cache.on_entry(0) {
                                 self.result.game_data = Some(dest);
@@ -892,15 +914,30 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             SinglePlayerStartState::FindingSkins => {
+                if self.inline_limit != 0 {
+                    if let Operation::Jump { .. } = *op {
+                        self.inline_limit -= 1;
+                    }
+                    if let Operation::Call(..) = *op {
+                        self.inline_limit = 0;
+                    }
+                    if self.inline_limit == 0 {
+                        ctrl.end_analysis();
+                        return;
+                    }
+                }
                 let result = &mut self.result;
-                let ctx = self.ctx;
+                let ctx = ctrl.ctx();
                 if let Operation::Call(dest) = *op {
                     if !self.inlining {
-                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                            let dest = E::VirtualAddress::from_u64(dest);
+                        if let Some(dest) = ctrl.resolve_va(dest) {
                             self.inlining = true;
+                            self.inline_limit = 15;
                             ctrl.inline(self, dest);
-                            ctrl.skip_operation();
+                            if self.inline_limit != 0 {
+                                ctrl.skip_operation();
+                                self.inline_limit = 0;
+                            }
                             self.inlining = false;
                         }
                     }
@@ -911,7 +948,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 let dest = ctrl.resolve(mem.address);
                                 let val = ctrl.resolve(val);
                                 if let Some(mem) = val.if_memory() {
-                                    Some((dest, mem.address.clone()))
+                                    Some((dest, mem.address))
                                 } else {
                                     None
                                 }
@@ -937,7 +974,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         if let Some((index, base)) = index_base {
                             if let Some(size) = index.1.if_constant() {
                                 if let Some(storm_id) = result.local_storm_player_id {
-                                    if index.0 == storm_id {
+                                    if index.0.unwrap_sext() == storm_id {
                                         let addr = ctx.sub_const(addr, 0x14);
                                         if size > 16 {
                                             single_result_assign(
