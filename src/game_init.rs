@@ -2164,8 +2164,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSnetInitProvi
                     let dest = E::VirtualAddress::from_u64(dest);
                     let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                     let arg5 = ctrl.resolve(self.arg_cache.on_call(4));
+                    let ctx = ctrl.ctx();
                     let ok = Some(())
-                        .filter(|()| arg1 == self.arg_cache.on_entry(0))
+                        .filter(|()| {
+                            ctx.and_const(arg1, 0xffff_ffff) ==
+                                ctx.and_const(self.arg_cache.on_entry(0), 0xffff_ffff)
+                        })
                         .and_then(|_| arg5.if_constant())
                         .is_some();
                     if ok {
