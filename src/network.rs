@@ -187,7 +187,7 @@ pub(crate) fn snet_handle_packets<'e, E: ExecutionState<'e>>(
     };
     // Look for snet functions in packet received handler of UdpServer (vtable fn #3)
     // First one - receive - immediately calls a function pointer to receive the packets,
-    // send calls a send_packet function for a ping (?) - send_packet(_, 0, 4, _, 4)
+    // send is verified by looking for a comparision (a - Mem32[b + C]) < 0xc350
     let vtables = BumpVec::from_iter_in(
         vtables.vtables_starting_with(b".?AVUdpServer@").map(|x| x.address),
         bump,
@@ -275,30 +275,26 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SnetHandlePackets
                         // End even if it isn't recv_packets, the [snp_functions + x] call
                         // should be first.
                         ctrl.end_analysis();
-                    } else {
-                        let mut ok = Some(())
-                            .map(|_| ctrl.resolve(arg_cache.on_call(1)))
-                            .filter(|x| x.if_constant() == Some(0))
-                            .map(|_| ctrl.resolve(arg_cache.on_call(2)))
-                            .filter(|x| x.if_constant() == Some(4))
-                            .map(|_| ctrl.resolve(arg_cache.on_call(4)))
-                            .filter(|x| x.if_constant() == Some(4))
-                            .is_some();
-                        if !ok {
-                            // Alt: data and length are 0
-                            ok = (1..5)
-                                .all(|i| {
-                                    let expected = if i == 2 { 4 } else { 0 };
-                                    Some(())
-                                        .map(|_| ctrl.resolve(arg_cache.on_call(i)))
-                                        .filter(|x| x.if_constant() == Some(expected))
-                                        .is_some()
-                                });
-                        }
-                        if ok {
-                            self.result.send_packets = Some(self.inlining_entry);
-                            ctrl.end_analysis();
-                        }
+                    }
+                }
+            }
+            Operation::Jump { condition, .. } => {
+                if !searching_for_recv && self.checking_candidate {
+                    let condition = ctrl.resolve(condition);
+                    let ok = condition.if_arithmetic_gt()
+                        .filter(|x| x.0.if_constant() == Some(0xc350))
+                        .and_then(|x| {
+                            let (l, r) = Operand::and_masked(x.1).0
+                                .if_arithmetic_sub()?.1
+                                .if_mem32()?
+                                .if_arithmetic_add()?;
+                            l.if_memory()?;
+                            r.if_constant()
+                        })
+                        .is_some();
+                    if ok {
+                        self.result.send_packets = Some(self.inlining_entry);
+                        ctrl.end_analysis();
                     }
                 }
             }
