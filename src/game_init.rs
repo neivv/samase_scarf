@@ -2637,39 +2637,36 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
         ctrl: &mut Control<'e, '_, '_, Self>,
         func: E::VirtualAddress,
     ) -> (bool, bool) {
-        // open_anim_single_file(this = &base_anim_set[1], 0, 1, 1)
-        // open_anim_multi_file(this = &base_anim_set[0], 0, 999, 1, 2, 1)
+        // open_anim_single_file(this = &base_anim_set[1], 0, 1, 1*)
+        // open_anim_multi_file(this = &base_anim_set[0], 0, 999, 1, 2*, 1)
+        //      * These last args seem to be unused and not set in 64bit at all;
+        //      32bit has to set them due to callee-restores-stack cc
         let ctx = ctrl.ctx();
-        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
-        let is_single_file = arg1.if_constant().filter(|&c| c == 0)
-            .and_then(|_| arg2.if_constant().filter(|&c| c == 1))
-            .and_then(|_| arg3.if_constant().filter(|&c| c == 1))
-            .is_some();
+        let arg1 = ctx.and_const(ctrl.resolve(self.arg_cache.on_thiscall_call(0)), 0xffff_ffff);
+        let arg2 = ctx.and_const(ctrl.resolve(self.arg_cache.on_thiscall_call(1)), 0xffff_ffff);
         let this = ctrl.resolve(ctx.register(1));
+        let is_single_file = arg1 == ctx.const_0() &&
+            arg2 == ctx.const_1() &&
+            this.if_arithmetic_add().and_then(|x| x.1.if_constant()).is_some();
         if is_single_file {
             self.custom_to_func_addr.push((func, Some(this)));
             return (true, false);
         }
         self.custom_to_func_addr.push((func, None));
-        let is_multi_file_1 = arg1.if_constant().filter(|&c| c == 0)
-            .and_then(|_| arg2.if_constant().filter(|&c| c == 999))
-            .and_then(|_| arg3.if_constant().filter(|&c| c == 1))
-            .is_some();
+        let is_multi_file_1 = arg1 == ctx.const_0() &&
+            arg2.if_constant() == Some(999);
         if is_multi_file_1 {
-            let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
-            let arg5 = ctrl.resolve(self.arg_cache.on_call(4));
-            let is_multi_file = arg4.if_constant().filter(|&c| c == 2)
-                .and_then(|_| arg5.if_constant().filter(|&c| c == 1))
-                .is_some();
+            let arg3 =
+                ctx.and_const(ctrl.resolve(self.arg_cache.on_thiscall_call(2)), 0xffff_ffff);
+            let arg4 =
+                ctx.and_const(ctrl.resolve(self.arg_cache.on_thiscall_call(3)), 0xffff_ffff);
+            let is_multi_file = arg3 == ctx.const_1() &&
+                matches!(arg4.if_constant(), Some(1) | Some(2));
             if is_multi_file {
-                let (base, off) = Operand::const_offset(this, ctx)
-                    .unwrap_or_else(|| (this, 0));
+                let (base, off) = this.struct_offset();
                 let single_file = self.custom_to_func_addr.iter().rev()
                     .find_map(|&(addr, single_this)| {
-                        let single_this = single_this?;
-                        let (base2, off2) = Operand::const_offset(single_this, ctx)?;
+                        let (base2, off2) = single_this?.struct_offset();
                         if base == base2 && off2 > off {
                             let diff = u16::try_from(off2 - off).ok()?;
                             Some((addr, diff))
@@ -2699,15 +2696,17 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
     ) {
         let ctx = ctrl.ctx();
         // Dest.vtable == 0 or 1
-        let is_copy = ctrl.resolve(ctrl.mem_word(this))
+        let is_copy = ctrl.read_memory(this, E::WORD_SIZE)
             .if_constant()
             .filter(|&c| c <= 1)
             .is_some();
         if is_copy {
-            let vtbl = ctrl.resolve_va(ctrl.mem_word(arg1));
-            let param = ctrl.resolve_va(ctrl.mem_word(
-                ctrl.const_word_offset(arg1, 1)
-            ));
+            let vtbl = ctrl.read_memory(arg1, E::WORD_SIZE)
+                .if_constant()
+                .map(E::VirtualAddress::from_u64);
+            let param = ctrl.read_memory(ctrl.const_word_offset(arg1, 1), E::WORD_SIZE)
+                .if_constant()
+                .map(E::VirtualAddress::from_u64);
             if let (Some(vtbl), Some(param)) = (vtbl, param) {
                 // Copy vtbl and param to this
                 let dest = ctrl.mem_word(this);
@@ -2716,8 +2715,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                 let state = ctrl.exec_state();
                 let vtbl = ctx.constant(vtbl.as_u64());
                 let param = ctx.constant(param.as_u64());
-                state.move_to(&DestOperand::from_oper(dest), vtbl);
-                state.move_to(&DestOperand::from_oper(dest2), param);
+                state.move_resolved(&DestOperand::from_oper(dest), vtbl);
+                state.move_resolved(&DestOperand::from_oper(dest2), param);
                 if E::VirtualAddress::SIZE == 4 {
                     // Also assuming that func copy is stdcall
                     let esp = ctrl.resolve(ctx.register(4));
@@ -2739,38 +2738,54 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
         if let Operation::Call(dest) = *op {
             let ctx = ctrl.ctx();
             let dest = ctrl.resolve(dest);
-            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
             if let Some(dest) = dest.if_constant() {
                 let dest = E::VirtualAddress::from_u64(dest);
                 let this = ctrl.resolve(ctx.register(1));
-                let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
-                // Check for add_asset_change_cb(&local, func_vtbl, func_cb, ...)
-                let asset_change_cb = arg2.if_constant()
-                    .map(E::VirtualAddress::from_u64)
-                    .filter(|&x| is_in_section(self.rdata, x))
-                    .and_then(|_| arg3.if_constant())
-                    .map(E::VirtualAddress::from_u64)
-                    .filter(|&x| is_in_section(self.text, x))
-                    .or_else(|| {
-                        // Alt function struct:
-                        // a2 - vtable *func_impl
-                        // a3 - vtable
-                        // a4 - param
-                        arg3.if_constant()
-                            .map(E::VirtualAddress::from_u64)
-                            .filter(|&x| is_in_section(self.rdata, x))?;
-                        let param = ctrl.resolve(self.arg_cache.on_call(3))
-                            .if_constant()
-                            .map(E::VirtualAddress::from_u64)
-                            .filter(|&x| is_in_section(self.text, x))?;
-                        let arg3_loc = self.arg_cache.on_call(2).if_memory()?.address;
-                        if arg2 != ctrl.resolve(arg3_loc) {
-                            None
-                        } else {
-                            Some(param)
-                        }
-                    });
+                let asset_change_cb = if E::VirtualAddress::SIZE == 4 {
+                    let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                    let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                    // Check for add_asset_change_cb(&local, func_vtbl, func_cb, ...)
+                    arg2.if_constant()
+                        .map(E::VirtualAddress::from_u64)
+                        .filter(|&x| is_in_section(self.rdata, x))
+                        .and_then(|_| arg3.if_constant())
+                        .map(E::VirtualAddress::from_u64)
+                        .filter(|&x| is_in_section(self.text, x))
+                        .or_else(|| {
+                            // Alt function struct:
+                            // a2 - vtable *func_impl
+                            // a3 - vtable
+                            // a4 - param
+                            arg3.if_constant()
+                                .map(E::VirtualAddress::from_u64)
+                                .filter(|&x| is_in_section(self.rdata, x))?;
+                            let param = ctrl.resolve(self.arg_cache.on_call(3))
+                                .if_constant()
+                                .map(E::VirtualAddress::from_u64)
+                                .filter(|&x| is_in_section(self.text, x))?;
+                            let arg3_loc = self.arg_cache.on_call(2).if_memory()?.address;
+                            if arg2 != ctrl.resolve(arg3_loc) {
+                                None
+                            } else {
+                                Some(param)
+                            }
+                        })
+                } else {
+                    // Check for add_asset_change_cb(&local, func *)
+                    // Check vtbl and cb, and that *local != 1
+                    // Local = 1 implies it being copy_func call instead,
+                    // which looks similar as it's this=dest, a1=val
+                    ctrl.read_memory(arg1, MemAccessSize::Mem64).if_constant()
+                        .map(E::VirtualAddress::from_u64)
+                        .filter(|&x| is_in_section(self.rdata, x))
+                        .map(|_| ctrl.read_memory(this, MemAccessSize::Mem64))
+                        .filter(|&x| x != ctx.const_1())
+                        .map(|_| ctrl.read_memory(ctx.add_const(arg1, 8), MemAccessSize::Mem64))
+                        .and_then(Operand::if_constant)
+                        .map(E::VirtualAddress::from_u64)
+                        .filter(|&x| is_in_section(self.text, x))
+                };
                 if let Some(cb) = asset_change_cb {
                     self.result.add_asset_change_cb = Some(dest);
                     self.result.anim_asset_change_cb = Some(cb);

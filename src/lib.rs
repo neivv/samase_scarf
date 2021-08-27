@@ -6262,6 +6262,14 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
                 ctx.new_undef(),
             );
         }
+        if A::Exec::WORD_SIZE == MemAccessSize::Mem64 {
+            for i in 8..10 {
+                state.move_to(
+                    &scarf::DestOperand::Register64(scarf::operand::Register(i)),
+                    ctx.new_undef(),
+                );
+            }
+        }
     }
 
     fn do_call_with_result(&mut self, result: Operand<'e>) {
