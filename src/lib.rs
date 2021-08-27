@@ -5662,16 +5662,21 @@ fn first_definite_entry<Va: VirtualAddressTrait>(
             // Sub rsp, constant.
             // If the sub is at start of function it should be 8-misaligned to 16-align
             // to fixup stack back to 16-align.
-            let push_count = (0usize..8)
-                .take_while(|i| {
-                    let pos = i * 2;
-                    first_bytes.get(pos..pos.wrapping_add(2))
-                        .filter(|slice| slice[0] & 0xf0 == 0x40 && slice[1] & 0xf8 == 0x50)
-                        .is_some()
-                })
-                .count();
+            let mut push_count = 0;
+            let mut pos = 0usize;
+            for _ in 0..8 {
+                if let Some(slice) = first_bytes.get(pos..pos.wrapping_add(2)) {
+                    if slice[0] & 0xf8 == 0x50 {
+                        pos += 1;
+                    } else if slice[0] & 0xf0 == 0x40 && slice[1] & 0xf8 == 0x50 {
+                        pos += 2;
+                    } else {
+                        break;
+                    }
+                    push_count += 1;
+                }
+            }
             let misalign = if push_count & 1 == 0 { 8 } else { 0 };
-            let pos = push_count * 2;
             if let Some(slice) = first_bytes.get(pos..pos + 4) {
                 if slice[0] == 0x48 &&
                     matches!(slice[1], 0x81 | 0x83) &&

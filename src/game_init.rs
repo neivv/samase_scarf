@@ -438,7 +438,11 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
             return false;
         }
         for (i, other_section) in chk_validated_sections.iter().enumerate().skip(1) {
-            let index = rva.0 as usize + i * 0xc;
+            let validator_size = match E::VirtualAddress::SIZE {
+                4 => 0xc,
+                _ => 0x10,
+            };
+            let index = rva.0 as usize + i * validator_size;
             let bytes = match rdata.data.get(index..index + 4) {
                 Some(s) => s,
                 None => return false,
@@ -456,9 +460,17 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
             .map(move |x| (rva, x))
     });
     let section_refs = BumpVec::from_iter_in(section_refs, bump);
-    let chk_validating_funcs = section_refs.into_iter().flat_map(|(chk_funcs_rva, rva)| {
+    let chk_validating_funcs = section_refs.iter().flat_map(|&(chk_funcs_rva, rva)| {
         let address = rdata.virtual_address + rva.0;
-        functions.find_functions_using_global(analysis, address)
+        let mut funcs = functions.find_functions_using_global(analysis, address);
+        if funcs.is_empty() {
+            // At least 64bit for some reason wants to refer to -8 offset..
+            funcs = functions.find_functions_using_global(
+                analysis,
+                address - E::VirtualAddress::SIZE,
+            );
+        }
+        funcs
             .into_iter()
             .map(move |x| (chk_funcs_rva, x))
     });
@@ -557,7 +569,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsInitMapFromPath
                 let mut arg3_check = false;
                 if let Some((l, r, _)) = crate::if_arithmetic_eq_neq(cond) {
                     if r.if_constant() == Some(0) {
-                        if self.arg_cache.on_entry(2) == l {
+                        if self.arg_cache.on_entry(2) == Operand::and_masked(l).0 {
                             arg3_check = true;
                         }
                     }
