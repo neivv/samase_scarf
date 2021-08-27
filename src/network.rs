@@ -2,11 +2,11 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{MemAccessSize, Operand, Operation, BinarySection, BinaryFile};
+use scarf::{MemAccessSize, Operand, OperandCtx, Operation, BinarySection, BinaryFile};
 
 use crate::{
     AnalysisCtx, ArgCache, single_result_assign, find_bytes, FunctionFinder, EntryOf, OptionExt,
-    entry_of_until, if_arithmetic_eq_neq,
+    OperandExt, entry_of_until, if_arithmetic_eq_neq,
 };
 use crate::vtables::Vtables;
 
@@ -348,6 +348,15 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStartUdpServer<'e, 
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        /// Matches val = Mem32[ecx + C]
+        fn is_this_mem32<'e>(val: Operand<'e>, ctx: OperandCtx<'e>) -> bool {
+            val.if_mem32()
+                .and_then(|x| x.if_arithmetic_add())
+                .filter(|x| x.1.if_constant().is_some())
+                .filter(|x| x.0 == ctx.register(1))
+                .is_some()
+        }
+
         let address = ctrl.address();
         if self.use_address >= address && self.use_address < ctrl.current_instruction_end() {
             self.result = EntryOf::Stop;
@@ -364,17 +373,23 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStartUdpServer<'e, 
                     Some(6) => Some(2),
                     _ => None,
                 })
-                .filter(|(_, other)| {
-                    other.if_mem32()
-                        .and_then(|x| x.if_arithmetic_add())
-                        .filter(|x| x.1.if_constant().is_some())
-                        .filter(|x| x.0 == ctx.register(1))
-                        .is_some()
-                })
+                .filter(|&(_, other)| is_this_mem32(other, ctx))
                 .map(|x| x.0);
             if let Some(index) = ok {
                 self.found[index] = true;
                 if self.found == [true; 3] {
+                    self.result = EntryOf::Ok(());
+                    ctrl.end_analysis();
+                }
+            } else {
+                // Also check for val & ffff_fff9 == 0, which matches
+                // 0/2/4/6 (It would then check != 2 later)
+                let all_ok = if_arithmetic_eq_neq(condition)
+                    .filter(|x| x.1 == ctx.const_0())
+                    .and_then(|x| x.0.if_arithmetic_and_const(0xffff_fff9))
+                    .filter(|&x| is_this_mem32(x, ctx))
+                    .is_some();
+                if all_ok {
                     self.result = EntryOf::Ok(());
                     ctrl.end_analysis();
                 }
