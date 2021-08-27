@@ -152,10 +152,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetw
                         return;
                     }
                     let ok = Some(())
-                        .and_then(|_| arg1_1.if_mem32()?.if_constant())
+                        .and_then(|_| ctrl.if_mem_word(arg1_1)?.if_constant())
                         .and_then(|a| binary.read_address(E::VirtualAddress::from_u64(a)).ok())
                         .filter(|&c| c >= text_start && c < text_end)
-                        .and_then(|_| arg1_2.if_mem32()?.if_constant())
+                        .and_then(|_| ctrl.if_mem_word(arg1_2)?.if_constant())
                         .and_then(|a| binary.read_address(E::VirtualAddress::from_u64(a)).ok())
                         .filter(|&c| c >= text_start && c < text_end)
                         .is_some();
