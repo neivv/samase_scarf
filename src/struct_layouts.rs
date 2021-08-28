@@ -155,3 +155,10 @@ pub fn order_id<Va: VirtualAddress>() -> u64 {
         false => 0x10,
     }
 }
+
+pub fn event_mouse_xy<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x12,
+        false => 0x1a,
+    }
+}

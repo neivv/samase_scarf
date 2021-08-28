@@ -12,6 +12,7 @@ use crate::{
     AnalysisCtx, ArgCache, ControlExt, EntryOf, OperandExt, OptionExt, single_result_assign,
     StringRefs, FunctionFinder, bumpvec_with_capacity, if_arithmetic_eq_neq,
 };
+use crate::struct_layouts;
 
 #[derive(Clone)]
 pub struct TooltipRelated<'e, Va: VirtualAddress> {
@@ -956,8 +957,15 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         .is_some();
                     if is_calling_event_handler {
                         let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                        let x = ctrl.read_memory(ctx.add_const(arg2, 0x12), MemAccessSize::Mem16);
-                        let y = ctrl.read_memory(ctx.add_const(arg2, 0x14), MemAccessSize::Mem16);
+                        let x_offset = struct_layouts::event_mouse_xy::<E::VirtualAddress>();
+                        let x = ctrl.read_memory(
+                            ctx.add_const(arg2, x_offset),
+                            MemAccessSize::Mem16,
+                        );
+                        let y = ctrl.read_memory(
+                            ctx.add_const(arg2, x_offset + 2),
+                            MemAccessSize::Mem16,
+                        );
                         if let Some(c) = Operand::and_masked(x).0.if_custom() {
                             self.result.x_func = Some(self.funcs[c as usize]);
                         } else {
