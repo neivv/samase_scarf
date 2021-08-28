@@ -323,12 +323,6 @@ fn dump<'e, E: ExecutionState<'e>>(
         out!(&mut out, "SMemFree: {:?}", analysis.smem_free());
         out!(&mut out, "allocator: {}", format_op_operand(analysis.allocator()));
 
-        let mouse_xy = analysis.mouse_xy();
-        out!(&mut out, "mouse_x: {}", format_op_operand(mouse_xy.x_var));
-        out!(&mut out, "mouse_y: {}", format_op_operand(mouse_xy.y_var));
-        out!(&mut out, "get_mouse_x: {:?}", mouse_xy.x_func);
-        out!(&mut out, "get_mouse_y: {:?}", mouse_xy.y_func);
-
         out!(&mut out, "grpwire_grp: {}", format_op_operand(analysis.grpwire_grp()));
         out!(&mut out, "grpwire_ddsgrp: {}", format_op_operand(analysis.grpwire_ddsgrp()));
         out!(&mut out, "tranwire_grp: {}", format_op_operand(analysis.tranwire_grp()));

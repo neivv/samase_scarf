@@ -265,9 +265,8 @@ fn everything_1213() {
         assert_eq!(analysis.smem_free().unwrap().0, 0x0083eec0);
         assert_eq!(analysis.cmdicons_ddsgrp().unwrap(), ctx.constant(0x0EC7CAC));
 
-        let mouse_xy = analysis.mouse_xy();
-        assert_eq!(mouse_xy.x_var.unwrap(), ctx.mem16(ctx.constant(0xea9910)));
-        assert_eq!(mouse_xy.y_var.unwrap(), ctx.mem16(ctx.constant(0xea9914)));
+        assert_eq!(analysis.mouse_x().unwrap(), ctx.mem16(ctx.constant(0xea9910)));
+        assert_eq!(analysis.mouse_y().unwrap(), ctx.mem16(ctx.constant(0xea9914)));
 
         assert_eq!(analysis.vertex_buffer().unwrap(), ctx.constant(0x00c75220));
     })
@@ -1232,9 +1231,8 @@ fn everything_1235e() {
         assert_eq!(analysis.smem_free().unwrap().0, 0x0094d980);
         assert_eq!(analysis.cmdicons_ddsgrp().unwrap(), ctx.constant(0x11b7960));
         assert_eq!(analysis.cmdbtns_ddsgrp().unwrap(), ctx.constant(0x11b7920));
-        let mouse_xy = analysis.mouse_xy();
-        assert_eq!(mouse_xy.x_func.unwrap().0, 0x006bf090);
-        assert_eq!(mouse_xy.y_func.unwrap().0, 0x006bf0a0);
+        assert_eq!(analysis.get_mouse_x().unwrap().0, 0x006bf090);
+        assert_eq!(analysis.get_mouse_y().unwrap().0, 0x006bf0a0);
         assert_eq!(analysis.status_screen_mode().unwrap(), ctx.mem8(ctx.constant(0x11b7a0e)));
     })
 }
@@ -1485,7 +1483,8 @@ fn test_nongeneric<'e>(
         use samase_scarf::AddressAnalysis::*;
         match addr {
             // special handling
-            JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins | StepGameLoop => continue,
+            JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins | StepGameLoop |
+                GetMouseX | GetMouseY => continue,
             _ => (),
         }
         let result = analysis.address_analysis(addr);
@@ -1497,7 +1496,7 @@ fn test_nongeneric<'e>(
         match op {
             // special handling
             Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg |
-                AntiTroll => {
+                AntiTroll | MouseX | MouseY => {
                 continue;
             }
             Game | Players | MenuScreenId | BnetController => {
@@ -1877,17 +1876,20 @@ fn test_nongeneric<'e>(
     }
 
     // 1.23.0 added input abstraction
-    let mouse_xy = analysis.mouse_xy();
+    let x_func = analysis.get_mouse_x();
+    let y_func = analysis.get_mouse_y();
+    let x_var = analysis.mouse_x();
+    let y_var = analysis.mouse_y();
     if minor_version >= 23 {
-        assert!(mouse_xy.x_func.is_some());
-        assert!(mouse_xy.y_func.is_some());
-        assert!(mouse_xy.x_var.is_none());
-        assert!(mouse_xy.y_var.is_none());
+        assert!(x_func.is_some());
+        assert!(y_func.is_some());
+        assert!(x_var.is_none());
+        assert!(y_var.is_none());
     } else {
-        check_global(mouse_xy.x_var.unwrap(), binary, "mouse x");
-        check_global(mouse_xy.y_var.unwrap(), binary, "mouse y");
-        assert!(mouse_xy.x_func.is_none());
-        assert!(mouse_xy.y_func.is_none());
+        check_global(x_var.unwrap(), binary, "mouse x");
+        check_global(y_var.unwrap(), binary, "mouse y");
+        assert!(x_func.is_none());
+        assert!(y_func.is_none());
     }
 
     check_global(analysis.grpwire_grp().unwrap(), binary, "grpwire_grp");

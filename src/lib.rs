@@ -311,6 +311,8 @@ results! {
         MapEntryLoadMap => "map_entry_load_map",
         MapEntryLoadSave => "map_entry_load_save",
         MapEntryLoadReplay => "map_entry_load_replay",
+        GetMouseX => "get_mouse_x",
+        GetMouseY => "get_mouse_y",
     }
 }
 
@@ -436,6 +438,8 @@ results! {
         NextGameStepTick => "next_game_step_tick",
         ReplaySeekFrame => "replay_seek_frame",
         BnetController => "bnet_controller",
+        MouseX => "mouse_x",
+        MouseY => "mouse_y",
     }
 }
 
@@ -476,7 +480,6 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
     dat_patches: Cached<Option<Rc<DatPatches<'e, E::VirtualAddress>>>>,
-    mouse_xy: Cached<dialog::MouseXy<'e, E::VirtualAddress>>,
     multi_wireframes: Cached<MultiWireframes<'e, E::VirtualAddress>>,
     run_triggers: Cached<RunTriggers<E::VirtualAddress>>,
     trigger_unit_count_caches: Cached<TriggerUnitCountCaches<'e>>,
@@ -710,7 +713,6 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 limits: Default::default(),
                 prism_shaders: Default::default(),
                 dat_patches: Default::default(),
-                mouse_xy: Default::default(),
                 multi_wireframes: Default::default(),
                 run_triggers: Default::default(),
                 trigger_unit_count_caches: Default::default(),
@@ -875,6 +877,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             MapEntryLoadMap => self.map_entry_load_map(),
             MapEntryLoadSave => self.map_entry_load_save(),
             MapEntryLoadReplay => self.map_entry_load_replay(),
+            GetMouseX => self.get_mouse_x(),
+            GetMouseY => self.get_mouse_y(),
         }
     }
 
@@ -1001,6 +1005,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             NextGameStepTick => self.next_game_step_tick(),
             ReplaySeekFrame => self.replay_seek_frame(),
             BnetController => self.bnet_controller(),
+            MouseX => self.mouse_x(),
+            MouseY => self.mouse_y(),
         }
     }
 
@@ -1864,10 +1870,6 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.analyze_many_op(OperandAnalysis::CmdBtnsDdsGrp, AnalysisCache::cache_cmdicons)
     }
 
-    pub fn mouse_xy(&mut self) -> MouseXy<'e, E::VirtualAddress> {
-        self.enter(|x, s| x.mouse_xy(s))
-    }
-
     pub fn status_screen_mode(&mut self) -> Option<Operand<'e>> {
         self.enter(|x, s| x.status_screen_mode(s))
     }
@@ -2503,6 +2505,22 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn join_param_variant_type_offset(&mut self) -> Option<usize> {
         self.enter(AnalysisCache::join_param_variant_type_offset)
+    }
+
+    pub fn get_mouse_x(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::GetMouseX, AnalysisCache::cache_mouse_xy)
+    }
+
+    pub fn get_mouse_y(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::GetMouseY, AnalysisCache::cache_mouse_xy)
+    }
+
+    pub fn mouse_x(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::MouseX, AnalysisCache::cache_mouse_xy)
+    }
+
+    pub fn mouse_y(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::MouseY, AnalysisCache::cache_mouse_xy)
     }
 
     /// Mainly for tests/dump
@@ -3883,22 +3901,14 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn mouse_xy(&mut self, actx: &AnalysisCtx<'e, E>) -> MouseXy<'e, E::VirtualAddress> {
-        if let Some(cached) = self.mouse_xy.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            Some(dialog::mouse_xy(actx, self.run_dialog(actx)?))
-        }).unwrap_or_else(|| {
-            MouseXy {
-                x_var: None,
-                y_var: None,
-                x_func: None,
-                y_func: None,
-            }
-        });
-        self.mouse_xy.cache(&result);
-        result
+    fn cache_mouse_xy(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[GetMouseX, GetMouseY], &[MouseX, MouseY], |s| {
+            let run_dialog = s.run_dialog(actx)?;
+            let result = dialog::mouse_xy(actx, run_dialog);
+            Some(([result.x_func, result.y_func], [result.x_var, result.y_var]))
+        })
     }
 
     fn status_screen_mode(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
@@ -5179,8 +5189,20 @@ impl<'e> AnalysisX86<'e> {
         self.0.cmdbtns_ddsgrp()
     }
 
-    pub fn mouse_xy(&mut self) -> MouseXy<'e, VirtualAddress> {
-        self.0.mouse_xy()
+    pub fn get_mouse_x(&mut self) -> Option<VirtualAddress> {
+        self.0.get_mouse_x()
+    }
+
+    pub fn get_mouse_y(&mut self) -> Option<VirtualAddress> {
+        self.0.get_mouse_y()
+    }
+
+    pub fn mouse_x(&mut self) -> Option<Operand<'e>> {
+        self.0.mouse_x()
+    }
+
+    pub fn mouse_y(&mut self) -> Option<Operand<'e>> {
+        self.0.mouse_y()
     }
 
     pub fn status_screen_mode(&mut self) -> Option<Operand<'e>> {
