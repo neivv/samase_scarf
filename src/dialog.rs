@@ -108,22 +108,9 @@ pub(crate) fn run_dialog<'e, E: ExecutionState<'e>>(
                 string_address: str_ref.string_address,
                 result: &mut result,
                 args,
-                ctx,
             };
 
-            let exec_state = E::initial_state(ctx, binary);
-            let mut analysis = FuncAnalysis::custom_state(
-                binary,
-                ctx,
-                entry,
-                exec_state,
-                RunDialogState {
-                    calling_load_dialog: false,
-                    calling_create_string: false,
-                    load_dialog_result: None,
-                    path_string: None,
-                },
-            );
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             analysis.analyze(&mut analyzer);
             if result.run_dialog.is_some() {
                 EntryOf::Ok(())
@@ -142,78 +129,30 @@ struct RunDialogAnalyzer<'exec, 'b, E: ExecutionState<'exec>> {
     string_address: E::VirtualAddress,
     args: &'b ArgCache<'exec, E>,
     result: &'b mut RunDialog<E::VirtualAddress>,
-    ctx: OperandCtx<'exec>,
-}
-
-#[derive(Copy, Clone)]
-struct RunDialogState<'e> {
-    calling_load_dialog: bool,
-    calling_create_string: bool,
-    load_dialog_result: Option<Operand<'e>>,
-    path_string: Option<Operand<'e>>,
-}
-
-impl<'e> AnalysisState for RunDialogState<'e> {
-    fn merge(&mut self, newer: Self) {
-        self.calling_load_dialog = newer.calling_load_dialog && self.calling_load_dialog;
-        self.calling_create_string = newer.calling_create_string && self.calling_create_string;
-        if self.load_dialog_result != newer.load_dialog_result {
-            self.load_dialog_result = None;
-        }
-        if self.path_string != newer.path_string {
-            self.path_string = None;
-        }
-    }
 }
 
 impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
     RunDialogAnalyzer<'exec, 'b, E>
 {
-    type State = RunDialogState<'exec>;
+    type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation<'exec>) {
-        if ctrl.user_state().calling_load_dialog {
-            let rax = ctrl.resolve(self.ctx.register(0));
-            let user_state = ctrl.user_state();
-            user_state.calling_load_dialog = false;
-            user_state.load_dialog_result = Some(rax);
-        }
-        if ctrl.user_state().calling_create_string {
-            let path_string = ctrl.user_state().path_string;
-            ctrl.user_state().calling_create_string = false;
-            if let Some(path_string) = path_string {
-                let dest = DestOperand::from_oper(self.ctx.register(0));
-                let dest2 = DestOperand::from_oper(ctrl.mem_word(path_string));
-                let state = ctrl.exec_state();
-                // String creation function returns eax = arg1
-                state.move_resolved(&dest, path_string);
-                // Mem[string + 0] is character data
-                state.move_resolved(&dest2, self.ctx.constant(self.string_address.as_u64()));
-            }
-        }
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(to) => {
                 let arg1 = ctrl.resolve(self.args.on_call(0));
                 let arg2 = ctrl.resolve(self.args.on_call(1));
                 let arg3 = ctrl.resolve(self.args.on_call(2));
                 let arg4 = ctrl.resolve(self.args.on_call(3));
-                let arg1_is_dialog_ptr = {
-                    let user_state = ctrl.user_state();
-                    if let Some(ref val) = user_state.load_dialog_result {
-                        *val == arg1
-                    } else {
-                        false
-                    }
-                };
+                let arg1_is_dialog_ptr = arg1.if_custom() == Some(0);
                 if arg1_is_dialog_ptr {
                     // run_dialog(dialog, 0, event_handler)
-                    let arg2_zero = arg2.if_constant().filter(|&c| c == 0).is_some();
+                    let arg2_zero = arg2 == ctx.const_0();
                     let arg3_ptr = arg3.if_constant().filter(|&c| c != 0);
                     if arg2_zero {
                         if let Some(arg3) = arg3_ptr {
-                            if let Some(to) = ctrl.resolve(to).if_constant() {
-                                let result = Some(E::VirtualAddress::from_u64(to));
-                                if single_result_assign(result, &mut self.result.run_dialog) {
+                            if let Some(to) = ctrl.resolve_va(to) {
+                                if single_result_assign(Some(to), &mut self.result.run_dialog) {
                                     ctrl.end_analysis();
                                 }
                                 self.result.glucmpgn_event_handler =
@@ -223,16 +162,13 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
                         }
                     }
                 }
-                if ctrl.user_state().load_dialog_result.is_some() {
-                    return;
-                }
                 let arg1_is_string_ptr = {
                     arg1.if_constant()
                         .filter(|&c| c == self.string_address.as_u64())
                         .is_some()
                 };
                 if arg1_is_string_ptr {
-                    ctrl.user_state().calling_load_dialog = true;
+                    ctrl.do_call_with_result(ctx.custom(0));
                 }
                 let arg4_is_string_ptr = arg4.if_constant()
                     .filter(|&c| c == self.string_address.as_u64())
@@ -240,11 +176,6 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
                 let arg2_is_string_ptr = arg2.if_constant()
                     .filter(|&c| c == self.string_address.as_u64())
                     .is_some();
-                if arg2_is_string_ptr || arg4_is_string_ptr {
-                    let state = ctrl.user_state();
-                    state.calling_create_string = true;
-                    state.path_string = Some(arg1);
-                }
                 let arg3_value = ctrl.read_memory(arg3, E::WORD_SIZE);
                 let arg3_inner = ctrl.read_memory(arg3_value, E::WORD_SIZE);
                 // Can be join(String *out, String *path1, String *path2)
@@ -253,10 +184,13 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
                     .and_then(|x| x.if_constant())
                     .filter(|&x| x == self.string_address.as_u64())
                     .is_some();
-                if arg3_is_string_struct_ptr {
-                    let state = ctrl.user_state();
-                    state.calling_create_string = true;
-                    state.path_string = Some(arg1);
+                if arg2_is_string_ptr || arg4_is_string_ptr || arg3_is_string_struct_ptr {
+                    // String creation function returns eax = arg1
+                    ctrl.do_call_with_result(arg1);
+                    // Mem[string + 0] is character data
+                    let dest2 = DestOperand::from_oper(ctrl.mem_word(arg1));
+                    let state = ctrl.exec_state();
+                    state.move_resolved(&dest2, ctx.constant(self.string_address.as_u64()));
                 }
             }
             _ => (),
@@ -405,22 +339,9 @@ pub(crate) fn spawn_dialog<'e, E: ExecutionState<'e>>(
                 string_address: str_ref.string_address,
                 result: &mut result,
                 args,
-                ctx,
             };
 
-            let exec_state = E::initial_state(ctx, binary);
-            let mut analysis = FuncAnalysis::custom_state(
-                binary,
-                ctx,
-                entry,
-                exec_state,
-                RunDialogState {
-                    calling_load_dialog: false,
-                    calling_create_string: false,
-                    load_dialog_result: None,
-                    path_string: None,
-                },
-            );
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             analysis.analyze(&mut analyzer);
             if result.run_dialog.is_some() {
                 EntryOf::Ok(())

@@ -72,9 +72,16 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
             id_to_func.push((address, None));
             ctx.custom(new_id)
         });
-        ctrl.do_call_with_result(self.resolve_calls(custom));
+        let val = ctrl.resolve(self.resolve_calls(custom));
+        ctrl.do_call_with_result(val)
     }
 
+    /// Converts any `Custom` (which are from `add_call()`) in `val` to
+    /// **resolved function return value relative to start of the called function**.
+    ///
+    /// That is, if the function returns anything depending on arguments, to resolve it
+    /// in context of the parent function, you'll need to have kept state at point of the
+    /// call and resolve on that.
     pub fn resolve_calls(&mut self, val: Operand<'e>) -> Operand<'e> {
         self.ctx.transform(val, 8, |op| {
             if let Some(idx) = op.if_custom() {

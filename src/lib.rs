@@ -6234,7 +6234,7 @@ trait ControlExt<'e, E: ExecutionStateTrait<'e>> {
     /// Skips current operation, assigns undef to other volatile registers except esp.
     fn skip_call_preserve_esp(&mut self);
     /// Skips current operation, assigns undef to other volatile registers except esp,
-    /// and assigns `result` to eax
+    /// and assigns `result` to eax. `result` has to be resolved.
     fn do_call_with_result(&mut self, result: Operand<'e>);
     /// Workaround for sometimes occuring memory reads which scarf isn't
     /// able to detect as aliasing another memory location.
@@ -6257,14 +6257,14 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
         let ctx = self.ctx();
         let state = self.exec_state();
         for i in 0..3 {
-            state.move_to(
+            state.move_resolved(
                 &scarf::DestOperand::Register64(scarf::operand::Register(i)),
                 ctx.new_undef(),
             );
         }
         if A::Exec::WORD_SIZE == MemAccessSize::Mem64 {
             for i in 8..10 {
-                state.move_to(
+                state.move_resolved(
                     &scarf::DestOperand::Register64(scarf::operand::Register(i)),
                     ctx.new_undef(),
                 );
@@ -6276,15 +6276,18 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
         self.skip_operation();
         let ctx = self.ctx();
         let state = self.exec_state();
-        state.move_to(&scarf::DestOperand::Register64(scarf::operand::Register(0)), result);
+        state.move_resolved(
+            &scarf::DestOperand::Register64(scarf::operand::Register(0)),
+            result,
+        );
         for i in 1..3 {
-            state.move_to(
+            state.move_resolved(
                 &scarf::DestOperand::Register64(scarf::operand::Register(i)),
                 ctx.new_undef(),
             );
         }
         if A::Exec::WORD_SIZE == MemAccessSize::Mem32 {
-            state.move_to(
+            state.move_resolved(
                 &scarf::DestOperand::Register64(scarf::operand::Register(4)),
                 ctx.new_undef(),
             );
