@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use bumpalo::collections::Vec as BumpVec;
 use scarf::{
-    DestOperand, Operand, Operation, MemAccessSize, OperandCtx, OperandType, BinaryFile, Rva,
+    DestOperand, Operand, Operation, MemAccessSize, OperandCtx, BinaryFile, Rva,
 };
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState};
@@ -14,6 +14,7 @@ use crate::{
 };
 use crate::hash_map::HashSet;
 use crate::struct_layouts;
+use crate::switch::CompleteSwitch;
 
 pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
@@ -69,6 +70,7 @@ pub struct AiScriptHook<'e, Va: VirtualAddressTrait> {
     pub opcode_operand: Operand<'e>,
     pub script_operand_at_switch: Operand<'e>,
     pub switch_table: Va,
+    pub switch_base: Option<Va>,
     pub switch_loop_address: Va,
     pub return_address: Va,
 }
@@ -77,7 +79,8 @@ fn aiscript_hook<'e, E: ExecutionState<'e>>(
     ctx: OperandCtx<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     entry: E::VirtualAddress,
-    switch_table: E::VirtualAddress,
+    switch_jump_address: E::VirtualAddress,
+    switch: &CompleteSwitch<'e>,
 ) -> Option<AiScriptHook<'e, E::VirtualAddress>> {
     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
     let mut analyzer: AiscriptHookAnalyzer<E> = AiscriptHookAnalyzer {
@@ -86,8 +89,15 @@ fn aiscript_hook<'e, E: ExecutionState<'e>>(
         branch_start: entry,
         best_def_jump: None,
         op_default_jump: None,
+        switch_jump_address,
     };
     analysis.analyze(&mut analyzer);
+
+    let switch_table = E::VirtualAddress::from_u64(switch.switch_table()?.if_constant()?);
+    let switch_base = match switch.base() {
+        0 => None,
+        x => Some(E::VirtualAddress::from_u64(x)),
+    };
 
     let tp = (analyzer.best_def_jump, analyzer.aiscript_operand, analyzer.switch_state);
     if let (Some(default_jump), Some(script_operand_orig), Some(switch_state)) = tp {
@@ -97,7 +107,7 @@ fn aiscript_hook<'e, E: ExecutionState<'e>>(
         };
         switch_state.unresolve(script_operand_orig)
             .and_then(|at_switch| {
-                aiscript_find_switch_loop_and_end::<E>(binary, ctx, switch_table)
+                aiscript_find_switch_loop_and_end::<E>(binary, ctx, switch)
                     .map(move |(switch_loop_address, return_address)| {
                         AiScriptHook {
                             op_limit_hook_begin: default_jump.branch_start,
@@ -107,6 +117,7 @@ fn aiscript_hook<'e, E: ExecutionState<'e>>(
                             opcode_operand: default_jump.opcode,
                             script_operand_at_switch: at_switch,
                             switch_table,
+                            switch_base,
                             switch_loop_address,
                             return_address,
                         }
@@ -123,6 +134,7 @@ struct AiscriptHookAnalyzer<'e, E: ExecutionState<'e>> {
     branch_start: E::VirtualAddress,
     best_def_jump: Option<BestDefaultJump<'e, E::VirtualAddress>>,
     op_default_jump: Option<OpDefaultJump<'e, E::VirtualAddress>>,
+    switch_jump_address: E::VirtualAddress,
 }
 
 struct OpDefaultJump<'e, Va: VirtualAddressTrait> {
@@ -157,37 +169,25 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Jump { condition, to } => {
-                let condition = match condition.if_constant() {
-                    Some(_) => None,
-                    None => Some(condition),
-                };
                 let to = ctrl.resolve(to);
-                match (condition, to.ty()) {
-                    // Check for switch jump
-                    (None, &OperandType::Memory(ref mem)) => {
-                        // Checking for arith since it could tecnically be a
-                        // tail call to fnptr.
-                        if let OperandType::Arithmetic(_) = mem.address.ty() {
-                            let state = ctrl.exec_state();
-                            self.switch_state = Some(state.clone());
-                        }
+                if ctrl.address() == self.switch_jump_address {
+                    let state = ctrl.exec_state();
+                    self.switch_state = Some(state.clone());
+                    return;
+                }
+                if let Some(to) = ctrl.resolve_va(to) {
+                    let resolved = ctrl.resolve(condition);
+                    let ctx = ctrl.ctx();
+                    let state = ctrl.exec_state();
+                    let jumps = is_aiscript_switch_jump(ctx, resolved, state);
+                    if let Some((jumps_to_default, opcode)) = jumps {
+                        self.op_default_jump = Some(OpDefaultJump {
+                            address: ctrl.address(),
+                            to,
+                            jumps_to_default,
+                            opcode,
+                        });
                     }
-                    // Check for default case jump
-                    (Some(cond), &OperandType::Constant(to)) => {
-                        let resolved = ctrl.resolve(cond);
-                        let ctx = ctrl.ctx();
-                        let state = ctrl.exec_state();
-                        let jumps = is_aiscript_switch_jump(ctx, resolved, state);
-                        if let Some((jumps_to_default, opcode)) = jumps {
-                            self.op_default_jump = Some(OpDefaultJump {
-                                address: ctrl.address(),
-                                to: E::VirtualAddress::from_u64(to),
-                                jumps_to_default,
-                                opcode,
-                            });
-                        }
-                    }
-                    _ => (),
                 }
             }
             Operation::Move(ref dest, val, _cond) => {
@@ -203,12 +203,9 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
                                     .unwrap_or(false)
                             });
                             if val_refers_to_dest {
-                                self.aiscript_operand = addr.if_arithmetic_add()
-                                    .and_then(|(l, r)| {
-                                        Operand::either(l, r, |x| x.if_constant())
-                                    })
-                                    .filter(|&(c, _)| c == 8)
-                                    .map(|x| x.1.clone());
+                                let pos_offset =
+                                    struct_layouts::ai_script_pos::<E::VirtualAddress>();
+                                self.aiscript_operand = addr.if_arithmetic_add_const(pos_offset);
                             }
                         }
                     }
@@ -287,12 +284,11 @@ fn is_aiscript_switch_jump<'e, E: ExecutionState<'e>>(
 fn aiscript_find_switch_loop_and_end<'e, E: ExecutionState<'e>>(
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: OperandCtx<'e>,
-    switch_table: E::VirtualAddress,
+    switch: &CompleteSwitch<'e>,
 ) -> Option<(E::VirtualAddress, E::VirtualAddress)> {
-    let opcode_case = binary.read_u32(switch_table + 0xb * 4).ok()?;
-    let second_opcode_case = binary.read_u32(switch_table + 0x2b * 4).ok()?;
-    let wait_case = binary.read_u32(switch_table + 0x2 * 4).ok()?;
-    let opcode_case = E::VirtualAddress::from_u64(opcode_case as u64);
+    let opcode_case = switch.branch::<E::VirtualAddress>(binary, 0xb)?;
+    let second_opcode_case = switch.branch::<E::VirtualAddress>(binary, 0x2b)?;
+    let wait_case = switch.branch::<E::VirtualAddress>(binary, 0x2)?;
     let mut analysis = FuncAnalysis::new(binary, ctx, opcode_case);
     let mut analyzer: AiscriptFindSwitchLoop<E> = AiscriptFindSwitchLoop {
         first_op_jumps: ArrayVec::new(),
@@ -300,12 +296,10 @@ fn aiscript_find_switch_loop_and_end<'e, E: ExecutionState<'e>>(
         result: None,
     };
     analysis.analyze(&mut analyzer);
-    let second_opcode_case = E::VirtualAddress::from_u64(second_opcode_case as u64);
     let mut analysis = FuncAnalysis::new(binary, ctx, second_opcode_case);
     analyzer.first_op = false;
     analysis.analyze(&mut analyzer);
 
-    let wait_case = E::VirtualAddress::from_u64(wait_case as u64);
     let other = aiscript_find_switch_loop_end::<E>(binary, ctx, wait_case);
     analyzer.result.and_then(|x| other.map(|y| (x, y)))
 }
@@ -324,16 +318,16 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchLoo
             Operation::Jump { condition, to } => {
                 let condition = ctrl.resolve(condition);
                 if condition.if_constant().filter(|&c| c != 0).is_some() {
-                    let to = ctrl.resolve(to);
-                    if let Some(dest) = to.if_constant() {
+                    let to = ctrl.resolve_va(to);
+                    if let Some(dest) = to {
                         if self.first_op {
-                            self.first_op_jumps.push(E::VirtualAddress::from_u64(dest));
+                            self.first_op_jumps.push(dest);
                             if self.first_op_jumps.is_full() {
                                 ctrl.end_analysis();
                             }
                         } else {
-                            if self.first_op_jumps.iter().any(|&x| x.as_u64() == dest) {
-                                self.result = Some(E::VirtualAddress::from_u64(dest));
+                            if self.first_op_jumps.iter().any(|&x| x == dest) {
+                                self.result = Some(dest);
                                 ctrl.end_analysis();
                             }
                         }
@@ -393,23 +387,24 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchEnd
                     if mem.size == MemAccessSize::Mem32 {
                         let addr = ctrl.resolve(mem.address);
                         let c_write = addr.if_arithmetic_add()
-                            .and_either(|x| x.if_constant());
-                        if let Some((offset, base)) = c_write {
+                            .and_then(|x| Some((x.0, x.1.if_constant()?)));
+                        if let Some((base, offset)) = c_write {
                             let old_ok = self.old_base.map(|x| x == base).unwrap_or(true);
                             if old_ok {
-                                if offset == 0x8 {
+                                let pos_offset =
+                                    struct_layouts::ai_script_pos::<E::VirtualAddress>();
+                                let wait_offset =
+                                    struct_layouts::ai_script_wait::<E::VirtualAddress>();
+                                if offset == pos_offset {
                                     let val = ctrl.resolve(val);
-                                    let ok = val.if_arithmetic_add()
-                                        .and_then(|(l, r)| {
-                                            Operand::either(l, r, |x| x.if_constant())
-                                        })
-                                        .filter(|&(c, _)| c == 2)
+                                    let ok = Operand::and_masked(val).0
+                                        .if_arithmetic_add_const(2)
                                         .is_some();
                                     if ok {
                                         self.pos_written = true;
-                                        self.old_base = Some(base.clone());
+                                        self.old_base = Some(base);
                                     }
-                                } else if offset == 0xc {
+                                } else if offset == wait_offset {
                                     let val = ctrl.resolve(val);
                                     let ok = val.if_memory()
                                         .filter(|mem| mem.size == MemAccessSize::Mem16)
@@ -417,7 +412,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchEnd
                                         .is_some();
                                     if self.not_inlined_op_read || ok {
                                         self.wait_written = true;
-                                        self.old_base = Some(base.clone());
+                                        self.old_base = Some(base);
                                     }
                                 }
                             }
@@ -916,31 +911,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
             }
             Operation::Jump { to, condition } if self.state == StepAiState::StepAiScript => {
                 let to = ctrl.resolve(to);
-                if let Some(to) = ctrl.if_mem_word(to) {
-                    let ok = to.if_arithmetic_add()
-                        .and_then(|(l, r)| {
-                            let switch_table = r.if_constant()?;
-                            let index = l.if_arithmetic_mul_const(4)?;
-                            let first_ai_script = index.if_mem8()?.if_arithmetic_add()
-                                .and_either(|x| {
-                                    let pos_off =
-                                        struct_layouts::ai_script_pos::<E::VirtualAddress>();
-                                    x.if_memory()?.address
-                                        .if_arithmetic_add_const(pos_off)
-                                })?.0;
-                            Some((E::VirtualAddress::from_u64(switch_table), first_ai_script))
-                        });
-                    if let Some((switch_table, first_ai_script)) = ok {
-                        self.result.first_ai_script = Some(first_ai_script);
-                        self.result.step_ai_script = Some(self.entry);
-                        self.state = StepAiState::StepRegions;
-                        self.result.hook =
-                            aiscript_hook::<E>(ctx, ctrl.binary(), self.entry, switch_table);
-                        if self.inline_depth > 1 {
-                            ctrl.end_analysis();
-                        }
-                    }
-                } else if let Some(dest) = to.if_constant() {
+                if let Some(dest) = to.if_constant() {
                     let condition = ctrl.resolve(condition);
                     // Assume jumps checking Mem8[script.flags] & 1 (aiscript/bwscript)
                     // always be taken to avoid making switch index undefined
@@ -959,6 +930,34 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                     if is_bwscript_check {
                         ctrl.end_branch();
                         ctrl.add_branch_with_current_state(E::VirtualAddress::from_u64(dest));
+                    }
+                } else if let Some(switch) = CompleteSwitch::new(to, ctrl.exec_state()) {
+                    let ok = Some(()).and_then(|()| {
+                        let index = switch.index_operand::<E::VirtualAddress>()?;
+                        let first_ai_script = index.if_mem8()?
+                            .if_arithmetic_add()
+                            .and_either(|x| {
+                                let pos_off =
+                                    struct_layouts::ai_script_pos::<E::VirtualAddress>();
+                                x.if_memory()?.address
+                                    .if_arithmetic_add_const(pos_off)
+                            })?.0;
+                        Some(first_ai_script)
+                    });
+                    if let Some(first_ai_script) = ok {
+                        self.result.first_ai_script = Some(first_ai_script);
+                        self.result.step_ai_script = Some(self.entry);
+                        self.state = StepAiState::StepRegions;
+                        self.result.hook = aiscript_hook::<E>(
+                            ctx,
+                            ctrl.binary(),
+                            self.entry,
+                            ctrl.address(),
+                            &switch,
+                        );
+                        if self.inline_depth > 1 {
+                            ctrl.end_analysis();
+                        }
                     }
                 }
             }
@@ -980,6 +979,16 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                     self.game_seconds_checked = true;
                 }
             }
+            Operation::Move(_, _, Some(condition)) if self.state == StepAiState::SpendMoney => {
+                let condition = ctrl.resolve(condition);
+                let ok = condition.if_arithmetic_gt()
+                    .and_either_other(|x| x.if_constant().filter(|&c| c == 4500))
+                    .filter(|&x| is_game_seconds(self.game, x))
+                    .is_some();
+                if ok {
+                    self.game_seconds_checked = true;
+                }
+            }
             Operation::Move(DestOperand::Memory(mem), val, None) => {
                 // step_objects has `counter = counter - 1`
                 // instruction which is after step_ai, so we can stop
@@ -987,7 +996,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                 if self.inline_depth == 0 && mem.size == MemAccessSize::Mem32 {
                     let val = ctrl.resolve(val);
                     let dest = ctrl.resolve(mem.address);
-                    let stop = val.if_arithmetic_sub_const(1)
+                    let stop = Operand::and_masked(val).0
+                        .if_arithmetic_sub_const(1)
                         .and_then(|x| x.if_mem32())
                         .filter(|&x| x == dest)
                         .is_some();
@@ -1014,8 +1024,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                                 .map(|x| x.address)
                                 .and_then(|x| x.if_arithmetic_add())
                                 .and_either(|x| {
-                                    x.if_arithmetic_mul()
-                                        .filter(|&(l, _r)| l == self.arg_cache.on_entry(0))
+                                    x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
+                                        .filter(|&x| {
+                                            Operand::and_masked(x).0 ==
+                                                self.arg_cache.on_entry(0)
+                                        })
                                 })
                         })
                         .is_some();

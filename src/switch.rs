@@ -96,6 +96,14 @@ impl<'e> CompleteSwitch<'e> {
         Some(Va::from_u64(value))
     }
 
+    pub fn base(&self) -> u64 {
+        self.base
+    }
+
+    pub fn switch_table(&self) -> Option<Operand<'e>> {
+        Some(self.table.if_arithmetic_add()?.1)
+    }
+
     pub fn index_operand<Va: VirtualAddress>(&self) -> Option<Operand<'e>> {
         let (l, _) = self.table.if_arithmetic_add()?;
         let index = l.if_arithmetic_mul_const((self.size.bits() / 8) as u64)?;

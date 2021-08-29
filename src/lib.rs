@@ -2909,7 +2909,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         &mut self,
         actx: &AnalysisCtx<'e, E>,
     ) -> Option<AiScriptHook<'e, E::VirtualAddress>> {
-        self.ai_spend_money(actx)?;
+        self.ai_spend_money(actx);
         self.aiscript_hook
     }
 
