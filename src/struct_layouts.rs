@@ -75,6 +75,13 @@ pub fn unit_current_tech<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_nuke_dot_sprite<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xd0,
+        false => 0x128,
+    }
+}
+
 pub fn unit_current_upgrade<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xc9,

@@ -3,9 +3,10 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::{
-    AnalysisCtx, ArgCache, EntryOf, OptionExt, OperandExt, entry_of_until_with_limit,
+    AnalysisCtx, ArgCache, ControlExt, EntryOf, OperandExt, entry_of_until_with_limit,
     single_result_assign, FunctionFinder,
 };
+use crate::struct_layouts;
 
 pub struct MapTileFlags<'e, Va: VirtualAddress> {
     pub map_tile_flags: Option<Operand<'e>>,
@@ -47,6 +48,7 @@ pub(crate) fn map_tile_flags<'e, E: ExecutionState<'e>>(
         type State = analysis::DefaultState;
         type Exec = F;
         fn operation(&mut self, ctrl: &mut Control<'b, '_, '_, Self>, op: &Operation<'b>) {
+            let offset = struct_layouts::unit_nuke_dot_sprite::<F::VirtualAddress>();
             match *op {
                 Operation::Call(dest) => {
                     // order_nuke_track calls update_visibility_point([unit + 0xd0])
@@ -54,20 +56,18 @@ pub(crate) fn map_tile_flags<'e, E: ExecutionState<'e>>(
                     // isn't necessarily correct
                     let ctx = ctrl.ctx();
                     let arg_this = ctrl.resolve(ctx.register(1));
-                    let ok = arg_this.if_mem32()
-                        .and_then(|x| x.if_arithmetic_add())
-                        .and_either(|x| x.if_constant().filter(|&c| c == 0xd0))
+                    let ok = ctrl.if_mem_word(arg_this)
+                        .and_then(|x| x.if_arithmetic_add_const(offset))
                         .is_some();
                     if ok {
-                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
                             let result = tile_flags_from_update_visibility_point(
                                 self.analysis,
-                                F::VirtualAddress::from_u64(dest),
+                                dest,
                             );
                             if let Some(result) = result {
                                 self.result.map_tile_flags = Some(result);
-                                self.result.update_visibility_point =
-                                    Some(F::VirtualAddress::from_u64(dest));
+                                self.result.update_visibility_point = Some(dest);
                                 ctrl.end_analysis();
                             }
                         }
@@ -77,9 +77,7 @@ pub(crate) fn map_tile_flags<'e, E: ExecutionState<'e>>(
                     // Ignore moves to [unit + 0xd0]
                     if let DestOperand::Memory(mem) = dest {
                         let addr = ctrl.resolve(mem.address);
-                        let skip = addr.if_arithmetic_add()
-                            .and_either(|x| x.if_constant().filter(|&c| c == 0xd0))
-                            .is_some();
+                        let skip = addr.if_arithmetic_add_const(offset).is_some();
                         if skip {
                             ctrl.skip_operation();
                         }
@@ -126,10 +124,9 @@ fn tile_flags_from_update_visibility_point<'e, E: ExecutionState<'e>>(
                     let result = from.if_memory()
                         .and_then(|x| x.address.if_arithmetic_add())
                         .and_then(|(l, r)| Operand::either(l, r, |x| {
-                            x.if_arithmetic_mul()
-                                .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                                .filter(|&(c, _)| c == 4)
-                                .and_then(|(_, other)| other.if_arithmetic_add())
+                            let x = x.if_arithmetic_mul_const(4)?
+                                .unwrap_sext();
+                            Operand::and_masked(x).0.if_arithmetic_add()
                         }))
                         .map(|(_, map_tile_flags)| map_tile_flags);
                     if let Some(result) = result {
