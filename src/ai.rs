@@ -10,7 +10,7 @@ use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
 use crate::{
     ArgCache, OptionExt, OperandExt, single_result_assign, AnalysisCtx, unwrap_sext,
-    entry_of_until, EntryOf, ControlExt, FunctionFinder,
+    entry_of_until, EntryOf, ControlExt, FunctionFinder, if_arithmetic_eq_neq,
 };
 use crate::hash_map::HashSet;
 use crate::struct_layouts;
@@ -534,8 +534,7 @@ pub(crate) fn player_ai_towns<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let addr_size = E::VirtualAddress::SIZE;
-    let start_town = binary.read_address(aiscript_switch_table + 0x3 * addr_size).ok()?;
+    let start_town = crate::switch::simple_switch_branch(binary, aiscript_switch_table, 0x3)?;
 
     let state = AiTownState {
         jump_count: 0,
@@ -649,15 +648,15 @@ pub(crate) fn player_ai<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let addr_size = E::VirtualAddress::SIZE;
-    let farms_notiming = binary.read_address(aiscript.switch_table + 0x32 * addr_size).ok()?;
+    let farms_notiming =
+        crate::switch::simple_switch_branch(binary, aiscript.switch_table, 0x32)?;
 
     // Set script->player to 0
     let mut state = E::initial_state(ctx, binary);
-    let player_offset = if addr_size == 4 { 0x10 } else { 0x18 };
-    let player = ctx.mem32(ctx.add(
+    let player_offset = struct_layouts::ai_script_player::<E::VirtualAddress>();
+    let player = ctx.mem32(ctx.add_const(
         aiscript.script_operand_at_switch,
-        ctx.constant(player_offset),
+        player_offset,
     ));
     state.move_to(&DestOperand::from_oper(player), ctx.const_0());
     let mut analysis = FuncAnalysis::with_state(
@@ -731,8 +730,7 @@ pub(crate) fn attack_prepare<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let addr_size = E::VirtualAddress::SIZE;
-    let attack_prepare = binary.read_address(aiscript_switch_table + 0xd * addr_size).ok()?;
+    let attack_prepare = crate::switch::simple_switch_branch(binary, aiscript_switch_table, 0xd)?;
 
     let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, attack_prepare);
@@ -787,6 +785,7 @@ pub(crate) struct AiStepFrameFuncs<'e, Va: VirtualAddressTrait> {
     pub ai_step_region: Option<Va>,
     pub ai_spend_money: Option<Va>,
     pub step_ai_script: Option<Va>,
+    pub players: Option<Operand<'e>>,
     pub first_ai_script: Option<Operand<'e>>,
     pub hook: Option<AiScriptHook<'e, Va>>,
 }
@@ -804,6 +803,7 @@ pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
         ai_spend_money: None,
         step_ai_script: None,
         first_ai_script: None,
+        players: None,
         hook: None,
     };
 
@@ -959,6 +959,19 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                             ctrl.end_analysis();
                         }
                     }
+                }
+            }
+            Operation::Jump { condition, .. } if self.state == StepAiState::StepRegions => {
+                if self.result.players.is_none() {
+                    // Check for players[global].type == 1
+                    let condition = ctrl.resolve(condition);
+                    let players = if_arithmetic_eq_neq(condition)
+                        .filter(|x| x.1 == ctx.const_1())
+                        .and_then(|x| {
+                            x.0.if_mem8()?.if_arithmetic_add_const(8)?.if_arithmetic_add()
+                        })
+                        .and_either_other(|x| x.if_arithmetic_mul_const(0x24));
+                    single_result_assign(players, &mut self.result.players);
                 }
             }
             Operation::Move(DestOperand::Memory(mem), val, None)

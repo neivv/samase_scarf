@@ -1537,7 +1537,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn players(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.players(s))
+        self.analyze_many_op(OperandAnalysis::Players, AnalysisCache::cache_ai_step_frame)
     }
 
     pub fn prepare_draw_image(&mut self) -> Option<E::VirtualAddress> {
@@ -3515,13 +3515,6 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn players(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.cache_single_operand(OperandAnalysis::Players, |s| {
-            let aiscript_switch = s.aiscript_switch_table(actx)?;
-            players::players(actx, aiscript_switch)
-        })
-    }
-
     fn cache_draw_game_layer(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(&[PrepareDrawImage, DrawImage], &[OperandAnalysis::CursorMarker], |s| {
@@ -3814,14 +3807,17 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     fn cache_ai_step_frame(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
-        self.cache_many(&[AiStepRegion, AiSpendMoney, StepAiScript], &[FirstAiScript], |s| {
-            let step_objects = s.step_objects(actx)?;
-            let game = s.game(actx)?;
-            let result = ai::step_frame_funcs(actx, step_objects, game);
-            s.aiscript_hook = result.hook;
-            Some(([result.ai_step_region, result.ai_spend_money, result.step_ai_script],
-                [result.first_ai_script]))
-        })
+        self.cache_many(
+            &[AiStepRegion, AiSpendMoney, StepAiScript], &[FirstAiScript, Players],
+            |s| {
+                let step_objects = s.step_objects(actx)?;
+                let game = s.game(actx)?;
+                let result = ai::step_frame_funcs(actx, step_objects, game);
+                s.aiscript_hook = result.hook;
+                Some(([result.ai_step_region, result.ai_spend_money, result.step_ai_script],
+                    [result.first_ai_script, result.players]))
+            },
+        )
     }
 
     fn ai_spend_money(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
