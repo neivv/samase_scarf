@@ -183,3 +183,10 @@ pub fn event_mouse_xy<Va: VirtualAddress>() -> u64 {
         false => 0x1a,
     }
 }
+
+pub fn glyph_set_size<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xa0,
+        false => 0xc8,
+    }
+}

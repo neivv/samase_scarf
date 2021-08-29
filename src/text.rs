@@ -5,9 +5,10 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{DestOperand, Operand, BinaryFile, BinarySection, Operation};
 
 use crate::{
-    AnalysisCtx, ArgCache, entry_of_until, EntryOf, OptionExt, single_result_assign,
+    AnalysisCtx, ArgCache, entry_of_until, EntryOf, OptionExt, OperandExt, single_result_assign,
     bumpvec_with_capacity, FunctionFinder,
 };
+use crate::struct_layouts;
 
 #[derive(Clone)]
 pub struct FontRender<Va: VirtualAddress> {
@@ -347,9 +348,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     if self.ok_calls.iter().any(|&x| x == dest) {
                         ctrl.user_state().last_ok_call = Some(dest);
                     } else {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                        if arg1.if_constant() == Some(0) && arg2.if_constant() == Some(0x20) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                        let ctx = ctrl.ctx();
+                        if arg1 == ctx.const_0() && arg2.if_constant() == Some(0x20) {
                             self.ok_calls.push(dest);
                             ctrl.user_state().last_ok_call = Some(dest);
                         }
@@ -377,7 +379,51 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TtfCacheCharacterAna
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
                     let ecx = ctrl.resolve(ctx.register(1));
-                    if self.is_glyph_set_ptr(ecx) {
+                    // Args 4, 5, 6 are hardcoded constants. Either
+                    //  0xd, 0xb4, 13.84615 (newer)
+                    //  0xd, 0xb4, 13.0 (new)
+                    //  0xa, 0xb4, 18.0 (old)
+                    let args_ok = Some(())
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                        .filter(|&a1| self.is_glyph_set_ptr(a1))
+                        .and_then(|_| {
+                            let arg4 = ctx.and_const(
+                                ctrl.resolve(self.arg_cache.on_call(3)),
+                                0xff,
+                            ).if_constant()?;
+                            let arg5 = ctx.and_const(
+                                ctrl.resolve(self.arg_cache.on_call(4)),
+                                0xff,
+                            ).if_constant()?;
+                            let arg6 = ctx.and_const(
+                                ctrl.resolve(self.arg_cache.on_call(5)),
+                                0xffff_ffff,
+                            );
+                            let arg6 = arg6.if_constant()
+                                .or_else(|| {
+                                    // Read from memory if data/rdata value,
+                                    // which it may be due to being a float
+                                    let mem = arg6.if_memory()?;
+                                    let addr =
+                                        E::VirtualAddress::from_u64(mem.address.if_constant()?);
+                                    let binary = ctrl.binary();
+                                    Some(binary.read_u64(addr).ok()? & mem.size.mask())
+                                })?;
+                            let arg6_masked = arg6 & 0xfff0_0000;
+                            let ok =
+                                (arg4 == 0xd && arg5 == 0xb4 && arg6_masked == 0x41500000) ||
+                                (arg4 == 0xa && arg5 == 0xb4 && arg6_masked == 0x41900000);
+                            if ok {
+                                Some(())
+                            } else {
+                                None
+                            }
+                        })
+                        .is_some();
+                    if args_ok {
+                        self.result.ttf_render_sdf = Some(dest);
+                        ctrl.end_analysis();
+                    } else if self.is_glyph_set_ptr(ecx) {
                         if self.inline_depth < 2 {
                             self.inline_depth += 1;
                             ctrl.analyze_with_current_state(self, dest);
@@ -385,33 +431,6 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TtfCacheCharacterAna
                             if self.result.ttf_render_sdf.is_some() {
                                 ctrl.end_analysis();
                             }
-                        }
-                    } else {
-                        // Args 4, 5, 6 are hardcoded constants. Either
-                        //  0xd, 0xb4, 13.84615 (newer)
-                        //  0xd, 0xb4, 13.0 (new)
-                        //  0xa, 0xb4, 18.0 (old)
-                        let args_ok = Some(())
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
-                            .filter(|&a1| self.is_glyph_set_ptr(a1))
-                            .and_then(|_| {
-                                let arg4 = ctrl.resolve(self.arg_cache.on_call(3)).if_constant()?;
-                                let arg5 = ctrl.resolve(self.arg_cache.on_call(4)).if_constant()?;
-                                let arg6 = ctrl.resolve(self.arg_cache.on_call(5)).if_constant()?;
-                                let arg6_masked = arg6 & 0xfff0_0000;
-                                let ok =
-                                    (arg4 == 0xd && arg5 == 0xb4 && arg6_masked == 0x41500000) ||
-                                    (arg4 == 0xa && arg5 == 0xb4 && arg6_masked == 0x41900000);
-                                if ok {
-                                    Some(())
-                                } else {
-                                    None
-                                }
-                            })
-                            .is_some();
-                        if args_ok {
-                            self.result.ttf_render_sdf = Some(dest);
-                            ctrl.end_analysis();
                         }
                     }
                 }
@@ -427,9 +446,12 @@ impl<'a, 'e, E: ExecutionState<'e>> TtfCacheCharacterAnalyzer<'a, 'e, E> {
     fn is_glyph_set_ptr(&self, op: Operand<'e>) -> bool {
         op.if_arithmetic_add()
             .and_either_other(|x| x.if_register().filter(|r| r.0 == 1))
-            .and_then(|x| x.if_arithmetic_mul())
-            .filter(|(_, r)| r.if_constant().filter(|&c| c == 0xa0).is_some())
-            .filter(|&(l, _)| l == self.arg_cache.on_entry(0))
+            .and_then(|x| {
+                x.if_arithmetic_mul_const(
+                    struct_layouts::glyph_set_size::<E::VirtualAddress>(),
+                )
+            })
+            .filter(|&x| Operand::and_masked(x).0 == self.arg_cache.on_thiscall_entry(0))
             .is_some()
     }
 }
