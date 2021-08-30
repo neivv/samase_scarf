@@ -75,6 +75,13 @@ pub fn unit_invisibility_effects<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_movement_state<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x97,
+        false => 0xdb,
+    }
+}
+
 pub fn unit_secondary_order<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xa6,

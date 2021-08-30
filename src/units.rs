@@ -1481,7 +1481,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 let ok = ctrl.resolve(condition)
                     .if_arithmetic_gt()
                     .and_either_other(|x| x.if_constant())
-                    .and_then(|x| x.if_mem8()?.if_arithmetic_add_const(0x97))
+                    .and_then(|x| {
+                        x.if_mem8()?
+                            .if_arithmetic_add_const(
+                                struct_layouts::unit_movement_state::<E::VirtualAddress>()
+                            )
+                    })
                     .filter(|&x| x == ctx.register(1))
                     .is_some();
                 if ok {
