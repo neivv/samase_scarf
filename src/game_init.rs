@@ -12,7 +12,7 @@ use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 use crate::{
     AnalysisCtx, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, OperandExt,
     if_arithmetic_eq_neq, single_result_assign, bumpvec_with_capacity, FunctionFinder,
-    ControlExt, is_stack_address,
+    ControlExt, is_stack_address, is_global
 };
 use crate::add_terms::collect_arith_add_terms;
 use crate::call_tracker::CallTracker;
@@ -3465,20 +3465,6 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnaly
                 }
             }
         }
-    }
-}
-
-/// Return true if all parts of operand are constants/arith
-fn is_global(op: Operand<'_>) -> bool {
-    if op.if_constant().is_some() {
-        true
-    } else if let OperandType::Arithmetic(arith) = op.ty() {
-        // Nicer for tail calls to check right first as it doesn't recurse in operand chains
-        is_global(arith.right) && is_global(arith.left)
-    } else if let OperandType::Memory(ref mem) = op.ty() {
-        is_global(mem.address)
-    } else {
-        false
     }
 }
 

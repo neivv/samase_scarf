@@ -6239,6 +6239,21 @@ fn bumpvec_with_capacity<T>(cap: usize, bump: &Bump) -> BumpVec<'_, T> {
     vec
 }
 
+/// Return true if all parts of operand are constants/arith
+fn is_global(op: Operand<'_>) -> bool {
+    use scarf::OperandType;
+    if op.if_constant().is_some() {
+        true
+    } else if let OperandType::Arithmetic(arith) = op.ty() {
+        // Nicer for tail calls to check right first as it doesn't recurse in operand chains
+        is_global(arith.right) && is_global(arith.left)
+    } else if let OperandType::Memory(ref mem) = op.ty() {
+        is_global(mem.address)
+    } else {
+        false
+    }
+}
+
 fn is_stack_address(addr: Operand<'_>) -> bool {
     if let Some((l, r)) = addr.if_arithmetic_sub() {
         r.if_constant().is_some() && l.if_register().map(|x| x.0) == Some(4)

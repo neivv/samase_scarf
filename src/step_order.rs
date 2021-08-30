@@ -7,7 +7,7 @@ use scarf::operand::OperandCtx;
 
 use crate::{
     AnalysisCtx, OptionExt, entry_of_until, single_result_assign, EntryOf, ArgCache,
-    bumpvec_with_capacity, FunctionFinder, OperandExt, ControlExt,
+    bumpvec_with_capacity, FunctionFinder, OperandExt, ControlExt, is_global,
 };
 use crate::struct_layouts;
 
@@ -711,6 +711,7 @@ pub(crate) fn do_attack<'e, E: ExecutionState<'e>>(
         last_bullet_spawner: None,
         arg_cache,
         inlining: false,
+        entry_esp: ctx.register(4),
     };
     analysis.analyze(&mut analyzer);
     Some(DoAttack {
@@ -726,6 +727,7 @@ struct FindDoAttack<'a, 'e, E: ExecutionState<'e>> {
     last_bullet_spawner: Option<Operand<'e>>,
     arg_cache: &'a ArgCache<'e, E>,
     inlining: bool,
+    entry_esp: Operand<'e>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e, E> {
@@ -737,6 +739,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
             () if self.last_bullet_spawner.is_none() => 1,
             () => 2,
         };
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
                 if self.inlining {
@@ -744,18 +747,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
                     return;
                 }
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let ctx = ctrl.ctx();
                     let dest = E::VirtualAddress::from_u64(dest);
                     if step == 0 {
                         // Step 0: Check for do_attack(this, 0x5)
-                        let ok = Some(())
-                            .filter(|_| ctrl.resolve(ctx.register(1)) == ctx.register(1))
-                            .and_then(|_| {
-                                ctrl.resolve(self.arg_cache.on_thiscall_call(0)).if_constant()
-                            })
-                            .filter(|&c| c == 5)
-                            .is_some();
-                        if ok {
+                        if self.is_do_attack_call(ctrl) {
                             self.do_attack = Some(dest);
                             ctrl.analyze_with_current_state(self, dest);
                             if self.do_attack_main.is_some() {
@@ -794,20 +789,54 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
                 if mem.size == E::WORD_SIZE {
                     let dest = ctrl.resolve(mem.address);
                     let val = ctrl.resolve(val);
-                    if val.if_constant() == Some(0) && dest.if_constant().is_some() {
+                    if val == ctx.const_0() && is_global(dest) {
                         let ctx = ctrl.ctx();
                         self.last_bullet_spawner =
                             Some(ctx.mem_variable_rc(mem.size, mem.address));
                     }
                 }
             }
-            Operation::Jump { .. } => {
+            Operation::Jump { condition, to } => {
                 if self.inlining {
                     ctrl.end_analysis();
                     return;
                 }
+                if step == 0 {
+                    if condition == ctx.const_1() {
+                        // Step 0 check can also be a tail call
+                        if ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                            if let Some(to) = ctrl.resolve_va(to) {
+                                if self.is_do_attack_call(ctrl) {
+                                    self.do_attack = Some(to);
+                                    ctrl.analyze_with_current_state(self, to);
+                                    if self.do_attack_main.is_some() {
+                                        ctrl.end_analysis();
+                                    } else {
+                                        self.do_attack = None;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             _ => (),
         }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> FindDoAttack<'a, 'e, E> {
+    fn is_do_attack_call(&self, ctrl: &mut Control<'e, '_, '_, Self>) -> bool {
+        let ctx = ctrl.ctx();
+        Some(())
+            .filter(|_| ctrl.resolve(ctx.register(1)) == ctx.register(1))
+            .map(|_| {
+                ctx.and_const(
+                    ctrl.resolve(self.arg_cache.on_thiscall_call(0)),
+                    0xff,
+                )
+            })
+            .filter(|&c| c.if_constant() == Some(5))
+            .is_some()
     }
 }
