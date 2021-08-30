@@ -10,6 +10,7 @@ use crate::{
     single_result_assign, OptionExt, if_arithmetic_eq_neq, FunctionFinder,
 };
 use crate::hash_map::HashMap;
+use crate::struct_layouts;
 use crate::vtables::Vtables;
 
 pub enum ResultOrEntries<'acx, T, Va: VirtualAddress> {
@@ -378,11 +379,13 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
                         let val = ctrl.resolve(val);
                         let result = Self::check_move(val);
                         if let Some((screen_coord, scale, struct_offset)) = result {
-                            if struct_offset == 0x12 {
-                                self.result.screen_x = Some(screen_coord.clone());
-                                self.result.scale = Some(scale.clone());
+                            if struct_offset ==
+                                struct_layouts::event_mouse_xy::<E::VirtualAddress>() as u32
+                            {
+                                self.result.screen_x = Some(screen_coord);
+                                self.result.scale = Some(scale);
                             } else {
-                                self.result.screen_y = Some(screen_coord.clone());
+                                self.result.screen_y = Some(screen_coord);
                             }
                             if self.result.screen_x.is_some() && self.result.screen_y.is_some() {
                                 ctrl.end_analysis();
