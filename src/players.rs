@@ -204,20 +204,13 @@ struct FindNetPlayerArr<'acx, 'e, E: ExecutionState<'e>> {
     binary: &'e BinaryFile<E::VirtualAddress>,
     delay_eax_move: Option<Operand<'e>>,
     bump: &'acx bumpalo::Bump,
+    arg_cache: &'acx ArgCache<'e, E>,
 }
 
 impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'acx, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        fn is_arg1(operand: Operand<'_>) -> bool {
-            operand.if_memory()
-                .and_then(|x| x.address.if_arithmetic_add())
-                .and_either_other(|x| x.if_constant().filter(|&c| c == 4))
-                .and_then(|x| x.if_register())
-                .filter(|x| x.0 == 4)
-                .is_some()
-        }
         fn base_mul<'e>(operand: Operand<'e>) -> Option<(Operand<'e>, u64, Operand<'e>)> {
             operand
                 .if_arithmetic_add()
@@ -234,6 +227,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
             let eax = DestOperand::Register64(Register(0));
             exec_state.move_resolved(&eax, value);
         }
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
                 if crate::seems_assertion_call(ctrl, self.binary) {
@@ -241,17 +235,16 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
                 }
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
-                    let ctx = ctrl.ctx();
                     let mut analyzer = CollectReturnValues::<E>::new(self.bump);
                     ctrl.analyze_with_current_state(&mut analyzer, dest);
                     if !analyzer.return_values.is_empty() {
                         if let Some((base, mul, other)) = base_mul(analyzer.return_values[0]) {
-                            let mut arg1_seen = is_arg1(other);
+                            let mut arg1_seen = other == self.arg_cache.on_entry(0);
                             let mut base = base;
                             let all_match = (&analyzer.return_values[1..]).iter().all(|&other| {
                                 match base_mul(other) {
                                     Some(o) => {
-                                        if is_arg1(o.2) {
+                                        if o.2 == self.arg_cache.on_entry(0) {
                                             arg1_seen = true;
                                             base = o.0;
                                         }
@@ -263,12 +256,9 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
                             if all_match && arg1_seen {
                                 self.delay_eax_move = Some(ctx.add(
                                     base,
-                                    ctx.mul(
-                                        ctx.constant(mul),
-                                        ctx.mem32(ctx.add(
-                                            ctx.register(4),
-                                            ctx.const_4(),
-                                        )),
+                                    ctx.mul_const(
+                                        self.arg_cache.on_entry(0),
+                                        mul,
                                     ),
                                 ));
                             }
@@ -282,21 +272,14 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
                     if mem.size == MemAccessSize::Mem16 {
                         let addr = ctrl.resolve(mem.address);
                         let val = ctrl.resolve(val);
-                        let is_arg4 = val.if_memory()
-                            .and_then(|x| x.address.if_arithmetic_add())
-                            .and_either_other(|x| x.if_constant().filter(|&c| c == 0x10))
-                            .and_then(|x| x.if_register())
-                            .filter(|x| x.0 == 4)
-                            .is_some();
-                        if is_arg4 {
+                        if Operand::and_masked(val).0 == self.arg_cache.on_entry(3) {
                             if let Some((base, size, rest)) = base_mul(addr) {
-                                if is_arg1(rest) {
-                                    let ctx = ctrl.ctx();
-                                    let base = ctx.sub(
-                                        base,
-                                        ctx.constant(6),
-                                    );
+                                if Operand::and_masked(rest.unwrap_sext()).0 ==
+                                    self.arg_cache.on_entry(0)
+                                {
+                                    let base = ctx.sub_const(base, 6);
                                     self.result = Some((base, size as usize));
+                                    ctrl.end_analysis();
                                 }
                             }
                         }
@@ -335,23 +318,24 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CollectReturnValue
 }
 
 pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'e, E>,
+    actx: &AnalysisCtx<'e, E>,
     lobby_cmd_switch: &CompleteSwitch<'e>,
 ) -> NetPlayers<'e, E::VirtualAddress> {
     let mut result = NetPlayers {
         net_players: None,
         init_net_player: None,
     };
-    let cmd_3f = match lobby_cmd_switch.branch(analysis.binary, 0x3f) {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let bump = &actx.bump;
+
+    let cmd_3f = match lobby_cmd_switch.branch(binary, 0x3f) {
         Some(s) => s,
         None => return result,
     };
-    let binary = analysis.binary;
-    let ctx = analysis.ctx;
-    let bump = &analysis.bump;
     let mut analyzer = FindInitNetPlayer {
         result: None,
-        arg_cache: &analysis.arg_cache,
+        arg_cache: &actx.arg_cache,
         in_child_func: false,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, cmd_3f);
@@ -363,6 +347,7 @@ pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
             binary,
             delay_eax_move: None,
             bump,
+            arg_cache: &actx.arg_cache,
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, init_net_player);
         analysis.analyze(&mut analyzer);
