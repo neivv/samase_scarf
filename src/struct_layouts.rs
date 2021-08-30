@@ -198,6 +198,13 @@ pub fn order_id<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn event_type<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x10,
+        false => 0x18,
+    }
+}
+
 pub fn event_mouse_xy<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x12,
@@ -209,5 +216,19 @@ pub fn glyph_set_size<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xa0,
         false => 0xc8,
+    }
+}
+
+pub fn graphic_layer_draw_func<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x10,
+        false => 0x18,
+    }
+}
+
+pub fn graphic_layer_size<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x14,
+        false => 0x20,
     }
 }

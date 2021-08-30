@@ -10,7 +10,7 @@ use scarf::{BinaryFile, DestOperand, Operation, Operand, OperandCtx};
 
 use crate::{
     AnalysisCtx, ArgCache, ControlExt, EntryOf, OperandExt, OptionExt, single_result_assign,
-    StringRefs, FunctionFinder, bumpvec_with_capacity, if_arithmetic_eq_neq,
+    StringRefs, FunctionFinder, bumpvec_with_capacity, if_arithmetic_eq_neq, is_global,
 };
 use crate::struct_layouts;
 
@@ -472,17 +472,25 @@ impl<'e, E: ExecutionState<'e>> FindTooltipCtrlState<'e, E> {
             Some(s) => s,
             None => return,
         };
-        let one_offset_10 = ctx.add_const(one, 0x10);
-        let (draw_tooltip_layer, other) = if one_offset_10 == func1.0 {
+        // Assuming that 1 gets stored to graphic_layers[1].should_draw (Offset 0 in struct),
+        // and one of the two func ptrs is graphic_layers[1].draw_func
+        let expected_draw_func = ctx.add_const(
+            one,
+            struct_layouts::graphic_layer_draw_func::<E::VirtualAddress>(),
+        );
+        let (draw_tooltip_layer, other) = if expected_draw_func == func1.0 {
             (func1.1, func2)
-        } else if one_offset_10 == func2.0 {
+        } else if expected_draw_func == func2.0 {
             (func2.1, func1)
         } else {
             return;
         };
         result.tooltip_draw_func = Some(E::operand_mem_word(ctx, other.0));
         result.draw_f10_menu_tooltip = Some(other.1);
-        result.graphic_layers = Some(ctx.sub_const(one, 0x14));
+        result.graphic_layers = Some(ctx.sub_const(
+            one,
+            struct_layouts::graphic_layer_size::<E::VirtualAddress>(),
+        ));
         result.current_tooltip_ctrl = Some(tooltip_ctrl);
         result.draw_tooltip_layer = Some(draw_tooltip_layer);
     }
@@ -533,9 +541,7 @@ impl<'a, 'e, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'e, E> {
             Operation::Call(dest) => {
                 let dest = ctrl.resolve(dest);
                 if dest.if_constant() == Some(self.spawn_dialog.as_u64()) {
-                    let event_handler = ctrl.resolve(self.arg_cache.on_call(2));
-                    if let Some(c) = event_handler.if_constant() {
-                        let addr = E::VirtualAddress::from_u64(c);
+                    if let Some(addr) = ctrl.resolve_va(self.arg_cache.on_call(2)) {
                         *ctrl.user_state() = TooltipState::FindTooltipCtrl(FindTooltipCtrlState {
                             tooltip_ctrl: None,
                             one: None,
@@ -554,9 +560,10 @@ impl<'a, 'e, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'e, E> {
                             &DestOperand::from_oper(self.arg_cache.on_call(0)),
                             ctx.custom(1),
                         );
+                        let type_offset = struct_layouts::event_type::<E::VirtualAddress>();
                         exec_state.move_to(
                             &DestOperand::Memory(MemAccess {
-                                address: ctx.add_const(ctx.custom(0), 0x10),
+                                address: ctx.add_const(ctx.custom(0), type_offset),
                                 size: MemAccessSize::Mem16,
                             }),
                             ctx.constant(0x3),
@@ -584,8 +591,7 @@ impl<'a, 'e, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'e, E> {
                     }
                 }
 
-                let dest = ctrl.resolve(dest);
-                if let Some(dest) = dest.if_constant().map(E::VirtualAddress::from_u64) {
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     let old_inline = self.inline_depth;
                     self.inline_depth += 1;
                     ctrl.analyze_with_current_state(self, dest);
@@ -597,23 +603,22 @@ impl<'a, 'e, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'e, E> {
             }
             Operation::Move(DestOperand::Memory(mem), value, None) => {
                 let addr = ctrl.resolve(mem.address);
-                if addr.contains_undefined() {
+                if !is_global(addr) {
                     return;
                 }
                 let value = ctrl.resolve(value);
                 let ctx = ctrl.ctx();
-                let bits = mem.size.bits();
                 if let TooltipState::FindTooltipCtrl(ref mut state) = ctrl.user_state() {
                     if value.is_undefined() {
-                        if bits == E::VirtualAddress::SIZE * 8 {
+                        if mem.size == E::WORD_SIZE {
                             state.tooltip_ctrl = Some(E::operand_mem_word(ctx, addr));
                         }
                     } else {
                         if let Some(c) = value.if_constant() {
-                            if c == 1 && bits == 8 {
+                            if c == 1 && mem.size == MemAccessSize::Mem8 {
                                 state.one = Some(addr);
                             }
-                            if bits == E::VirtualAddress::SIZE * 8 {
+                            if mem.size == E::WORD_SIZE {
                                 if c > 0x1000 {
                                     let dest = E::VirtualAddress::from_u64(c);
                                     if state.func1.is_none() {
@@ -650,8 +655,10 @@ impl<'a, 'e, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'e, E> {
                         if i == 2 {
                             true
                         } else {
-                            match ctrl.resolve(self.arg_cache.on_call(i)).if_constant() {
-                                Some(s) if s < 4 => s as u8 == vals[i as usize],
+                            let ctx = ctrl.ctx();
+                            let arg = ctrl.resolve(self.arg_cache.on_call(i));
+                            match ctx.and_const(arg, 0xff).if_constant() {
+                                Some(s) => s as u8 == vals[i as usize],
                                 _ => false,
                             }
                         }
