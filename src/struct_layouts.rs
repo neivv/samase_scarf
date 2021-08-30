@@ -12,6 +12,13 @@ pub fn sprite_first_overlay<Va: VirtualAddress>(sprite_size: u32) -> Option<u32>
     }
 }
 
+pub fn sprite_visibility_mask<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xc,
+        false => 0x14,
+    }
+}
+
 pub fn unit_sprite<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xc,
@@ -86,6 +93,13 @@ pub fn unit_current_upgrade<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xc9,
         false => 0x115,
+    }
+}
+
+pub fn unit_flags<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xdc,
+        false => 0x140,
     }
 }
 

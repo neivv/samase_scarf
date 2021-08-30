@@ -6,6 +6,7 @@ use crate::{
     AnalysisCtx, ArgCache, ControlExt, EntryOf, entry_of_until, if_arithmetic_eq_neq, OperandExt,
     OptionExt, Patch, bumpvec_with_capacity, FunctionFinder,
 };
+use crate::struct_layouts;
 
 pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
@@ -253,9 +254,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayVisionsAnalyze
     type State = ReplayVisionsState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        fn is_unit_flags_access(val: Operand<'_>) -> bool {
+        fn is_unit_flags_access<Va: VirtualAddress>(val: Operand<'_>) -> bool {
             val.if_mem32()
-                .and_then(|x| x.if_arithmetic_add_const(0xdc))
+                .and_then(|x| {
+                    x.if_arithmetic_add_const(struct_layouts::unit_flags::<Va>())
+                })
                 .is_some()
         }
 
@@ -263,7 +266,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayVisionsAnalyze
         if let Operation::Move(ref dest, val, None) = *op {
             // If reading unit flags, set cloak state to 0
             // Prevents a branch from making unit.sprite.visibility_mask undefined
-            if is_unit_flags_access(val) {
+            if is_unit_flags_access::<E::VirtualAddress>(val) {
                 ctrl.exec_state().move_to(dest, ctx.and_const(val, !0x300));
                 ctrl.skip_operation();
                 return;
@@ -296,20 +299,35 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayVisionsAnalyze
                 // Another way that cloak state may be checked
                 let left = ctrl.resolve(arith.left);
                 let right = ctrl.resolve(arith.right);
-                if is_unit_flags_access(left) {
+                if is_unit_flags_access::<E::VirtualAddress>(left) {
                     ctrl.exec_state()
                         .update(&Operation::SetFlags(scarf::FlagUpdate {
                             left: ctx.and_const(arith.left, !0x300),
                             ..arith
                         }));
                     ctrl.skip_operation();
-                } else if is_unit_flags_access(right) {
+                } else if is_unit_flags_access::<E::VirtualAddress>(right) {
                     ctrl.exec_state()
                         .update(&Operation::SetFlags(scarf::FlagUpdate {
                             right: ctx.and_const(arith.right, !0x300),
                             ..arith
                         }));
                     ctrl.skip_operation();
+                }
+            }
+        }
+        if let Operation::Jump { condition, to } = *op {
+            // Always assume that Custom(0) (player id) < c
+            // For first_player_unit bounds check
+            let condition = ctrl.resolve(condition);
+            let make_uncond = condition.if_arithmetic_gt()
+                .filter(|x| x.0.if_constant() == Some(0xc))
+                .filter(|x| Operand::and_masked(x.1).0.if_custom() == Some(0))
+                .is_some();
+            if make_uncond {
+                ctrl.end_branch();
+                if let Some(to) = ctrl.resolve_va(to) {
+                    ctrl.add_branch_with_current_state(to);
                 }
             }
         }
@@ -340,7 +358,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayVisionsAnalyze
                         .map(|x| ctx.and_const(ctx.add_const(x.1, 0x8000_0000), 0xffff_ffff));
                     if let Some(cmp) = player_cmp {
                         let exec = ctrl.exec_state();
-                        for i in 0..8 {
+                        let register_count = if E::VirtualAddress::SIZE == 4 { 8 } else { 16 };
+                        for i in 0..register_count {
                             if ctx.and_const(exec.resolve(ctx.register(i)), 0xffff_ffff) == cmp {
                                 let dest = DestOperand::Register64(scarf::operand::Register(i));
                                 exec.move_to(&dest, ctx.custom(0));
@@ -348,21 +367,26 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayVisionsAnalyze
                         }
                     }
                 }
-                // The main check: first_active_unit[0].sprite.visibility_mask & replay_visions
+                // The main check: first_player_unit[0].sprite.visibility_mask & replay_visions
                 let result = if_arithmetic_eq_neq(condition)
-                    .map(|x| (x.0, x.1))
-                    .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                    .and_then(|x| x.if_arithmetic_and())
+                    .filter(|x| x.1 == ctx.const_0())
+                    .and_then(|x| x.0.if_arithmetic_and())
                     .and_either(|x| {
+                        let sprite_visibility_mask =
+                            struct_layouts::sprite_visibility_mask::<E::VirtualAddress>();
+                        let unit_sprite =
+                            struct_layouts::unit_sprite::<E::VirtualAddress>();
                         let sprite = x.if_mem8()?
-                            .if_arithmetic_add_const(0xc)?;
+                            .if_arithmetic_add_const(sprite_visibility_mask)?;
                         let unit = ctrl.if_mem_word(sprite)?
-                            .if_arithmetic_add_const(0xc)?;
+                            .if_arithmetic_add_const(unit_sprite)?;
                         ctrl.if_mem_word(unit)
                             .and_then(|x| x.if_arithmetic_add())
                             .and_either_other(|x| {
                                 x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
-                                    .and_then(|x| x.if_custom().filter(|&c| c == 0))
+                                    .and_then(|x| {
+                                        Operand::and_masked(x).0.if_custom().filter(|&c| c == 0)
+                                    })
                             })
                     });
                 if let Some((first_player_unit, replay_visions)) = result {
@@ -377,8 +401,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayVisionsAnalyze
                 if user_state.visibility_mask_comparision != 0 {
                     user_state.visibility_mask_comparision -= 1;
                     let result = if_arithmetic_eq_neq(condition)
-                        .map(|x| (x.0, x.1))
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
+                        .filter(|x| x.1 == ctx.const_0())
+                        .map(|x| x.0)
                         .filter(|x| x.if_memory().is_some());
                     if let Some(replay_show_entire_map) = result  {
                         self.result.replay_show_entire_map = Some(replay_show_entire_map);
@@ -392,7 +416,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayVisionsAnalyze
                     // Check for draw_active_units call
                     if !self.inlining_draw_active_units {
                         let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        if arg1.if_custom() == Some(0) {
+                        if Operand::and_masked(arg1).0.if_custom() == Some(0) {
                             self.inlining_draw_active_units = true;
                             ctrl.inline(self, dest);
                             self.inlining_draw_active_units = false;
