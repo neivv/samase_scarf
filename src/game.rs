@@ -11,6 +11,7 @@ use crate::{
     bumpvec_with_capacity, is_stack_address,
 };
 use crate::call_tracker::CallTracker;
+use crate::struct_layouts;
 
 #[derive(Clone)]
 pub struct Limits<'e, Va: VirtualAddress> {
@@ -1206,9 +1207,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         self.inline_limit -= 1;
                     }
                     let condition = ctrl.resolve(condition);
+                    let offset = struct_layouts::unit_invisibility_effects::<E::VirtualAddress>();
                     let result = if_arithmetic_eq_neq(condition)
                         .filter(|x| x.1 == ctx.const_0())
-                        .and_then(|x| x.0.if_mem8()?.if_arithmetic_add_const(0x96));
+                        .and_then(|x| x.0.if_mem8()?.if_arithmetic_add_const(offset));
                     if let Some(result) = result {
                         self.result.first_invisible_unit = Some(result);
                         if self.invisible_unit_inline_depth != 0 || self.inline_depth != 0 {
