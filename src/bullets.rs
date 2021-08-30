@@ -1,12 +1,13 @@
 use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashMap;
 
-use scarf::{MemAccessSize, Operand, Operation, DestOperand};
+use scarf::{Operand, Operation, DestOperand};
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{AnalysisCtx, ArgCache, OptionExt, bumpvec_with_capacity};
+use crate::{AnalysisCtx, ArgCache, ControlExt, OperandExt, OptionExt, bumpvec_with_capacity};
 use crate::switch;
+use crate::struct_layouts;
 
 pub struct BulletCreation<'e, Va: VirtualAddress> {
     pub first_active_bullet: Option<Operand<'e>>,
@@ -39,15 +40,15 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a,
     type State = FindCreateBulletState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(to) => {
                 if !self.is_inlining {
-                    if let Some(dest) = ctrl.resolve(to).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    if let Some(dest) = ctrl.resolve_va(to) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                         if arg1.if_mem8().is_some() {
                             self.is_inlining = true;
-                            let ecx = ctrl.resolve(ctrl.ctx().register_ref(1));
+                            let ecx = ctrl.resolve(ctx.register(1));
                             self.active_iscript_unit = Some(ecx);
                             ctrl.user_state().calls_seen = 0;
                             self.calls_seen = 0;
@@ -72,20 +73,23 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a,
                 }
                 let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
                 let is_player = arg4.if_mem8()
-                    .and_then(|x| x.if_arithmetic_add())
-                    .and_either_other(|x| x.if_constant().filter(|&c| c == 0x4c))
+                    .and_then(|x| {
+                        x.if_arithmetic_add_const(
+                            struct_layouts::unit_player::<E::VirtualAddress>()
+                        )
+                    })
                     .map(|x| x == unit)
                     .unwrap_or(false);
                 if !is_player {
                     return;
                 }
-                if let Some(dest) = ctrl.resolve(to).if_constant() {
+                if let Some(dest) = ctrl.resolve_va(to) {
                     if let Some(s) = self.result {
-                        if s.as_u64() != dest {
+                        if s != dest {
                             return;
                         }
                     }
-                    self.result = Some(E::VirtualAddress::from_u64(dest));
+                    self.result = Some(dest);
                     self.active_iscript_unit = Some(unit);
                     let new_calls_seen = ctrl.user_state().calls_seen + 1;
                     if new_calls_seen > self.calls_seen {
@@ -96,8 +100,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a,
             }
             Operation::Jump { condition, to } => {
                 let condition = ctrl.resolve(condition);
-                if condition.if_constant().unwrap_or(0) != 0 {
-                    if to.if_memory().is_some() {
+                if condition == ctx.const_1() {
+                    if to.if_constant().is_none() {
                         // Reached switch jump?
                         ctrl.end_branch();
                     }
@@ -142,7 +146,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
                 }
             }
             Operation::Move(DestOperand::Memory(ref mem), value, None) => {
-                if mem.size != MemAccessSize::Mem32 {
+                if mem.size != E::WORD_SIZE {
                     return;
                 }
                 let dest_addr = ctrl.resolve(mem.address);
@@ -163,7 +167,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
                 }
                 // last_free_bullet = (*first_free_bullet).prev
                 // But not (*(*first_free_bullet).next).prev = (*first_free_bullet).prev
-                if let Some(inner) = value.if_mem32().and_then(|x| x.if_mem32()) {
+                if let Some(inner) = ctrl.if_mem_word(value).and_then(|x| ctrl.if_mem_word(x)) {
                     if dest_addr.iter().all(|x| x != inner) {
                         if self.is_unpaired_first_ptr(inner) {
                             self.last_free = Some(dest_value);
@@ -192,8 +196,8 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
             }
             Operation::Jump { condition, to } => {
                 let condition = ctrl.resolve(condition);
-                let dest_addr = match ctrl.resolve(to).if_constant() {
-                    Some(s) => E::VirtualAddress::from_u64(s),
+                let dest_addr = match ctrl.resolve_va(to) {
+                    Some(s) => s,
                     None => return,
                 };
                 fn if_arithmetic_eq_zero<'e>(op: Operand<'e>) -> Option<Operand<'e>> {
