@@ -936,7 +936,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                     }
                 } else if let Some(switch) = CompleteSwitch::new(to, ctrl.exec_state()) {
                     let ok = Some(()).and_then(|()| {
-                        let index = switch.index_operand::<E::VirtualAddress>()?;
+                        let index = switch.index_operand()?;
                         let first_ai_script = index.if_mem8()?
                             .if_arithmetic_add()
                             .and_either(|x| {

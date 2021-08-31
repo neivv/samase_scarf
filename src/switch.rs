@@ -104,7 +104,7 @@ impl<'e> CompleteSwitch<'e> {
         Some(self.table.if_arithmetic_add()?.1)
     }
 
-    pub fn index_operand<Va: VirtualAddress>(&self) -> Option<Operand<'e>> {
+    pub fn index_operand(&self) -> Option<Operand<'e>> {
         let (l, _) = self.table.if_arithmetic_add()?;
         let index = l.if_arithmetic_mul_const((self.size.bits() / 8) as u64)?;
         let index = index.if_memory()

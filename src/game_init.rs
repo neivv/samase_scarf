@@ -351,7 +351,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
                         if *ctrl.user_state() == ScMainAnalyzerState::SearchingGameLoop {
                             let switch = CompleteSwitch::new(to, ctrl.exec_state());
                             if let Some(switch) = switch {
-                                if let Some(index) = switch.index_operand::<E::VirtualAddress>() {
+                                if let Some(index) = switch.index_operand() {
                                     self.result.scmain_state = Some(index);
                                 }
                                 for case_n in 3..5 {
@@ -3655,7 +3655,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
                         if to.if_constant().is_none() {
                             let exec_state = ctrl.exec_state();
                             if let Some(switch) = CompleteSwitch::new(to, exec_state) {
-                                if let Some(idx) = switch.index_operand::<E::VirtualAddress>() {
+                                if let Some(idx) = switch.index_operand() {
                                     if let Some(vtable_offset) = idx.if_custom() {
                                         self.result.bnet_message_switch = Some(switch);
                                         self.result.message_vtable_type = vtable_offset as u16;
@@ -3834,8 +3834,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, '
         if let Operation::Call(dest) = *op {
             let dest = ctrl.resolve(dest);
             if let Some(addr) = ctrl.if_mem_word(dest) {
-                if let Some(value) = self.extract_index_from_jump_call(addr) {
-                    let offset = ctx.sub(self.current_variant, value).if_constant()
+                if let Some(value) = self.extract_index_from_call(addr) {
+                    let offset = ctx.sub(value, self.current_variant).if_constant()
                         .or_else(|| {
                             (0..3).find_map(|i| {
                                 let arg = ctrl.resolve(self.arg_cache.on_call(i));
@@ -3879,13 +3879,26 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, '
                     }
                 }
                 let to = ctrl.resolve(to);
-                if let Some(addr) = ctrl.if_mem_word(to) {
-                    if let Some(value) = self.extract_index_from_jump_call(addr) {
-                        if let Some(c) = ctx.sub(value, self.current_variant).if_constant() {
-                            if let Ok(c) = u16::try_from(c) {
-                                self.result = Some(c);
-                                ctrl.end_analysis();
-                                return;
+                if to.if_constant().is_none() {
+                    if let Some(switch) = CompleteSwitch::new(to, ctrl.exec_state()) {
+                        if let Some(index) = switch.index_operand() {
+                            if let Some(value) = index.unwrap_sext().if_memory()
+                                .and_then(|mem| {
+                                    let (l, r) = mem.address.if_arithmetic_add()?;
+                                    l.if_custom()?;
+                                    r.if_constant()?;
+                                    Some(mem.address)
+                                })
+                            {
+                                if let Some(c) =
+                                    ctx.sub(value, self.current_variant).if_constant()
+                                {
+                                    if let Ok(c) = u16::try_from(c) {
+                                        self.result = Some(c);
+                                        ctrl.end_analysis();
+                                        return;
+                                    }
+                                }
                             }
                         }
                     }
@@ -3894,14 +3907,14 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, '
         }
     }
 
-    fn extract_index_from_jump_call(&self, op: Operand<'e>) -> Option<Operand<'e>> {
+    fn extract_index_from_call(&self, op: Operand<'e>) -> Option<Operand<'e>> {
         let mut ops = collect_arith_add_terms(op, self.bump)?;
         let op = ops.remove_get(|x, is_sub| {
             !is_sub && x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into()).is_some()
         })?;
         op.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
             .and_then(|x| {
-                let addr = x.if_memory().filter(|x| x.size == E::WORD_SIZE)?.address;
+                let addr = x.if_memory()?.address;
                 let (l, r) = addr.if_arithmetic_add()?;
                 r.if_constant()?;
                 l.if_custom()?;
