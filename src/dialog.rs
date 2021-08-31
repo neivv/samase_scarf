@@ -11,6 +11,7 @@ use scarf::{BinaryFile, DestOperand, Operation, Operand, OperandCtx};
 use crate::{
     AnalysisCtx, ArgCache, ControlExt, EntryOf, OperandExt, OptionExt, single_result_assign,
     StringRefs, FunctionFinder, bumpvec_with_capacity, if_arithmetic_eq_neq, is_global,
+    is_stack_address,
 };
 use crate::struct_layouts;
 
@@ -1248,23 +1249,15 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyz
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        fn is_stack(op: Operand<'_>) -> bool {
-            op.if_arithmetic_sub()
-                .filter(|x| x.1.if_constant().is_some())
-                .map(|x| Operand::and_masked(x.0).0)
-                .and_then(|x| x.if_register())
-                .filter(|x| x.0 == 4)
-                .is_some()
-        }
         match *op {
             Operation::Call(dest) => {
                 if self.inline_depth == 0 {
                     // Arg 3 and 4 should be referring to stack, arg 1 global mem
                     let result = Some(())
                         .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
-                        .filter(|&a3| is_stack(a3))
+                        .filter(|&a3| is_stack_address(a3))
                         .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
-                        .filter(|&a4| is_stack(a4))
+                        .filter(|&a4| is_stack_address(a4))
                         .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
                         .and_then(|a1| ctrl.if_mem_word(a1))
                         .filter(|&a1| a1.if_constant().is_some());
@@ -1417,12 +1410,13 @@ fn find_child_draw_func<'e, E: ExecutionState<'e>>(
         &DestOperand::from_oper(arg2_loc),
         event_address,
     );
+    let event_type = struct_layouts::event_type::<E::VirtualAddress>();
     exec_state.move_to(
-        &DestOperand::from_oper(ctx.mem16(ctx.add_const(event_address, 0x10))),
+        &DestOperand::from_oper(ctx.mem16(ctx.add_const(event_address, event_type))),
         ctx.constant(0xe),
     );
     exec_state.move_to(
-        &DestOperand::from_oper(ctx.mem32(ctx.add_const(event_address, 0x0))),
+        &DestOperand::from_oper(ctx.mem32(event_address)),
         ctx.constant(0x0),
     );
     let mut analysis = FuncAnalysis::custom_state(
@@ -1454,10 +1448,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindChildDrawFunc<'a
                 if let Some(val) = ctrl.resolve(val).if_constant() {
                     let addr = ctrl.resolve(mem.address);
                     // Older offset for draw func was 0x30, 0x48 is current
-                    let ok = addr.if_arithmetic_add_const(0x48)
-                        .or_else(|| addr.if_arithmetic_add_const(0x30))
-                        .filter(|&other| other == self.arg_cache.on_entry(0))
-                        .is_some();
+                    let ok = struct_layouts::control_draw_funcs::<E::VirtualAddress>()
+                        .iter()
+                        .any(|&offset| {
+                            addr.if_arithmetic_add_const(offset)
+                                .filter(|&other| other == self.arg_cache.on_entry(0))
+                                .is_some()
+                        });
                     if ok && val > 0x10000 {
                         self.result = Some(E::VirtualAddress::from_u64(val));
                         ctrl.end_analysis();

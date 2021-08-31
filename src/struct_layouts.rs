@@ -267,3 +267,10 @@ pub fn graphic_layer_size<Va: VirtualAddress>() -> u64 {
         false => 0x20,
     }
 }
+
+pub fn control_draw_funcs<Va: VirtualAddress>() -> &'static [u64] {
+    match Va::SIZE == 4 {
+        true => &[0x30, 0x48],
+        false => &[0x68],
+    }
+}
