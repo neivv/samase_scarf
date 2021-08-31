@@ -6128,13 +6128,7 @@ trait OperandExt<'e> {
 
 impl<'e> OperandExt<'e> for Operand<'e> {
     fn if_mem32_offset(self, offset: u64) -> Option<Operand<'e>> {
-        let (l, r) = self.if_mem32()?.if_arithmetic_add()?;
-        let r = r.if_constant()?;
-        if r != offset {
-            None
-        } else {
-            Some(l)
-        }
+        self.if_mem32()?.if_arithmetic_add_const(offset)
     }
 
     fn if_arithmetic_add_const(self, offset: u64) -> Option<Operand<'e>> {

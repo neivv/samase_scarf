@@ -163,6 +163,13 @@ pub fn ai_script_player<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn ai_script_center<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x24,
+        false => 0x2c,
+    }
+}
+
 pub fn ai_script_flags<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x30,

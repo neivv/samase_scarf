@@ -753,17 +753,20 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnal
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
+                let ctx = ctrl.ctx();
+                let player_off = struct_layouts::ai_script_player::<E::VirtualAddress>();
+                let pos_off = struct_layouts::ai_script_center::<E::VirtualAddress>();
                 let ok = Some(())
                     .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
-                    .and_then(|x| x.if_mem32_offset(0x10))
+                    .and_then(|x| x.if_mem32_offset(player_off))
                     .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
-                    .and_then(|x| x.if_mem32_offset(0x24))
+                    .and_then(|x| x.if_mem32_offset(pos_off))
                     .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
-                    .and_then(|x| x.if_mem32_offset(0x28))
+                    .and_then(|x| x.if_mem32_offset(pos_off + 4))
                     .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
-                    .filter(|x| x.if_constant() == Some(1))
+                    .filter(|&x| ctx.and_const(x, 0xffff_ffff) == ctx.const_1())
                     .map(|_| ctrl.resolve(self.arg_cache.on_call(4)))
-                    .filter(|x| x.if_constant() == Some(0))
+                    .filter(|&x| ctx.and_const(x, 0xffff_ffff) == ctx.const_0())
                     .is_some();
                 if ok {
                     self.result = ctrl.resolve(dest)
