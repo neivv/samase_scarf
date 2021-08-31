@@ -508,15 +508,12 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GuardAiAnalyzer<'e, E
             Operation::Move(_, val, _) => {
                 let val = ctrl.resolve(val);
                 let ctx = ctrl.ctx();
-                let result = val.if_mem32()
+                let result = ctrl.if_mem_word(val)
                     .and_then(|address| address.if_arithmetic_add())
-                    .and_either(|x| x.if_arithmetic_mul())
-                    .and_then(|((l, r), base)| {
-                        Some((l, r))
-                            .and_either(|x| x.if_constant().filter(|&c| c == 8))
-                            .map(|_| base)
+                    .and_either_other(|x| {
+                        x.if_arithmetic_mul_const(u64::from(2 * E::VirtualAddress::SIZE))
                     })
-                    .map(|val| ctx.sub(val, ctx.constant(4)));
+                    .map(|val| ctx.sub_const(val, E::VirtualAddress::SIZE.into()));
                 if let Some(result) = result {
                     self.result = EntryOf::Ok(result);
                     ctrl.end_analysis();
