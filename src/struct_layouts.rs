@@ -124,6 +124,13 @@ pub fn image_iscript<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn image_parent<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x3c,
+        false => 0x50,
+    }
+}
+
 pub fn if_unit_sprite<'e, Va: VirtualAddress>(op: Operand<'e>) -> Option<Operand<'e>> {
     let word_size = if Va::SIZE == 4 { MemAccessSize::Mem32 } else { MemAccessSize::Mem64 };
     op.if_memory()

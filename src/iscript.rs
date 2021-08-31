@@ -292,11 +292,11 @@ struct AddOverlayAnalyzer<'exec, 'b, Exec: ExecutionState<'exec>> {
     args: &'b ArgCache<'exec, Exec>,
 }
 
-impl<'e, 'b, Exec: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyzer<'e, 'b, Exec> {
+impl<'e, 'b, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyzer<'e, 'b, E> {
     type State = analysis::DefaultState;
-    type Exec = Exec;
+    type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        let word_size = <Exec::VirtualAddress as VirtualAddress>::SIZE;
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Jump { to, .. } => {
                 let to = ctrl.resolve(to);
@@ -309,30 +309,24 @@ impl<'e, 'b, Exec: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyze
             Operation::Call(to) => {
                 let to = ctrl.resolve(to);
                 if let Some(dest) = to.if_constant() {
-                    let arg5 = ctrl.resolve(self.args.on_call(4));
-                    let arg5_ok = arg5
-                        .if_constant()
-                        .filter(|&c| c == 1)
-                        .is_some();
+                    let arg5 = ctrl.resolve(self.args.on_thiscall_call(4));
+                    let arg5_ok = ctx.and_const(arg5, 0xffff_ffff) == ctx.const_1();
                     if !arg5_ok {
                         return;
                     }
-                    let arg2 = ctrl.resolve(self.args.on_call(1));
-                    // TODO not 64-bit since not sure about image->parent pointer
-                    let arg2_ok = if word_size == 4 {
-                        arg2
-                            .if_mem32()
-                            .and_then(|x| x.if_arithmetic_add())
-                            .and_either(|x| x.if_constant().filter(|&c| c == 0x3c))
-                            .is_some()
-                    } else {
-                        unimplemented!();
-                    };
+                    let arg2 = ctrl.resolve(self.args.on_thiscall_call(1));
+                    let arg2_ok = ctrl.if_mem_word(arg2)
+                        .and_then(|x| {
+                            x.if_arithmetic_add_const(
+                                struct_layouts::image_parent::<E::VirtualAddress>()
+                            )
+                        })
+                        .is_some();
                     if !arg2_ok {
                         return;
                     }
 
-                    let result = Some(Exec::VirtualAddress::from_u64(dest));
+                    let result = Some(E::VirtualAddress::from_u64(dest));
                     if single_result_assign(result, &mut self.result) {
                         ctrl.end_analysis();
                     }
