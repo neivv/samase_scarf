@@ -6,6 +6,7 @@ use crate::{
     AnalysisCtx, ArgCache, entry_of_until, EntryOf,
     single_result_assign, OperandExt, FunctionFinder,
 };
+use crate::switch::CompleteSwitch;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckUnitRequirements<'e, Va: VirtualAddress> {
@@ -198,7 +199,7 @@ pub(crate) fn cheat_flags<'e, E: ExecutionState<'e>>(
     let mut analyzer = CheatFlagsAnalyzer::<E> {
         result: None,
         switch_reached: false,
-        binary,
+        phantom: Default::default(),
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
@@ -207,7 +208,7 @@ pub(crate) fn cheat_flags<'e, E: ExecutionState<'e>>(
 struct CheatFlagsAnalyzer<'e, E: ExecutionState<'e>> {
     result: Option<Operand<'e>>,
     switch_reached: bool,
-    binary: &'e BinaryFile<E::VirtualAddress>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheatFlagsAnalyzer<'e, E> {
@@ -225,23 +226,20 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheatFlagsAnalyzer<'e
             }
             Operation::Jump { to, .. } => {
                 let to = ctrl.resolve(to);
-                if to.if_memory().is_some() {
-                    let ctx = ctrl.ctx();
-                    let new_to = ctx.transform(to, 8, |x| match x.if_mem16() {
-                        Some(_) => Some(ctx.constant(0xff0f)),
-                        None => None,
-                    });
-                    let binary = self.binary;
-                    let addr = new_to.if_constant()
-                        .map(|x| E::VirtualAddress::from_u64(x))
-                        .or_else(|| {
-                            let addr = new_to.if_memory()?.address.if_constant()?;
-                            Some(binary.read_address(E::VirtualAddress::from_u64(addr)).ok()?)
-                        });
-                    if let Some(addr) = addr {
-                        self.switch_reached = true;
-                        ctrl.analyze_with_current_state(self, addr);
-                        ctrl.end_analysis();
+                if to.if_constant().is_none() {
+                    if self.switch_reached {
+                        ctrl.end_branch();
+                        return;
+                    }
+                    let binary = ctrl.binary();
+                    if let Some(switch) = CompleteSwitch::new(to, ctrl.exec_state()) {
+                        if let Some(branch) = switch.branch(binary, 0xff0f) {
+                            ctrl.clear_unchecked_branches();
+                            ctrl.end_branch();
+                            ctrl.add_branch_with_current_state(branch);
+                            self.switch_reached = true;
+                            return;
+                        }
                     }
                 }
             }
