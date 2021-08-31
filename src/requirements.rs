@@ -76,22 +76,16 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitReqsAnalyzer<
         match *op {
             Operation::Move(_, val, None) if !self.offsets_read => {
                 let val = ctrl.resolve(val);
+                let ctx = ctrl.ctx();
                 let ok = val.if_mem16()
                     .and_then(|x| x.if_arithmetic_add_const(self.requirement_offsets.as_u64()))
                     .and_then(|x| x.if_arithmetic_mul_const(2))
-                    .and_then(|x| {
+                    .filter(|&x| {
                         let arg1 = self.arg_cache.on_entry(0);
-                        if x == arg1 {
-                            return Some(());
-                        }
-                        match x.if_memory()?.address == arg1.if_memory()?.address {
-                            true => Some(()),
-                            false => None,
-                        }
+                        ctx.and_const(x, 0xffff) == ctx.and_const(arg1, 0xffff)
                     })
                     .is_some();
                 if ok {
-                    let ctx = ctrl.ctx();
                     let exec_state = ctrl.exec_state();
                     exec_state.move_to(
                         &DestOperand::from_oper(val),
@@ -171,7 +165,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for DatReqsAnalyzer<'
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
-                    let arg5 = ctrl.resolve(self.arg_cache.on_call(4));
+                    let ctx = ctrl.ctx();
+                    let arg5 = ctx.and_const(
+                        ctrl.resolve(self.arg_cache.on_call(4)),
+                        0xffff_ffff,
+                    );
                     let ok = arg5.if_mem16()
                         .and_then(|x| {
                             x.if_arithmetic_add_const(self.requirement_offsets.as_u64())
