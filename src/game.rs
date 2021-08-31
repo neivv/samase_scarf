@@ -1256,7 +1256,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let condition = ctrl.resolve(condition);
                     let ok = condition.if_arithmetic_gt()
                         .and_either(|x| x.if_mem8())
-                        .and_then(|x| x.0.if_arithmetic_add_const(0x4d))
+                        .and_then(|x| {
+                            x.0.if_arithmetic_add_const(
+                                struct_layouts::unit_order::<E::VirtualAddress>(),
+                            )
+                        })
                         .filter(|&x| x == self.first_active_bullet)
                         .is_some();
                     if ok {
