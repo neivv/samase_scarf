@@ -6,7 +6,7 @@ use scarf::{DestOperand, Operand, BinaryFile, BinarySection, Operation};
 
 use crate::{
     AnalysisCtx, ArgCache, entry_of_until, EntryOf, OptionExt, OperandExt, single_result_assign,
-    bumpvec_with_capacity, FunctionFinder,
+    bumpvec_with_capacity, FunctionFinder, ControlExt,
 };
 use crate::struct_layouts;
 
@@ -434,7 +434,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TtfCacheCharacterAna
                         }
                     }
                 }
-                call_cdecl(ctrl);
+                ctrl.skip_call_preserve_esp();
             }
             _ => (),
         }
@@ -488,7 +488,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindTtfMalloc<'a, 'e
                     // Malloc is called with (a4 + right - left) * (a4 + bottom - top)
                     // (a4 is border width)
                     let arg4 = self.arg_cache.on_entry(3);
-                    let arg1_ok = arg1.if_arithmetic_mul()
+                    let arg1_ok = Operand::and_masked(arg1.unwrap_sext()).0
+                        .if_arithmetic_mul()
                         .filter(|(l, r)| {
                             l.iter_no_mem_addr().any(|op| op == arg4) &&
                                 r.iter_no_mem_addr().any(|op| op == arg4)
@@ -499,22 +500,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindTtfMalloc<'a, 'e
                         ctrl.end_analysis();
                     }
                 }
-                call_cdecl(ctrl);
+                ctrl.skip_call_preserve_esp();
             }
             _ => (),
         }
-    }
-}
-
-fn call_cdecl<'e, A: analysis::Analyzer<'e>>(ctrl: &mut Control<'e, '_, '_, A>) {
-    // Assume esp is left as is (cdecl)
-    ctrl.skip_operation();
-    let ctx = ctrl.ctx();
-    let exec_state = ctrl.exec_state();
-    for i in 0..2 {
-        exec_state.move_to(
-            &DestOperand::Register64(scarf::operand::Register(i)),
-            ctx.new_undef(),
-        );
     }
 }
