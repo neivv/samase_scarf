@@ -50,9 +50,10 @@ pub fn x86_64_globals<Va: VirtualAddress>(binary: &BinaryFile<Va>) -> Vec<RelocV
     // Magic section "!" for zero initialized part of .data, samase uses that to reduce
     // amount of data that has to be searched for static globals.
     let extra_data = binary.section(b"!\0\0\0\0\0\0\0");
-    let global_min = data.virtual_address.min(rdata.virtual_address);
+    let global_min = data.virtual_address.min(rdata.virtual_address).min(text.virtual_address);
     let mut global_max = (data.virtual_address + data.virtual_size)
-        .max(rdata.virtual_address + rdata.virtual_size);
+        .max(rdata.virtual_address + rdata.virtual_size)
+        .max(text.virtual_address + text.virtual_size);
     if let Some(extra) = extra_data {
         global_max = global_max.max(extra.virtual_address + extra.virtual_size);
     }

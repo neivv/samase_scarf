@@ -1,6 +1,6 @@
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, DestOperand, FlagArith, Operand, Operation};
+use scarf::{DestOperand, FlagArith, Operand, Operation};
 
 use crate::{
     AnalysisCtx, ArgCache, entry_of_until, EntryOf,

@@ -1565,7 +1565,8 @@ impl<'a, 'e, E: ExecutionState<'e>> ResetUiEventHandlersAnalyzer<'a, 'e, E> {
                     // (Though at least idx 1 gets set by a func that is called)
                     continue;
                 }
-                let val = match self.stores.get(&(base, offset.wrapping_add(4 * i))) {
+                let i_offset = offset.wrapping_add(u64::from(E::VirtualAddress::SIZE) * i);
+                let val = match self.stores.get(&(base, i_offset)) {
                     Some(&s) => s,
                     None => continue 'outer,
                 };
