@@ -11,6 +11,7 @@ use crate::{
     bumpvec_with_capacity, OperandExt, FunctionFinder,
 };
 use crate::switch::CompleteSwitch;
+use crate::struct_layouts;
 
 #[derive(Clone, Debug)]
 pub struct Selections<'e> {
@@ -159,9 +160,11 @@ pub(crate) fn send_command<'e, E: ExecutionState<'e>>(
 
     // Search for stim button action
     let stim_funcs = firegraft.buttonsets.iter().filter_map(|&buttons| {
-        binary.read_address(buttons + 4).ok()
+        binary.read_address(buttons + E::VirtualAddress::SIZE).ok()
     }).filter_map(|marine_buttons| {
-        binary.read_address(marine_buttons + 0x6c).ok()
+        let button_size = struct_layouts::button_size::<E::VirtualAddress>();
+        let action_offset = struct_layouts::button_action_func::<E::VirtualAddress>();
+        binary.read_address(marine_buttons + 5 * button_size + action_offset).ok()
     });
 
     let mut result = None;
@@ -197,7 +200,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'
                 if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
                     // Check if calling send_command(&[COMMAND_STIM], 1)
                     let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                    let arg1_inner = ctrl.resolve(ctrl.ctx().mem8(arg1));
+                    let arg1_inner = ctrl.read_memory(arg1, MemAccessSize::Mem8);
                     if arg1_inner.if_constant() == Some(0x36) {
                         let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
                         if arg2.if_constant() == Some(1) {

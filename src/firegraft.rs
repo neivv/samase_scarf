@@ -22,7 +22,7 @@ pub(crate) fn find_buttonsets<'e, E: ExecutionState<'e>>(
     let first = [BUTTONSET_BUTTON_COUNTS[0], 0, 0, 0];
     let mut result = find_bytes(bump, &data.data, &first[..]);
     result.retain(|&rva| {
-        let button_size = struct_layouts::button_size::<E::VirtualAddress>();
+        let button_size = struct_layouts::button_set_size::<E::VirtualAddress>();
         let linked_offset = struct_layouts::button_linked::<E::VirtualAddress>();
         for (index, &expected) in BUTTONSET_BUTTON_COUNTS.iter().enumerate() {
             let index = index as u32;
