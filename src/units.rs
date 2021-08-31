@@ -1685,9 +1685,30 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                         self.inline_limit = old_limit;
                     }
-                } else if let Operation::Jump { condition, .. } = *op {
+                } else if let Operation::Jump { condition, to } = *op {
                     let condition = ctrl.resolve(condition);
                     if is_bfix {
+                        // Skip past any arg1 == constant comparisions
+                        // to avoid early append_order for SCV build
+                        let skip = if_arithmetic_eq_neq(condition)
+                            .filter(|x| x.1.if_constant().is_some())
+                            .filter(|x| {
+                                x.0 == ctx.and_const(self.arg_cache.on_thiscall_entry(0), 0xff)
+                            })
+                            .map(|x| x.2);
+                        if let Some(jump_if_constant) = skip {
+                            // Go to the non-constant branch
+                            let to = match jump_if_constant {
+                                false => ctrl.resolve_va(to),
+                                true => Some(ctrl.current_instruction_end()),
+                            };
+                            ctrl.end_branch();
+                            if let Some(to) = to {
+                                ctrl.add_branch_with_current_state(to);
+                            }
+                            return;
+                        }
+
                         let result = if_arithmetic_eq_neq(condition)
                             .and_then(|(l, r, _)| {
                                 if r != ctx.const_0() {
@@ -1747,7 +1768,7 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
     /// for order allocation vars.
     fn seems_append_order(&self, ctrl: &mut Control<'e, '_, '_, Self>) -> bool {
         // append_order(this = this, a1, a2, a3, a4, 0),
-        // -- In 64bit it is append_order(this = this, a1, a2, a3, 0) (I think)
+        // -- In 64bit it is append_order(this = this, a1, local copy of a2 (pos+target), a3, 0)
         let ctx = ctrl.ctx();
         let arg_cache = self.arg_cache;
         if self.inline_depth != 0 {
@@ -1756,17 +1777,33 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
         if ctrl.resolve(ctx.register(1)) != ctx.register(1) {
             return false;
         }
-        if ctrl.resolve(arg_cache.on_thiscall_call(4)) != ctx.const_0() {
-            return false;
-        }
         if ctx.and_const(ctrl.resolve(arg_cache.on_thiscall_call(0)), 0xff) !=
             ctx.and_const(arg_cache.on_thiscall_entry(0), 0xff)
         {
             return false;
         }
-        (1..3).all(|i| {
-            ctrl.resolve(arg_cache.on_thiscall_call(i)) == arg_cache.on_thiscall_entry(i)
-        })
+        if E::VirtualAddress::SIZE == 4 {
+            if ctrl.resolve(arg_cache.on_thiscall_call(4)) != ctx.const_0() {
+                return false;
+            }
+            (1..3).all(|i| {
+                ctrl.resolve(arg_cache.on_thiscall_call(i)) == arg_cache.on_thiscall_entry(i)
+            })
+        } else {
+            if ctrl.resolve(arg_cache.on_thiscall_call(3)) != ctx.const_0() {
+                return false;
+            }
+            let arg2 = ctrl.resolve(arg_cache.on_thiscall_call(1));
+            let ok = ctrl.read_memory(arg2, MemAccessSize::Mem64) ==
+                ctx.mem64(arg_cache.on_thiscall_entry(1)) &&
+                ctrl.read_memory(ctx.add_const(arg2, 8), MemAccessSize::Mem64) ==
+                    ctx.mem64(ctx.add_const(arg_cache.on_thiscall_entry(1), 8));
+            if !ok {
+                return false;
+            }
+            ctx.and_const(ctrl.resolve(arg_cache.on_thiscall_call(2)), 0xffff) ==
+                ctx.and_const(arg_cache.on_thiscall_entry(2), 0xffff)
+        }
     }
 
     fn state_order_alloc(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
