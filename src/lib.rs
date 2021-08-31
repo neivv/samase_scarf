@@ -3784,7 +3784,8 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         if let Some(cached) = self.prism_shaders.cached() {
             return cached;
         }
-        let result = renderer::prism_shaders(actx, &self.renderer_vtables(actx));
+        let vtables = self.vtables(actx);
+        let result = renderer::prism_shaders(actx, &vtables);
         self.prism_shaders.cache(&result);
         result
     }
@@ -4174,7 +4175,8 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 
     fn vertex_buffer(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::VertexBuffer, |s| {
-            renderer::vertex_buffer(actx, &s.renderer_vtables(actx))
+            let vtables = s.vtables(actx);
+            renderer::vertex_buffer(actx, &vtables)
         })
     }
 

@@ -2,16 +2,17 @@ use std::rc::Rc;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, OperandType, Operation};
+use scarf::{BinaryFile, DestOperand, Operand, OperandType, Operation};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::analysis::{self, Control, FuncAnalysis};
 
-use crate::add_terms::collect_arith_add_terms;
-use crate::struct_layouts;
 use crate::{
     AnalysisCtx, ArgCache, EntryOf, entry_of_until, single_result_assign, OperandExt, ControlExt,
     FunctionFinder,
 };
+use crate::add_terms::collect_arith_add_terms;
+use crate::struct_layouts;
+use crate::vtables::Vtables;
 
 #[derive(Clone)]
 pub struct PrismShaders<Va: VirtualAddress> {
@@ -30,16 +31,14 @@ impl<Va: VirtualAddress> Default for PrismShaders<Va> {
 
 pub(crate) fn prism_shaders<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
-    renderer_vtables: &[E::VirtualAddress],
+    vtables: &Vtables<'e, E::VirtualAddress>,
 ) -> PrismShaders<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let compare = b".?AVPrismRenderer";
-    let prism_renderer_vtable = renderer_vtables.iter().copied().filter(|&vtable| {
-        vtable_class_name(binary, vtable)
-            .filter(|name| name.starts_with(compare))
-            .is_some()
-    }).next();
+    let prism_renderer_vtable = vtables.vtables_starting_with(compare)
+        .map(|x| x.address)
+        .next();
     let prism_renderer_vtable = match prism_renderer_vtable {
         Some(s) => s,
         None => return PrismShaders::default(),
@@ -96,7 +95,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindPrismShaders<'a,
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
                         let dest = E::VirtualAddress::from_u64(dest);
                         let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        if arg1 == self.arg_cache.on_entry(0) {
+                        if arg1 == self.arg_cache.on_thiscall_entry(0) {
                             self.inline_depth += 1;
                             ctrl.analyze_with_current_state(self, dest);
                             self.inline_depth -= 1;
@@ -141,18 +140,14 @@ impl<'a, 'e, E: ExecutionState<'e>> FindPrismShaders<'a, 'e, E> {
             return;
         }
         let mut result = Vec::new();
-        let word_size = match E::VirtualAddress::SIZE {
-            4 => MemAccessSize::Mem32,
-            _ => MemAccessSize::Mem64,
-        };
         for i in 0.. {
             let name_addr = ctrl.const_word_offset(addr, i * 2);
             let set_addr = ctrl.const_word_offset(addr, i * 2 + 1);
-            let name = match ctrl.read_memory(name_addr, word_size).if_constant() {
+            let name = match ctrl.read_memory(name_addr, E::WORD_SIZE).if_constant() {
                 Some(s) => s,
                 None => break,
             };
-            let set = match ctrl.read_memory(set_addr, word_size).if_constant() {
+            let set = match ctrl.read_memory(set_addr, E::WORD_SIZE).if_constant() {
                 Some(s) => s,
                 None => break,
             };
@@ -179,10 +174,6 @@ impl<'a, 'e, E: ExecutionState<'e>> FindPrismShaders<'a, 'e, E> {
     }
 
     fn check_pixel_shaders(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, value: Operand<'e>) {
-        let word_size = match E::VirtualAddress::SIZE {
-            4 => MemAccessSize::Mem32,
-            _ => MemAccessSize::Mem64,
-        };
         let addr = match ctrl.if_mem_word(value) {
             Some(s) => s,
             None => return,
@@ -193,12 +184,9 @@ impl<'a, 'e, E: ExecutionState<'e>> FindPrismShaders<'a, 'e, E> {
         };
         let ctx = ctrl.ctx();
         let ok = terms.remove_one(|term, neg| {
-            !neg && term.if_arithmetic_mul()
-                .filter(|(_, r)| {
-                    r.if_constant().filter(|&c| c == E::VirtualAddress::SIZE as u64).is_some()
-                })
-                .and_then(|(l, _)| ctrl.if_mem_word(l))
-                .filter(|&x| x == self.arg_cache.on_entry(0))
+            !neg && term.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
+                .and_then(|x| x.unwrap_sext().if_mem32())
+                .filter(|&x| x == self.arg_cache.on_thiscall_entry(0))
                 .is_some()
         });
         if ok {
@@ -206,7 +194,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FindPrismShaders<'a, 'e, E> {
             let mut result = Vec::with_capacity(0x30);
             for i in 0.. {
                 let addr = ctrl.const_word_offset(base, i);
-                let value = match ctrl.read_memory(addr, word_size).if_constant() {
+                let value = match ctrl.read_memory(addr, E::WORD_SIZE).if_constant() {
                     Some(s) => s,
                     None => break,
                 };
@@ -325,7 +313,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 
 
 pub(crate) fn vertex_buffer<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
-    vtables: &[E::VirtualAddress],
+    vtables: &Vtables<'e, E::VirtualAddress>,
 ) -> Option<Operand<'e>> {
     // Renderer_Draw (vtable + 0x1c) calls a function that uploads vertex
     // buffer (vtable + 0x28)
@@ -342,13 +330,11 @@ pub(crate) fn vertex_buffer<'e, E: ExecutionState<'e>>(
     let arg_cache = &analysis.arg_cache;
     let word_size = E::VirtualAddress::SIZE;
 
-    for &renderer in &[&b".?AVGLRenderer"[..], b".?AVPrismRenderer"] {
-        let vtable = vtables.iter().copied().filter(|&vtable| {
-            vtable_class_name(binary, vtable)
-                .filter(|name| name.starts_with(renderer))
-                .is_some()
-        }).next();
-        let draw = match vtable.and_then(|x| binary.read_address(x + 7 * word_size).ok()) {
+    for vtable in [&b".?AVGLRenderer"[..], b".?AVPrismRenderer"].iter()
+        .flat_map(|name| vtables.vtables_starting_with(name))
+        .map(|x| x.address)
+    {
+        let draw = match binary.read_address(vtable + 7 * word_size).ok() {
             Some(s) => s,
             None => continue,
         };
@@ -406,8 +392,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindVertexBuffer<'a,
                 let dest = ctrl.resolve(dest);
                 if let Some(dest) = dest.if_constant().map(|x| E::VirtualAddress::from_u64(x)) {
                     if self.inline_depth < 2 {
-                        // Check for first two funcs which take draw_commands as an arg
-                        if ctrl.resolve(self.arg_cache.on_call(0)) == self.arg_cache.on_entry(0) {
+                        // Check for first two funcs which take draw_commands as an arg1
+                        // One is thiscall, one is cdecl
+                        if ctrl.resolve(self.arg_cache.on_call(0)) ==
+                            self.arg_cache.on_thiscall_entry(0) ||
+                            ctrl.resolve(self.arg_cache.on_thiscall_call(0) )==
+                            self.arg_cache.on_thiscall_entry(0)
+                        {
                             self.inline_depth += 1;
                             ctrl.analyze_with_current_state(self, dest);
                             self.inline_depth -= 1;
@@ -479,17 +470,6 @@ impl<'a, 'e, E: ExecutionState<'e>> FindVertexBuffer<'a, 'e, E> {
             self.get_fn_ok = false;
         }
     }
-}
-
-fn vtable_class_name<Va: VirtualAddress>(binary: &BinaryFile<Va>, vtable: Va) -> Option<&[u8]> {
-    let rtti = binary.read_address(vtable - Va::SIZE).ok()?;
-    let class_info = binary.read_address(rtti + 0xc).ok()?;
-    let start = class_info + 8;
-    let section = binary.section_by_addr(start)?;
-    let section_relative = start.as_u64().wrapping_sub(section.virtual_address.as_u64()) as usize;
-    let slice = section.data.get(section_relative..)?;
-    let end = slice.iter().position(|&x| x == 0)?;
-    slice.get(..end)
 }
 
 pub(crate) fn draw_game_layer<'e, E: ExecutionState<'e>>(
