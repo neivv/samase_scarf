@@ -33,15 +33,19 @@ pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
         fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation<'exec>) {
             match *op {
                 Operation::Call(dest) => {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let arg1 = ctrl.resolve(self.args.on_call(0));
-                        let arg2 = ctrl.resolve(self.args.on_call(1));
-                        let arg3 = ctrl.resolve(self.args.on_call(2));
-                        let args_ok = arg1.if_constant() == Some(0) &&
-                            arg2.if_constant() == Some(1) &&
-                            arg3.if_constant() == Some(0);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ctx = ctrl.ctx();
+                        let arg1 =
+                            ctx.and_const(ctrl.resolve(self.args.on_thiscall_call(0)), 0xff);
+                        let arg2 =
+                            ctx.and_const(ctrl.resolve(self.args.on_thiscall_call(1)), 0xff);
+                        let arg3 =
+                            ctx.and_const(ctrl.resolve(self.args.on_thiscall_call(2)), 0xff);
+                        let args_ok = arg1 == ctx.const_0() &&
+                            arg2 == ctx.const_1() &&
+                            arg3 == ctx.const_0();
                         if args_ok {
-                            self.result = Some(E::VirtualAddress::from_u64(dest));
+                            self.result = Some(dest);
                         }
                     }
                     ctrl.end_analysis();
