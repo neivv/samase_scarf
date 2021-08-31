@@ -484,7 +484,8 @@ pub(crate) fn draw_game_layer<'e, E: ExecutionState<'e>>(
 
     let dest_addr_op = ctx.add_const(
         draw_layers,
-        0x14 * 5 + 0x10,
+        struct_layouts::graphic_layer_size::<E::VirtualAddress>() * 5 +
+            struct_layouts::graphic_layer_draw_func::<E::VirtualAddress>()
     );
     let dest_addr = E::VirtualAddress::from_u64(dest_addr_op.if_constant()?);
     let refs = funcs.find_functions_using_global(actx, dest_addr);
