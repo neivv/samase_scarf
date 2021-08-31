@@ -190,7 +190,12 @@ fn dump<'e, E: ExecutionState<'e>>(
     }
 
     if filter.is_none() {
-        let firegraft = analysis.firegraft_addresses();
+        let mut firegraft = (*analysis.firegraft_addresses()).clone();
+        firegraft.requirement_table_refs.units.sort_unstable();
+        firegraft.requirement_table_refs.upgrades.sort_unstable();
+        firegraft.requirement_table_refs.tech_use.sort_unstable();
+        firegraft.requirement_table_refs.tech_research.sort_unstable();
+        firegraft.requirement_table_refs.orders.sort_unstable();
         out!(&mut out, "Buttonsets: {:?}", firegraft.buttonsets);
         out!(&mut out, "Unit status: {:?}", firegraft.unit_status_funcs);
         out!(
