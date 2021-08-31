@@ -272,10 +272,10 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
                     if mem.size == MemAccessSize::Mem16 {
                         let addr = ctrl.resolve(mem.address);
                         let val = ctrl.resolve(val);
-                        if Operand::and_masked(val).0 == self.arg_cache.on_entry(3) {
+                        if val == ctx.and_const(self.arg_cache.on_entry(3), 0xffff) {
                             if let Some((base, size, rest)) = base_mul(addr) {
-                                if Operand::and_masked(rest.unwrap_sext()).0 ==
-                                    self.arg_cache.on_entry(0)
+                                if ctx.and_const(rest, 0xff) ==
+                                    ctx.and_const(self.arg_cache.on_entry(0), 0xff)
                                 {
                                     let base = ctx.sub_const(base, 6);
                                     self.result = Some((base, size as usize));
