@@ -1486,9 +1486,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             .and_either_other(|x| {
                                 x.if_arithmetic_mul_const(4)?
                                     .if_mem8()?
-                                    .if_arithmetic_add_const(0x4c)?
-                                    .if_register()
-                                    .filter(|r| r.0 == 1)
+                                    .if_arithmetic_add_const(
+                                        struct_layouts::unit_player::<E::VirtualAddress>()
+                                    )
+                                    .filter(|&x| x == ctx.register(1))
                             })
                     })
                     .map(|x| x.0);
@@ -1506,17 +1507,22 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     // Inline to cdecl f(this, arg1, arg2) at depth 0
                     // ("ai_are_on_connected_regions")
                     do_inline = arg1 == ctx.register(1) &&
-                        arg2 == self.arg_cache.on_entry(0) &&
-                        arg3 == self.arg_cache.on_entry(1);
+                        ctx.and_const(arg2, 0xffff) ==
+                            ctx.and_const(self.arg_cache.on_thiscall_entry(0), 0xffff) &&
+                        ctx.and_const(arg3, 0xffff) ==
+                            ctx.and_const(self.arg_cache.on_thiscall_entry(1), 0xffff);
                 }
                 if !do_inline {
                     // Also inline to f(this.player, unit_region, dest_region)
                     // ("ai_region_reachable_without_transport")
                     // Only checking for player now
-                    do_inline = arg1.if_mem8()
-                        .and_then(|x| x.if_arithmetic_add_const(0x4c))
-                        .and_then(|x| x.if_register())
-                        .filter(|r| r.0 == 1)
+                    do_inline = ctx.and_const(arg1, 0xff).if_mem8()
+                        .and_then(|x| {
+                            x.if_arithmetic_add_const(
+                                struct_layouts::unit_player::<E::VirtualAddress>()
+                            )
+                        })
+                        .filter(|&x| x == ctx.register(1))
                         .is_some();
                 }
                 if do_inline {
