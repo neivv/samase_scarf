@@ -696,7 +696,12 @@ pub(crate) fn draw_graphic_layers<'e, E: ExecutionState<'e>>(
     let funcs = functions.functions();
     let global_refs = functions.find_functions_using_global(analysis, graphic_layers_addr);
     let mut result = None;
-    let expected_call_addr = ctx.mem32(ctx.add_const(graphic_layers, 0x14 * 7 + 0x10));
+    let call_offset = 7 * struct_layouts::graphic_layer_size::<E::VirtualAddress>() +
+        struct_layouts::graphic_layer_draw_func::<E::VirtualAddress>();
+    let expected_call_addr = ctx.mem_variable_rc(
+        E::WORD_SIZE,
+        ctx.add_const(graphic_layers, call_offset)
+    );
     for func in &global_refs {
         let val = crate::entry_of_until(binary, &funcs, func.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
