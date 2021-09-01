@@ -290,9 +290,9 @@ fn aiscript_find_switch_loop_and_end<'e, E: ExecutionState<'e>>(
     ctx: OperandCtx<'e>,
     switch: &CompleteSwitch<'e>,
 ) -> Option<(E::VirtualAddress, E::VirtualAddress)> {
-    let opcode_case = switch.branch::<E::VirtualAddress>(binary, 0xb)?;
-    let second_opcode_case = switch.branch::<E::VirtualAddress>(binary, 0x2b)?;
-    let wait_case = switch.branch::<E::VirtualAddress>(binary, 0x2)?;
+    let opcode_case = switch.branch::<E::VirtualAddress>(binary, ctx, 0xb)?;
+    let second_opcode_case = switch.branch::<E::VirtualAddress>(binary, ctx, 0x2b)?;
+    let wait_case = switch.branch::<E::VirtualAddress>(binary, ctx, 0x2)?;
     let mut analysis = FuncAnalysis::new(binary, ctx, opcode_case);
     let mut analyzer: AiscriptFindSwitchLoop<E> = AiscriptFindSwitchLoop {
         first_op_jumps: ArrayVec::new(),
@@ -935,9 +935,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                         ctrl.end_branch();
                         ctrl.add_branch_with_current_state(E::VirtualAddress::from_u64(dest));
                     }
-                } else if let Some(switch) = CompleteSwitch::new(to, ctrl.exec_state()) {
+                } else if let Some(switch) = CompleteSwitch::new(to, ctx, ctrl.exec_state()) {
                     let ok = Some(()).and_then(|()| {
-                        let index = switch.index_operand()?;
+                        let index = switch.index_operand(ctx)?;
                         let first_ai_script = index.if_mem8()?
                             .if_arithmetic_add()
                             .and_either(|x| {

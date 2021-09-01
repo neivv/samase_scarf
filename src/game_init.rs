@@ -335,6 +335,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
     type State = ScMainAnalyzerState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Jump { to, condition } => {
                 if let ScMainAnalyzerState::SwitchJumped(..) = *ctrl.user_state() {
@@ -349,14 +350,16 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
                         // Switch jump, follow cases 3 & 4 if searching for game loop,
                         // switch expression is also scmain_state then
                         if *ctrl.user_state() == ScMainAnalyzerState::SearchingGameLoop {
-                            let switch = CompleteSwitch::new(to, ctrl.exec_state());
+                            let switch = CompleteSwitch::new(to, ctx, ctrl.exec_state());
                             if let Some(switch) = switch {
-                                if let Some(index) = switch.index_operand() {
+                                if let Some(index) = switch.index_operand(ctx) {
                                     self.result.scmain_state = Some(index);
                                 }
                                 for case_n in 3..5 {
                                     let binary = ctrl.binary();
-                                    if let Some(addr) = switch.branch(binary, case_n as u32) {
+                                    if let Some(addr) =
+                                        switch.branch(binary, ctx, case_n as u32)
+                                    {
                                         *ctrl.user_state() =
                                             ScMainAnalyzerState::SwitchJumped(case_n);
                                         ctrl.analyze_with_current_state(self, addr);
@@ -1600,7 +1603,7 @@ pub(crate) fn lobby_state<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
 
     // Command 0x48 compares state == 8 at start of the function
-    let branch = process_lobby_commands_switch.branch(binary, 0x48)?;
+    let branch = process_lobby_commands_switch.branch(binary, ctx, 0x48)?;
     let mut analyzer = FindLobbyState::<E> {
         result: None,
         inlining: false,
@@ -3654,8 +3657,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
                         let to = ctrl.resolve(to);
                         if to.if_constant().is_none() {
                             let exec_state = ctrl.exec_state();
-                            if let Some(switch) = CompleteSwitch::new(to, exec_state) {
-                                if let Some(idx) = switch.index_operand() {
+                            if let Some(switch) = CompleteSwitch::new(to, ctx, exec_state) {
+                                if let Some(idx) = switch.index_operand(ctx) {
                                     if let Some(vtable_offset) = idx.if_custom() {
                                         self.result.bnet_message_switch = Some(switch);
                                         self.result.message_vtable_type = vtable_offset as u16;
@@ -3880,8 +3883,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, '
                 }
                 let to = ctrl.resolve(to);
                 if to.if_constant().is_none() {
-                    if let Some(switch) = CompleteSwitch::new(to, ctrl.exec_state()) {
-                        if let Some(index) = switch.index_operand() {
+                    if let Some(switch) = CompleteSwitch::new(to, ctx, ctrl.exec_state()) {
+                        if let Some(index) = switch.index_operand(ctx) {
                             if let Some(value) = index.unwrap_sext().if_memory()
                                 .and_then(|mem| {
                                     let (l, r) = mem.address.if_arithmetic_add()?;

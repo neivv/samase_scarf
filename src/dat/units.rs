@@ -292,7 +292,7 @@ pub(crate) fn command_analysis<'a, 'acx, 'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     for &case in &[0x1f, 0x35] {
-        let branch = switch.branch(binary, case)?;
+        let branch = switch.branch(binary, ctx, case)?;
 
         let mut analyzer = CommandPatch {
             dat_ctx,

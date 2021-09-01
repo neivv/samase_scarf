@@ -78,7 +78,7 @@ pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
 
     // print_text is called for packet 0x5c as print_text(data + 2, data[1])
-    let branch = process_commands_switch.branch(binary, 0x5c)?;
+    let branch = process_commands_switch.branch(binary, ctx, 0x5c)?;
 
     let mut analyzer = Analyzer::<E> {
         arg1: analysis.arg_cache.on_call(0),
@@ -263,8 +263,9 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeFirstSwitch<'e
         if let Operation::Jump { to, .. } = *op {
             let to = ctrl.resolve(to);
             if to.if_constant().is_none() {
+                let ctx = ctrl.ctx();
                 let exec_state = ctrl.exec_state();
-                self.result = CompleteSwitch::new(to, exec_state);
+                self.result = CompleteSwitch::new(to, ctx, exec_state);
                 ctrl.end_analysis();
             }
         } else {
@@ -300,7 +301,7 @@ pub(crate) fn command_user<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let command_ally = process_commands_switch.branch(binary, 0xe)?;
+    let command_ally = process_commands_switch.branch(binary, ctx, 0xe)?;
     let mut analysis = FuncAnalysis::new(binary, ctx, command_ally);
     let mut analyzer = CommandUserAnalyzer::<E> {
         result: None,
@@ -385,7 +386,7 @@ pub(crate) fn selections<'e, E: ExecutionState<'e>>(
         selections: None,
         unique_command_user: None,
     };
-    let cancel_nuke_command = process_commands_switch.branch(binary, 0x2e);
+    let cancel_nuke_command = process_commands_switch.branch(binary, ctx, 0x2e);
     let cancel_nuke = match cancel_nuke_command {
         Some(s) => s,
         None => return result,
@@ -505,7 +506,7 @@ pub(crate) fn is_replay<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let bump = &analysis.bump;
 
-    let command = process_commands_switch.branch(binary, 0x5d)?;
+    let command = process_commands_switch.branch(binary, ctx, 0x5d)?;
 
     // The replay pause command does
     // if (is_replay) {
@@ -899,7 +900,7 @@ pub(crate) fn replay_data<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let branch = process_commands_switch.branch(binary, 0x15)?;
+    let branch = process_commands_switch.branch(binary, ctx, 0x15)?;
 
     let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, branch);

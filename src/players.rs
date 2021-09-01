@@ -329,7 +329,7 @@ pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
     let ctx = actx.ctx;
     let bump = &actx.bump;
 
-    let cmd_3f = match lobby_cmd_switch.branch(binary, 0x3f) {
+    let cmd_3f = match lobby_cmd_switch.branch(binary, ctx, 0x3f) {
         Some(s) => s,
         None => return result,
     };

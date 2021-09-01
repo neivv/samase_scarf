@@ -1,7 +1,7 @@
 use std::convert::TryInto;
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, MemAccessSize, Operand};
+use scarf::{ArithOpType, BinaryFile, MemAccessSize, Operand, OperandCtx, OperandType};
 
 use crate::{OperandExt};
 
@@ -20,11 +20,75 @@ pub struct CompleteSwitch<'e> {
     high: u32,
 }
 
+fn extract_table_first_index<'e>(
+    ctx: OperandCtx<'e>,
+    table: Operand<'e>,
+    size: MemAccessSize,
+) -> Option<(u64, Operand<'e>)> {
+    let (l, r) = table.if_arithmetic_add()?;
+    let table = r.if_constant()?;
+    let index = divide_by_const(ctx, l, size)?;
+    Some((table, index))
+}
+
+/// Like ctx.div_const(x, c) but only if remainder is 0
+fn divide_by_const<'e>(
+    ctx: OperandCtx<'e>,
+    op: Operand<'e>,
+    size: MemAccessSize,
+) -> Option<Operand<'e>> {
+    let bytes = size.bits() / 8;
+    if let Some(inner) = op.if_arithmetic_mul_const(bytes as u64) {
+        // Common path
+        return Some(inner);
+    }
+    let shift = match size {
+        MemAccessSize::Mem8 => 0u8,
+        MemAccessSize::Mem16 => 1,
+        MemAccessSize::Mem32 => 2,
+        MemAccessSize::Mem64 => 3,
+    };
+    match *op.ty() {
+        OperandType::Arithmetic(ref arith) => {
+            if arith.ty == ArithOpType::And {
+                if let Some(c) = arith.right.if_constant() {
+                    if c & (bytes as u64 - 1) == 0 {
+                        return Some(ctx.rsh_const(arith.left, shift as u64));
+                    }
+                }
+            }
+            match arith.ty {
+                ArithOpType::Add | ArithOpType::Sub | ArithOpType::Or |
+                    ArithOpType::Xor | ArithOpType::And =>
+                {
+                    let l = divide_by_const(ctx, arith.left, size)?;
+                    let r = divide_by_const(ctx, arith.right, size)?;
+                    Some(ctx.arithmetic(arith.ty, l, r))
+                }
+                ArithOpType::Mul => {
+                    let r = divide_by_const(ctx, arith.right, size)?;
+                    Some(ctx.arithmetic(arith.ty, arith.left, r))
+                }
+                _ => None,
+            }
+        }
+        OperandType::Constant(c) => {
+            if c & (bytes as u64 - 1) == 0 {
+                Some(ctx.constant(c >> shift))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 impl<'e> CompleteSwitch<'e> {
     /// `dest` should be the operand jumped to.
     /// If it can be understood as a switch, Some(switch) is returned.
     pub fn new<E: ExecutionState<'e>>(
         dest: Operand<'e>,
+        ctx: OperandCtx<'e>,
         exec_state: &mut E,
     ) -> Option<CompleteSwitch<'e>> {
         let (base, table, size) = match dest.if_memory() {
@@ -38,9 +102,7 @@ impl<'e> CompleteSwitch<'e> {
         };
         // Recognize `table + index * SIZE`, and if
         // `index` is `Mem8/16[secondary_table + index * word_size]` unwrap that too.
-        let (l, r) = table.if_arithmetic_add()?;
-        let _table = r.if_constant()?;
-        let index = l.if_arithmetic_mul_const((size.bits() / 8) as u64)?;
+        let (_table, index) = extract_table_first_index(ctx, table, size)?;
         let index = index.if_memory()
             .filter(|x| matches!(x.size, MemAccessSize::Mem8 | MemAccessSize::Mem16))
             .and_then(|mem| {
@@ -66,6 +128,7 @@ impl<'e> CompleteSwitch<'e> {
     pub fn branch<Va: VirtualAddress>(
         &self,
         binary: &'e BinaryFile<Va>,
+        ctx: OperandCtx<'e>,
         branch: u32,
     ) -> Option<Va> {
         if branch < self.low || branch > self.high {
@@ -73,10 +136,9 @@ impl<'e> CompleteSwitch<'e> {
         }
         // Recognize `table + index * SIZE`, and if
         // `index` is `Mem8/16[secondary_table + index * word_size]` unwrap that too.
-        let (l, r) = self.table.if_arithmetic_add()?;
+        let (table, index) = extract_table_first_index(ctx, self.table, self.size)?;
         let main_index_size = self.size.bits() / 8;
-        let index = l.if_arithmetic_mul_const(main_index_size as u64)?;
-        let table = Va::from_u64(r.if_constant()?);
+        let table = Va::from_u64(table);
         let index = index.if_memory()
             .filter(|x| matches!(x.size, MemAccessSize::Mem8 | MemAccessSize::Mem16))
             .and_then(|mem| {
@@ -104,9 +166,8 @@ impl<'e> CompleteSwitch<'e> {
         Some(self.table.if_arithmetic_add()?.1)
     }
 
-    pub fn index_operand(&self) -> Option<Operand<'e>> {
-        let (l, _) = self.table.if_arithmetic_add()?;
-        let index = l.if_arithmetic_mul_const((self.size.bits() / 8) as u64)?;
+    pub fn index_operand(&self, ctx: OperandCtx<'e>) -> Option<Operand<'e>> {
+        let (_, index) = extract_table_first_index(ctx, self.table, self.size)?;
         let index = index.if_memory()
             .filter(|x| matches!(x.size, MemAccessSize::Mem8 | MemAccessSize::Mem16))
             .and_then(|mem| {

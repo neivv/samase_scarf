@@ -232,8 +232,9 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheatFlagsAnalyzer<'e
                         return;
                     }
                     let binary = ctrl.binary();
-                    if let Some(switch) = CompleteSwitch::new(to, ctrl.exec_state()) {
-                        if let Some(branch) = switch.branch(binary, 0xff0f) {
+                    let ctx = ctrl.ctx();
+                    if let Some(switch) = CompleteSwitch::new(to, ctx, ctrl.exec_state()) {
+                        if let Some(branch) = switch.branch(binary, ctx, 0xff0f) {
                             ctrl.clear_unchecked_branches();
                             ctrl.end_branch();
                             ctrl.add_branch_with_current_state(branch);

@@ -14,6 +14,7 @@ use crate::{
     is_stack_address,
 };
 use crate::struct_layouts;
+use crate::switch::CompleteSwitch;
 
 #[derive(Clone)]
 pub struct TooltipRelated<'e, Va: VirtualAddress> {
@@ -1732,6 +1733,7 @@ pub(crate) fn analyze_run_menus<'e, E: ExecutionState<'e>>(
         arg_cache: &actx.arg_cache,
         state: RunMenusState::Start,
         inline_depth: 0,
+        entry_esp: ctx.register(4),
     };
     analysis.analyze(&mut analyzer);
     result
@@ -1750,6 +1752,7 @@ struct RunMenusAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     arg_cache: &'a ArgCache<'e, E>,
     state: RunMenusState,
     inline_depth: u8,
+    entry_esp: Operand<'e>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a, 'e, E> {
@@ -1763,19 +1766,16 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                 if let Operation::Jump { condition, to } = *op {
                     if condition == ctx.const_1() {
                         let to = ctrl.resolve(to);
-                        let switch_table = ctrl.if_mem_word(to)
-                            .and_then(|x| x.if_arithmetic_add())
-                            .and_then(|x| x.1.if_constant())
-                            .map(|x| E::VirtualAddress::from_u64(x));
-                        if let Some(switch_table) = switch_table {
-                            let binary = ctrl.binary();
-                            let case = binary.read_address(
-                                switch_table + 0x13 * E::VirtualAddress::SIZE
-                            );
-                            if let Ok(case) = case {
-                                self.state = RunMenusState::TerranBriefing;
-                                ctrl.analyze_with_current_state(self, case);
-                                ctrl.end_analysis();
+                        if to.if_constant().is_none() {
+                            let exec = ctrl.exec_state();
+                            if let Some(switch) = CompleteSwitch::new(to, ctx, exec) {
+                                let binary = ctrl.binary();
+                                if let Some(case) = switch.branch(binary, ctx, 0x13) {
+                                    self.state = RunMenusState::TerranBriefing;
+                                    ctrl.clear_all_branches();
+                                    ctrl.end_branch();
+                                    ctrl.add_branch_with_current_state(case);
+                                }
                             }
                         }
                     }
@@ -1785,14 +1785,23 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if self.result.set_music.is_none() {
-                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            let arg1 = ctx.and_const(
+                                ctrl.resolve(self.arg_cache.on_call(0)),
+                                0xff,
+                            );
                             if arg1.if_constant() == Some(0xe) {
                                 self.result.set_music = Some(dest);
                                 return;
                             }
                             if self.inline_depth == 0 {
                                 self.inline_depth += 1;
+                                let old_esp = self.entry_esp;
+                                self.entry_esp = ctx.sub_const(
+                                    ctrl.resolve(ctx.register(4)),
+                                    E::VirtualAddress::SIZE.into(),
+                                );
                                 ctrl.analyze_with_current_state(self, dest);
+                                self.entry_esp = old_esp;
                                 self.inline_depth -= 1;
                                 if self.result.set_music.is_some() {
                                     ctrl.end_analysis();
@@ -1800,7 +1809,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                             }
                         } else {
                             self.state = RunMenusState::CheckPreMissionGlue;
+                            let old_esp = self.entry_esp;
+                            self.entry_esp = ctx.sub_const(
+                                ctrl.resolve(ctx.register(4)),
+                                E::VirtualAddress::SIZE.into(),
+                            );
                             ctrl.analyze_with_current_state(self, dest);
+                            self.entry_esp = old_esp;
                             self.state = RunMenusState::TerranBriefing;
                             if self.result.pre_mission_glue.is_some() {
                                 self.result.pre_mission_glue = Some(dest);
@@ -1809,7 +1824,15 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                         }
                     }
                 }
-                if let Operation::Jump { to, .. } = *op {
+                if let Operation::Jump { to, condition } = *op {
+                    if ctrl.resolve(ctx.register(4)) == self.entry_esp &&
+                        condition == ctx.const_1()
+                    {
+                        // Tail call
+                        self.operation(ctrl, &Operation::Call(to));
+                        ctrl.end_branch();
+                        return;
+                    }
                     if to.if_memory().is_some() {
                         // Looped back to switch probably.
                         ctrl.end_analysis();
@@ -1818,10 +1841,18 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
             }
             RunMenusState::CheckPreMissionGlue => {
                 if let Operation::Jump { condition, .. } = *op {
+                    if ctrl.resolve(ctx.register(4)) == self.entry_esp &&
+                        condition == ctx.const_1()
+                    {
+                        // Tail call
+                        ctrl.end_branch();
+                        return;
+                    }
+
                     let cond = ctrl.resolve(condition);
                     let ok = if_arithmetic_eq_neq(cond)
-                        .map(|x| (x.0, x.1))
-                        .and_either_other(|x| Some(()).filter(|&()| x == ctx.const_0()))
+                        .filter(|x| x.1 == ctx.const_0())
+                        .map(|x| x.0)
                         .and_then(|x| {
                             x.if_arithmetic_and_const(0x20)
                                 .or_else(|| x.if_arithmetic_and_const(0x2000_0000))
@@ -1837,12 +1868,22 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                        let ok = arg1.if_mem32().is_some() && arg2.if_constant() == Some(1);
+                        let arg2 = ctx.and_const(ctrl.resolve(self.arg_cache.on_call(1)), 0xff);
+                        let ok = ctrl.if_mem_word(arg1).is_some() && arg2 == ctx.const_1();
                         if ok {
                             self.result.show_mission_glue = Some(dest);
                             ctrl.end_analysis();
                         }
+                    }
+                }
+                if let Operation::Jump { condition, to } = *op {
+                    if ctrl.resolve(ctx.register(4)) == self.entry_esp &&
+                        condition == ctx.const_1()
+                    {
+                        // Tail call
+                        self.operation(ctrl, &Operation::Call(to));
+                        ctrl.end_branch();
+                        return;
                     }
                 }
             }
