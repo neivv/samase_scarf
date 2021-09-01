@@ -1622,48 +1622,91 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindClampZoom<'a, 'e
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        if self.inline_depth < 2 {
-            if let Operation::Call(dest) = *op {
-                if let Some(dest) = ctrl.resolve_va(dest) {
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                    // 0xbdcc_cccd == -0.1 f32
-                    let ok = if self.inline_depth == 0 {
-                        arg1.if_constant() == Some(0xbdcc_cccd)
-                    } else {
-                        arg1.if_arithmetic_float(ArithOpType::Mul)
-                            .and_either(|x| x.if_arithmetic_float(ArithOpType::Add))
-                            .map(|x| x.0)
-                            .and_either(|x| x.if_constant().filter(|&c| c == 0xbdcc_cccd))
-                            .is_some()
-                    };
-
-                    if ok {
-                        self.inline_depth += 1;
-                        ctrl.analyze_with_current_state(self, dest);
-                        self.inline_depth -= 1;
-                        if self.result.is_some() {
-                            if self.inline_depth == 1 {
-                                self.result = Some(dest);
-                            }
-                            ctrl.end_analysis();
+        let ctx = ctrl.ctx();
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                let (inline, clamp_zoom) = self.check_inline(ctrl);
+                if inline {
+                    self.inline_depth += 1;
+                    ctrl.analyze_with_current_state(self, dest);
+                    self.inline_depth -= 1;
+                    if self.result.is_some() {
+                        if clamp_zoom {
+                            self.result = Some(dest);
                         }
+                        ctrl.end_analysis();
                     }
                 }
             }
-        } else {
-            if let Operation::Jump { condition, .. } = *op {
-                let condition = ctrl.resolve(condition);
-                let ok = if_arithmetic_eq_neq(condition)
-                    .map(|x| (x.0, x.1))
-                    .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                    .filter(|&x| x == self.is_multiplayer)
-                    .is_some();
-                if ok {
-                    self.result = Some(E::VirtualAddress::from_u64(0));
-                    ctrl.end_analysis();
+        } else if let Operation::Jump { condition, to } = *op {
+            if condition == ctx.const_1() &&
+                ctrl.resolve(ctx.register(4)) == ctx.register(4)
+            {
+                if let Some(to) = ctrl.resolve_va(to) {
+                    // Tail call
+                    let (inline, clamp_zoom) = self.check_inline(ctrl);
+                    if inline {
+                        let binary = ctrl.binary();
+                        self.inline_depth += 1;
+                        let mut analysis = FuncAnalysis::custom_state(
+                            binary,
+                            ctx,
+                            to,
+                            ctrl.exec_state().clone(),
+                            Default::default(),
+                        );
+                        analysis.analyze(self);
+                        self.inline_depth -= 1;
+                        if self.result.is_some() {
+                            if clamp_zoom {
+                                self.result = Some(to);
+                            }
+                            ctrl.end_analysis();
+                            return;
+                        }
+                    }
+                    ctrl.end_branch();
                 }
             }
+            let condition = ctrl.resolve(condition);
+            let ok = if_arithmetic_eq_neq(condition)
+                .filter(|x| x.1 == ctx.const_0())
+                .filter(|&x| x.0 == self.is_multiplayer)
+                .is_some();
+            if ok {
+                self.result = Some(E::VirtualAddress::from_u64(0));
+                ctrl.end_analysis();
+            }
         }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> FindClampZoom<'a, 'e, E> {
+    /// Returns (should_inline, is_clamp_zoom_candidate)
+    fn check_inline(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) -> (bool, bool) {
+        let ctx = ctrl.ctx();
+        let arg1 = match E::VirtualAddress::SIZE == 4 {
+            true => ctrl.resolve(self.arg_cache.on_call(0)),
+            false => ctrl.resolve(ctx.xmm(0, 0)),
+        };
+        let binary = ctrl.binary();
+        // 0xbdcc_cccd == -0.1 f32
+        if self.inline_depth == 0 {
+            if arg1.if_constant_or_read_binary(binary) == Some(0xbdcc_cccd) {
+                return (true, false);
+            }
+        }
+        let clamp_zoom_call = arg1.if_arithmetic_float(ArithOpType::Mul)
+            .and_either(|x| x.if_arithmetic_float(ArithOpType::Add))
+            .map(|x| x.0)
+            .and_either(|x| {
+                x.if_constant_or_read_binary(binary).filter(|&c| c == 0xbdcc_cccd)
+            })
+            .is_some();
+        if clamp_zoom_call {
+            return (true, true);
+        }
+        (false, false)
     }
 }
 

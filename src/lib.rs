@@ -6124,6 +6124,10 @@ trait OperandExt<'e> {
     fn struct_offset(self) -> (Operand<'e>, u32);
     /// If `self` is SignExtend(x), returns `x`. Otherwise resturns `self`
     fn unwrap_sext(self) -> Operand<'e>;
+    fn if_constant_or_read_binary<Va: VirtualAddressTrait>(
+        self,
+        binary: &BinaryFile<Va>,
+    ) -> Option<u64>;
 }
 
 impl<'e> OperandExt<'e> for Operand<'e> {
@@ -6224,6 +6228,18 @@ impl<'e> OperandExt<'e> for Operand<'e> {
             scarf::operand::OperandType::SignExtend(val, ..) => val,
             _ => self,
         }
+    }
+
+    fn if_constant_or_read_binary<Va: VirtualAddressTrait>(
+        self,
+        binary: &BinaryFile<Va>,
+    ) -> Option<u64> {
+        self.if_constant()
+            .or_else(|| {
+                let mem = self.if_memory()?;
+                let addr = Va::from_u64(mem.address.if_constant()?);
+                Some(binary.read_u64(addr).ok()? & mem.size.mask())
+            })
     }
 }
 
