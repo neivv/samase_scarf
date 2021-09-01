@@ -1651,13 +1651,19 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddMilitaryAnalyzer<
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
+                let ctx = ctrl.ctx();
                 let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                let is_region1 = arg1.if_arithmetic_add_const(0x34)
+                let is_region1 = arg1.if_arithmetic_add_const(
+                        struct_layouts::ai_region_size::<E::VirtualAddress>()
+                    )
                     .and_then(|x| ctrl.if_mem_word(x))
                     .and_then(|x| x.if_arithmetic_add())
-                    .and_either_other(|x| Some(()).filter(|()| x == self.ai_regions))
+                    .and_if_either_other(|x| x == self.ai_regions)
                     .and_then(|x| x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into()))
-                    .filter(|&x| x == self.arg_cache.on_entry(0))
+                    .filter(|&x| {
+                        ctx.and_const(x, 0xffff_ffff) ==
+                            ctx.and_const(self.arg_cache.on_entry(0), 0xffff_ffff)
+                    })
                     .is_some();
                 if !is_region1 {
                     return;
