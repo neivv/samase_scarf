@@ -2,21 +2,15 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operand, Operation, DestOperand};
 
-use crate::{AnalysisCtx, ArgCache, OptionExt, single_result_assign};
+use crate::{AnalysisCtx, ArgCache, ControlExt, OperandExt, OptionExt, single_result_assign};
+use crate::struct_layouts;
+use crate::switch::simple_switch_branch;
 
 #[derive(Clone, Debug)]
 pub struct RegionRelated<'e, Va: VirtualAddress> {
     pub get_region: Option<Va>,
     pub ai_regions: Option<Operand<'e>>,
     pub change_ai_region_state: Option<Va>,
-}
-
-impl<'e, Va: VirtualAddress> RegionRelated<'e, Va> {
-    fn any_empty(&self) -> bool {
-        self.get_region.is_none() ||
-            self.ai_regions.is_none() ||
-            self.change_ai_region_state.is_none()
-    }
 }
 
 pub(crate) fn regions<'e, E: ExecutionState<'e>>(
@@ -34,23 +28,23 @@ pub(crate) fn regions<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let arg_cache = &analysis.arg_cache;
 
-    let value_area = match binary.read_u32(aiscript_hook.switch_table + 0x2a * 4) {
-        Ok(o) => E::VirtualAddress::from_u64(o as u64),
-        Err(_) => return result,
+    let value_area = match simple_switch_branch(binary, aiscript_hook.switch_table, 0x2a) {
+        Some(s) => s,
+        None => return result,
     };
     // Set script->player to 0, x to 999 and y to 998
     let mut state = E::initial_state(ctx, binary);
-    let player = ctx.mem32(ctx.add(
+    let player = ctx.mem32(ctx.add_const(
         aiscript_hook.script_operand_at_switch,
-        ctx.constant(0x10),
+        struct_layouts::ai_script_player::<E::VirtualAddress>(),
     ));
-    let x = ctx.mem32(ctx.add(
+    let x = ctx.mem32(ctx.add_const(
         aiscript_hook.script_operand_at_switch,
-        ctx.constant(0x24),
+        struct_layouts::ai_script_center::<E::VirtualAddress>(),
     ));
-    let y = ctx.mem32(ctx.add(
+    let y = ctx.mem32(ctx.add_const(
         aiscript_hook.script_operand_at_switch,
-        ctx.constant(0x28),
+        struct_layouts::ai_script_center::<E::VirtualAddress>() + 4,
     ));
     state.move_to(&DestOperand::from_oper(player), ctx.const_0());
     state.move_to(&DestOperand::from_oper(x), ctx.constant(999));
@@ -82,9 +76,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RegionsAnalyzer<'
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
-                let dest = ctrl.resolve(dest);
-                if let Some(dest) = dest.if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     let handled = self.check_call(dest, ctrl);
                     if !handled && !self.inlining{
                         self.inlining = true;
@@ -95,20 +87,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RegionsAnalyzer<'
             }
             Operation::Jump { condition, to } => {
                 if !self.inlining {
-                    let cond = ctrl.resolve(condition);
                     let to = ctrl.resolve(to);
-                    // Early break on nonconditional backwards jumps
-                    let seems_switch_loop = {
-                        cond.if_constant()
-                            .filter(|&c| c != 0)
-                            .is_some()
-                    } && {
-                        to.if_constant()
-                            .filter(|&c| c < ctrl.address().as_u64())
-                            .is_some()
-                    };
-                    if !self.result.any_empty() && seems_switch_loop {
-                        ctrl.end_analysis();
+                    if to.if_constant().is_none() {
+                        // Avoid switch
+                        ctrl.end_branch();
                     }
                 }
             }
@@ -124,19 +106,14 @@ impl<'a, 'e, E: ExecutionState<'e>> RegionsAnalyzer<'a, 'e, E> {
         dest: E::VirtualAddress,
         ctrl: &mut Control<'e, '_, '_, Self>,
     ) -> bool {
-        fn is_undef_mul_34(op: Operand<'_>) -> bool {
-            op.if_arithmetic_mul()
-                .and_either_other(|x| x.if_constant().filter(|&c| c == 0x34))
-                .filter(|y| {
-                    y.iter().any(|y| y.is_undefined())
-                })
-                .is_some()
-        }
-
-        match ctrl.resolve(self.arg_cache.on_call(1)).if_constant() {
+        let ctx = ctrl.ctx();
+        match ctx.and_const(ctrl.resolve(self.arg_cache.on_call(1)), 0xffff).if_constant() {
             // GetRegion(x, y) call?
             Some(998) => {
-                if ctrl.resolve(self.arg_cache.on_call(0)).if_constant() == Some(999) {
+                if ctx.and_const(
+                    ctrl.resolve(self.arg_cache.on_call(0)),
+                    0xffff,
+                ).if_constant() == Some(999) {
                     self.result.get_region = Some(dest);
                     return true;
                 }
@@ -145,17 +122,14 @@ impl<'a, 'e, E: ExecutionState<'e>> RegionsAnalyzer<'a, 'e, E> {
             Some(5) => {
                 let arg1 =  ctrl.resolve(self.arg_cache.on_call(0));
                 let ai_regions = arg1.if_arithmetic_add()
-                    .and_then(|(l, r)| {
-                        if is_undef_mul_34(l) {
-                            r.if_mem32()
-                        } else if is_undef_mul_34(r) {
-                            l.if_mem32()
-                        } else {
-                            None
-                        }
-                    });
+                    .and_either_other(|x| {
+                        x.if_arithmetic_mul_const(
+                            struct_layouts::ai_region_size::<E::VirtualAddress>()
+                        ).filter(|x| x.contains_undefined())
+                    })
+                    .and_then(|x| ctrl.if_mem_word(x));
                 if let Some(ai_regions_addr) = ai_regions {
-                    self.result.ai_regions = Some(ai_regions_addr.clone());
+                    self.result.ai_regions = Some(ai_regions_addr);
                     self.result.change_ai_region_state = Some(dest);
                 }
             }

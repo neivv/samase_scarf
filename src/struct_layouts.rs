@@ -142,6 +142,13 @@ pub fn if_unit_sprite<'e, Va: VirtualAddress>(op: Operand<'e>) -> Option<Operand
         })
 }
 
+pub fn ai_region_size<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x34,
+        false => 0x50,
+    }
+}
+
 pub fn ai_script_pos<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x8,
