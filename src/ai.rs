@@ -9,7 +9,7 @@ use scarf::exec_state::{ExecutionState};
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
 use crate::{
-    ArgCache, OptionExt, OperandExt, single_result_assign, AnalysisCtx, unwrap_sext,
+    ArgCache, OptionExt, OperandExt, single_result_assign, AnalysisCtx,
     entry_of_until, EntryOf, ControlExt, FunctionFinder, if_arithmetic_eq_neq,
 };
 use crate::hash_map::HashSet;
@@ -1313,13 +1313,13 @@ pub(crate) fn ai_prepare_moving_to<'e, E: ExecutionState<'e>>(
     let order_state = ctx.mem8(
         ctx.add_const(
             ctx.register(1),
-            0x4e,
+            struct_layouts::unit_order_state::<E::VirtualAddress>(),
         ),
     );
     let target = ctx.mem32(
         ctx.add_const(
             ctx.register(1),
-            0x5c,
+            struct_layouts::unit_target::<E::VirtualAddress>(),
         ),
     );
     exec_state.move_to(&DestOperand::from_oper(order_state), ctx.const_0());
@@ -1355,13 +1355,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAna
                 // Check for this.ai == null or this.ai != null
                 let condition = ctrl.resolve(condition);
                 let jump_on_null = crate::if_arithmetic_eq_neq(condition)
+                    .filter(|x| x.1 == ctx.const_0())
                     .and_then(|x| {
-                        Some((x.0, x.1))
-                            .and_either_other(|x| x.if_constant().filter(|&c| c == 0))?
-                            .if_mem32()?
-                            .if_arithmetic_add_const(0x134)?
-                            .if_register()
-                            .filter(|r| r.0 == 1)?;
+                        ctrl.if_mem_word(x.0)?
+                            .if_arithmetic_add_const(
+                                struct_layouts::unit_ai::<E::VirtualAddress>()
+                            )
+                            .filter(|&x| x == ctx.register(1))?;
                         Some(x.2)
                     });
                 let jump_on_null = match jump_on_null {
@@ -1393,20 +1393,28 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAna
             Operation::Call(dest) if self.inline_depth < 3 || self.inline_depth == 255 => {
                 // Inline to f(this, this.order_target.x, this.order_target.y)
                 let ecx = ctrl.resolve(ctx.register(1));
-                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
                 if ecx != ctx.register(1) {
                     return;
                 }
-                let ok = unwrap_sext(arg1).if_mem16()
-                    .and_then(|x| x.if_arithmetic_add_const(0x58))
+                let ok = arg1.unwrap_sext().if_mem16()
+                    .and_then(|x| {
+                        x.if_arithmetic_add_const(
+                            struct_layouts::unit_order_target_pos::<E::VirtualAddress>()
+                        )
+                    })
                     .filter(|&x| x == ecx)
                     .is_some();
                 if !ok {
                     return;
                 }
-                let ok = unwrap_sext(arg2).if_mem16()
-                    .and_then(|x| x.if_arithmetic_add_const(0x5a))
+                let ok = arg2.unwrap_sext().if_mem16()
+                    .and_then(|x| {
+                        x.if_arithmetic_add_const(
+                            struct_layouts::unit_order_target_pos::<E::VirtualAddress>() + 2
+                        )
+                    })
                     .filter(|&x| x == ecx)
                     .is_some();
                 if !ok {

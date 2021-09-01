@@ -26,27 +26,6 @@ pub fn unit_sprite<Va: VirtualAddress>() -> u64 {
     }
 }
 
-pub fn unit_subunit_linked<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x70,
-        false => 0xa0,
-    }
-}
-
-pub fn unit_related<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x80,
-        false => 0xc0,
-    }
-}
-
-pub fn unit_order_target_pos<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x58,
-        false => 0x78,
-    }
-}
-
 pub fn unit_player<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x4c,
@@ -61,10 +40,45 @@ pub fn unit_order<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_order_state<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x4e,
+        false => 0x6a,
+    }
+}
+
+pub fn unit_order_target_pos<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x58,
+        false => 0x78,
+    }
+}
+
+pub fn unit_target<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x5c,
+        false => 0x80,
+    }
+}
+
 pub fn unit_id<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x64,
         false => 0x8c,
+    }
+}
+
+pub fn unit_subunit_linked<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x70,
+        false => 0xa0,
+    }
+}
+
+pub fn unit_related<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x80,
+        false => 0xc0,
     }
 }
 
@@ -114,6 +128,13 @@ pub fn unit_flags<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xdc,
         false => 0x140,
+    }
+}
+
+pub fn unit_ai<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x134,
+        false => 0x1c8,
     }
 }
 
