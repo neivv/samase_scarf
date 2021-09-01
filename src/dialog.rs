@@ -1,7 +1,7 @@
 use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashMap;
 
-use std::convert::TryInto;
+use std::convert::{TryInto, TryFrom};
 
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -1920,24 +1920,59 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GluCmpgnAnalyzer<'a,
     type State = GluCmpgnState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Jump { condition, to } => {
-                let ctx = ctrl.ctx();
                 let binary = ctrl.binary();
+                let to = ctrl.resolve(to);
                 if condition == ctx.const_1() {
-                    let to = ctrl.resolve(to);
-                    // Case 2 = Activate button (end), 0xa = Init
-                    let ext_param = ctx.mem32(self.arg_cache.on_entry(1));
-                    for &case in &[2u8, 0xa] {
-                        let op = ctx.substitute(to, ext_param, ctx.constant(case.into()), 8);
-                        let dest = resolve_memory(binary, op);
-                        if let Some(dest) = dest {
-                            let dest = E::VirtualAddress::from_u64(dest);
-                            self.ext_event_branch = case;
-                            ctrl.analyze_with_current_state(self, dest);
+                    if to.if_constant().is_none() {
+                        // Case 2 = Activate button (end), 0xa = Init
+                        let ext_param = ctrl.mem_word(self.arg_cache.on_entry(1));
+                        for &case in &[2u8, 0xa] {
+                            let op = ctx.substitute(to, ext_param, ctx.constant(case.into()), 8);
+                            let dest = resolve_memory(binary, op);
+                            if let Some(dest) = dest {
+                                let dest = E::VirtualAddress::from_u64(dest);
+                                self.ext_event_branch = case;
+                                ctrl.analyze_with_current_state(self, dest);
+                            }
                         }
+                        ctrl.end_analysis();
                     }
-                    ctrl.end_analysis();
+                } else if let Some(to) = to.if_constant() {
+                    let to = E::VirtualAddress::from_u64(to);
+                    let condition = ctrl.resolve(condition);
+                    let ext_param = if_arithmetic_eq_neq(condition)
+                        .and_then(|x| {
+                            ctrl.if_mem_word(x.0).filter(|&x| x == self.arg_cache.on_entry(1))?;
+                            Some((u8::try_from(x.1.if_constant()?).ok()?, x.2))
+                        });
+                    match ext_param {
+                        Some((event, jump_if_eq)) if event == 0x2 || event == 0xa => {
+                            let (eq_case, neq_case) = match jump_if_eq {
+                                true => (to, ctrl.current_instruction_end()),
+                                false => (ctrl.current_instruction_end(), to),
+                            };
+                            self.ext_event_branch = event;
+                            let mut analysis = FuncAnalysis::custom_state(
+                                ctrl.binary(),
+                                ctx,
+                                eq_case,
+                                ctrl.exec_state().clone(),
+                                ctrl.user_state().clone(),
+                            );
+                            analysis.analyze(self);
+                            self.ext_event_branch = 0;
+                            if self.result.swish_out.is_some() && self.result.swish_in.is_some() {
+                                ctrl.end_analysis();
+                            } else {
+                                ctrl.end_branch();
+                                ctrl.add_branch_with_current_state(neq_case);
+                            }
+                        }
+                        _ => (),
+                    }
                 }
             }
             Operation::Call(dest) if self.ext_event_branch != 0 => {
@@ -1950,11 +1985,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GluCmpgnAnalyzer<'a,
                             .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
                             .and_then(|x| x.if_constant().filter(|&c| c > 0x1000))
                             .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
-                            .filter(|x| x.if_constant() == Some(2))
+                            .filter(|&x| ctx.and_const(x, 0xff).if_constant() == Some(2))
                             .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
-                            .filter(|x| x.if_constant() == Some(2))
+                            .filter(|&x| ctx.and_const(x, 0xff).if_constant() == Some(2))
                             .map(|_| ctrl.resolve(self.arg_cache.on_call(4)))
-                            .filter(|x| x.if_constant() == Some(0))
+                            .filter(|&x| ctx.and_const(x, 0xffff) == ctx.const_0())
                             .is_some();
                         if is_swish_in {
                             self.result.swish_in = Some(dest);
