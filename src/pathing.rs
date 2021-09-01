@@ -85,7 +85,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RegionsAnalyzer<'
                     }
                 }
             }
-            Operation::Jump { condition, to } => {
+            Operation::Jump { to, .. } => {
                 if !self.inlining {
                     let to = ctrl.resolve(to);
                     if to.if_constant().is_none() {
@@ -164,59 +164,6 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindPathing<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        // Finds `x` in `x + 0xc + 0x2 * y`
-        fn find_base<'e>(addr: Operand<'e>) -> Option<Operand<'e>> {
-            struct State {
-                const_c_seen: bool,
-                mul_2_seen: bool,
-            }
-
-            fn recurse<'e>(state: &mut State, addr: Operand<'e>) -> Option<Operand<'e>> {
-                fn check_offset_oper<'e>(state: &mut State, op: Operand<'e>) -> Option<()> {
-                    let offset = op.if_constant().filter(|&x| x == 0xc).is_some();
-                    let index = op.if_arithmetic_mul()
-                        .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                        .filter(|&(c, _)| c == 2).is_some();
-                    if offset {
-                        state.const_c_seen = true;
-                        Some(())
-                    } else if index {
-                        state.mul_2_seen = true;
-                        Some(())
-                    } else {
-                        None
-                    }
-                }
-
-                addr.if_arithmetic_add().and_then(|(l, r)| {
-                    let either = Operand::either(l, r, |x| check_offset_oper(state, x));
-                    match either {
-                        None => {
-                            let left = recurse(state, l);
-                            let right = recurse(state, r);
-                            match (left, right) {
-                                (Some(x), None) | (None, Some(x)) => Some(x),
-                                _ => None,
-                            }
-                        }
-                        Some(((), other)) => {
-                            if check_offset_oper(state, other).is_some() {
-                                None
-                            } else {
-                                Some(recurse(state, other).unwrap_or_else(|| other))
-                            }
-                        }
-                    }
-                })
-            }
-            let mut state = State {
-                const_c_seen: false,
-                mul_2_seen: false,
-            };
-            recurse(&mut state, addr)
-                .filter(|_| state.const_c_seen && state.mul_2_seen)
-        }
-
         match *op {
             Operation::Jump { condition, .. } => {
                 let condition = ctrl.resolve(condition);
@@ -224,7 +171,13 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindPathing<'e, E> {
                     .flat_map(|x| x.if_mem16())
                     .next();
                 if let Some(addr) = addr {
-                    let val = find_base(addr);
+                    // Match against u16 arr pathing.map_tile_regions[]
+                    // So `(pathing + x * 2) + const_regions_offset`
+                    let val = addr.if_arithmetic_add_const(
+                            struct_layouts::pathing_map_tile_regions::<E::VirtualAddress>()
+                        )
+                        .and_then(|x| x.if_arithmetic_add())
+                        .and_either_other(|x| x.if_arithmetic_mul_const(2));
                     if single_result_assign(val, &mut self.result) {
                         ctrl.end_analysis();
                     }

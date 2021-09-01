@@ -281,3 +281,10 @@ pub fn control_draw_funcs<Va: VirtualAddress>() -> &'static [u64] {
         false => &[0x68],
     }
 }
+
+pub fn pathing_map_tile_regions<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xc,
+        false => 0x18,
+    }
+}
