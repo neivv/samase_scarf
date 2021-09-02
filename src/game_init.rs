@@ -2586,19 +2586,50 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             LoadImagesAnalysisState::FindFireOverlayMax => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
-                    if mem.size == MemAccessSize::Mem8 {
-                        let value = ctrl.resolve(value);
-                        let ok = value.if_arithmetic_and_const(0xfe)
-                            .or_else(|| Some(value))
-                            .and_then(|x| x.if_arithmetic_mul_const(0x2))
-                            .is_some();
-                        if ok {
-                            let dest = ctrl.resolve(mem.address);
-                            let base = dest.if_arithmetic_add()
-                                .and_if_either_other(|x| x.is_undefined());
-                            if let Some(base) = base {
-                                self.result.fire_overlay_max = Some(base);
+                let ctx = ctrl.ctx();
+                if let Operation::Move(ref dest, value, None) = *op {
+                    let value = ctrl.resolve(value);
+                    if value.if_constant() == Some(999) {
+                        ctrl.skip_operation();
+                        ctrl.exec_state().move_to(dest, ctx.custom(0));
+                        return;
+                    }
+                    // End on loop rerun i = 999 - 2
+                    let end_branch = Operand::and_masked(ctx.and_const(value, 0xffff_ffff)).0
+                        .if_arithmetic_sub_const(2)
+                        .and_then(|x| x.if_custom())
+                        .is_some();
+                    if end_branch {
+                        ctrl.end_branch();
+                        return;
+                    }
+                    if let DestOperand::Memory(ref mem) = *dest {
+                        if mem.size == MemAccessSize::Mem8 {
+                            let ok = value.if_arithmetic_and_const(0xfe)
+                                .or_else(|| Some(value))
+                                .and_then(|x| x.if_arithmetic_mul_const(0x2))
+                                .is_some();
+                            if ok {
+                                let dest = ctrl.resolve(mem.address);
+                                let base = dest.if_arithmetic_add()
+                                    .and_then(|(l, r)| {
+                                        Some((l, r)).and_either_other(|x| {
+                                            Operand::and_masked(x).0
+                                                .if_arithmetic_sub_const(1)?
+                                                .if_custom()
+                                            })
+                                            .or_else(|| {
+                                                Some((l, r)).and_either_other(|x| {
+                                                    Operand::and_masked(x).0
+                                                        .if_custom()
+                                                    })
+                                                    .map(|x| ctx.add_const(x, 1))
+                                            })
+                                    });
+                                if let Some(base) = base {
+                                    self.result.fire_overlay_max = Some(base);
+                                    ctrl.end_analysis();
+                                }
                             }
                         }
                     }
