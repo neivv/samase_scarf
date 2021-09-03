@@ -1005,7 +1005,9 @@ pub(crate) fn status_screen_mode<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let binary = analysis.binary;
 
-    let goliath_turret_status = binary.read_address(status_arr + 0x4 * 0xc + 0x8).ok()?;
+    let goliath_turret_status = binary.read_address(
+        status_arr + 0x4 * E::VirtualAddress::SIZE * 3 + E::VirtualAddress::SIZE * 2
+    ).ok()?;
     // First variable that goliath turret's status screen function writes to is
     // setting that mode to 0.
     let mut analysis = FuncAnalysis::new(binary, ctx, goliath_turret_status);
@@ -1045,7 +1047,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StatusScreenMode<'e, E> 
             Operation::Move(DestOperand::Memory(mem), val, None) => {
                 if mem.size == MemAccessSize::Mem8 {
                     let ctx = ctrl.ctx();
-                    if ctx.and_const(ctrl.resolve(val), 0xff).if_constant() == Some(0) {
+                    if ctx.and_const(ctrl.resolve(val), 0xff) == ctx.const_0() {
                         let dest = ctrl.resolve(mem.address);
                         if dest.if_constant().is_some() {
                             self.result = Some(ctx.mem8(dest));
