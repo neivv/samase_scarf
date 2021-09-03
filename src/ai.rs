@@ -576,8 +576,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiTownAnalyzer<'e, E>
         match *op {
             Operation::Call(dest) => {
                 if !self.inlining {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         self.inlining = true;
                         let old_jump_count = ctrl.user_state().jump_count;
                         ctrl.user_state().jump_count = 0;
@@ -630,12 +629,10 @@ impl<'e, E: ExecutionState<'e>> AiTownAnalyzer<'e, E> {
         // aiscript_start_town accesses player's first ai town
         if let Some(mem) = val.if_memory() {
             mem.address.if_arithmetic_add()
-                .and_either(|x| x.if_arithmetic_mul())
-                .and_then(|((l, r), other)| {
-                    Operand::either(l, r, |x| x.if_constant())
-                        .filter(|&(c, _)| c == 8)
-                        .map(|_| ctx.sub(other, ctx.const_4()))
+                .and_either_other(|x| {
+                    x.if_arithmetic_mul_const(u64::from(2 * E::VirtualAddress::SIZE))
                 })
+                .map(|other| ctx.sub_const(other, E::VirtualAddress::SIZE.into()))
         } else {
             None
         }
