@@ -425,6 +425,7 @@ pub(crate) fn limits<'e, E: ExecutionState<'e>>(
             limit: 24,
             result: None,
             phantom: Default::default(),
+            entry_esp: ctx.register(4),
         };
         analysis.analyze(&mut analyzer);
         result.allocator = analyzer.result;
@@ -436,6 +437,7 @@ struct AllocatorFromSMemAlloc<'e, E: ExecutionState<'e>> {
     limit: u8,
     result: Option<Operand<'e>>,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
+    entry_esp: Operand<'e>,
 }
 
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AllocatorFromSMemAlloc<'e, E> {
@@ -454,22 +456,46 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AllocatorFromSMemAllo
             let dest = ctrl.resolve(dest);
             if let Some(dest) = dest.if_constant() {
                 let dest = E::VirtualAddress::from_u64(dest);
+                let old_esp = self.entry_esp;
+                self.entry_esp = ctrl.get_new_esp_for_call();
                 ctrl.analyze_with_current_state(self, dest);
+                self.entry_esp = old_esp;
             } else {
-                // Check for allocator.vtable.alloc(size, align)
-                let ctx = ctrl.ctx();
-                let ecx = ctrl.resolve(ctx.register(1));
-                self.result = ctrl.if_mem_word(dest)
-                    .and_then(|x| {
-                        let x = x.if_arithmetic_add_const(1 * E::VirtualAddress::SIZE as u64)?;
-                        ctrl.if_mem_word(x)
-                            .filter(|&x| x == ecx)
-                    });
+                self.check_result_at_call(ctrl, dest);
             }
             if self.result.is_some() {
                 ctrl.end_analysis();
             }
+        } else if let Operation::Jump { condition, to } = *op {
+            let ctx = ctrl.ctx();
+            if condition == ctx.const_1() {
+                if self.entry_esp == ctrl.resolve(ctx.register(4)) {
+                    // Tail call
+                    let to = ctrl.resolve(to);
+                    if to.if_constant().is_none() {
+                        self.check_result_at_call(ctrl, to);
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
         }
+    }
+}
+
+impl<'e, E: ExecutionState<'e>> AllocatorFromSMemAlloc<'e, E> {
+    fn check_result_at_call(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, dest: Operand<'e>) {
+        // Check for allocator.vtable.alloc(size, align)
+        // Ok if dest is MemWord[[this] + 1 * word_size]
+        let ctx = ctrl.ctx();
+        let ecx = ctrl.resolve(ctx.register(1));
+        self.result = ctrl.if_mem_word(dest)
+            .and_then(|x| {
+                let x = x.if_arithmetic_add_const(1 * E::VirtualAddress::SIZE as u64)?;
+                ctrl.if_mem_word(x)
+                    .filter(|&x| x == ecx)
+            });
     }
 }
 
@@ -635,40 +661,41 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Call(dest_unres) => {
                 let dest_op = ctrl.resolve(dest_unres);
                 let ctx = ctrl.ctx();
-                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                let arg1_not_this = ctrl.resolve(self.arg_cache.on_call(0));
                 let ecx = ctrl.resolve(ctx.register(1));
                 let mut inline = false;
                 let word_size = E::VirtualAddress::SIZE;
                 if self.check_malloc_free && self.result.allocator.is_none() {
                     // Note: Assuming this is inside image vector resize.
                     // alloc image_count * 0x40
-                    let is_alloc = arg1.if_arithmetic(scarf::ArithOpType::Lsh)
-                        .and_then(|(_, r)| r.if_constant())
-                        .filter(|&c| c == 6)
-                        .is_some();
+                    let is_alloc =
+                        struct_layouts::if_mul_image_size::<E::VirtualAddress>(arg1_not_this)
+                            .is_some();
                     if is_alloc {
-                        match dest_op.if_constant() {
-                            Some(s) => {
-                                self.result.smem_alloc = Some(E::VirtualAddress::from_u64(s));
-                            }
-                            None => {
-                                // Check for call word[word[ecx] + 4],
-                                // allocator.vtable.alloc(size, align)
-                                let allocator = ctrl.if_mem_word(dest_op)
-                                    .and_then(|x| {
-                                        let x = x.if_arithmetic_add_const(1 * word_size as u64)?;
-                                        ctrl.if_mem_word(x)
-                                            .filter(|&x| x == ecx)
-                                    });
-                                if let Some(allocator) = allocator {
-                                    self.result.allocator =
-                                        Some(self.call_tracker.resolve_calls(allocator));
-                                }
-                            }
-                        };
-                        return;
+                        if let Some(s) = dest_op.if_constant() {
+                            self.result.smem_alloc = Some(E::VirtualAddress::from_u64(s));
+                            return;
+                        }
                     }
-                    let is_free = arg1.if_memory()
+                    let is_thiscall_alloc =
+                        struct_layouts::if_mul_image_size::<E::VirtualAddress>(arg1).is_some();
+                    if is_thiscall_alloc {
+                        // Check for call word[word[ecx] + 4],
+                        // allocator.vtable.alloc(size, align)
+                        let allocator = ctrl.if_mem_word(dest_op)
+                            .and_then(|x| {
+                                let x = x.if_arithmetic_add_const(1 * word_size as u64)?;
+                                ctrl.if_mem_word(x)
+                                    .filter(|&x| x == ecx)
+                            });
+                        if let Some(allocator) = allocator {
+                            self.result.allocator =
+                                Some(self.call_tracker.resolve_calls(allocator));
+                            return;
+                        }
+                    }
+                    let is_free = arg1_not_this.if_memory()
                         .and_then(|mem| {
                             Some(mem.address == self.result.arrays.get(0)?.get(0)?.0)
                         })
@@ -707,7 +734,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         inline = true;
                     }
                 }
-                if self.check_malloc_free && ecx.if_constant().is_some() {
+                if !inline &&
+                    E::VirtualAddress::SIZE == 8 &&
+                    self.arg1_off(arg1_not_this).is_some()
+                {
+                    inline = true;
+                }
+                if !inline && self.check_malloc_free && ecx.if_constant().is_some() {
                     inline = true;
                 }
                 if inline || self.inline_depth == 0 {
@@ -752,9 +785,27 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     self.call_tracker.add_call(ctrl, dest);
                 }
             }
+            Operation::Jump { condition, to } => {
+                let ctx = ctrl.ctx();
+                if condition == ctx.const_1() &&
+                    ctrl.resolve(ctx.register(4)) == self.func_initial_esp
+                {
+                    // Tail call
+                    ctrl.end_branch();
+                    let exec_state = ctrl.exec_state();
+                    exec_state.move_to(
+                        &DestOperand::Register64(scarf::operand::Register(4)),
+                        ctx.add_const(
+                            ctx.register(4),
+                            E::VirtualAddress::SIZE as u64,
+                        ),
+                    );
+                    self.operation(ctrl, &Operation::Call(to));
+                }
+            }
             Operation::Move(ref dest, value, None) => {
                 match dest {
-                    DestOperand::Register64(reg) => {
+                    DestOperand::Register64(reg) if E::VirtualAddress::SIZE == 4 => {
                         if reg.0 == 5 && value.if_memory().is_some() {
                             // Make pop ebp always be mov esp, orig_esp
                             // even if current esp is considered unknown
@@ -807,7 +858,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> SetLimitsAnalyzer<'a, 'acx, 'e, E> {
     fn arg1_off(&self, val: Operand<'e>) -> Option<(u32, u32, u32)> {
-        Some(val)
+        Some(Operand::and_masked(val.unwrap_sext()).0)
             .map(|val| {
                 val.if_arithmetic_add()
                     .and_then(|(l, r)| {

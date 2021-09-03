@@ -138,6 +138,16 @@ pub fn unit_ai<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn if_mul_image_size<'e, Va: VirtualAddress>(op: Operand<'e>) -> Option<Operand<'e>> {
+    if Va::SIZE == 4 {
+        op.if_arithmetic(scarf::ArithOpType::Lsh)
+            .filter(|(_, r)| r.if_constant() == Some(6))
+            .map(|x| x.0)
+    } else {
+        op.if_arithmetic_mul_const(0x58)
+    }
+}
+
 pub fn image_iscript<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x10,

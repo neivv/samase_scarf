@@ -6284,6 +6284,11 @@ trait ControlExt<'e, E: ExecutionStateTrait<'e>> {
     /// Workaround for sometimes occuring memory reads which scarf isn't
     /// able to detect as aliasing another memory location.
     fn aliasing_memory_fix(&mut self, operation: &scarf::Operation<'e>);
+    /// Returns esp - E::VirtualAddress::SIZE.
+    /// That is, value of call entry stack pointer supposing we're right
+    /// before ctrl.inline() and want the child function to know what the stack
+    /// pointer was on entry.
+    fn get_new_esp_for_call(&mut self) -> Operand<'e>;
 }
 
 impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
@@ -6371,5 +6376,13 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
                 }
             }
         }
+    }
+
+    fn get_new_esp_for_call(&mut self) -> Operand<'e> {
+        let ctx = self.ctx();
+        self.resolve(ctx.sub_const(
+            ctx.register(4),
+            <A::Exec as ExecutionStateTrait<'e>>::VirtualAddress::SIZE.into(),
+        ))
     }
 }
