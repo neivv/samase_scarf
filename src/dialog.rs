@@ -761,7 +761,8 @@ pub(crate) fn button_ddsgrps<'e, E: ExecutionState<'e>>(
         cmdicons: None,
     };
 
-    let gateway_status = match binary.read_address(unit_status_funcs + 0xa0 * 0xc + 0x8).ok() {
+    let offset = 0xa0 * E::VirtualAddress::SIZE * 0x3 + E::VirtualAddress::SIZE * 2;
+    let gateway_status = match binary.read_address(unit_status_funcs + offset).ok() {
         Some(s) => s,
         None => return result,
     };
@@ -795,8 +796,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     if self.inline_depth < 5 {
                         let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                         // Only inline when status_screen dialog is being passed to the function
@@ -841,11 +841,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                             let is_u16_move = dest.if_arithmetic_add()
                                 .and_then(|(l, r)| {
                                     let c = r.if_constant()?;
-                                    match c {
-                                        // 0x26 is older offset
-                                        0x3e | 0x26 => Some((l, c as u16)),
-                                        _ => None,
-                                    }
+                                    struct_layouts::control_u16_value::
+                                        <E::VirtualAddress>()
+                                        .iter()
+                                        .find(|&&x| x == c)
+                                        .map(|&c| (l, c as u16))
                                 });
                             if let Some(base) = is_u16_move {
                                 self.current_function_u16_param_set = Some(base);
@@ -865,13 +865,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                         }
                     }
                 }
-                if mem.size == MemAccessSize::Mem32 {
+                if mem.size == E::WORD_SIZE {
                     if let Some((base, offset)) = self.current_function_u16_param_set {
                         let ok = ctrl.if_mem_word(dest)
-                            .and_then(|x| x.if_arithmetic_add())
-                            .filter(|&(l, _)| l == base)
-                            .and_then(|(_, r)| r.if_constant())
-                            .filter(|&c| c == offset as u64 + 2)
+                            .and_then(|x| x.if_arithmetic_add_const(offset as u64 + 2))
+                            .filter(|&x| x == base)
                             .is_some();
                         if ok {
                             if let Some(outer) = ctrl.if_mem_word(val) {

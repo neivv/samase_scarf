@@ -313,6 +313,13 @@ pub fn control_draw_funcs<Va: VirtualAddress>() -> &'static [u64] {
     }
 }
 
+pub fn control_u16_value<Va: VirtualAddress>() -> &'static [u64] {
+    match Va::SIZE == 4 {
+        true => &[0x26, 0x3e],
+        false => &[0x56],
+    }
+}
+
 pub fn pathing_map_tile_regions<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xc,
