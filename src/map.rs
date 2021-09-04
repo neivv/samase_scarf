@@ -233,10 +233,13 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                         {
                             // For some reason the trigger pointer is aligned past linked list
                             // prev/next, but check for x + 8 offsets as well to be safe
-                            if offset == 0xf || offset == 0x17 {
+                            // The trigger structure is same size in 32/64bit outside
+                            // those linked list prev/next.
+                            let two_words = u64::from(E::VirtualAddress::SIZE * 2);
+                            if offset == 0xf || offset == 0xf + two_words {
                                 // Condition is at trigger + 8 + 0xf
                                 single_result_assign(Some(base), &mut self.result.conditions);
-                            } else if offset == 0x15a || offset == 0x162 {
+                            } else if offset == 0x15a || offset == 0x15a + two_words {
                                 // Action is at trigger + 8 + 0x148 + 0x1a
                                 single_result_assign(Some(base), &mut self.result.actions);
                             }
@@ -352,7 +355,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                         } else {
                             if let Some(player) = self.trigger_player {
                                 let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                                if arg1 == player {
+                                if Operand::and_masked(arg1).0 == player {
                                     self.inline_depth += 1;
                                     ctrl.analyze_with_current_state(self, dest);
                                     self.inline_depth -= 1;
@@ -365,12 +368,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                             let custom = ctx.custom(self.next_func_return_id);
                             self.next_func_return_id = self.next_func_return_id
                                 .wrapping_add(1);
-                            let exec_state = ctrl.exec_state();
-                            exec_state.move_to(
-                                &DestOperand::Register64(scarf::operand::Register(0)),
-                                custom,
-                            );
-                            ctrl.skip_operation();
+                            ctrl.do_call_with_result(custom);
                         }
                     }
                 }
