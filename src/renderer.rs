@@ -282,13 +282,16 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 
         match *op {
             Operation::Call(_) => {
                 let ctx = ctrl.ctx();
-                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
                 let ok = ctx.and_const(arg1, 0xff).if_mem8().is_some() &&
                     arg3.if_mem16()
-                        .and_then(|x| x.if_arithmetic_add_const(8))
-                        .and_then(|x| x.if_register())
-                        .filter(|r| r.0 == 1)
+                        .and_then(|x| {
+                            x.if_arithmetic_add_const(
+                                struct_layouts::image_id::<E::VirtualAddress>()
+                            )
+                        })
+                        .filter(|&x| x == ctx.register(1))
                         .is_some();
                 if ok {
                     let ecx = ctrl.resolve(ctx.register(1));
@@ -299,12 +302,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 
                     }
                 }
                 // Assume cdecl calls
-                ctrl.skip_operation();
-                let state = ctrl.exec_state();
-                state.move_to(
-                    &DestOperand::Register64(scarf::operand::Register(0)),
-                    ctx.new_undef(),
-                );
+                ctrl.skip_call_preserve_esp();
             }
             _ => (),
         }

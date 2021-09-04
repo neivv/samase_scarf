@@ -148,6 +148,13 @@ pub fn if_mul_image_size<'e, Va: VirtualAddress>(op: Operand<'e>) -> Option<Oper
     }
 }
 
+pub fn image_id<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x8,
+        false => 0x10,
+    }
+}
+
 pub fn image_iscript<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x10,
