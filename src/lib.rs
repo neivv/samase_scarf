@@ -6289,6 +6289,8 @@ trait ControlExt<'e, E: ExecutionStateTrait<'e>> {
     /// before ctrl.inline() and want the child function to know what the stack
     /// pointer was on entry.
     fn get_new_esp_for_call(&mut self) -> Operand<'e>;
+    /// Adds word size to esp (Does not actually return the operand at [esp])
+    fn pop_stack(&mut self);
 }
 
 impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
@@ -6384,5 +6386,17 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
             ctx.register(4),
             <A::Exec as ExecutionStateTrait<'e>>::VirtualAddress::SIZE.into(),
         ))
+    }
+
+    fn pop_stack(&mut self) {
+        let ctx = self.ctx();
+        let state = self.exec_state();
+        state.move_to(
+            &scarf::DestOperand::Register64(scarf::operand::Register(4)),
+            ctx.add_const(
+                ctx.register(4),
+                <A::Exec as ExecutionStateTrait<'e>>::VirtualAddress::SIZE.into(),
+            ),
+        );
     }
 }

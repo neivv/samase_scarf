@@ -398,6 +398,7 @@ pub(crate) fn trigger_unit_count_caches<'e, E: ExecutionState<'e>>(
         arg_cache,
         inline_depth: 0,
         game,
+        entry_esp: ctx.register(4),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, cond_command);
     analysis.analyze(&mut analyzer);
@@ -409,6 +410,7 @@ struct CountCacheAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut TriggerUnitCountCaches<'e>,
     arg_cache: &'a ArgCache<'e, E>,
     game: Operand<'e>,
+    entry_esp: Operand<'e>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CountCacheAnalyzer<'a, 'e, E> {
@@ -438,12 +440,26 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CountCacheAnalyze
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
                         let dest = E::VirtualAddress::from_u64(dest);
                         self.inline_depth += 1;
+                        let old_esp = self.entry_esp;
+                        self.entry_esp = ctrl.get_new_esp_for_call();
                         ctrl.analyze_with_current_state(self, dest);
+                        self.entry_esp = old_esp;
                         self.inline_depth -= 1;
                         let res = &self.result;
                         if res.all_units.is_some() && res.completed_units.is_some() {
                             ctrl.end_analysis();
                         }
+                    }
+                }
+            }
+            Operation::Jump { condition, to } => {
+                let ctx = ctrl.ctx();
+                if condition == ctx.const_1() {
+                    if ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                        // Tail call
+                        ctrl.pop_stack();
+                        self.operation(ctrl, &Operation::Call(to));
+                        ctrl.end_branch();
                     }
                 }
             }
