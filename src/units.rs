@@ -771,7 +771,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGiveUnit<'a, 
             if arg2_ok {
                 let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
                 let ctx = ctrl.ctx();
-                let func = ctrl.read_memory(ctx.add_const(arg3, 0xc), E::WORD_SIZE);
+                let offset = if E::VirtualAddress::SIZE == 4 { 0xc } else { 0x10 };
+                let func = ctrl.read_memory(ctx.add_const(arg3, offset), E::WORD_SIZE);
                 if let Some(func) = func.if_constant() {
                     if func >= ctrl.binary().base().as_u64() {
                         self.result = Some(E::VirtualAddress::from_u64(func));
