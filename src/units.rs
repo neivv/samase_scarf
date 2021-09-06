@@ -797,7 +797,7 @@ pub(crate) fn set_unit_player<'e, E: ExecutionState<'e>>(
         arg_cache: &actx.arg_cache,
         result: None,
         skipped_branch: E::VirtualAddress::from_u64(0),
-        inlining: false,
+        inline_depth: 0,
         inline_limit: 0,
     };
     analysis.analyze(&mut analyzer);
@@ -808,7 +808,7 @@ struct FindSetUnitPlayer<'a, 'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     skipped_branch: E::VirtualAddress,
-    inlining: bool,
+    inline_depth: u8,
     inline_limit: u8,
 }
 
@@ -818,41 +818,73 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
-                if self.inlining {
+                if self.inline_depth != 0 {
                     if self.inline_limit == 0 {
                         ctrl.end_analysis();
+                        return;
                     }
                     self.inline_limit -= 1;
                 }
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     let ctx = ctrl.ctx();
                     let tc_arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
-                    let player = self.arg_cache.on_entry(1);
-                    let arg1_ok = tc_arg1 == player ||
-                        tc_arg1.if_arithmetic_or()
-                            .and_either_other(|x| x.if_arithmetic_and())
-                            .filter(|&x| x == ctx.and_const(player, 0xff))
-                            .is_some();
-                    if arg1_ok {
-                        let this = ctrl.resolve(ctx.register(1));
-                        if this == self.arg_cache.on_entry(0) {
-                            self.result = Some(dest);
-                            ctrl.end_analysis();
-                            return;
+                    let this = ctrl.resolve(ctx.register(1));
+                    let input_unit = self.arg_cache.on_entry(0);
+                    let input_player = ctx.and_const(self.arg_cache.on_entry(1), 0xff);
+                    // -- If inlining, check if current func is set_unit_player --
+                    // set_unit_player calls
+                    //      set_unit_iscript(this = unit, a1(u8) = 14, a2(u8) =1)
+                    //      or set_sprite_iscript(this = unit.sprite, a1/a2 same)
+                    if self.inline_depth != 0 {
+                        let this_ok = this == input_unit ||
+                            ctrl.if_mem_word(this)
+                                .and_then(|x| {
+                                    x.if_arithmetic_add_const(
+                                        struct_layouts::unit_sprite::<E::VirtualAddress>()
+                                    )
+                                })
+                                .filter(|&x| x == input_unit)
+                                .is_some();
+                        if this_ok && ctx.and_const(tc_arg1, 0xff).if_constant() == Some(0x14) {
+                            let tc_arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                            if ctx.and_const(tc_arg2, 0xff) == ctx.const_1() {
+                                self.result = Some(E::VirtualAddress::from_u64(0));
+                                ctrl.end_analysis();
+                                return;
+                            }
                         }
                     }
-                    if !self.inlining {
-                        // There's possibly almost-empty single-assert function
-                        // in middle, taking a1 = unit, a2 = player
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        if arg1 == self.arg_cache.on_entry(0) &&
-                            ctrl.resolve(self.arg_cache.on_call(1)) == self.arg_cache.on_entry(1)
-                        {
-                            self.inlining = true;
-                            self.inline_limit = 8;
+                    // -- Consider more inlining --
+                    if self.inline_depth < 2 {
+                        let mut inline = false;
+                        // Inline if thiscall(unit, player)
+                        // Or at depth 0 if cdecl(unit, player)
+                        //      (Almost-empty single-assert function that is often not separated)
+                        let arg1_ok = ctx.and_const(tc_arg1, 0xff) == input_player;
+                        if arg1_ok && this == input_unit {
+                            inline = true;
+                        }
+                        if !inline && self.inline_depth == 0 {
+                            // cdecl(unit, player)
+                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            if arg1 == input_unit &&
+                                ctx.and_const(ctrl.resolve(self.arg_cache.on_call(1)), 0xff) ==
+                                    input_player
+                            {
+                                inline = true;
+                            }
+                        }
+                        if inline {
+                            self.inline_depth += 1;
+                            let old_inline_limit = self.inline_limit;
+                            self.inline_limit = 12;
                             ctrl.analyze_with_current_state(self, dest);
-                            self.inlining = false;
-                            if self.result.is_some() {
+                            self.inline_limit = old_inline_limit;
+                            self.inline_depth -= 1;
+                            if let Some(result) = self.result {
+                                if result.as_u64() == 0 {
+                                    self.result = Some(dest);
+                                }
                                 ctrl.end_analysis();
                             }
                         }
@@ -860,9 +892,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
                 }
             }
             Operation::Jump { condition, .. } => {
-                if self.inlining {
+                if self.inline_depth != 0 {
                     if self.inline_limit == 0 {
                         ctrl.end_analysis();
+                        return;
                     }
                     self.inline_limit -= 1;
                 }
@@ -870,9 +903,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
                 // so that later player comparision isn't undef
                 let condition = ctrl.resolve(condition);
                 let is_player_cmp_d = if_arithmetic_eq_neq(condition)
-                    .map(|x| (x.0, x.1))
-                    .and_either_other(|x| x.if_constant().filter(|&c| c == 0xd))
-                    .filter(|&x| x == self.arg_cache.on_entry(1))
+                    .filter(|x| x.1.if_constant() == Some(0xd))
+                    .filter(|x| Operand::and_masked(x.0).0 == self.arg_cache.on_entry(1))
                     .is_some();
                 if is_player_cmp_d {
                     self.skipped_branch = ctrl.current_instruction_end();
