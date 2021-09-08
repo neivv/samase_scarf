@@ -489,7 +489,7 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
 }
 
 struct ArgCache<'e, E: ExecutionStateTrait<'e>> {
-    args: Vec<Operand<'e>>,
+    args: [Operand<'e>; 8],
     ctx: scarf::OperandCtx<'e>,
     phantom: std::marker::PhantomData<E>,
 }
@@ -498,7 +498,7 @@ impl<'e, E: ExecutionStateTrait<'e>> ArgCache<'e, E> {
     fn new(ctx: OperandCtx<'e>) -> ArgCache<'e, E> {
         let is_x64 = <E::VirtualAddress as VirtualAddressTrait>::SIZE == 8;
         let stack_pointer = ctx.register(4);
-        let args = (0..8).map(|i| {
+        let args = array_init::array_init(|i| {
             if is_x64 {
                 match i {
                     0 => ctx.register(1),
@@ -507,16 +507,16 @@ impl<'e, E: ExecutionStateTrait<'e>> ArgCache<'e, E> {
                     3 => ctx.register(9),
                     _ => ctx.mem64(ctx.add(
                         stack_pointer,
-                        ctx.constant(i * 8),
+                        ctx.constant(i as u64 * 8),
                     )),
                 }
             } else {
                 ctx.mem32(ctx.add(
                     stack_pointer,
-                    ctx.constant(i * 4),
+                    ctx.constant(i as u64 * 4),
                 ))
             }
-        }).collect();
+        });
         ArgCache {
             args,
             ctx,
