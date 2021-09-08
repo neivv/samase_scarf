@@ -60,7 +60,6 @@ fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
                 mov_u32_max_seen: false,
                 first_branch: true,
                 middle_of_func,
-                ctx,
                 global_addr,
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -139,7 +138,6 @@ struct GameScreenRClickAnalyzer<'e, E: ExecutionState<'e>> {
     mov_u32_max_seen: bool,
     result: Option<Operand<'e>>,
     middle_of_func: E::VirtualAddress,
-    ctx: OperandCtx<'e>,
     global_addr: Option<E::VirtualAddress>,
 }
 
@@ -182,18 +180,11 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
             Operation::Jump { condition, .. } => {
                 if self.mov_u32_max_seen {
                     let condition = ctrl.resolve(condition);
+                    let ctx = ctrl.ctx();
                     let client_selection = condition.if_arithmetic_eq()
-                        .and_either(|x| x.if_constant())
-                        .and_then(|(c, op)| match c == 0 {
-                            true => op.if_memory(),
-                            false => None,
-                        })
-                        .map(|mem| {
-                            self.ctx.sub(
-                                mem.address,
-                                self.ctx.constant(11 * 4),
-                            )
-                        });
+                        .filter(|x| x.1 == ctx.const_0())
+                        .and_then(|x| x.0.if_memory())
+                        .map(|mem| ctx.sub_const(mem.address, 11 * 4));
                     if let Some(csl) = client_selection {
                         self.result = Some(csl);
                     }

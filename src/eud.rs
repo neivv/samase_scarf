@@ -250,16 +250,16 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
                             if len % 0x10 == 0 {
                                 let result = (0..(len / 0x10)).map(|i| {
                                     let address = ctrl.resolve(ctx.mem32(
-                                        ctx.add(a2, ctx.constant(i * 0x10))
+                                        ctx.add_const(a2, i * 0x10)
                                     ));
                                     let size = ctrl.resolve(ctx.mem32(
-                                        ctx.add(a2, ctx.constant(i * 0x10 + 0x4))
+                                        ctx.add_const(a2, i * 0x10 + 0x4)
                                     ));
                                     let operand = ctrl.resolve(ctx.mem32(
-                                        ctx.add(a2, ctx.constant(i * 0x10 + 0x8))
+                                        ctx.add_const(a2, i * 0x10 + 0x8)
                                     ));
                                     let flags = ctrl.resolve(ctx.mem32(
-                                        ctx.add(a2, ctx.constant(i * 0x10 + 0xc))
+                                        ctx.add_const(a2, i * 0x10 + 0xc)
                                     ));
                                     if let Some(address) = address.if_constant() {
                                         if let Some(size) = size.if_constant() {
