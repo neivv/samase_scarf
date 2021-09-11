@@ -6268,9 +6268,9 @@ fn is_global(op: Operand<'_>) -> bool {
 
 fn is_stack_address(addr: Operand<'_>) -> bool {
     if let Some((l, r)) = addr.if_arithmetic_sub() {
-        r.if_constant().is_some() && l.if_register().map(|x| x.0) == Some(4)
+        r.if_constant().is_some() && l.if_register() == Some(4)
     } else {
-        addr.if_register().map(|x| x.0) == Some(4)
+        addr.if_register() == Some(4)
     }
 }
 
@@ -6310,14 +6310,14 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
         let state = self.exec_state();
         for i in 0..3 {
             state.move_resolved(
-                &scarf::DestOperand::Register64(scarf::operand::Register(i)),
+                &scarf::DestOperand::Register64(i),
                 ctx.new_undef(),
             );
         }
         if A::Exec::WORD_SIZE == MemAccessSize::Mem64 {
             for i in 8..10 {
                 state.move_resolved(
-                    &scarf::DestOperand::Register64(scarf::operand::Register(i)),
+                    &scarf::DestOperand::Register64(i),
                     ctx.new_undef(),
                 );
             }
@@ -6329,18 +6329,18 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
         let ctx = self.ctx();
         let state = self.exec_state();
         state.move_resolved(
-            &scarf::DestOperand::Register64(scarf::operand::Register(0)),
+            &scarf::DestOperand::Register64(0),
             result,
         );
         for i in 1..3 {
             state.move_resolved(
-                &scarf::DestOperand::Register64(scarf::operand::Register(i)),
+                &scarf::DestOperand::Register64(i),
                 ctx.new_undef(),
             );
         }
         if A::Exec::WORD_SIZE == MemAccessSize::Mem32 {
             state.move_resolved(
-                &scarf::DestOperand::Register64(scarf::operand::Register(4)),
+                &scarf::DestOperand::Register64(4),
                 ctx.new_undef(),
             );
         }
@@ -6392,7 +6392,7 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
         let ctx = self.ctx();
         let state = self.exec_state();
         state.move_to(
-            &scarf::DestOperand::Register64(scarf::operand::Register(4)),
+            &scarf::DestOperand::Register64(4),
             ctx.add_const(
                 ctx.register(4),
                 <A::Exec as ExecutionStateTrait<'e>>::VirtualAddress::SIZE.into(),

@@ -58,13 +58,14 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
     {
         match *op {
             Operation::Move(ref dest, val, None) => {
-                if matches!(dest, DestOperand::Register64(r) if r.0 == 4) {
+                let ctx = ctrl.ctx();
+                if matches!(dest, DestOperand::Register64(4)) {
                     let constant = val.if_arithmetic_add()
-                        .filter(|x| x.0.if_register().filter(|r| r.0 == 4).is_some())
+                        .filter(|x| x.0 == ctx.register(4))
                         .and_then(|x| i32::try_from(x.1.if_constant()?).ok())
                         .or_else(|| {
                             val.if_arithmetic_sub()
-                                .filter(|x| x.0.if_register().filter(|r| r.0 == 4).is_some())
+                                .filter(|x| x.0 == ctx.register(4))
                                 .and_then(|x| i32::try_from(x.1.if_constant()?).ok())
                                 .map(|x| 0i32.wrapping_sub(x))
                         });

@@ -140,7 +140,7 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
                         if let Some(dest) = dest {
                             let ctx = ctrl.ctx();
                             if !self.inlining {
-                                let ecx = ctrl.resolve(ctx.register_ref(1));
+                                let ecx = ctrl.resolve(ctx.register(1));
                                 if ecx == self.arg_cache.on_entry(0) {
                                     self.inlining = true;
                                     ctrl.analyze_with_current_state(self, dest);

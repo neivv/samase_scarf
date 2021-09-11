@@ -273,6 +273,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeFirstSwitch<'e
             if E::VirtualAddress::SIZE == 4 {
                 if let Operation::Move(_, value, None) = *op {
                     let value = ctrl.resolve(value);
+                    let ctx = ctrl.ctx();
                     let skip = value.if_arithmetic_and()
                         .and_then(|(l, r)| {
                             r.if_constant().filter(|&x| x.wrapping_add(1) & x == 0)?;
@@ -281,7 +282,11 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeFirstSwitch<'e
                                 .unwrap_or(l)
                                 .if_arithmetic_sub()?;
                             r.if_constant()?;
-                            l.if_register().filter(|x| x.0 == 4)
+                            if l != ctx.register(4) {
+                                None
+                            } else {
+                                Some(())
+                            }
                         })
                         .is_some();
                     if skip {

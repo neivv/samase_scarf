@@ -6,7 +6,6 @@ extern crate scarf;
 use std::path::Path;
 
 use scarf::{Operand, OperandType, VirtualAddress, ExecutionStateX86, OperandContext, OperandCtx};
-use scarf::operand::Register;
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 use samase_scarf::{DatType, Eud};
 
@@ -83,7 +82,7 @@ fn everything_1209() {
 fn everything_1209b() {
     test_with_extra_checks(Path::new("1209b.exe"), |ctx, analysis| {
         let ais = analysis.aiscript_hook().unwrap();
-        assert_eq!(ais.opcode_operand.if_register(), Some(Register(0)));
+        assert_eq!(ais.opcode_operand.if_register(), Some(0));
         assert_eq!(ais.switch_loop_address.0, 0x00607ED0);
         assert_eq!(ais.return_address.0, 0x00608F4F);
 
@@ -167,8 +166,8 @@ fn everything_1210b() {
 fn everything_1211() {
     test_with_extra_checks(Path::new("1211.exe"), |_ctx, analysis| {
         let ais = analysis.aiscript_hook().unwrap();
-        assert_eq!(ais.opcode_operand.if_register(), Some(Register(0)));
-        assert_eq!(ais.script_operand_at_switch.if_register(), Some(Register(6)));
+        assert_eq!(ais.opcode_operand.if_register(), Some(0));
+        assert_eq!(ais.script_operand_at_switch.if_register(), Some(6));
         assert_eq!(ais.op_limit_hook_begin.0, 0x007134EB);
         assert_eq!(ais.op_limit_hook_end.0, 0x007134FA);
         assert_eq!(ais.switch_loop_address.0, 0x00714EF9);
@@ -1969,7 +1968,7 @@ fn test_nongeneric<'e>(
     assert_eq!(analysis.bnet_message_vtable_type(), Some(4));
 }
 
-fn op_register_anywidth(op: Operand<'_>) -> Option<Register> {
+fn op_register_anywidth(op: Operand<'_>) -> Option<u8> {
     match *op.ty() {
         OperandType::Register(s) => Some(s),
         _ => op.if_and_masked_register().map(|x| x.0)

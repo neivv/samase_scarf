@@ -110,7 +110,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FontsAnalyzer<'a, 'e
                             ctrl.skip_operation();
                             let exec_state = ctrl.exec_state();
                             exec_state.move_to(
-                                &DestOperand::Register64(scarf::operand::Register(0)),
+                                &DestOperand::Register64(0),
                                 ctx.custom(offset),
                             );
                         }
@@ -445,7 +445,7 @@ impl<'a, 'e, E: ExecutionState<'e>> TtfCacheCharacterAnalyzer<'a, 'e, E> {
     /// Checks for ecx + arg1 * 0xa0
     fn is_glyph_set_ptr(&self, op: Operand<'e>) -> bool {
         op.if_arithmetic_add()
-            .and_either_other(|x| x.if_register().filter(|r| r.0 == 1))
+            .and_either_other(|x| x.if_register().filter(|&r| r == 1))
             .and_then(|x| {
                 x.if_arithmetic_mul_const(
                     struct_layouts::glyph_set_size::<E::VirtualAddress>(),

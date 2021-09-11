@@ -3,9 +3,9 @@ use bumpalo::collections::Vec as BumpVec;
 use scarf::{BinaryFile, Operand, OperandCtx, Operation, DestOperand, OperandType, MemAccessSize};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::operand::{ArithOpType, Register};
+use scarf::operand::{ArithOpType};
 
-use crate::{AnalysisCtx, EntryOf, bumpvec_with_capacity, FunctionFinder};
+use crate::{AnalysisCtx, EntryOf, OperandExt, bumpvec_with_capacity, FunctionFinder};
 
 pub struct Eud<'e> {
     pub address: u32,
@@ -241,9 +241,8 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
                     let a2 = ctx.mem32(ctx.add(esp, ctx.const_4()));
                     let a3 = ctrl.resolve(ctx.mem32(ctx.add(esp, ctx.const_8())));
                     let is_a1 = a1.if_mem32()
-                        .and_then(|addr| addr.if_arithmetic_add())
-                        .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                        .filter(|&(c, other)| c == 4 && other.if_register() == Some(Register(4)))
+                        .and_then(|addr| addr.if_arithmetic_add_const(4))
+                        .filter(|&x| x == ctx.register(4))
                         .is_some();
                     if is_a1 {
                         if let Some(len) = a3.if_constant() {
@@ -380,10 +379,10 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
                         if let DestOperand::Memory(mem) = to {
                             // Offset if this is moving to [esp + offset]
                             let mut off = if_arithmetic_add_or_sub_const(mem.address)
-                                .filter(|(r, _)| r.if_register() == Some(Register(4)))
+                                .filter(|(r, _)| r.if_register() == Some(4))
                                 .map(|(_, off)| off);
                             if off.is_none() {
-                                if mem.address.if_register() == Some(Register(4)) {
+                                if mem.address.if_register() == Some(4) {
                                     off = Some(0);
                                 }
                             }
@@ -411,9 +410,9 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
                 _ => true,
             };
             if stop {
-                let esp = ctrl.resolve(ctrl.ctx().register_ref(4));
+                let esp = ctrl.resolve(ctrl.ctx().register(4));
                 let off = if_arithmetic_add_or_sub_const(esp)
-                    .filter(|(r, _)| r.if_register() == Some(Register(4)));
+                    .filter(|(r, _)| r.if_register() == Some(4));
                 if let Some((_, off)) = off {
                     let neg_offset = 0u64.wrapping_sub(off);
                     if neg_offset < 0x80000 {

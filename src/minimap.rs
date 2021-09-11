@@ -361,7 +361,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayVisionsAnalyze
                         let register_count = if E::VirtualAddress::SIZE == 4 { 8 } else { 16 };
                         for i in 0..register_count {
                             if ctx.and_const(exec.resolve(ctx.register(i)), 0xffff_ffff) == cmp {
-                                let dest = DestOperand::Register64(scarf::operand::Register(i));
+                                let dest = DestOperand::Register64(i);
                                 exec.move_to(&dest, ctx.custom(0));
                             }
                         }

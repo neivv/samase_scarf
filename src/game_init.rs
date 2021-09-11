@@ -667,9 +667,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRealChooseSnp
             Operation::Jump { condition, to } => {
                 if let Some(c) = condition.if_constant() {
                     if c != 0 {
-                        let esp_nonchanged = ctrl.resolve(self.ctx.register(4))
-                            .if_register().filter(|x| x.0 == 4)
-                            .is_some();
+                        let ctx = ctrl.ctx();
+                        let esp_nonchanged =
+                            ctrl.resolve(self.ctx.register(4)) == ctx.register(4);
                         if esp_nonchanged {
                             if let Some(to) = to.if_constant() {
                                 let to = E::VirtualAddress::from_u64(to);
@@ -1283,7 +1283,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingR
                         let custom = ctx.custom(idx);
                         self.func_returns.push(dest);
                         exec.move_to(
-                            &DestOperand::Register64(scarf::operand::Register(0)),
+                            &DestOperand::Register64(0),
                             custom,
                         );
                         ctrl.skip_operation();
@@ -2760,7 +2760,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                     let esp = ctrl.resolve(ctx.register(4));
                     let state = ctrl.exec_state();
                     state.move_to(
-                        &scarf::DestOperand::Register64(scarf::operand::Register(4)),
+                        &scarf::DestOperand::Register64(4),
                         ctx.add_const(esp, 4),
                     );
                 }
@@ -2844,7 +2844,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                     let esp = ctrl.resolve(ctx.register(4));
                     let state = ctrl.exec_state();
                     state.move_to(
-                        &scarf::DestOperand::Register64(scarf::operand::Register(4)),
+                        &scarf::DestOperand::Register64(4),
                         ctx.add_const(esp, 4),
                     );
                 }

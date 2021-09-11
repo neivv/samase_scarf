@@ -554,7 +554,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 .filter(|&(l, _)| {
                     // Allow esp - x and
                     // ((esp - y) & 0xffff_fff0) - x
-                    l.if_register().filter(|r| r.0 == 4).is_some() ||
+                    l.if_register().filter(|&r| r == 4).is_some() ||
                         l.if_arithmetic_and()
                             .filter(|&(_, r)| r.if_constant().is_some())
                             .and_then(|(l, _)| {
@@ -562,7 +562,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                     .filter(|&(_, r)| r.if_constant().is_some())
                                     .and_then(|(l, _)| l.if_register())
                                     .or_else(|| l.if_register())
-                                    .filter(|r| r.0 == 4)
+                                    .filter(|&r| r == 4)
                             })
                             .is_some()
                 })
@@ -794,7 +794,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     ctrl.end_branch();
                     let exec_state = ctrl.exec_state();
                     exec_state.move_to(
-                        &DestOperand::Register64(scarf::operand::Register(4)),
+                        &DestOperand::Register64(4),
                         ctx.add_const(
                             ctx.register(4),
                             E::VirtualAddress::SIZE as u64,
@@ -804,15 +804,15 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             Operation::Move(ref dest, value, None) => {
-                match dest {
+                match *dest {
                     DestOperand::Register64(reg) if E::VirtualAddress::SIZE == 4 => {
-                        if reg.0 == 5 && value.if_memory().is_some() {
+                        if reg == 5 && value.if_memory().is_some() {
                             // Make pop ebp always be mov esp, orig_esp
                             // even if current esp is considered unknown
                             let ctx = ctrl.ctx();
                             let exec_state = ctrl.exec_state();
                             exec_state.move_resolved(
-                                &DestOperand::Register64(scarf::operand::Register(4)),
+                                &DestOperand::Register64(4),
                                 ctx.sub_const(
                                     self.func_initial_esp,
                                     E::VirtualAddress::SIZE as u64,
@@ -820,7 +820,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             );
                         }
                     }
-                    DestOperand::Memory(mem) if !self.redo_check_malloc_free => {
+                    DestOperand::Memory(ref mem) if !self.redo_check_malloc_free => {
                         let value = ctrl.resolve(value);
                         // Generally vector.resize(limits.x) is caught at call
                         // but check also for inlined vector.size = limits.x
@@ -1346,7 +1346,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepObjectsAnalyzer<'a, 'acx, 'e, E> {
             ctrl.skip_operation();
             let state = ctrl.exec_state();
             state.move_to(
-                &DestOperand::Register64(scarf::operand::Register(0)),
+                &DestOperand::Register64(0),
                 result,
             );
             true
@@ -1413,7 +1413,7 @@ fn analyze_simulate_short<'e, E: ExecutionState<'e>>(
         ctx.mem_variable_rc(E::WORD_SIZE, ctx.register(4)),
     );
     exec.move_to(
-        &DestOperand::Register64(scarf::operand::Register(4)),
+        &DestOperand::Register64(4),
         ctx.sub_const(ctx.register(4), E::VirtualAddress::SIZE as u64),
     );
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, func, exec, Default::default());

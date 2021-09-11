@@ -5,7 +5,7 @@ use bumpalo::collections::Vec as BumpVec;
 use scarf::{MemAccessSize, Operand, Operation, DestOperand, Rva, BinaryFile, OperandCtx};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::operand::{MemAccess, Register};
+use scarf::operand::{MemAccess};
 
 use crate::{
     ArgCache, AnalysisCtx, ControlExt, EntryOf, FunctionFinder, OperandExt, OptionExt,
@@ -238,11 +238,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                             }
                             let state = ctrl.exec_state();
                             state.move_to(
-                                &DestOperand::Register64(Register(0)),
+                                &DestOperand::Register64(0),
                                 ctx.custom(custom_id),
                             );
-                            state.move_to(&DestOperand::Register64(Register(1)), ctx.new_undef());
-                            state.move_to(&DestOperand::Register64(Register(2)), ctx.new_undef());
+                            state.move_to(&DestOperand::Register64(1), ctx.new_undef());
+                            state.move_to(&DestOperand::Register64(2), ctx.new_undef());
                             if arg1_c.is_some() {
                                 let dest = DestOperand::Memory(MemAccess {
                                     address: arg1,
@@ -419,7 +419,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
                 .address.if_arithmetic_add_const(
                     struct_layouts::unit_related::<E::VirtualAddress>()
                 )?;
-            rcx.if_register().filter(|r| r.0 == 1)?;
+            rcx.if_register().filter(|&r| r == 1)?;
             Some(offset)
         }
 

@@ -245,13 +245,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
         if self.after_call {
             // Has to be done like this since just writing to eax before call would
             // just get overwritten later
-            let eax = DestOperand::Register64(scarf::operand::Register(0));
+            let eax = DestOperand::Register64(0);
             let state = ctrl.exec_state();
             state.move_to(&eax, self.return_marker);
             self.after_call = false;
         }
         if let Some(path_string) = self.path_string.take() {
-            let dest = DestOperand::Register64(scarf::operand::Register(0));
+            let dest = DestOperand::Register64(0);
             let dest2 = DestOperand::from_oper(ctrl.mem_word(path_string));
             let state = ctrl.exec_state();
             // String creation function returns eax = arg1
@@ -957,7 +957,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     self.funcs.push(dest);
                     let exec_state = ctrl.exec_state();
                     exec_state.move_to(
-                        &DestOperand::Register64(scarf::operand::Register(0)),
+                        &DestOperand::Register64(0),
                         custom,
                     );
                 } else {
@@ -1175,7 +1175,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
                         let custom = ctx.custom(0);
                         let exec_state = ctrl.exec_state();
                         exec_state.move_to(
-                            &DestOperand::Register64(scarf::operand::Register(0)),
+                            &DestOperand::Register64(0),
                             custom,
                         );
                     } else {
@@ -1192,7 +1192,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
                     let custom = ctx.custom(1);
                     let exec_state = ctrl.exec_state();
                     exec_state.move_to(
-                        &DestOperand::Register64(scarf::operand::Register(0)),
+                        &DestOperand::Register64(0),
                         custom,
                     );
                 }
@@ -1298,11 +1298,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyz
                         }
                         let exec_state = ctrl.exec_state();
                         exec_state.move_resolved(
-                            &DestOperand::Register64(scarf::operand::Register(4)),
+                            &DestOperand::Register64(4),
                             esp,
                         );
                         exec_state.move_resolved(
-                            &DestOperand::Register64(scarf::operand::Register(5)),
+                            &DestOperand::Register64(5),
                             ebp,
                         );
                     }

@@ -1019,7 +1019,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                     // Check 64 bit register args
                     if is_and_ff {
                         if let Some(reg) = arith.left.if_register() {
-                            let result = match reg.0 {
+                            let result = match reg {
                                 1 => Some(U8Operand::Arg(0)),
                                 2 => Some(U8Operand::Arg(1)),
                                 8 => Some(U8Operand::Arg(2)),
@@ -1048,7 +1048,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             OperandType::Memory(ref mem) if mem.size == MemAccessSize::Mem8 => {
                 mem.address.if_arithmetic_add()
                     .and_then(|(l, r)| {
-                        l.if_register().filter(|r| r.0 == 4)?;
+                        l.if_register().filter(|&r| r == 4)?;
                         let constant = r.if_constant()?;
                         if let Some(arg_n) = arg_n_from_offset::<E>(constant) {
                             Some(U8Operand::Arg(arg_n))
@@ -1322,7 +1322,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         ctrl.skip_operation();
                         let exec_state = ctrl.exec_state();
                         exec_state.move_to(
-                            &DestOperand::Register64(scarf::operand::Register(0)),
+                            &DestOperand::Register64(0),
                             custom,
                         );
                     }
@@ -1738,9 +1738,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             .and_then(|x| x.address.if_arithmetic_sub())
             .and_then(|(l, r)| {
                 r.if_constant().filter(|&c| c < 0x2000)?;
-                l.if_register()
+                Some(l)
             })
-            .filter(|r| r.0 == 4)
+            .filter(|&r| r == ctx.register(4))
             .is_some();
         let is_undef = Operand::and_masked(value).0.is_undefined();
         if is_local || is_undef {
@@ -1792,7 +1792,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 })
                 .or_else(|| value.if_register());
             if let Some(reg) = reg {
-                let arg_n = match reg.0 {
+                let arg_n = match reg {
                     1 => 0,
                     2 => 1,
                     8 => 2,
@@ -1843,8 +1843,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         size: MemAccessSize,
         dat: DatType,
     ) -> Result<(), ()> {
-
-        let is_stack = base.if_register().filter(|x| x.0 == 4).is_some();
+        let ctx = ctrl.ctx();
+        let is_stack = base == ctx.register(4);
         if is_stack {
             if let Some(arg) = arg_n_from_offset::<E>(offset).map(|x| x as usize) {
                 if arg < self.needed_func_params.len() {
@@ -2589,7 +2589,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     DestOperand::Register32(r) | DestOperand::Register64(r) => {
                         if let Some(op) = self.needed_operand {
                             if Operand::and_masked(op).0.if_register()
-                                .filter(|x| x.0 == r.0)
+                                .filter(|&x| x == r)
                                 .is_some()
                             {
                                 // I feel like this doesn't need to be a branch rerun..
@@ -2608,7 +2608,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     // but that isn't caught by check_u8_instruction
                     if let Some(op) = self.needed_operand {
                         if Operand::and_masked(op).0.if_register()
-                            .filter(|x| x.0 == r.0)
+                            .filter(|&x| x == r)
                             .is_some()
                         {
                             self.instruction_lists.clear();
@@ -2661,7 +2661,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         ctrl.skip_operation();
                         let exec_state = ctrl.exec_state();
                         exec_state.move_to(
-                            &DestOperand::Register64(scarf::operand::Register(0)),
+                            &DestOperand::Register64(0),
                             custom,
                         );
                     }
@@ -2687,15 +2687,16 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
                     // with resolved_dest_address set.
                     // It's a bit hacky fix and probably could be more general,
                     // but oh well.
+                    let ctx = ctrl.ctx();
                     let is_esp_offset = mem.address.if_arithmetic_add()
-                        .filter(|x| x.0.if_register().filter(|&r| r.0 == 4).is_some())
+                        .filter(|x| x.0 == ctx.register(4))
                         .and_then(|x| x.1.if_constant())
                         .filter(|&c| c < 0x200)
                         .is_some();
                     if is_esp_offset {
                         let addr = ctrl.resolve(mem.address);
                         let is_esp_offset = addr.if_arithmetic_sub()
-                            .filter(|x| x.0.if_register().filter(|&r| r.0 == 4).is_some())
+                            .filter(|x| x.0 == ctx.register(4))
                             .and_then(|x| x.1.if_constant())
                             .filter(|&c| c < 0x200)
                             .is_some();
@@ -2749,7 +2750,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
         match *Operand::and_masked(op).0.ty() {
             OperandType::Register(reg) => {
                 if E::VirtualAddress::SIZE == 8 && self.branch == self.func_entry {
-                    let arg = match reg.0 {
+                    let arg = match reg {
                         1 => 0,
                         2 => 1,
                         8 => 2,
@@ -2773,9 +2774,9 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
                         }
                     })
                     .or_else(|| Some((mem.address.if_register()?, 0)))
-                    .filter(|&x| x.0.0 == 4 || x.0.0 == 5);
+                    .filter(|&x| x.0 == 4 || x.0 == 5);
                 match stack_offset {
-                    Some((r, s)) if r.0 == 4 && self.branch == self.func_entry => {
+                    Some((r, s)) if r == 4 && self.branch == self.func_entry => {
                         // If this is an argument, then request all of its uses to be widened
                         // for parent.
                         if let Some(arg) = arg_n_from_offset::<E>(s).map(|x| x as usize) {
@@ -2945,8 +2946,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 Operation::Move(_, val, None) => {
                     let val = ctrl.resolve(val);
                     if let Some(mem) = val.if_memory() {
+                        let ctx = ctrl.ctx();
                         let this_field = mem.address.if_arithmetic_add()
-                            .filter(|(l, _)| l.if_register().filter(|x| x.0 == 1).is_some())
+                            .filter(|&(l, _)| l == ctx.register(1))
                             .and_then(|(_, r)| r.if_constant())
                             .filter(|&c| c < 0x400);
                         if let Some(offset) = this_field {
@@ -3054,7 +3056,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> RecognizeDatPatchFunc<'a, 'b, 'acx
             let this_field = inner.if_memory()
                 .and_then(|mem| {
                     let (l, r) = mem.address.if_arithmetic_add()?;
-                    l.if_register().filter(|r| r.0 == 1)?;
+                    l.if_register().filter(|&r| r == 1)?;
                     let offset = r.if_constant()?;
                     Some((offset, mem.size))
                 });
@@ -3154,12 +3156,12 @@ fn unresolve<'e, E: ExecutionState<'e>>(
         }
         return None;
     }
-    if op.if_register().filter(|r| r.0 == 4).is_some() {
+    if op == ctx.register(4) {
         for i in 4..6 {
             let unres = ctx.register(i);
             let esp = exec_state.resolve(unres);
             if let Some((l, r)) = esp.if_arithmetic_sub() {
-                if l.if_register().filter(|r| r.0 == 4).is_some() {
+                if l == ctx.register(4) {
                     return Some(ctx.add(unres, r));
                 }
             }

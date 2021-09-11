@@ -625,7 +625,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnaly
                             ctrl.skip_operation();
                             let exec_state = ctrl.exec_state();
                             exec_state.move_to(
-                                &DestOperand::Register64(scarf::operand::Register(0)),
+                                &DestOperand::Register64(0),
                                 ctx.custom(0),
                             );
                         }
@@ -634,7 +634,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnaly
                             ctrl.skip_operation();
                             let exec_state = ctrl.exec_state();
                             exec_state.move_to(
-                                &DestOperand::Register64(scarf::operand::Register(0)),
+                                &DestOperand::Register64(0),
                                 ctx.custom(0),
                             );
                             return;

@@ -460,7 +460,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FindVertexBuffer<'a, 'e, E> {
             if let Some(eax) = self.get_fn_result {
                 let state = ctrl.exec_state();
                 state.move_resolved(
-                    &DestOperand::Register64(scarf::operand::Register(0)),
+                    &DestOperand::Register64(0),
                     eax,
                 );
                 ctrl.skip_operation();

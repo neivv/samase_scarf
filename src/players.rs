@@ -2,7 +2,7 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
-use scarf::operand::{MemAccessSize, Register};
+use scarf::operand::{MemAccessSize};
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
@@ -224,7 +224,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
         }
         if let Some(value) = self.delay_eax_move.take() {
             let exec_state = ctrl.exec_state();
-            let eax = DestOperand::Register64(Register(0));
+            let eax = DestOperand::Register64(0);
             exec_state.move_resolved(&eax, value);
         }
         let ctx = ctrl.ctx();
@@ -310,7 +310,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CollectReturnValue
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if let Operation::Return(..) = op {
-            let eax = ctrl.ctx().register_ref(0);
+            let eax = ctrl.ctx().register(0);
             let eax = ctrl.resolve(eax);
             self.return_values.push(eax);
         }

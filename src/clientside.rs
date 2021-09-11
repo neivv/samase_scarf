@@ -3,7 +3,7 @@ use bumpalo::collections::Vec as BumpVec;
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation, Rva};
-use scarf::operand::{OperandCtx, Register};
+use scarf::operand::{OperandCtx};
 
 use crate::{
     AnalysisCtx, ArgCache, EntryOf, EntryOfResult, entry_of_until, unwrap_sext,
@@ -329,7 +329,7 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
             if self.set_eax_to_zero {
                 self.set_eax_to_zero = false;
                 let exec_state = ctrl.exec_state();
-                exec_state.move_to(&DestOperand::Register64(Register(0)), self.ctx.const_0());
+                exec_state.move_to(&DestOperand::Register64(0), self.ctx.const_0());
                 return;
             }
             match *op {
@@ -613,6 +613,7 @@ impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
     fn state_begin(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         use MiscClientSideAnalyzerState as State;
         // Check for the this.vtable_fn() call and
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
                 let dest = ctrl.resolve(dest);
@@ -621,15 +622,14 @@ impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
                     .and_then(|x| x.if_arithmetic_add())
                     .and_either_other(|x| x.if_constant())
                     .and_then(|x| ctrl.if_mem_word(x))
-                    .and_then(|x| x.if_register())
-                    .filter(|r| r.0 == 1)
+                    .filter(|&x| x == ctx.register(1))
                     .is_some();
                 if is_vtable_fn {
                     ctrl.skip_operation();
                     let exec_state = ctrl.exec_state();
                     exec_state.move_to(
-                        &DestOperand::Register64(Register(0)),
-                        self.vtable_fn_result_op.clone(),
+                        &DestOperand::Register64(0),
+                        self.vtable_fn_result_op,
                     );
                 }
 
@@ -637,13 +637,9 @@ impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
             Operation::Jump { condition, to } => {
                 let cond = ctrl.resolve(condition);
                 let cond_ok = if_arithmetic_eq_neq(cond)
-                    .and_then(|(l, r, is_eq)| {
-                        Some((l, r))
-                            .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                            .map(|x| Operand::and_masked(x).0)
-                            .filter(|&x| x == self.vtable_fn_result_op)?;
-                        Some(is_eq)
-                    });
+                    .filter(|x| x.1 == ctx.const_0())
+                    .filter(|x| Operand::and_masked(x.0).0 == self.vtable_fn_result_op)
+                    .map(|x| x.2);
                 if let Some(is_eq) = cond_ok {
                     // is_eq: true jumps if x == 0
                     // is_eq: false jumps if x != 0

@@ -150,7 +150,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 .filter(|x| x.1.if_constant().is_some())
                 .map(|x| Operand::and_masked(x.0).0)
                 .and_then(|x| x.if_register())
-                .filter(|x| x.0 == 4)
+                .filter(|&x| x == 4)
                 .is_some()
         }
         let ctx = ctrl.ctx();
@@ -209,7 +209,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     ctrl.skip_operation();
                     let exec_state = ctrl.exec_state();
                     exec_state.move_to(
-                        &DestOperand::Register64(scarf::operand::Register(0)),
+                        &DestOperand::Register64(0),
                         custom,
                     );
                     self.checked_refs.insert(ctrl.address());
@@ -262,7 +262,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             let custom = ctx.custom(0x10);
                             let exec_state = ctrl.exec_state();
                             exec_state.move_to(
-                                &DestOperand::Register64(scarf::operand::Register(0)),
+                                &DestOperand::Register64(0),
                                 custom,
                             );
                         }
