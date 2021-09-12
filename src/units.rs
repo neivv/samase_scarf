@@ -4,7 +4,7 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, OperandCtx, Operation};
+use scarf::{BinaryFile, DestOperand, MemAccess, MemAccessSize, Operand, OperandCtx, Operation};
 
 use crate::{
     AnalysisCtx, ControlExt, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
@@ -165,10 +165,15 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if !self.memref_found {
                     let val = ctrl.resolve(val);
                     if let Some(mem) = val.if_memory() {
-                        self.memref_found = mem.address.iter().any(|x| match x.if_constant() {
-                            Some(c) => c == self.memref_address.as_u64(),
-                            None => false,
-                        });
+                        let (base, offset) = mem.address();
+                        if offset == self.memref_address.as_u64() {
+                            self.memref_found = true;
+                        } else {
+                            self.memref_found = base.iter().any(|x| match x.if_constant() {
+                                Some(c) => c == self.memref_address.as_u64(),
+                                None => false,
+                            });
+                        }
                     }
                 }
             }
@@ -219,7 +224,7 @@ pub(crate) fn order_issuing<'e, E: ExecutionState<'e>>(
         let idle_orders = binary.read_address(dat + 0xe * dat_table_size)
             .unwrap_or_else(|_| E::VirtualAddress::from_u64(0));
         let address = idle_orders + 0x47;
-        let order = ctx.mem8(ctx.constant(address.as_u64()));
+        let order = ctx.mem8c(address.as_u64());
         let funcs = functions.find_functions_using_global(analysis, address)
             .into_iter()
             .map(move |global_ref| (global_ref, order));
@@ -715,9 +720,9 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StrengthAnalyzer<'e, 
             }
             Operation::Move(DestOperand::Memory(ref mem), _, None) => {
                 if self.init_units_seen && mem.size == MemAccessSize::Mem32 {
-                    let dest = ctrl.resolve(mem.address);
-                    let base = dest.if_arithmetic_add()
-                        .and_either_other(|x| x.if_arithmetic_mul_const(4));
+                    let dest = ctrl.resolve_mem(mem);
+                    let ctx = ctrl.ctx();
+                    let base = dest.if_add_either_other(ctx, |x| x.if_arithmetic_mul_const(4));
                     if let Some(base) = base {
                         if let Some(old) = self.candidate {
                             let ctx = ctrl.ctx();
@@ -1116,11 +1121,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                     }
                 }
                 SetUnitPlayerState::ClearBuildQueue => {
-                    if let Operation::Move(DestOperand::Memory(mem), val, None) = *op {
-                        let address = ctrl.resolve(mem.address);
-                        let addr_ok = address.if_arithmetic_add_const(0x98)
-                            .filter(|&x| x == ctx.register(1))
-                            .is_some();
+                    if let Operation::Move(DestOperand::Memory(ref mem), val, None) = *op {
+                        let (base, offset) = ctrl.resolve_mem(mem).address();
+                        let addr_ok = base == ctx.register(1) && offset == 0x98;
                         if addr_ok {
                             let val_u16 = ctx.and_const(ctrl.resolve(val), 0xffff);
                             if val_u16.if_constant() == Some(0xe4) {
@@ -1227,9 +1230,9 @@ pub(crate) fn unit_apply_speed_upgrades<'e, E: ExecutionState<'e>>(
         step_iscript,
         units_dat_flingy: ctx.constant(units_dat_flingy.as_u64()),
         flingy_dat_movement_type: ctx.constant(flingy_dat_movement_type.as_u64()),
-        flingy_dat_speed: ctx.constant(flingy_dat_speed.as_u64()),
-        flingy_dat_acceleration: ctx.constant(flingy_dat_acceleration.as_u64()),
-        flingy_dat_turn_speed: ctx.constant(flingy_dat_turn_speed.as_u64()),
+        flingy_dat_speed: flingy_dat_speed,
+        flingy_dat_acceleration: flingy_dat_acceleration,
+        flingy_dat_turn_speed: flingy_dat_turn_speed,
     };
     analysis.analyze(&mut analyzer);
     result
@@ -1244,9 +1247,9 @@ struct UnitSpeedAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     func_entry: E::VirtualAddress,
     step_iscript: E::VirtualAddress,
     flingy_dat_movement_type: Operand<'e>,
-    flingy_dat_speed: Operand<'e>,
-    flingy_dat_acceleration: Operand<'e>,
-    flingy_dat_turn_speed: Operand<'e>,
+    flingy_dat_speed: E::VirtualAddress,
+    flingy_dat_acceleration: E::VirtualAddress,
+    flingy_dat_turn_speed: E::VirtualAddress,
     units_dat_flingy: Operand<'e>,
 }
 
@@ -1435,15 +1438,13 @@ impl<'a, 'e, E: ExecutionState<'e>> UnitSpeedAnalyzer<'a, 'e, E> {
             let val = ctrl.resolve(val);
             if let Some(mem) = val.if_memory() {
                 let size = mem.size;
-                let (_, r) = match mem.address.if_arithmetic_add() {
-                    Some(s) => s,
-                    None => return,
-                };
-                let result = if r == self.flingy_dat_speed && size == MemAccessSize::Mem32 {
+                let (_, offset) = mem.address();
+                let offset = E::VirtualAddress::from_u64(offset);
+                let result = if offset == self.flingy_dat_speed && size == MemAccessSize::Mem32 {
                     &mut self.result.buffed_flingy_speed
-                } else if r == self.flingy_dat_acceleration && size == MemAccessSize::Mem16 {
+                } else if offset == self.flingy_dat_acceleration && size == MemAccessSize::Mem16 {
                     &mut self.result.buffed_acceleration
-                } else if r == self.flingy_dat_turn_speed && size == MemAccessSize::Mem8 {
+                } else if offset == self.flingy_dat_turn_speed && size == MemAccessSize::Mem8 {
                     // Turn speed is last of these three handled, can end branch then.
                     self.end_caller_branch = true;
                     &mut self.result.buffed_turn_speed
@@ -1769,19 +1770,17 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     // Block moves to Mem[esp + x]; a string initialized to
                     // stack and then moving to heap, followed by string.ptr[constant] = 0
-                    // caused issues.
-                    let address = ctrl.resolve(mem.address);
-                    let block = address.if_arithmetic_add()
-                        .filter(|x| x.0 == ctx.register(4))
-                        .is_some();
-                    if block {
+                    // caused issues by overwriting stack args.
+                    let mem = ctrl.resolve_mem(mem);
+                    let (base, offset) = mem.address();
+                    if base == ctx.register(4) && offset as i32 > 0 {
                         ctrl.skip_operation();
                     }
                     // Another check to skip replay operand analysis,
                     // if append_order call is inlined.
                     if is_bfix && mem.size == MemAccessSize::Mem8 {
                         let value = ctrl.resolve(value);
-                        if let Some(val) = self.find_first_free_order(ctrl, address, value) {
+                        if let Some(val) = self.find_first_free_order(ctrl, mem, value) {
                             self.result.first_free_order = Some(val);
                             self.inline_limit = 0;
                             self.state = PrepareIssueOrderState::FirstFreeOrder;
@@ -1828,9 +1827,9 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
             }
             let arg2 = ctrl.resolve(arg_cache.on_thiscall_call(1));
             let ok = ctrl.read_memory(arg2, MemAccessSize::Mem64) ==
-                ctx.mem64(arg_cache.on_thiscall_entry(1)) &&
+                ctx.mem64(arg_cache.on_thiscall_entry(1), 0) &&
                 ctrl.read_memory(ctx.add_const(arg2, 8), MemAccessSize::Mem64) ==
-                    ctx.mem64(ctx.add_const(arg_cache.on_thiscall_entry(1), 8));
+                    ctx.mem64(arg_cache.on_thiscall_entry(1), 8);
             if !ok {
                 return false;
             }
@@ -1872,8 +1871,8 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
             let value = ctrl.resolve(value);
             if self.result.first_free_order.is_none() {
                 if mem.size == MemAccessSize::Mem8 {
-                    let address = ctrl.resolve(mem.address);
-                    if let Some(val) = self.find_first_free_order(ctrl, address, value) {
+                    let mem = ctrl.resolve_mem(mem);
+                    if let Some(val) = self.find_first_free_order(ctrl, mem, value) {
                         self.result.first_free_order = Some(val);
                         self.inline_limit = 0;
                     }
@@ -1884,7 +1883,7 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
                     .if_arithmetic_add_const(1)
                 {
                     if let Some(base_mem) = base.if_memory() {
-                        if base_mem.address == ctrl.resolve(mem.address) {
+                        if base_mem == &ctrl.resolve_mem(mem) {
                             self.result.allocated_order_count = Some(base);
                             ctrl.end_analysis();
                         }
@@ -1910,14 +1909,12 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
     fn find_first_free_order(
         &self,
         ctrl: &mut Control<'e, '_, '_, Self>,
-        address: Operand<'e>,
+        address: MemAccess<'e>,
         value: Operand<'e>,
     ) -> Option<Operand<'e>> {
         let ctx = ctrl.ctx();
         if value == ctx.and_const(self.arg_cache.on_thiscall_entry(0), 0xff) {
-            return address.if_arithmetic_add_const(
-                struct_layouts::order_id::<E::VirtualAddress>()
-            );
+            return address.if_offset(struct_layouts::order_id::<E::VirtualAddress>());
         }
         None
     }

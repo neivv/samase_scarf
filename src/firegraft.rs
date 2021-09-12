@@ -5,7 +5,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operation};
 
 use crate::{
-    AnalysisCtx, OperandExt, OptionExt, read_u32_at, find_bytes, FunctionFinder, entry_of_until,
+    AnalysisCtx, OperandExt, read_u32_at, find_bytes, FunctionFinder, entry_of_until,
     bumpvec_with_capacity,
 };
 use crate::struct_layouts;
@@ -109,9 +109,11 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitStatusFuncU
                 let word_size = E::VirtualAddress::SIZE as u64;
                 let dest = ctrl.resolve(dest);
                 let val = dest.if_memory()
-                    .and_then(|mem| mem.address.if_arithmetic_add())
-                    .and_either_other(|x| x.if_arithmetic_mul_const(word_size * 3))
-                    .and_then(|x| x.if_constant());
+                    .and_then(|mem| {
+                        let (base, offset) = mem.address();
+                        base.if_arithmetic_mul_const(word_size * 3)?;
+                        Some(offset)
+                    });
                 if let Some(address) = val {
                     // An valid address, check if there's another +/- 4 bytes
                     // from it, if yes, return result

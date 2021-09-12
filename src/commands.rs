@@ -8,7 +8,7 @@ use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 use crate::{
     AnalysisCtx, ArgCache, ControlExt, EntryOf, OptionExt, if_callable_const,
     entry_of_until, single_result_assign, find_bytes, read_u32_at, if_arithmetic_eq_neq,
-    bumpvec_with_capacity, OperandExt, FunctionFinder,
+    bumpvec_with_capacity, OperandExt, FunctionFinder, is_global,
 };
 use crate::switch::CompleteSwitch;
 use crate::struct_layouts;
@@ -347,21 +347,14 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CommandUserAnalyzer<'
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem8 {
                         // The alliance command writes bytes to game + e544 + x * 0xc
-                        let addr = ctrl.resolve(mem.address);
-                        let offset = ctrl.ctx().sub(addr, self.game);
-                        let command_user = offset.if_arithmetic_add()
-                            .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                            .and_then(|(c, other)| match c == 0xe544 {
-                                true => other.if_arithmetic_mul(),
-                                false => None,
-                            })
-                            .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                            .and_then(|(c, other)| match c == 0xc {
-                                true => Some(other),
-                                false => None,
-                            });
-                        if single_result_assign(command_user, &mut self.result) {
-                            ctrl.end_analysis();
+                        let (base, offset) = ctrl.resolve_mem(mem).address();
+                        if offset == 0xe544 {
+                            let command_user = base.if_arithmetic_add()
+                                .and_if_either_other(|x| x == self.game)
+                                .and_then(|other| other.if_arithmetic_mul_const(0xc));
+                            if single_result_assign(command_user, &mut self.result) {
+                                ctrl.end_analysis();
+                            }
                         }
                     }
                 }
@@ -461,26 +454,18 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 } else if let SelectionState::LimitJumped(selection_pos) = self.sel_state {
                     // Check if the condition is
                     // (selections + (unique_command_user * 0xc + selection_pos) * 4) == 0
-                    let x = condition.if_arithmetic_eq()
-                        .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                        .and_then(|(c, other)| match c == 0 {
-                            true => Some(other),
-                            false => None,
-                        })
-                        .and_then(|other| other.if_memory())
-                        .and_then(|mem| mem.address.if_arithmetic_add())
-                        .and_then(|(l, r)| Operand::either(l, r, |x| x.if_arithmetic_mul()));
-                    if let Some(((l, r), selections)) = x {
-                        let unique_command_user = r.if_constant()
-                            .and_then(|c| match c == E::VirtualAddress::SIZE.into() {
-                                true => Some(l),
-                                false => None,
+                    let ctx = ctrl.ctx();
+                    let x = if_arithmetic_eq_neq(condition)
+                        .filter(|x| x.1 == ctx.const_0())
+                        .and_then(|x| x.0.if_memory())
+                        .and_then(|mem| {
+                            mem.if_add_either(ctx, |x| {
+                                x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
                             })
-                            .and_then(|other| other.if_arithmetic_add())
-                            .and_either_other(|x| match x == selection_pos {
-                                true => Some(()),
-                                false => None,
-                            })
+                        });
+                    if let Some((index, selections)) = x {
+                        let unique_command_user = index.if_arithmetic_add()
+                            .and_if_either_other(|x| x == selection_pos)
                             .and_then(|x| x.if_arithmetic_mul_const(0xc));
                         if let Some(unique_command_user) = unique_command_user {
                             single_result_assign(
@@ -670,9 +655,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwor
             if ctrl.user_state().after_receive_storm_turns {
                 if let Operation::Move(ref dest, val, None) = *op {
                     if let DestOperand::Memory(mem) = dest {
-                        if ctrl.resolve(val).if_constant() == Some(1) {
-                            self.result.network_ready =
-                                Some(ctrl.ctx().mem_variable_rc(mem.size, mem.address));
+                        let ctx = ctrl.ctx();
+                        if ctrl.resolve(val) == ctx.const_1() {
+                            self.result.network_ready = Some(ctx.memory(&ctrl.resolve_mem(mem)));
                         }
                     }
                 } else if let Operation::Call(_) = op {
@@ -807,10 +792,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwor
                     if !is_process_lobby_commands {
                         if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                             if ctrl.resolve(value).if_constant() == Some(7) {
-                                let address = ctrl.resolve(mem.address);
-                                if address.if_constant().is_some() {
-                                    self.storm_command_user_candidate =
-                                        Some(ctx.mem_variable_rc(mem.size, address));
+                                let dest = ctrl.resolve_mem(mem);
+                                if is_global(dest.address().0) {
+                                    self.storm_command_user_candidate = Some(ctx.memory(&dest));
                                 }
                             }
                         }

@@ -505,16 +505,16 @@ impl<'e, E: ExecutionStateTrait<'e>> ArgCache<'e, E> {
                     1 => ctx.register(2),
                     2 => ctx.register(8),
                     3 => ctx.register(9),
-                    _ => ctx.mem64(ctx.add_const(
+                    _ => ctx.mem64(
                         stack_pointer,
                         i as u64 * 8,
-                    )),
+                    ),
                 }
             } else {
-                ctx.mem32(ctx.add_const(
+                ctx.mem32(
                     stack_pointer,
                     i as u64 * 4,
-                ))
+                )
             }
         });
         ArgCache {
@@ -537,10 +537,11 @@ impl<'e, E: ExecutionStateTrait<'e>> ArgCache<'e, E> {
                 true => MemAccessSize::Mem64,
                 false => MemAccessSize::Mem32,
             };
-            self.ctx.mem_variable_rc(mem_size, self.ctx.add_const(
+            self.ctx.mem_any(
+                mem_size,
                 stack_pointer,
                 index as u64 * size,
-            ))
+            )
         }
     }
 
@@ -564,19 +565,19 @@ impl<'e, E: ExecutionStateTrait<'e>> ArgCache<'e, E> {
             if index as usize + 1 < self.args.len() {
                 self.args[index as usize + 1]
             } else {
-                ctx.mem32(ctx.add_const(
+                ctx.mem32(
                     stack_pointer,
                     (index as u64 + 1) * 4,
-                ))
+                )
             }
         } else {
             if index < 4 {
                 self.args[index as usize]
             } else {
-                ctx.mem64(ctx.add_const(
+                ctx.mem64(
                     stack_pointer,
                     (index as u64 + 1) * 8,
-                ))
+                )
             }
         }
     }
@@ -6060,19 +6061,19 @@ fn seems_assertion_call<'exec, A: analysis::Analyzer<'exec>, Va: VirtualAddressT
 ) -> bool {
     let ctx = ctrl.ctx();
     let esp = ctx.register(4);
-    let arg1 = match ctrl.resolve(ctx.mem32(esp)).if_constant() {
+    let arg1 = match ctrl.resolve(ctx.mem32(esp, 0)).if_constant() {
         Some(s) => s,
         None => return false,
     };
-    let arg2 = match ctrl.resolve(ctx.mem32(ctx.add_const(esp, 4))).if_constant() {
+    let arg2 = match ctrl.resolve(ctx.mem32(esp, 4)).if_constant() {
         Some(s) => s,
         None => return false,
     };
-    let arg3 = match ctrl.resolve(ctx.mem32(ctx.add_const(esp, 8))).if_constant() {
+    let arg3 = match ctrl.resolve(ctx.mem32(esp, 8)).if_constant() {
         Some(s) => s,
         None => return false,
     };
-    let arg4 = match ctrl.resolve(ctx.mem32(ctx.add_const(esp, 0xc))).if_constant() {
+    let arg4 = match ctrl.resolve(ctx.mem32(esp, 0xc)).if_constant() {
         Some(s) => s,
         None => return false,
     };
@@ -6237,7 +6238,7 @@ impl<'e> OperandExt<'e> for Operand<'e> {
         self.if_constant()
             .or_else(|| {
                 let mem = self.if_memory()?;
-                let addr = Va::from_u64(mem.address.if_constant()?);
+                let addr = Va::from_u64(mem.if_constant_address()?);
                 Some(binary.read_u64(addr).ok()? & mem.size.mask())
             })
     }
@@ -6260,7 +6261,7 @@ fn is_global(op: Operand<'_>) -> bool {
         // Nicer for tail calls to check right first as it doesn't recurse in operand chains
         is_global(arith.right) && is_global(arith.left)
     } else if let OperandType::Memory(ref mem) = op.ty() {
-        is_global(mem.address)
+        is_global(mem.address().0)
     } else {
         false
     }
@@ -6369,7 +6370,7 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
                         }
                     }
                 } else if mem.size == MemAccessSize::Mem32 {
-                    if self.resolve(mem.address).if_constant() == Some(0x7ffe026c) {
+                    if self.resolve_mem(mem).if_constant_address() == Some(0x7ffe026c) {
                         self.skip_operation();
                         let ctx = self.ctx();
                         let state = self.exec_state();

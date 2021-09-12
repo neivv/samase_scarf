@@ -3,7 +3,7 @@ use bumpalo::collections::Vec as BumpVec;
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{OperandType};
-use scarf::{BinaryFile, DestOperand, Operand, Operation, Rva};
+use scarf::{BinaryFile, DestOperand, MemAccess, Operand, Operation, Rva};
 
 use crate::{
     AnalysisCache, AnalysisCtx, EntryOf, entry_of_until, OperandExt, OptionExt, FunctionFinder,
@@ -263,14 +263,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     return;
                 }
                 if let Some(mem) = unres_val.if_memory() {
-                    self.check_mem_access(ctrl, mem.address);
+                    self.check_mem_access(ctrl, mem);
                 } else if let DestOperand::Memory(ref mem) = *dest {
-                    self.check_mem_access(ctrl, mem.address);
+                    self.check_mem_access(ctrl, mem);
                 } else if let OperandType::Arithmetic(ref arith) = *unres_val.ty() {
                     if let Some(mem) = arith.left.if_memory() {
-                        self.check_mem_access(ctrl, mem.address);
+                        self.check_mem_access(ctrl, mem);
                     } else if let Some(mem) = arith.right.if_memory() {
-                        self.check_mem_access(ctrl, mem.address);
+                        self.check_mem_access(ctrl, mem);
                     }
                 }
             }
@@ -362,9 +362,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::SetFlags(ref arith) => {
                 if self.game_ref_seen {
                     if let Some(mem) = arith.left.if_memory() {
-                        self.check_mem_access(ctrl, mem.address);
+                        self.check_mem_access(ctrl, mem);
                     } if let Some(mem) = arith.right.if_memory() {
-                        self.check_mem_access(ctrl, mem.address);
+                        self.check_mem_access(ctrl, mem);
                     }
                 }
             }
@@ -395,9 +395,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
     fn check_mem_access(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
-        address_unres: Operand<'e>,
+        mem_unres: &MemAccess<'e>,
     ) {
-        let addr = ctrl.resolve(address_unres);
+        let mem = ctrl.resolve_mem(mem_unres);
         if self.other_globals {
             let ctx = ctrl.ctx();
             let others = [
@@ -406,62 +406,57 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                 (self.game_ctx.trigger_all_units, 0xe4 * 4 * 12),
                 (self.game_ctx.trigger_completed_units, 0xe4 * 4 * 12),
             ];
-            let (base, index) = addr.if_arithmetic_add()
-                .map(|x| (x.1, x.0))
-                .unwrap_or_else(|| (addr, ctx.const_0()));
-            if let Some(c) = base.if_constant() {
-                for &(start, len) in &others {
-                    if let Some(c2) = start.if_constant() {
-                        let offset = c.wrapping_sub(c2);
-                        if offset < len {
-                            let index = ctx.add_const(index, offset);
-                            if start == self.game_ctx.unit_strength {
-                                self.patch_unit_strength(ctrl, index);
-                            } else if start == self.game_ctx.ai_build_limit {
-                                self.patch_ai_unit_limit(ctrl, index);
-                            } else if start == self.game_ctx.trigger_all_units ||
-                                start == self.game_ctx.trigger_completed_units
-                            {
-                                let id = if start == self.game_ctx.trigger_all_units {
-                                    0x0d
-                                } else {
-                                    0x0e
-                                };
-                                self.patch_unit_counts(ctrl, index, id);
-                            }
+            let (index, base) = mem.compat_address(ctx);
+            for &(start, len) in &others {
+                if let Some(c2) = start.if_constant() {
+                    let offset = base.wrapping_sub(c2);
+                    if offset < len {
+                        let index = ctx.add_const(index, offset);
+                        if start == self.game_ctx.unit_strength {
+                            self.patch_unit_strength(ctrl, index);
+                        } else if start == self.game_ctx.ai_build_limit {
+                            self.patch_ai_unit_limit(ctrl, index);
+                        } else if start == self.game_ctx.trigger_all_units ||
+                            start == self.game_ctx.trigger_completed_units
+                        {
+                            let id = if start == self.game_ctx.trigger_all_units {
+                                0x0d
+                            } else {
+                                0x0e
+                            };
+                            self.patch_unit_counts(ctrl, index, id);
                         }
                     }
                 }
             }
         } else {
-            self.check_game_mem_access(ctrl, addr);
+            self.check_game_mem_access(ctrl, &mem);
         }
     }
 
     fn check_game_mem_access(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
-        addr: Operand<'e>,
+        mem: &MemAccess<'e>,
     ) {
-        let bump = &self.game_ctx.analysis.bump;
-        let mut terms = match crate::add_terms::collect_arith_add_terms(addr, bump) {
-            Some(s) => s,
-            None => return,
-        };
-        if !terms.remove_one(|x, _neg| x == self.game_ctx.game) {
-            return;
-        }
         let ctx = ctrl.ctx();
-        let val = terms.join(ctx);
-        let (index, offset) = match val.if_arithmetic_add()
-            .and_then(|(l, r)| Some((l, r.if_constant()? as u32)))
-            .or_else(|| {
-                let c = val.if_constant()? as u32;
-                Some((ctx.const_0(), c))
-            })
-        {
-            Some(s) => s,
-            None => return,
+        let game = self.game_ctx.game;
+        let bump = &self.game_ctx.analysis.bump;
+        let (base, offset) = mem.address();
+        let offset = offset as u32;
+        let index = match crate::add_terms::collect_arith_add_terms(base, bump) {
+            Some(mut terms) => {
+                if !terms.remove_one(|x, _neg| x == game) {
+                    return;
+                }
+                terms.join(ctx)
+            }
+            None => {
+                if base != game {
+                    return;
+                }
+                ctx.const_0()
+            }
         };
         match offset {
             // Unit availability

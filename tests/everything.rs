@@ -13,7 +13,7 @@ use samase_scarf::{DatType, Eud};
 fn everything_1207() {
     test_with_extra_checks(Path::new("1207.exe"), |ctx, analysis| {
         assert_eq!(analysis.process_events().unwrap().0, 0x00732760);
-        assert_eq!(analysis.next_game_step_tick().unwrap(), ctx.mem32(ctx.constant(0x10f8628)));
+        assert_eq!(analysis.next_game_step_tick().unwrap(), ctx.mem32c(0x10f8628));
     })
 }
 
@@ -27,11 +27,11 @@ fn everything_1208() {
         let serialize = analysis.serialize_sprites().unwrap();
         assert_eq!(serialize.0, 0x00666900);
 
-        assert_eq!(analysis.grpwire_grp().unwrap(), ctx.mem32(ctx.constant(0x113e9bc)));
-        assert_eq!(analysis.tranwire_grp().unwrap(), ctx.mem32(ctx.constant(0x113e9b8)));
+        assert_eq!(analysis.grpwire_grp().unwrap(), ctx.mem32c(0x113e9bc));
+        assert_eq!(analysis.tranwire_grp().unwrap(), ctx.mem32c(0x113e9b8));
         assert_eq!(analysis.grpwire_ddsgrp().unwrap(), ctx.constant(0x113e960));
         assert_eq!(analysis.tranwire_ddsgrp().unwrap(), ctx.constant(0x113e96c));
-        assert_eq!(analysis.status_screen().unwrap(), ctx.mem32(ctx.constant(0x113e9c0)));
+        assert_eq!(analysis.status_screen().unwrap(), ctx.mem32c(0x113e9c0));
         assert_eq!(analysis.status_screen_event_handler().unwrap().0, 0x00813760);
         // This is actually only address of the grp on old versions like 1208;
         // the ddsgrp set doesn't exist here.
@@ -46,7 +46,7 @@ fn everything_1208() {
 
         assert_eq!(analysis.menu_swish_in().unwrap().0, 0x0077a7c0);
         assert_eq!(analysis.menu_swish_out().unwrap().0, 0x00779e70);
-        assert_eq!(analysis.dialog_return_code().unwrap(), ctx.mem32(ctx.constant(0x115cae4)));
+        assert_eq!(analysis.dialog_return_code().unwrap(), ctx.mem32c(0x115cae4));
 
         assert_eq!(analysis.unit_update_speed().unwrap().0, 0x006c0570);
         assert_eq!(analysis.unit_update_speed_iscript().unwrap().0, 0x006a4190);
@@ -57,14 +57,14 @@ fn everything_1208() {
         assert_eq!(analysis.open_anim_single_file().unwrap().0, 0x006178c0);
         assert_eq!(analysis.open_anim_multi_file().unwrap().0, 0x00617d80);
         assert_eq!(analysis.base_anim_set().unwrap(), ctx.constant(0xe728d8));
-        assert_eq!(analysis.first_invisible_unit().unwrap(), ctx.mem32(ctx.constant(0xf35350)));
+        assert_eq!(analysis.first_invisible_unit().unwrap(), ctx.mem32c(0xf35350));
         assert_eq!(analysis.step_network().unwrap().0, 0x007BF740);
         assert_eq!(analysis.render_screen().unwrap().0, 0x009CF170);
 
-        assert_eq!(analysis.first_ai_script().unwrap(), ctx.mem32(ctx.constant(0x00f5df00)));
+        assert_eq!(analysis.first_ai_script().unwrap(), ctx.mem32c(0x00f5df00));
 
         assert_eq!(analysis.process_commands().unwrap().0, 0x007b84e0);
-        assert_eq!(analysis.storm_command_user().unwrap(), ctx.mem32(ctx.constant(0x00dcec10)));
+        assert_eq!(analysis.storm_command_user().unwrap(), ctx.mem32c(0x00dcec10));
 
         assert_eq!(analysis.map_entry_load_map().unwrap().0, 0x00988510);
         assert_eq!(analysis.map_entry_load_save().unwrap().0, 0x00988060);
@@ -89,9 +89,9 @@ fn everything_1209b() {
         let select_map_entry = analysis.select_map_entry();
         let is_multiplayer = analysis.is_multiplayer();
         assert_eq!(select_map_entry.unwrap().0, 0x008A1ED0);
-        assert_eq!(is_multiplayer.unwrap(), ctx.mem8(ctx.constant(0x1036D20)));
+        assert_eq!(is_multiplayer.unwrap(), ctx.mem8c(0x1036D20));
 
-        assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x1039e3c)));
+        assert_eq!(analysis.replay_data().unwrap(), ctx.mem32c(0x1039e3c));
     });
 }
 
@@ -103,8 +103,8 @@ fn everything_12010() {
 #[test]
 fn everything_12011() {
     test_with_extra_checks(Path::new("12011.exe"), |ctx, analysis| {
-        assert_eq!(analysis.first_dying_unit().unwrap(), ctx.mem32(ctx.constant(0xe240bc)));
-        assert_eq!(analysis.active_iscript_flingy().unwrap(), ctx.mem32(ctx.constant(0xd0891c)));
+        assert_eq!(analysis.first_dying_unit().unwrap(), ctx.mem32c(0xe240bc));
+        assert_eq!(analysis.active_iscript_flingy().unwrap(), ctx.mem32c(0xd0891c));
     });
 }
 
@@ -113,8 +113,8 @@ fn everything_12011b() {
     test_with_extra_checks(Path::new("12011b.exe"), |ctx, analysis| {
         let first_active_unit = analysis.first_active_unit();
         let first_hidden_unit = analysis.first_hidden_unit();
-        assert_eq!(first_active_unit.unwrap(), ctx.mem32(ctx.constant(0xf240ac)));
-        assert_eq!(first_hidden_unit.unwrap(), ctx.mem32(ctx.constant(0xf240c4)));
+        assert_eq!(first_active_unit.unwrap(), ctx.mem32c(0xf240ac));
+        assert_eq!(first_hidden_unit.unwrap(), ctx.mem32c(0xf240c4));
         let prepare_issue_order = analysis.prepare_issue_order();
         let do_next_queued_order = analysis.do_next_queued_order();
         assert_eq!(prepare_issue_order.unwrap().0, 0x006A8FB0);
@@ -151,14 +151,14 @@ fn everything_1210b() {
         assert_eq!(init_net_player.unwrap().0, 0x006F28E0);
         assert_eq!(net_players.as_ref().unwrap().0, ctx.constant(0x00F31988));
 
-        assert_eq!(analysis.tooltip_draw_func().unwrap(), ctx.mem32(ctx.constant(0xd49148)));
-        assert_eq!(analysis.current_tooltip_ctrl().unwrap(), ctx.mem32(ctx.constant(0xd4914c)));
+        assert_eq!(analysis.tooltip_draw_func().unwrap(), ctx.mem32c(0xd49148));
+        assert_eq!(analysis.current_tooltip_ctrl().unwrap(), ctx.mem32c(0xd4914c));
         assert_eq!(analysis.layout_draw_text().unwrap().0, 0x008d5fd0);
 
         assert_eq!(analysis.smem_alloc().unwrap().0, 0x0089ead0);
         assert_eq!(analysis.smem_free().unwrap().0, 0x0089eb10);
-        assert_eq!(analysis.first_dying_unit().unwrap(), ctx.mem32(ctx.constant(0xd48884)));
-        assert_eq!(analysis.active_iscript_flingy().unwrap(), ctx.mem32(ctx.constant(0xd3116c)));
+        assert_eq!(analysis.first_dying_unit().unwrap(), ctx.mem32c(0xd48884));
+        assert_eq!(analysis.active_iscript_flingy().unwrap(), ctx.mem32c(0xd3116c));
     });
 }
 
@@ -178,7 +178,7 @@ fn everything_1211() {
 fn everything_1211b() {
     test_with_extra_checks(Path::new("1211b.exe"), |ctx, analysis| {
         assert_eq!(analysis.process_commands().unwrap().0, 0x0072D560);
-        assert_eq!(analysis.storm_command_user().unwrap(), ctx.mem32(ctx.constant(0x00D61584)));
+        assert_eq!(analysis.storm_command_user().unwrap(), ctx.mem32c(0x00D61584));
 
         let print = analysis.print_text();
         assert_eq!(print.unwrap().0, 0x007044C0);
@@ -216,11 +216,11 @@ fn everything_1212() {
             ctx.add(
                 ctx.constant(0x9be5b25d),
                 ctx.mul(
-                    ctx.mem32(ctx.constant(0xd1775e)),
+                    ctx.mem32c(0xd1775e),
                     ctx.constant(2),
                 ),
             ),
-            ctx.mem32(ctx.constant(0xf25830)),
+            ctx.mem32c(0xf25830),
         );
         assert_eq!(players, val);
 
@@ -229,7 +229,7 @@ fn everything_1212() {
         let iscript_bin = analysis.iscript_bin().unwrap();
         assert_eq!(step_iscript.0, 0x0054a250);
         assert_eq!(hook.script_operand_at_switch, ctx.register(2));
-        assert_eq!(iscript_bin, ctx.mem32(ctx.constant(0xd35994)));
+        assert_eq!(iscript_bin, ctx.mem32c(0xd35994));
 
         assert_eq!(analysis.vertex_buffer().unwrap(), ctx.constant(0xceede8));
     });
@@ -264,8 +264,8 @@ fn everything_1213() {
         assert_eq!(analysis.smem_free().unwrap().0, 0x0083eec0);
         assert_eq!(analysis.cmdicons_ddsgrp().unwrap(), ctx.constant(0x0EC7CAC));
 
-        assert_eq!(analysis.mouse_x().unwrap(), ctx.mem16(ctx.constant(0xea9910)));
-        assert_eq!(analysis.mouse_y().unwrap(), ctx.mem16(ctx.constant(0xea9914)));
+        assert_eq!(analysis.mouse_x().unwrap(), ctx.mem16c(0xea9910));
+        assert_eq!(analysis.mouse_y().unwrap(), ctx.mem16c(0xea9914));
 
         assert_eq!(analysis.vertex_buffer().unwrap(), ctx.constant(0x00c75220));
     })
@@ -285,21 +285,21 @@ fn everything_1213b() {
         let init_game = analysis.init_game();
         let loaded_save = analysis.loaded_save();
         assert_eq!(init_game.unwrap().0, 0x00643460);
-        assert_eq!(loaded_save.unwrap(), ctx.mem32(ctx.constant(0x00c666dc)));
+        assert_eq!(loaded_save.unwrap(), ctx.mem32c(0x00c666dc));
 
         let command_user = analysis.command_user().unwrap();
-        assert_eq!(command_user, ctx.mem32(ctx.constant(0x00c65de4)));
+        assert_eq!(command_user, ctx.mem32c(0x00c65de4));
 
         let unique_command_user = analysis.unique_command_user();
         let selections = analysis.selections();
-        assert_eq!(unique_command_user.unwrap(), ctx.mem32(ctx.constant(0x00c65de8)));
+        assert_eq!(unique_command_user.unwrap(), ctx.mem32c(0x00c65de8));
         assert_eq!(selections.unwrap(), ctx.constant(0x00eb4d90));
 
         let is_replay = analysis.is_replay().unwrap();
-        assert_eq!(is_replay, ctx.mem32(ctx.constant(0x00ea9940)));
+        assert_eq!(is_replay, ctx.mem32c(0x00ea9940));
 
         let units = analysis.units().unwrap();
-        assert_eq!(units, ctx.mem32(ctx.constant(0x00CBDB8C)));
+        assert_eq!(units, ctx.mem32c(0x00CBDB8C));
 
         let game_screen_rclick = analysis.game_screen_rclick();
         let client_selection = analysis.client_selection();
@@ -312,7 +312,7 @@ fn everything_1213b() {
 fn everything_1214() {
     test_with_extra_checks(Path::new("1214.exe"), |ctx, analysis| {
         let script = analysis.first_ai_script().unwrap();
-        assert_eq!(script, ctx.mem32(ctx.constant(0x00cee4e8)));
+        assert_eq!(script, ctx.mem32c(0x00cee4e8));
     })
 }
 
@@ -368,7 +368,7 @@ fn everything_1215f() {
         assert_eq!(ais.return_address.0, 0x005BCB3C);
 
         let pathing = analysis.pathing().unwrap();
-        assert_eq!(pathing, ctx.mem32(ctx.constant(0x00EDFE30)));
+        assert_eq!(pathing, ctx.mem32c(0x00EDFE30));
     })
 }
 
@@ -473,7 +473,7 @@ fn everything_1221() {
         let select_map_entry = analysis.select_map_entry();
         let is_multiplayer = analysis.is_multiplayer();
         assert_eq!(select_map_entry.unwrap().0, 0x005E7350);
-        assert_eq!(is_multiplayer.unwrap(), ctx.mem8(ctx.constant(0x010A5138)));
+        assert_eq!(is_multiplayer.unwrap(), ctx.mem8c(0x010A5138));
 
         let load = analysis.load_images().unwrap();
         assert_eq!(load.0, 0x0054D1E0);
@@ -496,21 +496,21 @@ fn everything_1221b() {
         assert_eq!(init.0, 0x006ed550);
 
         let lobby_state = analysis.lobby_state();
-        assert_eq!(lobby_state.unwrap(), ctx.mem8(ctx.constant(0x01060fc5)));
+        assert_eq!(lobby_state.unwrap(), ctx.mem8c(0x01060fc5));
         let init = analysis.init_storm_networking().unwrap();
         assert_eq!(init.0, 0x006F0BB0);
 
         assert_eq!(analysis.chk_init_players().unwrap(), ctx.constant(0x1064330));
-        assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x1064310)));
+        assert_eq!(analysis.replay_data().unwrap(), ctx.mem32c(0x1064310));
         assert_eq!(analysis.ai_spend_money().unwrap().0, 0x005F3E70);
         assert_eq!(analysis.ai_train_military().unwrap().0, 0x0060FD80);
         assert_eq!(analysis.ai_add_military_to_region().unwrap().0, 0x0060e530);
 
         assert_eq!(analysis.first_player_unit().unwrap(), ctx.constant(0xE6C824));
-        assert_eq!(analysis.replay_visions().unwrap(), ctx.mem8(ctx.constant(0x10660C0)));
+        assert_eq!(analysis.replay_visions().unwrap(), ctx.mem8c(0x10660C0));
         assert_eq!(
             analysis.replay_show_entire_map().unwrap(),
-            ctx.mem32(ctx.constant(0x10660C4)),
+            ctx.mem32c(0x10660C4),
         );
     })
 }
@@ -533,12 +533,12 @@ fn everything_1221c() {
         let last_free_lone = analysis.last_free_lone_sprite();
         assert_eq!(sprite_hlines.unwrap(), ctx.constant(0x00e7ccc0));
         assert_eq!(sprite_hlines_end.unwrap(), ctx.constant(0x00e7d0c0));
-        assert_eq!(first_free_sprite.unwrap(), ctx.mem32(ctx.constant(0x00e7c9a0)));
-        assert_eq!(last_free_sprite.unwrap(), ctx.mem32(ctx.constant(0x00e7c9a4)));
-        assert_eq!(first_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d610)));
-        assert_eq!(last_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d614)));
-        assert_eq!(first_free_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d608)));
-        assert_eq!(last_free_lone.unwrap(), ctx.mem32(ctx.constant(0x00e7d60c)));
+        assert_eq!(first_free_sprite.unwrap(), ctx.mem32c(0x00e7c9a0));
+        assert_eq!(last_free_sprite.unwrap(), ctx.mem32c(0x00e7c9a4));
+        assert_eq!(first_lone.unwrap(), ctx.mem32c(0x00e7d610));
+        assert_eq!(last_lone.unwrap(), ctx.mem32c(0x00e7d614));
+        assert_eq!(first_free_lone.unwrap(), ctx.mem32c(0x00e7d608));
+        assert_eq!(last_free_lone.unwrap(), ctx.mem32c(0x00e7d60c));
     })
 }
 
@@ -552,21 +552,21 @@ fn everything_1222() {
 fn everything_1222b() {
     test_with_extra_checks(Path::new("1222b.exe"), |ctx, analysis| {
         let pathing = analysis.pathing().unwrap();
-        assert_eq!(pathing, ctx.mem32(ctx.constant(0x00ff1274)));
+        assert_eq!(pathing, ctx.mem32c(0x00ff1274));
         assert_eq!(analysis.add_asset_change_callback().unwrap().0, 0x005238d0);
         assert_eq!(analysis.anim_asset_change_cb().unwrap().0, 0x00550cf0);
         assert_eq!(analysis.step_unit_movement().unwrap().0, 0x0058ec70);
-        assert_eq!(analysis.unit_should_reveal_area().unwrap(), ctx.mem32(ctx.constant(0xdf5b8c)));
+        assert_eq!(analysis.unit_should_reveal_area().unwrap(), ctx.mem32c(0xdf5b8c));
         assert_eq!(analysis.prepare_draw_image().unwrap().0, 0x0054c3b0);
         assert_eq!(analysis.draw_image().unwrap().0, 0x00552810);
-        assert_eq!(analysis.cursor_marker().unwrap(), ctx.mem32(ctx.constant(0xdf5898)));
+        assert_eq!(analysis.cursor_marker().unwrap(), ctx.mem32c(0xdf5898));
     })
 }
 
 #[test]
 fn everything_1222c() {
     test_with_extra_checks(Path::new("1222c.exe"), |ctx, analysis| {
-        assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x10185d8)));
+        assert_eq!(analysis.replay_data().unwrap(), ctx.mem32c(0x10185d8));
     })
 }
 
@@ -576,7 +576,7 @@ fn everything_1222d() {
         let init_game = analysis.init_game();
         let loaded_save = analysis.loaded_save();
         assert_eq!(init_game.unwrap().0, 0x00694330);
-        assert_eq!(loaded_save.unwrap(), ctx.mem32(ctx.constant(0x00da61cc)));
+        assert_eq!(loaded_save.unwrap(), ctx.mem32c(0x00da61cc));
     })
 }
 
@@ -598,7 +598,7 @@ fn everything_1223b() {
 fn everything_1223c() {
     test_with_extra_checks(Path::new("1223c.exe"), |ctx, analysis| {
         let map_tile_flags = analysis.map_tile_flags();
-        assert_eq!(map_tile_flags.unwrap(), ctx.mem32(ctx.constant(0xe47004)));
+        assert_eq!(map_tile_flags.unwrap(), ctx.mem32c(0xe47004));
     })
 }
 
@@ -627,9 +627,9 @@ fn everything_1224() {
         let val = ctx.xor(
             ctx.xor(
                 ctx.constant(0x1c7e5fe2),
-                ctx.mem32(ctx.constant(0x1020c70)),
+                ctx.mem32c(0x1020c70),
             ),
-            ctx.mem32(ctx.constant(0xe0770d)),
+            ctx.mem32c(0xe0770d),
         );
         assert_eq!(players, val);
 
@@ -646,7 +646,7 @@ fn everything_1224() {
         assert!(vtables.iter().any(|x| x.0 == 0xca4b28));
 
         let local_player_id = analysis.local_player_id().unwrap();
-        assert_eq!(local_player_id, ctx.mem32(ctx.constant(0xdc7940)));
+        assert_eq!(local_player_id, ctx.mem32c(0xdc7940));
     })
 }
 
@@ -663,7 +663,7 @@ fn everything_1224c() {
         let hook = analysis.step_iscript_hook().unwrap();
         assert_eq!(step_iscript.0, 0x005409e0);
         assert_eq!(hook.script_operand_at_switch, ctx.register(6));
-        assert_eq!(analysis.iscript_bin().unwrap(), ctx.mem32(ctx.constant(0xde75c4)));
+        assert_eq!(analysis.iscript_bin().unwrap(), ctx.mem32c(0xde75c4));
         assert_eq!(hook.opcode_check, (VirtualAddress(0x00540A2A), 2));
         let first_active_bullet = analysis.first_active_bullet();
         let last_active_bullet = analysis.last_active_bullet();
@@ -671,12 +671,12 @@ fn everything_1224c() {
         let last_free_bullet = analysis.last_free_bullet();
         let create_bullet = analysis.create_bullet();
         let active_iscript_unit = analysis.active_iscript_unit();
-        assert_eq!(first_active_bullet.unwrap(), ctx.mem32(ctx.constant(0xde60c4)));
-        assert_eq!(last_active_bullet.unwrap(), ctx.mem32(ctx.constant(0xde60c8)));
-        assert_eq!(first_free_bullet.unwrap(), ctx.mem32(ctx.constant(0xde6094)));
-        assert_eq!(last_free_bullet.unwrap(), ctx.mem32(ctx.constant(0xde6098)));
+        assert_eq!(first_active_bullet.unwrap(), ctx.mem32c(0xde60c4));
+        assert_eq!(last_active_bullet.unwrap(), ctx.mem32c(0xde60c8));
+        assert_eq!(first_free_bullet.unwrap(), ctx.mem32c(0xde6094));
+        assert_eq!(last_free_bullet.unwrap(), ctx.mem32c(0xde6098));
         assert_eq!(create_bullet.unwrap().0, 0x531f00);
-        assert_eq!(active_iscript_unit.unwrap(), ctx.mem32(ctx.constant(0xde7190)));
+        assert_eq!(active_iscript_unit.unwrap(), ctx.mem32c(0xde7190));
 
         let net_players = analysis.net_players();
         let init_net_player = analysis.init_net_player();
@@ -691,15 +691,15 @@ fn everything_1224c() {
         assert_eq!(sc_main.unwrap().0, 0x006e4350);
         assert_eq!(mainmenu_entry_hook.unwrap().0, 0x006e51ae);
         assert_eq!(game_loop.unwrap().0, 0x0006e5450);
-        assert_eq!(scmain_state.unwrap(), ctx.mem32(ctx.constant(0x00FC7FE8)));
+        assert_eq!(scmain_state.unwrap(), ctx.mem32c(0x00FC7FE8));
 
         assert_eq!(analysis.font_cache_render_ascii().unwrap().0, 0x008FCFF0);
         assert_eq!(analysis.ttf_cache_character().unwrap().0, 0x009036B0);
         assert_eq!(analysis.ttf_render_sdf().unwrap().0, 0x00907980);
 
-        assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32(ctx.constant(0x0df3f98)));
-        assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32(ctx.constant(0x0df3f9c)));
-        assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32(ctx.constant(0x0df3fb0)));
+        assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32c(0x0df3f98));
+        assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32c(0x0df3f9c));
+        assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32c(0x0df3fb0));
     })
 }
 
@@ -714,8 +714,8 @@ fn everything_1230a() {
         });
         let first_active_unit = analysis.first_active_unit();
         let first_hidden_unit = analysis.first_hidden_unit();
-        assert_eq!(first_active_unit.unwrap(), ctx.mem32(ctx.constant(0xddf144)));
-        assert_eq!(first_hidden_unit.unwrap(), ctx.mem32(ctx.constant(0xddf154)));
+        assert_eq!(first_active_unit.unwrap(), ctx.mem32c(0xddf144));
+        assert_eq!(first_hidden_unit.unwrap(), ctx.mem32c(0xddf154));
         assert_eq!(analysis.player_unit_skins().unwrap(), ctx.constant(0x00fe9b10));
         assert_eq!(analysis.init_skins().unwrap().0, 0x006124b0);
     })
@@ -802,9 +802,9 @@ fn everything_1230i() {
         let screen_x = analysis.screen_x();
         let screen_y = analysis.screen_y();
         let zoom = analysis.zoom();
-        assert_eq!(screen_x.unwrap(), ctx.mem32(ctx.constant(0x00e4caf4)));
-        assert_eq!(screen_y.unwrap(), ctx.mem32(ctx.constant(0x00e4caf8)));
-        assert_eq!(zoom.unwrap(), ctx.mem32(ctx.constant(0x00d77940)));
+        assert_eq!(screen_x.unwrap(), ctx.mem32c(0x00e4caf4));
+        assert_eq!(screen_y.unwrap(), ctx.mem32c(0x00e4caf8));
+        assert_eq!(zoom.unwrap(), ctx.mem32c(0x00d77940));
     })
 }
 
@@ -823,15 +823,15 @@ fn everything_1231a() {
         let last_active = analysis.last_fow_sprite();
         let first_free = analysis.first_free_fow_sprite();
         let last_free = analysis.last_free_fow_sprite();
-        assert_eq!(first_active.unwrap(), ctx.mem32(ctx.constant(0x0E32110)));
-        assert_eq!(last_active.unwrap(), ctx.mem32(ctx.constant(0x0E32114)));
-        assert_eq!(first_free.unwrap(), ctx.mem32(ctx.constant(0x0E32108)));
-        assert_eq!(last_free.unwrap(), ctx.mem32(ctx.constant(0x0E3210C)));
+        assert_eq!(first_active.unwrap(), ctx.mem32c(0x0E32110));
+        assert_eq!(last_active.unwrap(), ctx.mem32c(0x0E32114));
+        assert_eq!(first_free.unwrap(), ctx.mem32c(0x0E32108));
+        assert_eq!(last_free.unwrap(), ctx.mem32c(0x0E3210C));
 
         let rng_seed = analysis.rng_seed();
         let rng_enable = analysis.rng_enable();
-        assert_eq!(rng_seed.unwrap(), ctx.mem32(ctx.constant(0x1030770)));
-        assert_eq!(rng_enable.unwrap(), ctx.mem32(ctx.constant(0x1030B80)));
+        assert_eq!(rng_seed.unwrap(), ctx.mem32c(0x1030770));
+        assert_eq!(rng_enable.unwrap(), ctx.mem32c(0x1030B80));
     })
 }
 
@@ -856,9 +856,9 @@ fn everything_1232b() {
 #[test]
 fn everything_1232c() {
     test_with_extra_checks(Path::new("1232c.exe"), |ctx, analysis| {
-        assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32(ctx.constant(0x0e9a850)));
-        assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32(ctx.constant(0x0e9a854)));
-        assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32(ctx.constant(0x0e9a868)));
+        assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32c(0x0e9a850));
+        assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32c(0x0e9a854));
+        assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32c(0x0e9a868));
     })
 }
 
@@ -885,8 +885,8 @@ fn everything_1232e() {
         let skins = analysis.skins();
         let player_skins = analysis.player_skins();
         assert_eq!(single_player_start.unwrap().0, 0x00714870);
-        assert_eq!(local_storm_player_id.unwrap(), ctx.mem32(ctx.constant(0xdff54c)));
-        assert_eq!(local_unique_player_id.unwrap(), ctx.mem32(ctx.constant(0xdff548)));
+        assert_eq!(local_storm_player_id.unwrap(), ctx.mem32c(0xdff54c));
+        assert_eq!(local_unique_player_id.unwrap(), ctx.mem32c(0xdff548));
         assert_eq!(net_player_to_game.unwrap(), ctx.constant(0x106f6a8));
         assert_eq!(net_player_to_unique.unwrap(), ctx.constant(0x106f678));
         assert_eq!(game_data.unwrap(), ctx.constant(0x1070ce0));
@@ -896,12 +896,12 @@ fn everything_1232e() {
         let select_map_entry = analysis.select_map_entry();
         let is_multiplayer = analysis.is_multiplayer();
         assert_eq!(select_map_entry.unwrap().0, 0x005FD7F0);
-        assert_eq!(is_multiplayer.unwrap(), ctx.mem8(ctx.constant(0x0106F57C)));
+        assert_eq!(is_multiplayer.unwrap(), ctx.mem8c(0x0106F57C));
 
         let load = analysis.load_images().unwrap();
         assert_eq!(load.0, 0x00566710);
         let loaded = analysis.images_loaded().unwrap();
-        assert_eq!(loaded, ctx.mem8(ctx.constant(0x0104C60A)));
+        assert_eq!(loaded, ctx.mem8c(0x0104C60A));
         let local_player_name = analysis.local_player_name().unwrap();
         assert_eq!(local_player_name, ctx.constant(0x106f5b8));
 
@@ -911,9 +911,9 @@ fn everything_1232e() {
             ctx.xor(
                 ctx.sub(
                     ctx.constant(0x1d3fbab2),
-                    ctx.mem32(ctx.constant(0xe5164a)),
+                    ctx.mem32c(0xe5164a),
                 ),
-                ctx.mem32(ctx.constant(0x1049cf4)),
+                ctx.mem32c(0x1049cf4),
             ),
             0xffff_ffff,
         );
@@ -921,7 +921,7 @@ fn everything_1232e() {
         assert_eq!(analysis.net_player_flags().unwrap(), ctx.constant(0x0106F588));
         assert_eq!(analysis.player_turns().unwrap(), ctx.constant(0x01071118));
         assert_eq!(analysis.player_turns_size().unwrap(), ctx.constant(0x01071148));
-        assert_eq!(analysis.network_ready().unwrap(), ctx.mem8(ctx.constant(0x0106F57D)));
+        assert_eq!(analysis.network_ready().unwrap(), ctx.mem8c(0x0106F57D));
 
         let init = analysis.init_game_network().unwrap();
         assert_eq!(init.0, 0x00713cb0);
@@ -930,7 +930,7 @@ fn everything_1232e() {
         assert_eq!(snp_definitions.snp_definitions, ctx.constant(0x00E065E0));
 
         let lobby_state = analysis.lobby_state();
-        assert_eq!(lobby_state.unwrap(), ctx.mem8(ctx.constant(0x0106f475)));
+        assert_eq!(lobby_state.unwrap(), ctx.mem8c(0x0106f475));
         let init = analysis.init_storm_networking().unwrap();
         assert_eq!(init.0, 0x00716F70);
     })
@@ -948,14 +948,14 @@ fn everything_1233a() {
         assert_eq!(load_snps.0, 0x007A4590);
 
         let draw_cursor_marker = analysis.draw_cursor_marker();
-        assert_eq!(draw_cursor_marker.unwrap(), ctx.mem8(ctx.constant(0x00ee6c21)));
+        assert_eq!(draw_cursor_marker.unwrap(), ctx.mem8c(0x00ee6c21));
 
         let is_paused = analysis.is_paused();
         let is_placing_building = analysis.is_placing_building();
         let is_targeting = analysis.is_targeting();
-        assert_eq!(is_paused.unwrap(), ctx.mem32(ctx.constant(0x00eed95c)));
-        assert_eq!(is_placing_building.unwrap(), ctx.mem32(ctx.constant(0x010e748c)));
-        assert_eq!(is_targeting.unwrap(), ctx.mem8(ctx.constant(0x010f54f2)));
+        assert_eq!(is_paused.unwrap(), ctx.mem32c(0x00eed95c));
+        assert_eq!(is_placing_building.unwrap(), ctx.mem32c(0x010e748c));
+        assert_eq!(is_targeting.unwrap(), ctx.mem8c(0x010f54f2));
     })
 }
 
@@ -987,9 +987,9 @@ fn everything_1233c() {
         assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xeb1750), 1, 0)));
         assert!(limits.arrays[1].iter().any(|x| *x == (ctx.constant(0xeb1760), 0, 0)));
 
-        assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32(ctx.constant(0x0ea9d60)));
-        assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32(ctx.constant(0x0ea9d64)));
-        assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32(ctx.constant(0x0ea9d78)));
+        assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32c(0x0ea9d60));
+        assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32c(0x0ea9d64));
+        assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32c(0x0ea9d78));
     })
 }
 
@@ -1006,7 +1006,7 @@ fn everything_1233d() {
             ctx.xor(
                 ctx.xor(
                     ctx.custom(0),
-                    ctx.mem16(ctx.add_const(ctx.mem32(ctx.constant(0x30)), 0x10)),
+                    ctx.mem16(ctx.mem32c(0x30), 0x10),
                 ),
                 ctx.constant(0xb653),
             ),
@@ -1029,7 +1029,7 @@ fn everything_1233d() {
                     ctx.and_const(
                         ctx.xor(
                             ctx.custom(0),
-                            ctx.mem16(ctx.add_const(ctx.mem32(ctx.constant(0x30)), 0x10)),
+                            ctx.mem16(ctx.mem32c(0x30), 0x10),
                         ),
                         0xffff,
                     ),
@@ -1045,13 +1045,13 @@ fn everything_1233d() {
                                     ),
                                     0x8800,
                                 ),
-                                ctx.mem16(ctx.add_const(ctx.mem32(ctx.constant(0x30)), 0x12)),
+                                ctx.mem16(ctx.mem32c(0x30), 0x12),
                             ),
-                            ctx.mem16(ctx.add_const(ctx.mem32(ctx.constant(0x30)), 0x10)),
+                            ctx.mem16(ctx.mem32c(0x30), 0x10),
                         ),
                         ctx.xor(
-                            ctx.mem16(ctx.constant(0xead6ab)),
-                            ctx.mem16(ctx.constant(0xeada1d)),
+                            ctx.mem16c(0xead6ab),
+                            ctx.mem16c(0xeada1d),
                         ),
                     ),
                     0xffff,
@@ -1069,8 +1069,8 @@ fn everything_1233e() {
     test_with_extra_checks(Path::new("1233e.exe"), |ctx ,analysis| {
         let rng_seed = analysis.rng_seed();
         let rng_enable = analysis.rng_enable();
-        assert_eq!(rng_seed.unwrap(), ctx.mem32(ctx.constant(0x10A11C0)));
-        assert_eq!(rng_enable.unwrap(), ctx.mem32(ctx.constant(0x10A15D0)));
+        assert_eq!(rng_seed.unwrap(), ctx.mem32c(0x10A11C0));
+        assert_eq!(rng_enable.unwrap(), ctx.mem32c(0x10A15D0));
 
         let fonts = analysis.fonts();
         assert_eq!(fonts.unwrap(), ctx.constant(0x10D1A5C));
@@ -1081,7 +1081,7 @@ fn everything_1233e() {
 fn everything_1233f() {
     test_with_extra_checks(Path::new("1233f.exe"), |ctx, analysis| {
         let sprite_array = analysis.sprite_array().unwrap().0;
-        assert_eq!(sprite_array, ctx.mem32(ctx.constant(0xeb6098)));
+        assert_eq!(sprite_array, ctx.mem32c(0xeb6098));
         let init_sprites = analysis.init_sprites().unwrap();
         assert_eq!(init_sprites.0, 0x0056C360);
         let serialize = analysis.serialize_sprites().unwrap();
@@ -1128,8 +1128,8 @@ fn everything_1233g() {
         assert_eq!(join_game.0, 0x0089D2B0);
         assert_eq!(analysis.prepare_draw_image().unwrap().0, 0x005747f0);
         assert_eq!(analysis.draw_image().unwrap().0, 0x0057be50);
-        assert_eq!(analysis.cursor_marker().unwrap(), ctx.mem32(ctx.constant(0xed4994)));
-        assert_eq!(analysis.allocator().unwrap(), ctx.mem32(ctx.constant(0x10fc81c)));
+        assert_eq!(analysis.cursor_marker().unwrap(), ctx.mem32c(0xed4994));
+        assert_eq!(analysis.allocator().unwrap(), ctx.mem32c(0x10fc81c));
     })
 }
 
@@ -1142,8 +1142,8 @@ fn everything_1233h() {
 #[test]
 fn everything_1233i() {
     test_with_extra_checks(Path::new("1233i.exe"), |ctx, analysis| {
-        assert_eq!(analysis.tooltip_draw_func().unwrap(), ctx.mem32(ctx.constant(0xee926c)));
-        assert_eq!(analysis.current_tooltip_ctrl().unwrap(), ctx.mem32(ctx.constant(0xee9270)));
+        assert_eq!(analysis.tooltip_draw_func().unwrap(), ctx.mem32c(0xee926c));
+        assert_eq!(analysis.current_tooltip_ctrl().unwrap(), ctx.mem32c(0xee9270));
         assert_eq!(analysis.graphic_layers().unwrap(), ctx.constant(0x1115f50));
         assert_eq!(analysis.layout_draw_text().unwrap().0, 0x977380);
         assert_eq!(analysis.draw_f10_menu_tooltip().unwrap().0, 0x007a0aa0);
@@ -1213,7 +1213,7 @@ fn everything_1235c() {
         assert_eq!(do_attack.0, 0x00593CB0);
         let do_attack_main = analysis.do_attack_main().unwrap();
         assert_eq!(do_attack_main.0, 0x00593A80);
-        assert_eq!(analysis.last_bullet_spawner().unwrap(), ctx.mem32(ctx.constant(0xf823ac)));
+        assert_eq!(analysis.last_bullet_spawner().unwrap(), ctx.mem32c(0xf823ac));
     })
 }
 
@@ -1232,7 +1232,7 @@ fn everything_1235e() {
         assert_eq!(analysis.cmdbtns_ddsgrp().unwrap(), ctx.constant(0x11b7920));
         assert_eq!(analysis.get_mouse_x().unwrap().0, 0x006bf090);
         assert_eq!(analysis.get_mouse_y().unwrap().0, 0x006bf0a0);
-        assert_eq!(analysis.status_screen_mode().unwrap(), ctx.mem8(ctx.constant(0x11b7a0e)));
+        assert_eq!(analysis.status_screen_mode().unwrap(), ctx.mem8c(0x11b7a0e));
     })
 }
 
@@ -1247,15 +1247,15 @@ fn everything_1235g() {
     test_with_extra_checks(Path::new("1235g.exe"), |ctx, analysis| {
         assert_eq!(analysis.check_unit_requirements().unwrap().0, 0x006627D0);
         assert_eq!(analysis.check_dat_requirements().unwrap().0, 0x00538f80);
-        assert_eq!(analysis.dat_requirement_error().unwrap(), ctx.mem32(ctx.constant(0xffaad8)));
-        assert_eq!(analysis.cheat_flags().unwrap(), ctx.mem32(ctx.constant(0x1180f74)));
+        assert_eq!(analysis.dat_requirement_error().unwrap(), ctx.mem32c(0xffaad8));
+        assert_eq!(analysis.cheat_flags().unwrap(), ctx.mem32c(0x1180f74));
         assert_eq!(analysis.unit_strength().unwrap(), ctx.constant(0xfe8998));
 
-        assert_eq!(analysis.grpwire_grp().unwrap(), ctx.mem32(ctx.constant(0x11cc9a4)));
-        assert_eq!(analysis.tranwire_grp().unwrap(), ctx.mem32(ctx.constant(0x11cc9a0)));
+        assert_eq!(analysis.grpwire_grp().unwrap(), ctx.mem32c(0x11cc9a4));
+        assert_eq!(analysis.tranwire_grp().unwrap(), ctx.mem32c(0x11cc9a0));
         assert_eq!(analysis.grpwire_ddsgrp().unwrap(), ctx.constant(0x11cc9ac));
         assert_eq!(analysis.tranwire_ddsgrp().unwrap(), ctx.constant(0x11cc9b8));
-        assert_eq!(analysis.status_screen().unwrap(), ctx.mem32(ctx.constant(0x11cc9a8)));
+        assert_eq!(analysis.status_screen().unwrap(), ctx.mem32c(0x11cc9a8));
         assert_eq!(analysis.status_screen_event_handler().unwrap().0, 0x00795590);
         assert_eq!(analysis.init_status_screen().unwrap().0, 0x00795810);
         assert_eq!(analysis.wirefram_ddsgrp().unwrap(), ctx.constant(0x11cd4d4));
@@ -1304,7 +1304,7 @@ fn everything_1236b() {
 fn everything_1237a() {
     test_with_extra_checks(Path::new("1237a.exe"), |ctx, analysis| {
         assert_eq!(analysis.step_replay_commands().unwrap().0, 0x00743750);
-        assert_eq!(analysis.replay_data().unwrap(), ctx.mem32(ctx.constant(0x011CF5CC)));
+        assert_eq!(analysis.replay_data().unwrap(), ctx.mem32c(0x011CF5CC));
         assert_eq!(analysis.ai_step_region().unwrap().0, 0x0064fc90);
         assert_eq!(analysis.ai_spend_money().unwrap().0, 0x0062f090);
         assert_eq!(analysis.ai_train_military().unwrap().0, 0x0064e3c0);
@@ -1334,10 +1334,10 @@ fn everything_1238b() {
         assert_eq!(analysis.clamp_zoom().unwrap().0, 0x00614c40);
         assert_eq!(analysis.draw_minimap_units().unwrap().0, 0x0073D160);
         assert_eq!(analysis.first_player_unit().unwrap(), ctx.constant(0xffd218));
-        assert_eq!(analysis.replay_visions().unwrap(), ctx.mem8(ctx.constant(0x11fe330)));
+        assert_eq!(analysis.replay_visions().unwrap(), ctx.mem8c(0x11fe330));
         assert_eq!(
             analysis.replay_show_entire_map().unwrap(),
-            ctx.mem32(ctx.constant(0x11fe334)),
+            ctx.mem32c(0x11fe334),
         );
     })
 }
@@ -1351,7 +1351,7 @@ fn everything_1238c() {
         assert_eq!(analysis.show_mission_glue().unwrap().0, 0x00699790);
         assert_eq!(analysis.menu_swish_in().unwrap().0, 0x006f44b0);
         assert_eq!(analysis.menu_swish_out().unwrap().0, 0x006f3c20);
-        assert_eq!(analysis.dialog_return_code().unwrap(), ctx.mem32(ctx.constant(0x1201ef0)));
+        assert_eq!(analysis.dialog_return_code().unwrap(), ctx.mem32c(0x1201ef0));
         assert_eq!(analysis.ai_spell_cast().unwrap().0, 0x0063bbe0);
         assert_eq!(analysis.give_unit().unwrap().0, 0x006623f0);
         assert_eq!(analysis.set_unit_player().unwrap().0, 0x005b8ae0);
@@ -1372,28 +1372,28 @@ fn everything_1238c() {
         assert_eq!(analysis.init_skins().unwrap().0, 0x00649ff0);
         assert_eq!(analysis.add_asset_change_callback().unwrap().0, 0x0054d670);
         assert_eq!(analysis.anim_asset_change_cb().unwrap().0, 0x0057e0a0);
-        assert_eq!(analysis.asset_scale().unwrap(), ctx.mem32(ctx.constant(0xf2cd20)));
+        assert_eq!(analysis.asset_scale().unwrap(), ctx.mem32c(0xf2cd20));
         assert_eq!(analysis.base_anim_set().unwrap(), ctx.constant(0xfd4448));
         assert_eq!(analysis.image_grps().unwrap(), ctx.constant(0xfc9ab0));
         assert_eq!(analysis.image_overlays().unwrap(), ctx.constant(0xfce598));
         assert_eq!(analysis.fire_overlay_max().unwrap(), ctx.constant(0xfc9688));
-        assert_eq!(analysis.vision_update_counter().unwrap(), ctx.mem32(ctx.constant(0x11ab1bc)));
-        assert_eq!(analysis.vision_updated().unwrap(), ctx.mem8(ctx.constant(0x11ab194)));
-        assert_eq!(analysis.first_dying_unit().unwrap(), ctx.mem32(ctx.constant(0xfd7260)));
-        assert_eq!(analysis.active_iscript_flingy().unwrap(), ctx.mem32(ctx.constant(0xfc967c)));
+        assert_eq!(analysis.vision_update_counter().unwrap(), ctx.mem32c(0x11ab1bc));
+        assert_eq!(analysis.vision_updated().unwrap(), ctx.mem8c(0x11ab194));
+        assert_eq!(analysis.first_dying_unit().unwrap(), ctx.mem32c(0xfd7260));
+        assert_eq!(analysis.active_iscript_flingy().unwrap(), ctx.mem32c(0xfc967c));
         assert_eq!(analysis.step_active_unit_frame().unwrap().0, 0x005d8de0);
-        assert_eq!(analysis.first_revealer().unwrap(), ctx.mem32(ctx.constant(0xfd7214)));
+        assert_eq!(analysis.first_revealer().unwrap(), ctx.mem32c(0xfd7214));
         assert_eq!(analysis.reveal_unit_area().unwrap().0, 0x005a7730);
         assert_eq!(analysis.step_hidden_unit_frame().unwrap().0, 0x005d9130);
-        assert_eq!(analysis.first_invisible_unit().unwrap(), ctx.mem32(ctx.constant(0xfd74a8)));
+        assert_eq!(analysis.first_invisible_unit().unwrap(), ctx.mem32c(0xfd74a8));
         assert_eq!(analysis.step_bullet_frame().unwrap().0, 0x00572100);
-        assert_eq!(analysis.active_iscript_bullet().unwrap(), ctx.mem32(ctx.constant(0xfc9680)));
+        assert_eq!(analysis.active_iscript_bullet().unwrap(), ctx.mem32c(0xfc9680));
         assert_eq!(analysis.step_unit_movement().unwrap().0, 0x005bf660);
-        assert_eq!(analysis.unit_should_reveal_area().unwrap(), ctx.mem32(ctx.constant(0xfd7284)));
+        assert_eq!(analysis.unit_should_reveal_area().unwrap(), ctx.mem32c(0xfd7284));
         assert_eq!(analysis.draw_game_layer().unwrap().0, 0x0060EA70);
         assert_eq!(analysis.prepare_draw_image().unwrap().0, 0x0057a990);
         assert_eq!(analysis.draw_image().unwrap().0, 0x005827d0);
-        assert_eq!(analysis.cursor_marker().unwrap(), ctx.mem32(ctx.constant(0xfd70ac)));
+        assert_eq!(analysis.cursor_marker().unwrap(), ctx.mem32c(0xfd70ac));
     })
 }
 
@@ -1404,11 +1404,11 @@ fn everything_1238d() {
         assert_eq!(analysis.ttf_cache_character().unwrap().0, 0x009F04C0);
         assert_eq!(analysis.ttf_render_sdf().unwrap().0, 0x009F4A20);
         assert_eq!(analysis.init_real_time_lighting().unwrap().0, 0x0083C750);
-        assert_eq!(analysis.asset_scale().unwrap(), ctx.mem32(ctx.constant(0xfa76f4)));
+        assert_eq!(analysis.asset_scale().unwrap(), ctx.mem32c(0xfa76f4));
         assert_eq!(analysis.cmdicons_ddsgrp().unwrap(), ctx.constant(0x1020AA4));
         assert_eq!(analysis.cmdbtns_ddsgrp().unwrap(), ctx.constant(0x1020A64));
         assert_eq!(analysis.wirefram_ddsgrp().unwrap(), ctx.constant(0x10286c8));
-        assert_eq!(analysis.allocator().unwrap(), ctx.mem32(ctx.constant(0xfb990c)));
+        assert_eq!(analysis.allocator().unwrap(), ctx.mem32c(0xfb990c));
 
         assert_eq!(analysis.step_network().unwrap().0, 0x00819e00);
         assert_eq!(analysis.render_screen().unwrap().0, 0x009ecd00);
@@ -1418,27 +1418,27 @@ fn everything_1238d() {
         assert_eq!(analysis.palette_set().unwrap(), ctx.constant(0x01380728));
         assert_eq!(analysis.tfontgam().unwrap(), ctx.constant(0x137f0f0));
         assert_eq!(analysis.sync_data().unwrap(), ctx.constant(0x1031f70));
-        assert_eq!(analysis.sync_active().unwrap(), ctx.mem32(ctx.constant(0x01030CEC)));
+        assert_eq!(analysis.sync_active().unwrap(), ctx.mem32c(0x01030CEC));
     });
 }
 
 #[test]
 fn everything_1238e() {
     test_with_extra_checks(Path::new("1238e.exe"), |ctx, analysis| {
-        assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32(ctx.constant(0x011b5ac0)));
-        assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32(ctx.constant(0x011b5ac4)));
-        assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32(ctx.constant(0x011b5ad4)));
+        assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32c(0x011b5ac0));
+        assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32c(0x011b5ac4));
+        assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32c(0x011b5ad4));
         assert_eq!(analysis.replay_bfix().unwrap(), ctx.constant(0x00F8B790));
         assert_eq!(analysis.replay_gcfg().unwrap(), ctx.constant(0x01009788));
 
         assert_eq!(analysis.step_game_loop().unwrap().0, 0x00766530);
         assert_eq!(analysis.step_game_logic().unwrap().0, 0x00766860);
         assert_eq!(analysis.process_events().unwrap().0, 0x0075EC90);
-        assert_eq!(analysis.continue_game_loop().unwrap(), ctx.mem8(ctx.constant(0x01009A95)));
+        assert_eq!(analysis.continue_game_loop().unwrap(), ctx.mem8c(0x01009A95));
         assert_eq!(analysis.anti_troll().unwrap(), ctx.constant(0x010098F0));
-        assert_eq!(analysis.step_game_frames().unwrap(), ctx.mem32(ctx.constant(0x00F8B9D4)));
-        assert_eq!(analysis.next_game_step_tick().unwrap(), ctx.mem32(ctx.constant(0x1009a90)));
-        assert_eq!(analysis.replay_seek_frame().unwrap(), ctx.mem32(ctx.constant(0x1007a98)));
+        assert_eq!(analysis.step_game_frames().unwrap(), ctx.mem32c(0x00F8B9D4));
+        assert_eq!(analysis.next_game_step_tick().unwrap(), ctx.mem32c(0x1009a90));
+        assert_eq!(analysis.replay_seek_frame().unwrap(), ctx.mem32c(0x1007a98));
     });
 }
 

@@ -97,7 +97,7 @@ fn aiscript_hook<'e, E: ExecutionState<'e>>(
     };
     analysis.analyze(&mut analyzer);
 
-    let switch_table = E::VirtualAddress::from_u64(switch.switch_table()?.if_constant()?);
+    let switch_table = E::VirtualAddress::from_u64(switch.switch_table());
     let switch_base = match switch.base() {
         0 => None,
         x => Some(E::VirtualAddress::from_u64(x)),
@@ -198,18 +198,19 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
                 // Try to find script->pos += 1
                 if self.aiscript_operand.is_none() {
                     if let DestOperand::Memory(ref mem) = dest {
-                        let addr = ctrl.resolve(mem.address);
                         if mem.size == MemAccessSize::Mem32 {
-                            let val = ctrl.resolve(val);
-                            let val_refers_to_dest = val.iter_no_mem_addr().any(|x| {
-                                x.if_memory()
-                                    .map(|x| x.address == addr)
-                                    .unwrap_or(false)
-                            });
-                            if val_refers_to_dest {
-                                let pos_offset =
-                                    struct_layouts::ai_script_pos::<E::VirtualAddress>();
-                                self.aiscript_operand = addr.if_arithmetic_add_const(pos_offset);
+                            let mem = ctrl.resolve_mem(mem);
+                            let (base, offset) = mem.address();
+                            let pos_offset =
+                                struct_layouts::ai_script_pos::<E::VirtualAddress>();
+                            if offset == pos_offset {
+                                let val = ctrl.resolve(val);
+                                let val_refers_to_dest = val.iter_no_mem_addr().any(|x| {
+                                    x.if_memory() == Some(&mem)
+                                });
+                                if val_refers_to_dest {
+                                    self.aiscript_operand = Some(base);
+                                }
                             }
                         }
                     }
@@ -389,35 +390,31 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchEnd
             Operation::Move(ref dest, val, _) => {
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem32 {
-                        let addr = ctrl.resolve(mem.address);
-                        let c_write = addr.if_arithmetic_add()
-                            .and_then(|x| Some((x.0, x.1.if_constant()?)));
-                        if let Some((base, offset)) = c_write {
-                            let old_ok = self.old_base.map(|x| x == base).unwrap_or(true);
-                            if old_ok {
-                                let pos_offset =
-                                    struct_layouts::ai_script_pos::<E::VirtualAddress>();
-                                let wait_offset =
-                                    struct_layouts::ai_script_wait::<E::VirtualAddress>();
-                                if offset == pos_offset {
-                                    let val = ctrl.resolve(val);
-                                    let ok = Operand::and_masked(val).0
-                                        .if_arithmetic_add_const(2)
-                                        .is_some();
-                                    if ok {
-                                        self.pos_written = true;
-                                        self.old_base = Some(base);
-                                    }
-                                } else if offset == wait_offset {
-                                    let val = ctrl.resolve(val);
-                                    let ok = val.if_memory()
-                                        .filter(|mem| mem.size == MemAccessSize::Mem16)
-                                        .and_then(|mem| mem.address.if_arithmetic_add())
-                                        .is_some();
-                                    if self.not_inlined_op_read || ok {
-                                        self.wait_written = true;
-                                        self.old_base = Some(base);
-                                    }
+                        let dest = ctrl.resolve_mem(mem);
+                        let (base, offset) = dest.address();
+                        let old_ok = self.old_base.map(|x| x == base).unwrap_or(true);
+                        if old_ok {
+                            let pos_offset =
+                                struct_layouts::ai_script_pos::<E::VirtualAddress>();
+                            let wait_offset =
+                                struct_layouts::ai_script_wait::<E::VirtualAddress>();
+                            if offset == pos_offset {
+                                let val = ctrl.resolve(val);
+                                let ok = Operand::and_masked(val).0
+                                    .if_arithmetic_add_const(2)
+                                    .is_some();
+                                if ok {
+                                    self.pos_written = true;
+                                    self.old_base = Some(base);
+                                }
+                            } else if offset == wait_offset {
+                                let val = ctrl.resolve(val);
+                                let ok = val.if_mem16()
+                                    .and_then(|x| x.if_arithmetic_add())
+                                    .is_some();
+                                if self.not_inlined_op_read || ok {
+                                    self.wait_written = true;
+                                    self.old_base = Some(base);
                                 }
                             }
                         }
@@ -628,8 +625,7 @@ impl<'e, E: ExecutionState<'e>> AiTownAnalyzer<'e, E> {
         let val = ctrl.resolve(val);
         // aiscript_start_town accesses player's first ai town
         if let Some(mem) = val.if_memory() {
-            mem.address.if_arithmetic_add()
-                .and_either_other(|x| {
+            mem.if_add_either_other(ctx, |x| {
                     x.if_arithmetic_mul_const(u64::from(2 * E::VirtualAddress::SIZE))
                 })
                 .map(|other| ctx.sub_const(other, E::VirtualAddress::SIZE.into()))
@@ -652,10 +648,10 @@ pub(crate) fn player_ai<'e, E: ExecutionState<'e>>(
     // Set script->player to 0
     let mut state = E::initial_state(ctx, binary);
     let player_offset = struct_layouts::ai_script_player::<E::VirtualAddress>();
-    let player = ctx.mem32(ctx.add_const(
+    let player = ctx.mem32(
         aiscript.script_operand_at_switch,
         player_offset,
-    ));
+    );
     state.move_to(&DestOperand::from_oper(player), ctx.const_0());
     let mut analysis = FuncAnalysis::with_state(
         binary,
@@ -698,14 +694,14 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlayerAiAnalyzer<'e, 
             }
             Operation::Move(ref dest, val, _cond) => {
                 if let DestOperand::Memory(mem) = dest {
-                    let dest = ctrl.resolve(mem.address);
+                    let dest = ctrl.resolve_mem(mem);
                     let val = ctrl.resolve(val);
                     let ctx = ctrl.ctx();
                     let result = val.if_arithmetic_or()
-                        .and_either_other(|x| x.if_memory().filter(|mem| mem.address == dest))
+                        .and_either_other(|x| x.if_memory().filter(|&mem| mem == &dest))
                         .and_then(|y| y.if_constant())
                         .filter(|&c| c == 0x10)
-                        .map(|_| ctx.sub_const(dest, 0x218));
+                        .map(|_| ctx.mem_sub_const_op(&dest, 0x218));
                     if single_result_assign(result, &mut self.result) {
                         ctrl.end_analysis();
                     }
@@ -1003,17 +999,17 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                     self.game_seconds_checked = true;
                 }
             }
-            Operation::Move(DestOperand::Memory(mem), val, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), val, None) => {
                 // step_objects has `counter = counter - 1`
                 // instruction which is after step_ai, so we can stop
                 // if that is reached.
                 if self.inline_depth == 0 && mem.size == MemAccessSize::Mem32 {
                     let val = ctrl.resolve(val);
-                    let dest = ctrl.resolve(mem.address);
+                    let dest = ctrl.resolve_mem(mem);
                     let stop = Operand::and_masked(val).0
                         .if_arithmetic_sub_const(1)
-                        .and_then(|x| x.if_mem32())
-                        .filter(|&x| x == dest)
+                        .and_then(|x| x.if_memory())
+                        .filter(|&x| x == &dest)
                         .is_some();
                     if stop {
                         ctrl.end_analysis();
@@ -1024,10 +1020,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                     // region = ai_regions[arg1] + arg2 * region_size;
                     // region.flags &= !0x4;
                     let val = ctrl.resolve(val);
-                    let dest = ctrl.resolve(mem.address);
+                    let dest = ctrl.resolve_mem(mem);
                     let ok = val.if_arithmetic_and_const(0xfb)
                         .and_then(|x| x.if_mem8())
-                        .filter(|&x| x == dest)
+                        .filter(|&x| x == dest.address_op(ctx))
                         .and_then(|x| x.if_arithmetic_add_const(8)) // flag offset
                         .and_then(|x| x.if_arithmetic_add()) // addition for regions base + index
                         .and_either(|x| {
@@ -1308,16 +1304,12 @@ pub(crate) fn ai_prepare_moving_to<'e, E: ExecutionState<'e>>(
     let arg_cache = &analysis.arg_cache;
     let mut exec_state = E::initial_state(ctx, binary);
     let order_state = ctx.mem8(
-        ctx.add_const(
-            ctx.register(1),
-            struct_layouts::unit_order_state::<E::VirtualAddress>(),
-        ),
+        ctx.register(1),
+        struct_layouts::unit_order_state::<E::VirtualAddress>(),
     );
     let target = ctx.mem32(
-        ctx.add_const(
-            ctx.register(1),
-            struct_layouts::unit_target::<E::VirtualAddress>(),
-        ),
+        ctx.register(1),
+        struct_layouts::unit_target::<E::VirtualAddress>(),
     );
     exec_state.move_to(&DestOperand::from_oper(order_state), ctx.const_0());
     exec_state.move_to(&DestOperand::from_oper(target), ctx.const_0());

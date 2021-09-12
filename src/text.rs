@@ -117,12 +117,15 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FontsAnalyzer<'a, 'e
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(mem), val, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), val, None) => {
                 let val = ctrl.resolve(val);
                 if let Some(offset) = val.if_custom() {
-                    let addr = ctrl.resolve(mem.address);
+                    let mem = ctrl.resolve_mem(mem);
                     let ctx = ctrl.ctx();
-                    let base = ctx.sub_const(addr, (offset * E::VirtualAddress::SIZE) as u64);
+                    let base = ctx.mem_sub_const_op(
+                        &mem,
+                        (offset * E::VirtualAddress::SIZE) as u64
+                    );
                     let index = match self.candidates.iter().position(|x| x.base == base) {
                         Some(s) => s,
                         None => {
@@ -404,8 +407,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TtfCacheCharacterAna
                                     // Read from memory if data/rdata value,
                                     // which it may be due to being a float
                                     let mem = arg6.if_memory()?;
-                                    let addr =
-                                        E::VirtualAddress::from_u64(mem.address.if_constant()?);
+                                    let addr = E::VirtualAddress::from_u64(
+                                        mem.if_constant_address()?
+                                    );
                                     let binary = ctrl.binary();
                                     Some(binary.read_u64(addr).ok()? & mem.size.mask())
                                 })?;

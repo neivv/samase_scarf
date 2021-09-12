@@ -270,7 +270,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
                 // Check for Mem16[base + arg1 * mul + 6] = arg4
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem16 {
-                        let addr = ctrl.resolve(mem.address);
+                        let addr = ctrl.resolve_mem(mem).address_op(ctx);
                         let val = ctrl.resolve(val);
                         if val == ctx.and_const(self.arg_cache.on_entry(3), 0xffff) {
                             if let Some((base, size, rest)) = base_mul(addr) {

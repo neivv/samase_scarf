@@ -89,7 +89,7 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
         checked_functions.push(func.address);
 
         let mut state = E::initial_state(ctx, binary);
-        let arg1_store = ctx.mem64(ctx.custom(0));
+        let arg1_store = ctx.mem64(ctx.custom(0), 0);
         let arg1_addr = arg_cache.on_entry(0);
         let arg1 = state.resolve(arg1_addr);
         state.move_to(&DestOperand::from_oper(arg1_store), arg1);
@@ -156,7 +156,10 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
                 if self.filename_arg == Arg::Stack(1) && !self.ok {
                     // Don't immediately end analysis even if ok, can still find other functions.
                     self.ok |= (0..3).all(|i| {
-                        let arg1_out = ctrl.mem_word(ctrl.const_word_offset(self.arg1_store, i));
+                        let arg1_out = ctrl.mem_word(
+                            self.arg1_store,
+                            i * E::VirtualAddress::SIZE as u64,
+                        );
                         let resolved = ctrl.resolve(arg1_out);
                         let rdata = self.rdata;
                         match resolved.if_constant() {

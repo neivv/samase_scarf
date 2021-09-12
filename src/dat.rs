@@ -42,7 +42,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, MemAccessSize, OperandType, OperandHashByAddress};
 use scarf::{
     BinaryFile, BinarySection, DestOperand, FlagArith, FlagUpdate, Operand, OperandCtx,
-    Operation, Rva
+    MemAccess, Operation, Rva
 };
 
 use crate::{
@@ -1046,16 +1046,14 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             }
             OperandType::Custom(c) => Some(U8Operand::Return(c)),
             OperandType::Memory(ref mem) if mem.size == MemAccessSize::Mem8 => {
-                mem.address.if_arithmetic_add()
-                    .and_then(|(l, r)| {
-                        l.if_register().filter(|&r| r == 4)?;
-                        let constant = r.if_constant()?;
-                        if let Some(arg_n) = arg_n_from_offset::<E>(constant) {
-                            Some(U8Operand::Arg(arg_n))
-                        } else {
-                            None
-                        }
-                    })
+                let (base, offset) = mem.address();
+                let ctx = self.analysis.ctx;
+                if base == ctx.register(4) {
+                    if let Some(arg_n) = arg_n_from_offset::<E>(offset) {
+                        return Some(U8Operand::Arg(arg_n));
+                    }
+                }
+                None
             }
             _ => None,
         };
@@ -1232,9 +1230,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if self.mode == DatFuncAnalysisMode::ArrayIndex {
                     self.check_array_ref(ctrl, val);
                     if let DestOperand::Memory(mem) = dest {
-                        if let Some(op) = mem.address.if_arithmetic_add().map(|x| x.1) {
-                            self.check_array_ref(ctrl, op);
-                        }
+                        self.check_array_ref_const(ctrl, mem.address().1);
                     }
                 }
                 // Check l/r separately if the instruction has two operands
@@ -1516,21 +1512,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         };
 
         let size_bytes = mem.size.bits() / 8;
-        let base_index = mem.address.if_arithmetic_add()
-            .and_then(|(l, r)| {
-                let base = r.if_constant()?;
-                if size_bytes == 1 {
-                    Some((base, l))
-                } else {
-                    let index = if l.is_undefined() {
-                        l
-                    } else {
-                        l.if_arithmetic_mul_const(size_bytes as u64)?
-                    };
-                    Some((base, index))
-                }
-            });
-        let (base, index) = match base_index {
+        let (index, base) = mem.address();
+        let index = if index.is_undefined() || size_bytes == 1 {
+            Some(index)
+        } else {
+            index.if_arithmetic_mul_const(size_bytes as u64)
+        };
+        let index = match index {
             Some(s) => s,
             None => return None,
         };
@@ -1762,25 +1750,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             return Ok(Some(new_op));
         }
 
-        let mem_offset = value.if_memory()
-            .and_then(|mem| {
-                mem.address.if_arithmetic_add()
-                    .and_then(|(l, r)| {
-                        let offset = r.if_constant()?;
-                        Some((l, offset))
-                    })
-                    .or_else(|| {
-                        if let Some(c) = mem.address.if_constant() {
-                            Some((ctx.const_0(), c))
-                        } else {
-                            Some((mem.address, 0))
-                        }
-                    })
-                    .map(|(base, offset)| (base, offset, mem.size))
-            });
         // -- Check arguments and struct offsets --
-        if let Some((base, offset, size)) = mem_offset {
-            return self.check_mem_widen_value(ctrl, base, offset, size, dat)
+        if let Some(mem) = value.if_memory() {
+            let (base, offset) = mem.compat_address(ctx);
+            return self.check_mem_widen_value(ctrl, base, offset, mem.size, dat)
                 .map(|()| None);
         }
         // -- Check 64bit register args --
@@ -1827,7 +1800,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         op.if_memory()
             .filter(|mem| mem.size == E::WORD_SIZE)
             .and_then(|mem| {
-                mem.address.if_arithmetic_add_const(
+                mem.if_offset(
                     struct_layouts::control_ptr_value::<E::VirtualAddress>()
                 )
             })
@@ -1947,8 +1920,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
 
     /// Checks for array refs that check_memory_read isn't expected to catch.
     fn check_array_ref(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, val: Operand<'e>) {
-        if let Some(c) = val.if_constant().filter(|&c| c > 0x10000) {
-            let addr = E::VirtualAddress::from_u64(c);
+        if let Some(c) = val.if_constant() {
+            self.check_array_ref_const(ctrl, c);
+        }
+    }
+
+    fn check_array_ref_const(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, val: u64) {
+        if val > 0x10000 {
+            let addr = E::VirtualAddress::from_u64(val);
             if self.dat_ctx.array_lookup.contains_key(&addr) {
                 self.reached_array_ref_32(ctrl, addr);
             }
@@ -2553,10 +2532,13 @@ struct CfgAnalyzer<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> {
     final_address: E::VirtualAddress,
     func_entry: E::VirtualAddress,
     // Used if doing CFG analysis for function argument instead of array index
+    // Causes analyzer to determine what is the value of this unresolved operand
+    // at end of the branch. (This is resolved when being added from succeeding branch,
+    // but unresolved from the preceding branch analysis's point of view)
     needed_operand: Option<Operand<'e>>,
-    resolved_dest_address: Option<Operand<'e>>,
+    resolved_dest_address: Option<MemAccess<'e>>,
     unchecked_branches:
-        BumpVec<'acx, (E::VirtualAddress, Operand<'e>, E::VirtualAddress, Option<Operand<'e>>)>,
+        BumpVec<'acx, (E::VirtualAddress, Operand<'e>, E::VirtualAddress, Option<MemAccess<'e>>)>,
     added_unchecked_branches:
         HashSet<(E::VirtualAddress, OperandHashByAddress<'e>, E::VirtualAddress)>,
     parent: &'a mut DatReferringFuncAnalysis<'b, 'c, 'acx, 'e, E>,
@@ -2622,11 +2604,11 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
                 if let DestOperand::Memory(ref mem) = *dest {
                     let matches = if let Some(resolved_dest) = self.resolved_dest_address {
-                        resolved_dest == ctrl.resolve(mem.address)
+                        resolved_dest.address() == ctrl.resolve_mem(mem).address()
                     } else {
                         self.needed_operand
                             .and_then(|x| x.if_memory())
-                            .filter(|x| x.address == mem.address)
+                            .filter(|x| x.address() == mem.address())
                             .is_some()
                     };
                     // Same for mov byte [esp - 4], al and such
@@ -2688,20 +2670,12 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
                     // It's a bit hacky fix and probably could be more general,
                     // but oh well.
                     let ctx = ctrl.ctx();
-                    let is_esp_offset = mem.address.if_arithmetic_add()
-                        .filter(|x| x.0 == ctx.register(4))
-                        .and_then(|x| x.1.if_constant())
-                        .filter(|&c| c < 0x200)
-                        .is_some();
-                    if is_esp_offset {
-                        let addr = ctrl.resolve(mem.address);
-                        let is_esp_offset = addr.if_arithmetic_sub()
-                            .filter(|x| x.0 == ctx.register(4))
-                            .and_then(|x| x.1.if_constant())
-                            .filter(|&c| c < 0x200)
-                            .is_some();
-                        if is_esp_offset {
-                            self.add_resolved_dest_redo(addr);
+                    let (base, offset) = mem.address();
+                    if base == ctx.register(4) && (1..0x200).contains(&offset) {
+                        let mem = ctrl.resolve_mem(mem);
+                        let (base, offset) = mem.address();
+                        if base == ctx.register(4) && (-0x200..0).contains(&(offset as i32)) {
+                            self.add_resolved_dest_redo(mem);
                         }
                     }
                 }
@@ -2716,15 +2690,19 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
     /// (Expected dat_array[index]), from where the index will be cheked and handled.
     fn check_final_op(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: Operand<'e>) {
         // Match Mem[index + C], Mem[index * C2 + C]
+        let ctx = ctrl.ctx();
         let index = match op.if_memory()
-            .and_then(|x| x.address.if_arithmetic_add())
-            .filter(|(_, r)| r.if_constant().is_some())
-            .map(|(l, _)| {
+            .and_then(|mem| {
+                let (base, offset) = mem.address();
+                if offset == 0 || base == ctx.const_0() {
+                    return None;
+                }
                 // Remove * 2 or * 4 if mem address is not byte
-                l.if_arithmetic_mul()
+                let removed = base.if_arithmetic_mul()
                     .filter(|(_, r)| r.if_constant().is_some())
                     .map(|(l, _)| l)
-                    .unwrap_or(l)
+                    .unwrap_or(base);
+                Some(removed)
             })
         {
             Some(s) => s,
@@ -2763,23 +2741,14 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
                 }
             }
             OperandType::Memory(mem) => {
-                let stack_offset = Some(())
-                    .and_then(|()| {
-                        if let Some((l, r)) = mem.address.if_arithmetic_add() {
-                            Some((l.if_register()?, r.if_constant()?))
-                        } else if let Some((l, r)) = mem.address.if_arithmetic_sub() {
-                            Some((l.if_register()?, 0u64.wrapping_sub(r.if_constant()?)))
-                        } else {
-                            None
-                        }
-                    })
-                    .or_else(|| Some((mem.address.if_register()?, 0)))
-                    .filter(|&x| x.0 == 4 || x.0 == 5);
-                match stack_offset {
-                    Some((r, s)) if r == 4 && self.branch == self.func_entry => {
+                let (base, offset) = mem.address();
+                let reg = base.if_register()
+                    .filter(|&x| x == 4 || x == 5);
+                match reg {
+                    Some(r) if r == 4 && self.branch == self.func_entry => {
                         // If this is an argument, then request all of its uses to be widened
                         // for parent.
-                        if let Some(arg) = arg_n_from_offset::<E>(s).map(|x| x as usize) {
+                        if let Some(arg) = arg_n_from_offset::<E>(offset).map(|x| x as usize) {
                             if arg < self.parent.needed_func_params.len() {
                                 self.parent.needed_func_params[arg] = Some(self.dat);
                             }
@@ -2818,7 +2787,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
         }
     }
 
-    fn add_resolved_dest_redo(&mut self, resolved: Operand<'e>) {
+    fn add_resolved_dest_redo(&mut self, resolved: MemAccess<'e>) {
         if let Some(needed) = self.needed_operand {
             self.unchecked_branches.push((
                 self.branch,
@@ -2947,22 +2916,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let val = ctrl.resolve(val);
                     if let Some(mem) = val.if_memory() {
                         let ctx = ctrl.ctx();
-                        let this_field = mem.address.if_arithmetic_add()
-                            .filter(|&(l, _)| l == ctx.register(1))
-                            .and_then(|(_, r)| r.if_constant())
-                            .filter(|&c| c < 0x400);
-                        if let Some(offset) = this_field {
-                            if offset == struct_layouts::unit_subunit_linked
-                                ::<E::VirtualAddress>()
-                            {
-                                self.flags |= SUBUNIT_READ;
-                            }
+                        let (base, offset) = mem.address();
+                        if base == ctx.register(1) &&
+                            offset == struct_layouts::unit_subunit_linked::<E::VirtualAddress>()
+                        {
+                            self.flags |= SUBUNIT_READ;
                         }
-                        let dat_field = mem.address.if_arithmetic_add()
-                            .and_then(|(_, r)| r.if_constant())
-                            .filter(|&c| c > 0x4000)
-                            .map(|x| E::VirtualAddress::from_u64(x))
-                            .and_then(|address| self.dat_ctx.array_lookup.get(&address));
+                        let address = E::VirtualAddress::from_u64(offset);
+                        let dat_field = self.dat_ctx.array_lookup.get(&address);
                         if let Some(&(dat, idx)) = dat_field {
                             match (dat, idx) {
                                 (DatType::Units, 0x11) => self.flags |= GROUND_WEAPON_READ,
@@ -3055,10 +3016,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> RecognizeDatPatchFunc<'a, 'b, 'acx
             };
             let this_field = inner.if_memory()
                 .and_then(|mem| {
-                    let (l, r) = mem.address.if_arithmetic_add()?;
-                    l.if_register().filter(|&r| r == 1)?;
-                    let offset = r.if_constant()?;
-                    Some((offset, mem.size))
+                    let (base, offset) = mem.address();
+                    if base.if_register() == Some(1) {
+                        Some((offset, mem.size))
+                    } else {
+                        None
+                    }
                 });
             if let Some((offset, size)) = this_field {
                 if offset == 0xc8 && size == MemAccessSize::Mem8 {
@@ -3151,7 +3114,7 @@ fn unresolve<'e, E: ExecutionState<'e>>(
             .is_some()
         {
             if let Some(addr) = unresolve(ctx, exec_state, mem.address) {
-                return Some(ctx.mem_variable_rc(mem.size, addr));
+                return Some(ctx.mem_any(mem.size, addr, 0));
             }
         }
         return None;

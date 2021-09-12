@@ -67,18 +67,18 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Move(DestOperand::Memory(ref mem), _, None) => {
                 match self.state {
                     InitUnitsState::WireframeArray => {
-                        let dest = ctrl.resolve(mem.address);
+                        let dest = ctrl.resolve_mem(mem);
+                        let (index, base) = dest.address();
                         let expected_base = self.units_dat_target_acq_range.as_u64();
-                        if let Some(index) = dest.if_arithmetic_add_const(expected_base) {
+                        if base == expected_base {
                             self.state = InitUnitsState::WireframeArray_TargetAcqStored(index);
                         }
                     }
                     InitUnitsState::WireframeArray_TargetAcqStored(index) => {
-                        let dest = ctrl.resolve(mem.address);
-                        if let Some(base) = dest.if_arithmetic_add()
-                            .filter(|&(l, _)| l == index)
-                            .and_then(|(_, r)| r.if_constant())
-                            .filter(|&c| c != self.units_dat_target_acq_range.as_u64())
+                        let dest = ctrl.resolve_mem(mem);
+                        let (dest_index, base) = dest.address();
+                        if dest_index == index &&
+                            base != self.units_dat_target_acq_range.as_u64()
                         {
                             let base = E::VirtualAddress::from_u64(base);
                             let end = base + 0xe4;

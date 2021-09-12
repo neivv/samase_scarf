@@ -301,10 +301,10 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let mut state = E::initial_state(ctx, binary);
     let dest = DestOperand::from_oper(
-        ctx.mem8(ctx.add_const(
+        ctx.mem8(
             ctx.register(1),
             struct_layouts::unit_order::<E::VirtualAddress>(),
-        ))
+        )
     );
     state.move_to(&dest, ctx.constant(order as u64));
     let mut analysis = FuncAnalysis::custom_state(
@@ -784,15 +784,14 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(mem), val, None) if step == 1 => {
+            Operation::Move(DestOperand::Memory(ref mem), val, None) if step == 1 => {
                 // Step 1: Look for assignment of zero to global memory
                 if mem.size == E::WORD_SIZE {
-                    let dest = ctrl.resolve(mem.address);
+                    let dest = ctrl.resolve_mem(mem);
                     let val = ctrl.resolve(val);
-                    if val == ctx.const_0() && is_global(dest) {
+                    if val == ctx.const_0() && is_global(dest.address().0) {
                         let ctx = ctrl.ctx();
-                        self.last_bullet_spawner =
-                            Some(ctx.mem_variable_rc(mem.size, mem.address));
+                        self.last_bullet_spawner = Some(ctx.memory(&dest));
                     }
                 }
             }

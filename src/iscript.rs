@@ -393,7 +393,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDrawCursorMarker<'e,
                         let val = ctrl.resolve(val);
                         if val.if_constant() == Some(0) {
                             let ctx = ctrl.ctx();
-                            self.result = Some(ctx.mem_variable_rc(mem.size, mem.address));
+                            self.result = Some(ctx.memory(&ctrl.resolve_mem(mem)));
                             ctrl.end_analysis();
                         }
                     }

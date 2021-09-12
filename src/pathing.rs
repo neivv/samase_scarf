@@ -34,18 +34,18 @@ pub(crate) fn regions<'e, E: ExecutionState<'e>>(
     };
     // Set script->player to 0, x to 999 and y to 998
     let mut state = E::initial_state(ctx, binary);
-    let player = ctx.mem32(ctx.add_const(
+    let player = ctx.mem32(
         aiscript_hook.script_operand_at_switch,
         struct_layouts::ai_script_player::<E::VirtualAddress>(),
-    ));
-    let x = ctx.mem32(ctx.add_const(
+    );
+    let x = ctx.mem32(
         aiscript_hook.script_operand_at_switch,
         struct_layouts::ai_script_center::<E::VirtualAddress>(),
-    ));
-    let y = ctx.mem32(ctx.add_const(
+    );
+    let y = ctx.mem32(
         aiscript_hook.script_operand_at_switch,
         struct_layouts::ai_script_center::<E::VirtualAddress>() + 4,
-    ));
+    );
     state.move_to(&DestOperand::from_oper(player), ctx.const_0());
     state.move_to(&DestOperand::from_oper(x), ctx.constant(999));
     state.move_to(&DestOperand::from_oper(y), ctx.constant(998));

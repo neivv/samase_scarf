@@ -110,8 +110,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindPrismShaders<'a,
             Operation::Move(_, unresolved, None) => {
                 let value = ctrl.resolve(unresolved);
                 if is_vertex_shader_name(self.binary, value) {
+                    let ctx = ctrl.ctx();
                     let addr = match *unresolved.ty() {
-                        OperandType::Memory(mem) => mem.address,
+                        OperandType::Memory(mem) => mem.address_op(ctx),
                         OperandType::Register(_) => unresolved,
                         _ => return,
                     };
@@ -492,7 +493,7 @@ pub(crate) fn draw_game_layer<'e, E: ExecutionState<'e>>(
     for global_ref in &refs {
         let new = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
             let mut analyzer = FindDrawGameLayer::<E> {
-                dest_addr: dest_addr_op,
+                dest_addr,
                 result: EntryOf::Retry,
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -507,7 +508,7 @@ pub(crate) fn draw_game_layer<'e, E: ExecutionState<'e>>(
 }
 
 struct FindDrawGameLayer<'e, E: ExecutionState<'e>> {
-    dest_addr: Operand<'e>,
+    dest_addr: E::VirtualAddress,
     result: EntryOf<E::VirtualAddress>,
 }
 
@@ -517,10 +518,13 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDrawGameLayer<'e, E>
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Move(DestOperand::Memory(ref mem), value, None) => {
-                if mem.size == E::WORD_SIZE && mem.address == self.dest_addr {
-                    if let Some(value) = ctrl.resolve_va(value) {
-                        self.result = EntryOf::Ok(value);
-                        ctrl.end_analysis();
+                if mem.size == E::WORD_SIZE {
+                    let dest = ctrl.resolve_mem(mem);
+                    if dest.if_constant_address() == Some(self.dest_addr.as_u64()) {
+                        if let Some(value) = ctrl.resolve_va(value) {
+                            self.result = EntryOf::Ok(value);
+                            ctrl.end_analysis();
+                        }
                     }
                 }
             }

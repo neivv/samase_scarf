@@ -132,12 +132,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
                         if val.iter().any(|x| x.if_constant() == Some(0x015A_4E35)) {
                             let jump_cond = self.jump_conds.iter()
                                 .filter(|x| x.0 == self.branch_start)
-                                .map(|x| &x.1)
+                                .map(|x| x.1)
                                 .next();
                             if let Some(rng_enable) = jump_cond {
-                                let dest = ctrl.resolve(mem.address);
+                                let dest = ctrl.resolve_mem(mem);
                                 let ctx = ctrl.ctx();
-                                let val = (ctx.mem32(dest), rng_enable.clone());
+                                let val = (ctx.memory(&dest), rng_enable);
                                 self.result = EntryOf::Ok(val);
                                 ctrl.end_analysis();
                             }

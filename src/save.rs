@@ -48,7 +48,7 @@ pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
     // vec instead to avoid duplicate work.
     let mut checked = bumpvec_with_capacity(globals.len(), bump);
     checked.push(Rva((init_sprites.as_u64() - binary.base.as_u64()) as u32));
-    let map_height_tiles = ctx.mem16(ctx.add_const(game, 0xe6));
+    let map_height_tiles = ctx.mem16(game, 0xe6);
     let last_y_hline = ctx.add(
         ctx.mul_const(
             ctx.sub_const(map_height_tiles, 1),
@@ -144,10 +144,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 }
                 self.first_branch = false;
             }
-            Operation::Move(DestOperand::Memory(mem), value, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), value, None) => {
                 let value = ctrl.resolve(value);
-                let dest = ctrl.resolve(mem.address);
                 let ctx = ctrl.ctx();
+                let dest = ctrl.resolve_mem(mem).address_op(ctx);
                 if dest == self.last_y_hline {
                     if let Some(mut terms) = collect_arith_add_terms(value, self.bump) {
                         let ok = terms.remove_one(|op, _neg| {

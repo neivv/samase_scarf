@@ -99,8 +99,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitReqsAnalyzer<
                 let val = ctrl.resolve(val);
                 if val.if_constant() == Some(0x17) {
                     let ctx = ctrl.ctx();
-                    let address = ctrl.resolve(mem.address);
-                    self.result = EntryOf::Ok(ctx.mem_variable_rc(mem.size, address));
+                    let dest = ctrl.resolve_mem(mem);
+                    self.result = EntryOf::Ok(ctx.memory(&dest));
                     ctrl.end_analysis();
                 }
             }

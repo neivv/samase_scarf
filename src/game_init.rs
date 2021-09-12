@@ -300,7 +300,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsScMain<'a, 'e, 
                 }
             }
             Operation::Move(DestOperand::Memory(ref mem), _, None) => {
-                let addr = ctrl.resolve(mem.address);
+                let ctx = ctrl.ctx();
+                let mem = ctrl.resolve_mem(mem);
+                let addr = mem.address_op(ctx);
                 if self.game_pointers.iter().any(|&x| addr == x) {
                     self.result = EntryOf::Ok(());
                     ctrl.end_analysis();
@@ -404,7 +406,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
                 // Skip any moves of constant 4 to memory as it is likely scmain_state write
                 if *ctrl.user_state() == ScMainAnalyzerState::SearchingEntryHook {
                     if ctrl.resolve(val).if_constant() == Some(4) {
-                        if !is_stack_address(ctrl.resolve(mem.address)) {
+                        let dest = ctrl.resolve_mem(mem);
+                        if !is_stack_address(dest.address().0) {
                             ctrl.skip_operation();
                         }
                     }
@@ -552,12 +555,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsInitMapFromPath
                     let val = ctrl.resolve(val);
                     if val.if_constant() == Some(0) {
                         if let DestOperand::Memory(mem) = to {
-                            let addr = ctrl.resolve(mem.address);
-                            if let Some((_, r)) = addr.if_arithmetic_add() {
-                                if r.if_constant() == Some(0x154) {
-                                    self.result = EntryOf::Ok(());
-                                    ctrl.end_analysis();
-                                }
+                            let dest = ctrl.resolve_mem(mem);
+                            if dest.address().1 == 0x154 {
+                                self.result = EntryOf::Ok(());
+                                ctrl.end_analysis();
                             }
                         }
                     }
@@ -841,7 +842,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if ok {
                         let arg10 = ctrl.resolve(self.arg_cache.on_call(9));
                         *ctrl.user_state() = SinglePlayerStartState::AssigningPlayerMappings;
-                        self.result.local_storm_player_id = Some(ctx.mem32(arg10));
+                        self.result.local_storm_player_id = Some(ctx.mem32(arg10, 0));
                     }
                 }
             }
@@ -867,12 +868,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 } else if let Operation::Move(ref dest, val, None) = *op {
                     if let DestOperand::Memory(mem) = dest {
                         let val = ctrl.resolve(val);
-                        let dest_addr = ctrl.resolve(mem.address);
-                        let is_move_to_u32_arr = dest_addr.if_arithmetic_add()
-                            .and_either(|x| {
-                                x.if_arithmetic_mul_const(4)
-                                    .map(|x| x.unwrap_sext())
-                            });
+                        let dest = ctrl.resolve_mem(mem);
+                        let ctx = ctrl.ctx();
+                        let is_move_to_u32_arr = dest.if_add_either(ctx, |x| {
+                            x.if_arithmetic_mul_const(4)
+                                .map(|x| x.unwrap_sext())
+                        });
                         if let Some((index, base)) = is_move_to_u32_arr {
                             if let Some(storm_id) = self.result.local_storm_player_id {
                                 if index == storm_id {
@@ -892,16 +893,18 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let offset = val.if_memory()
                             .filter(|x| x.size.bits() >= 32 && x.size == mem.size)
                             .and_then(|x| {
-                                let (l, r) = x.address.if_arithmetic_add()?;
-                                if l != self.arg_cache.on_entry(0) {
-                                    return None;
+                                let (base, offset) = x.address();
+                                if base != self.arg_cache.on_entry(0) ||
+                                    !(0x80..0x8c).contains(&offset)
+                                {
+                                    None
+                                } else {
+                                    Some(offset)
                                 }
-                                let offset = r.if_constant().filter(|&c| c >= 0x80 && c < 0x8c)?;
-                                Some(offset)
                             });
                         if let Some(offset) = offset {
                             let ctx = ctrl.ctx();
-                            let game_data = ctx.sub_const(dest_addr, offset);
+                            let game_data = ctx.mem_sub_const_op(&dest, offset);
                             if is_global(game_data) {
                                 self.result.game_data = Some(game_data);
                             }
@@ -960,10 +963,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let dest_from = match *op {
                         Operation::Move(ref dest, val, None) => match dest {
                             DestOperand::Memory(mem) => {
-                                let dest = ctrl.resolve(mem.address);
+                                let dest = ctrl.resolve_mem(mem);
                                 let val = ctrl.resolve(val);
                                 if let Some(mem) = val.if_memory() {
-                                    Some((dest, mem.address))
+                                    Some((dest, *mem))
                                 } else {
                                     None
                                 }
@@ -975,6 +978,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             if &bytes[..] == &[0xf3, 0xa5] {
                                 let from = ctrl.resolve(ctx.register(6));
                                 let dest = ctrl.resolve(ctx.register(7));
+                                let from = ctx.mem_access(from, 0, MemAccessSize::Mem32);
+                                let dest = ctx.mem_access(dest, 0, MemAccessSize::Mem32);
                                 Some((dest, from))
                             } else {
                                 None
@@ -984,13 +989,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     };
 
                     if let Some((dest, addr)) = dest_from {
-                        let index_base = dest.if_arithmetic_add()
-                            .and_either(|x| x.if_arithmetic_mul());
+                        let index_base = dest.if_add_either(ctx, |x| x.if_arithmetic_mul());
                         if let Some((index, base)) = index_base {
                             if let Some(size) = index.1.if_constant() {
                                 if let Some(storm_id) = result.local_storm_player_id {
                                     if index.0.unwrap_sext() == storm_id {
-                                        let addr = ctx.sub_const(addr, 0x14);
+                                        let addr = ctx.mem_sub_const_op(&addr, 0x14);
                                         if size > 16 {
                                             single_result_assign(
                                                 Some(addr),
@@ -1052,7 +1056,7 @@ pub(crate) fn select_map_entry<'e, E: ExecutionState<'e>>(
                     .map(|x| x.1)
                     .filter(|&x| !not_is_multiplayer.iter().any(|&y| x == y))
                     .next()
-                    .map(|x| ctx.mem8(x));
+                    .map(|x| ctx.mem8(x, 0));
                 result.is_multiplayer = is_multiplayer;
                 EntryOf::Ok(())
             } else {
@@ -1114,22 +1118,20 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSelectMapEntr
             Operation::Move(ref dest, _, _) => {
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem8 {
-                        let addr = ctrl.resolve(mem.address);
+                        let ctx = ctrl.ctx();
+                        let dest = ctrl.resolve_mem(mem);
                         if self.first_branch {
-                            if let Some((l, r)) = addr.if_arithmetic_add() {
-                                let right_ok = r.if_constant()
-                                    .filter(|&c| c > 0x20)
-                                    .is_some();
-                                // Older versions of the function had arg1 as
-                                // map entry (and used 5 args total instead of 3)
-                                let left_ok = l == self.arg_cache.on_entry(2) ||
-                                    l == self.arg_cache.on_entry(0);
-                                if right_ok && left_ok {
-                                    self.arg3_write_seen = true;
-                                }
+                            let (base, offset) = dest.address();
+                            // Older versions of the function had arg1 as
+                            // map entry (and used 5 args total instead of 3)
+                            if offset > 0x20 &&
+                                (base == self.arg_cache.on_entry(2) ||
+                                 base == self.arg_cache.on_entry(0))
+                            {
+                                self.arg3_write_seen = true;
                             }
                         }
-                        self.mem_bytes_written.push(addr.clone());
+                        self.mem_bytes_written.push(dest.address_op(ctx));
                     }
                 }
             }
@@ -1849,12 +1851,12 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                                         {
                                             self.state =
                                                 SelectMapEntryState::CreateGameMultiplayer;
-                                            let dest_addr = ctx.add_const(
+                                            let dest = ctx.mem32(
                                                 arg_cache.on_entry(2),
                                                 self.map_entry_flags_offset.unwrap_or(0) as u64,
                                             );
                                             state.move_resolved(
-                                                &DestOperand::from_oper(ctx.mem32(dest_addr)),
+                                                &DestOperand::from_oper(dest),
                                                 ctx.constant(2),
                                             );
                                             let binary = ctrl.binary();
@@ -2315,9 +2317,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindOrigPlayerTyp
             Operation::Move(DestOperand::Memory(dest), val, None) => {
                 let val = ctrl.resolve(val);
                 let input_ok = val.if_memory()
-                    .filter(|x| x.size == dest.size)
-                    .and_then(|mem| mem.address.if_arithmetic_add_const(0x1f))
-                    .filter(|&x| x == self.arg_cache.on_entry(0))
+                    .filter(|x| {
+                        let (base, offset) = x.address();
+                        x.size == dest.size &&
+                            offset == 0x1f &&
+                            base == self.arg_cache.on_entry(0)
+                    })
                     .is_some();
                 if input_ok {
                     let addr = ctrl.resolve(dest.address);
@@ -2514,13 +2519,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let val = ctrl.resolve(val);
                         let cmp = b"/skins";
                         let addr = if let Some(mem) = val.if_memory() {
-                            mem.address
+                            mem.if_constant_address()
                         } else {
-                            val
+                            val.if_constant()
                         };
                         let binary = ctrl.binary();
-                        let ok = addr.if_constant()
-                            .map(E::VirtualAddress::from_u64)
+                        let ok = addr.map(E::VirtualAddress::from_u64)
                             .and_then(|x| binary.slice_from_address(x, cmp.len() as u32).ok())
                             .filter(|&x| x == cmp)
                             .is_some();
@@ -2610,22 +2614,17 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 .and_then(|x| x.if_arithmetic_mul_const(0x2))
                                 .is_some();
                             if ok {
-                                let dest = ctrl.resolve(mem.address);
-                                let base = dest.if_arithmetic_add()
-                                    .and_then(|(l, r)| {
-                                        Some((l, r)).and_either_other(|x| {
-                                            Operand::and_masked(x).0
-                                                .if_arithmetic_sub_const(1)?
-                                                .if_custom()
-                                            })
-                                            .or_else(|| {
-                                                Some((l, r)).and_either_other(|x| {
-                                                    Operand::and_masked(x).0
-                                                        .if_custom()
-                                                    })
-                                                    .map(|x| ctx.add_const(x, 1))
-                                            })
-                                    });
+                                let dest = ctrl.resolve_mem(mem);
+                                let ctx = ctrl.ctx();
+                                let base = dest.if_add_either_other(ctx, |x| {
+                                    Operand::and_masked(x).0
+                                        .if_arithmetic_sub_const(1)?
+                                        .if_custom()
+                                }).or_else(|| {
+                                    dest.if_add_either_other(ctx, |x| {
+                                        Operand::and_masked(x).0.if_custom()
+                                    }).map(|x| ctx.add_const(x, 1))
+                                });
                                 if let Some(base) = base {
                                     self.result.fire_overlay_max = Some(base);
                                     ctrl.end_analysis();
@@ -2747,9 +2746,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                 .map(E::VirtualAddress::from_u64);
             if let (Some(vtbl), Some(param)) = (vtbl, param) {
                 // Copy vtbl and param to this
-                let dest = ctrl.mem_word(this);
-                let dest2 =
-                    ctrl.mem_word(ctrl.const_word_offset(this, 1));
+                let dest = ctrl.mem_word(this,0 );
+                let dest2 = ctrl.mem_word(this, E::VirtualAddress::SIZE as u64);
                 let state = ctrl.exec_state();
                 let vtbl = ctx.constant(vtbl.as_u64());
                 let param = ctx.constant(param.as_u64());
@@ -3111,8 +3109,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
             GameLoopAnalysisState::ContinueGameLoop => {
                 if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     if mem.size == MemAccessSize::Mem8 && ctrl.resolve(value) == ctx.const_1() {
-                        self.result.continue_game_loop =
-                            Some(ctx.mem8(ctrl.resolve(mem.address)));
+                        self.result.continue_game_loop = Some(ctx.memory(&ctrl.resolve_mem(mem)));
                         self.state = GameLoopAnalysisState::PaletteCopy;
                     }
                 }
@@ -3251,10 +3248,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                     }
                 } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     if ctrl.resolve(value) == ctx.const_1() {
-                        let address = ctrl.resolve(mem.address);
-                        if address.if_constant().is_some() {
-                            self.sync_active_candidate =
-                                Some(ctx.mem_variable_rc(mem.size, address));
+                        let mem = ctrl.resolve_mem(mem);
+                        if mem.if_constant_address().is_some() {
+                            self.sync_active_candidate = Some(ctx.memory(&mem));
                         }
                     }
                 }
@@ -3421,7 +3417,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnaly
                     // Skip stores that may be to next_game_step_tick
                     let value = ctrl.resolve(value);
                     if Operand::and_masked(value).0.if_custom().is_some() &&
-                        is_global(ctrl.resolve(mem.address))
+                        is_global(ctrl.resolve_mem(mem).address().0)
                     {
                         ctrl.skip_operation();
                     }
@@ -3704,9 +3700,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
                     // from assuming that a binary tree stays empty
                     if let DestOperand::Memory(ref mem) = *dest {
                         if mem.size == E::WORD_SIZE {
-                            let addr = ctrl.resolve(mem.address);
+                            let dest_resolved = ctrl.resolve_mem(mem);
                             let value = ctrl.resolve(value);
-                            if addr == ctx.add_const(value, E::VirtualAddress::SIZE as u64) {
+                            if value == ctx.mem_sub_const_op(
+                                &dest_resolved,
+                                E::VirtualAddress::SIZE as u64,
+                            ) {
                                 let state = ctrl.exec_state();
                                 state.move_to(dest, ctx.new_undef());
                                 ctrl.skip_operation();
@@ -3828,7 +3827,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 ctrl.end_analysis();
                                 return;
                             }
-                            let dest = DestOperand::from_oper(ctrl.mem_word(arg1));
+                            let dest = DestOperand::from_oper(ctrl.mem_word(arg1, 0));
                             let state = ctrl.exec_state();
                             state.move_resolved(&dest, ctx.custom(self.custom_pos));
                             self.custom_pos += 1;
@@ -3916,16 +3915,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, '
                 if to.if_constant().is_none() {
                     if let Some(switch) = CompleteSwitch::new(to, ctx, ctrl.exec_state()) {
                         if let Some(index) = switch.index_operand(ctx) {
-                            if let Some(value) = index.unwrap_sext().if_memory()
-                                .and_then(|mem| {
-                                    let (l, r) = mem.address.if_arithmetic_add()?;
-                                    l.if_custom()?;
-                                    r.if_constant()?;
-                                    Some(mem.address)
-                                })
+                            if let Some(mem) = index.unwrap_sext().if_memory()
+                                .filter(|mem| mem.address().0.if_custom().is_some())
                             {
                                 if let Some(c) =
-                                    ctx.sub(value, self.current_variant).if_constant()
+                                    ctx.mem_sub_op(mem, self.current_variant).if_constant()
                                 {
                                     if let Ok(c) = u16::try_from(c) {
                                         self.result = Some(c);

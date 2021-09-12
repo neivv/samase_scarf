@@ -76,9 +76,8 @@ pub(crate) fn map_tile_flags<'e, E: ExecutionState<'e>>(
                 Operation::Move(ref dest, _, _) => {
                     // Ignore moves to [unit + 0xd0]
                     if let DestOperand::Memory(mem) = dest {
-                        let addr = ctrl.resolve(mem.address);
-                        let skip = addr.if_arithmetic_add_const(offset).is_some();
-                        if skip {
+                        let (_, dest_off) = ctrl.resolve_mem(mem).address();
+                        if dest_off == offset {
                             ctrl.skip_operation();
                         }
                     }
@@ -272,7 +271,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                             .checked_sub(1)
                     }
                     OperandType::Memory(ref mem) => {
-                        recurse(mem.address, limit)?
+                        recurse(mem.address().0, limit)?
                             .checked_sub(1)
                     }
                     _ => limit.checked_sub(1),
@@ -305,9 +304,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                 }
             }
             Operation::Move(DestOperand::Memory(ref mem), val, None) => {
-                let dest = ctrl.resolve(mem.address);
+                let dest = ctrl.resolve_mem(mem);
                 let is_setting_rng_enable = self.rng_enable.if_memory()
-                    .filter(|x| x.address == dest)
+                    .filter(|&x| x == &dest)
                     .is_some();
                 if is_setting_rng_enable {
                     if let Some(c) = ctrl.resolve(val).if_constant() {

@@ -135,19 +135,14 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetw
                     let binary = self.binary;
                     let arg1_1;
                     let arg1_2;
+                    let word_size = u64::from(E::VirtualAddress::SIZE);
                     if arg2 == Some(1) {
-                        arg1_1 = ctrl.resolve(ctrl.mem_word(arg1));
-                        arg1_2 = ctrl.resolve(
-                            ctrl.mem_word(ctrl.const_word_offset(arg1, 1))
-                        );
+                        arg1_1 = ctrl.resolve(ctrl.mem_word(arg1, 0));
+                        arg1_2 = ctrl.resolve(ctrl.mem_word(arg1, word_size));
                     } else if arg2 == Some(2) {
                         // Older versions have array size 2 and a second fnptr pair
-                        arg1_1 = ctrl.resolve(
-                            ctrl.mem_word(ctrl.const_word_offset(arg1, 2))
-                        );
-                        arg1_2 = ctrl.resolve(
-                            ctrl.mem_word(ctrl.const_word_offset(arg1, 3))
-                        );
+                        arg1_1 = ctrl.resolve(ctrl.mem_word(arg1, 2 * word_size));
+                        arg1_2 = ctrl.resolve(ctrl.mem_word(arg1, 3 * word_size));
                     } else {
                         return;
                     }

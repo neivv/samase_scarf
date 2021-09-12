@@ -3,7 +3,7 @@ use fxhash::FxHashMap;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, OperandCtx, Operand, DestOperand, Operation, MemAccessSize};
+use scarf::{BinaryFile, OperandCtx, Operand, DestOperand, Operation, MemAccess, MemAccessSize};
 
 use crate::{
     AnalysisCtx, ControlExt, OptionExt, EntryOf, FunctionFinder, if_arithmetic_eq_neq,
@@ -285,7 +285,7 @@ impl VisionStepState {
     fn update<'e>(&mut self, dest: &DestOperand<'e>, val: Operand<'e>, ctx: OperandCtx<'e>) {
         if let DestOperand::Memory(ref mem) = *dest {
             if mem.size == MemAccessSize::Mem32 {
-                if let Some(_addr) = mem.address.if_constant() {
+                if let Some(_addr) = mem.if_constant_address() {
                     if val.if_constant() == Some(0x64) {
                         self.store_64_seen = true;
                     } else {
@@ -549,27 +549,38 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        fn esp_offset<'e>(val: Operand<'e>) -> Option<u32> {
-            val.if_arithmetic_sub()
-                .filter(|&(l, _)| {
-                    // Allow esp - x and
-                    // ((esp - y) & 0xffff_fff0) - x
-                    l.if_register().filter(|&r| r == 4).is_some() ||
-                        l.if_arithmetic_and()
-                            .filter(|&(_, r)| r.if_constant().is_some())
-                            .and_then(|(l, _)| {
-                                l.if_arithmetic_sub()
-                                    .filter(|&(_, r)| r.if_constant().is_some())
-                                    .and_then(|(l, _)| l.if_register())
-                                    .or_else(|| l.if_register())
-                                    .filter(|&r| r == 4)
-                            })
+        fn check_esp<'e>(esp: Operand<'e>, ctx: OperandCtx<'e>) -> bool {
+            // Allow esp and
+            // ((esp - y) & 0xffff_fff0)
+            let reg4 = ctx.register(4);
+            esp == reg4 ||
+                esp.if_arithmetic_and()
+                    .filter(|&(_, r)| r.if_constant().is_some())
+                    .filter(|&(l, _)| {
+                        l == reg4 || l.if_arithmetic_sub()
+                            .filter(|&(l, r)| l == reg4 && r.if_constant().is_some())
                             .is_some()
-                })
+                    })
+                    .is_some()
+        }
+
+        fn esp_offset<'e>(val: Operand<'e>, ctx: OperandCtx<'e>) -> Option<u32> {
+            val.if_arithmetic_sub()
+                .filter(|&(l, _)| check_esp(l, ctx))
                 .and_then(|(_, r)| r.if_constant())
                 .map(|c| c as u32)
         }
 
+        fn esp_offset_mem<'e>(val: &MemAccess<'e>, ctx: OperandCtx<'e>) -> Option<u32> {
+            let (base, offset) = val.address();
+            if check_esp(base, ctx) {
+                Some(offset as u32)
+            } else {
+                None
+            }
+        }
+
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
                 let dest = match ctrl.resolve(dest).if_constant() {
@@ -577,10 +588,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     None => return,
                 };
                 let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                if let Some(offset) = esp_offset(arg1).filter(|&x| x >= 6 * 4) {
+                if let Some(offset) = esp_offset(arg1, ctx).filter(|&x| x >= 6 * 4) {
                     let u32_offset = offset / 4;
                     if (0..7).all(|i| self.is_local_u32_set(u32_offset - i)) {
-                        let ctx = ctrl.ctx();
                         let mut analysis = FuncAnalysis::new(self.binary, ctx, dest);
                         let mut analyzer = SetLimitsAnalyzer::<E> {
                             result: self.result,
@@ -615,9 +625,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(mem), _, _) => {
-                let dest = ctrl.resolve(mem.address);
-                if let Some(offset) = esp_offset(dest) {
+            Operation::Move(DestOperand::Memory(ref mem), _, _) => {
+                let dest_mem = ctrl.resolve_mem(mem);
+                if let Some(offset) = esp_offset_mem(&dest_mem, ctx) {
                     let u32_offset = offset / 4;
                     self.set_local_u32(u32_offset);
                     if mem.size == MemAccessSize::Mem64 {
@@ -697,7 +707,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                     let is_free = arg1_not_this.if_memory()
                         .and_then(|mem| {
-                            Some(mem.address == self.result.arrays.get(0)?.get(0)?.0)
+                            Some(mem.address_op(ctx) == self.result.arrays.get(0)?.get(0)?.0)
                         })
                         .unwrap_or(false);
                     if is_free {
@@ -828,12 +838,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             if off & 3 != 0 {
                                 return;
                             }
-                            let dest = ctrl.resolve(mem.address);
-                            if dest.if_constant().is_some() {
+                            let dest = ctrl.resolve_mem(mem);
+                            let ctx = ctrl.ctx();
+                            if let Some(c) = dest.if_constant_address() {
                                 if self.inlining_object_subfunc {
-                                    let ctx = ctrl.ctx();
-                                    let vector =
-                                        ctx.sub_const(dest, E::VirtualAddress::SIZE as u64);
+                                    let vector = ctx.constant(
+                                        c.wrapping_sub(E::VirtualAddress::SIZE as u64)
+                                    );
                                     self.add_result(off, add, mul, vector);
                                     // off == 0 => images
                                     if self.result.smem_alloc.is_none() &&
@@ -843,7 +854,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                         self.redo_check_malloc_free = true;
                                     }
                                 } else if self.inline_depth == 0 {
-                                    self.depth_0_arg1_global_stores.push((dest, value));
+                                    let dest_op = ctx.constant(c);
+                                    self.depth_0_arg1_global_stores.push((dest_op, value));
                                 }
                             }
                         }
@@ -1017,12 +1029,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         let ctx = ctrl.ctx();
         match self.state {
             StepObjectsAnalysisState::VisionUpdateCounter => {
-                if let Operation::Move(DestOperand::Memory(mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     if mem.size == MemAccessSize::Mem32 {
                         let value = ctrl.resolve(value);
                         if value.if_constant() == Some(0x64) {
-                            let addr = ctrl.resolve(mem.address);
-                            self.result.vision_update_counter = Some(ctx.mem32(addr));
+                            let mem = ctrl.resolve_mem(mem);
+                            self.result.vision_update_counter = Some(ctx.memory(&mem));
                             self.state = StepObjectsAnalysisState::VisionUpdated;
                             self.continue_state = Some((
                                 Box::new(ctrl.exec_state().clone()),
@@ -1034,13 +1046,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             StepObjectsAnalysisState::VisionUpdated => {
-                if let Operation::Move(DestOperand::Memory(mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     if mem.size == MemAccessSize::Mem8 {
                         let value = ctrl.resolve(value);
                         if value.if_constant() == Some(0) {
-                            let addr = ctrl.resolve(mem.address);
-                            if !is_stack_address(addr) {
-                                self.result.vision_updated = Some(ctx.mem8(addr));
+                            let mem = ctrl.resolve_mem(mem);
+                            if !is_stack_address(mem.address().0) {
+                                self.result.vision_updated = Some(ctx.memory(&mem));
                                 self.state = StepObjectsAnalysisState::FirstDyingUnit;
                             }
                         }
@@ -1054,7 +1066,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             if mem.size == MemAccessSize::Mem32 {
                                 let value = ctrl.resolve(value);
                                 if value.if_constant() == Some(0) {
-                                    let addr = ctrl.resolve(mem.address);
+                                    let addr = ctrl.resolve(mem.address().0);
                                     if !is_stack_address(addr) {
                                         self.needs_inline_verify = false;
                                     }
@@ -1129,10 +1141,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                     }
                 } else if let Operation::Move(ref dest, value, None) = *op {
-                    if let DestOperand::Memory(mem) = dest {
+                    if let DestOperand::Memory(ref mem) = dest {
                         if mem.size == E::WORD_SIZE {
-                            let address = ctrl.resolve(mem.address);
-                            let dest_op = ctrl.mem_word(address);
+                            let mem = ctrl.resolve_mem(mem);
+                            let dest_op = ctx.memory(&mem);
                             let value = ctrl.resolve(value);
                             if dest_op == self.active_iscript_unit {
                                 self.result.first_dying_unit = Some(value);
@@ -1292,12 +1304,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             }
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     if mem.size == E::WORD_SIZE && self.result.active_iscript_bullet.is_none() {
                         let value = ctrl.resolve(value);
                         if value == self.first_active_bullet {
-                            let address = ctrl.resolve(mem.address);
-                            let dest_op = ctrl.mem_word(address);
+                            let mem = ctrl.resolve_mem(mem);
+                            let dest_op = ctx.memory(&mem);
                             if Some(dest_op) != self.result.active_iscript_flingy {
                                 self.result.active_iscript_bullet = Some(dest_op);
                             }
@@ -1390,7 +1402,7 @@ fn analyze_simulate_short<'e, E: ExecutionState<'e>>(
                     ctrl.end_analysis();
                 }
                 Operation::Move(DestOperand::Memory(mem), _, _) => {
-                    let address = ctrl.resolve(mem.address);
+                    let address = ctrl.resolve(mem.address().0);
                     if !is_stack_address(address) {
                         ctrl.end_analysis();
                     }
@@ -1410,7 +1422,7 @@ fn analyze_simulate_short<'e, E: ExecutionState<'e>>(
         &DestOperand::Memory(
             scarf::operand::MemAccess { size: E::WORD_SIZE, address: ctx.register(4) }
         ),
-        ctx.mem_variable_rc(E::WORD_SIZE, ctx.register(4)),
+        ctx.mem_any(E::WORD_SIZE, ctx.register(4), 0),
     );
     exec.move_to(
         &DestOperand::Register64(4),

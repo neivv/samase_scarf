@@ -191,7 +191,7 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
                     // String creation function returns eax = arg1
                     ctrl.do_call_with_result(arg1);
                     // Mem[string + 0] is character data
-                    let dest2 = DestOperand::from_oper(ctrl.mem_word(arg1));
+                    let dest2 = DestOperand::from_oper(ctrl.mem_word(arg1, 0));
                     let state = ctrl.exec_state();
                     state.move_resolved(&dest2, ctx.constant(self.string_address.as_u64()));
                 }
@@ -252,7 +252,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
         }
         if let Some(path_string) = self.path_string.take() {
             let dest = DestOperand::Register64(0);
-            let dest2 = DestOperand::from_oper(ctrl.mem_word(path_string));
+            let dest2 = DestOperand::from_oper(ctrl.mem_word(path_string, 0));
             let state = ctrl.exec_state();
             // String creation function returns eax = arg1
             state.move_resolved(&dest, path_string);
@@ -304,7 +304,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
                 let resolved = ctrl.resolve(val);
                 if resolved == self.return_marker {
                     if let DestOperand::Memory(ref mem) = *dest {
-                        if let Some(c) = ctrl.resolve(mem.address).if_constant() {
+                        if let Some(c) = ctrl.resolve_mem(mem).if_constant_address() {
                             self.result = EntryOf::Ok(E::VirtualAddress::from_u64(c));
                             ctrl.end_analysis();
                         }
@@ -487,7 +487,7 @@ impl<'e, E: ExecutionState<'e>> FindTooltipCtrlState<'e, E> {
         } else {
             return;
         };
-        result.tooltip_draw_func = Some(E::operand_mem_word(ctx, other.0));
+        result.tooltip_draw_func = Some(E::operand_mem_word(ctx, other.0, 0));
         result.draw_f10_menu_tooltip = Some(other.1);
         result.graphic_layers = Some(ctx.sub_const(
             one,
@@ -603,9 +603,9 @@ impl<'a, 'e, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'e, E> {
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(mem), value, None) => {
-                let addr = ctrl.resolve(mem.address);
-                if !is_global(addr) {
+            Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+                let mem = ctrl.resolve_mem(mem);
+                if !is_global(mem.address().0) {
                     return;
                 }
                 let value = ctrl.resolve(value);
@@ -613,20 +613,20 @@ impl<'a, 'e, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'e, E> {
                 if let TooltipState::FindTooltipCtrl(ref mut state) = ctrl.user_state() {
                     if value.is_undefined() {
                         if mem.size == E::WORD_SIZE {
-                            state.tooltip_ctrl = Some(E::operand_mem_word(ctx, addr));
+                            state.tooltip_ctrl = Some(ctx.memory(&mem));
                         }
                     } else {
                         if let Some(c) = value.if_constant() {
                             if c == 1 && mem.size == MemAccessSize::Mem8 {
-                                state.one = Some(addr);
+                                state.one = Some(mem.address_op(ctx));
                             }
                             if mem.size == E::WORD_SIZE {
                                 if c > 0x1000 {
                                     let dest = E::VirtualAddress::from_u64(c);
                                     if state.func1.is_none() {
-                                        state.func1 = Some((addr, dest));
+                                        state.func1 = Some((mem.address_op(ctx), dest));
                                     } else if state.func2.is_none() {
-                                        state.func2 = Some((addr, dest));
+                                        state.func2 = Some((mem.address_op(ctx), dest));
                                     }
                                 }
                             }
@@ -699,9 +699,10 @@ pub(crate) fn draw_graphic_layers<'e, E: ExecutionState<'e>>(
     let mut result = None;
     let call_offset = 7 * struct_layouts::graphic_layer_size::<E::VirtualAddress>() +
         struct_layouts::graphic_layer_draw_func::<E::VirtualAddress>();
-    let expected_call_addr = ctx.mem_variable_rc(
+    let expected_call_addr = ctx.mem_any(
         E::WORD_SIZE,
-        ctx.add_const(graphic_layers, call_offset)
+        graphic_layers,
+        call_offset,
     );
     for func in &global_refs {
         let val = crate::entry_of_until(binary, &funcs, func.use_address, |entry| {
@@ -820,7 +821,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                                 // hackfix to fix get_ddsgrp() static constructor
                                 // writing 0 to [ddsgrp], causing it be undefined.
                                 // Make it back [ddsgrp]
-                                let val = ctrl.mem_word(eax);
+                                let val = ctrl.mem_word(eax, 0);
                                 let exec_state = ctrl.exec_state();
                                 exec_state.move_resolved(&DestOperand::from_oper(val), val);
                             }
@@ -832,43 +833,36 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(mem), val, None) => {
-                let dest = ctrl.resolve(mem.address);
+            Operation::Move(DestOperand::Memory(ref mem), val, None) => {
+                let dest = ctrl.resolve_mem(mem);
                 let val = ctrl.resolve(val);
                 if mem.size == MemAccessSize::Mem16 {
                     if let Some(c) = val.if_constant() {
                         if self.result.cmdicons.is_none() && c == 0xc {
-                            let is_u16_move = dest.if_arithmetic_add()
-                                .and_then(|(l, r)| {
-                                    let c = r.if_constant()?;
-                                    struct_layouts::control_u16_value::
-                                        <E::VirtualAddress>()
-                                        .iter()
-                                        .find(|&&x| x == c)
-                                        .map(|&c| (l, c as u16))
-                                });
+                            let (base, off) = dest.address();
+                            let is_u16_move =
+                                struct_layouts::control_u16_value::<E::VirtualAddress>()
+                                    .iter()
+                                    .find(|&&x| x == off)
+                                    .map(|&c| (base, c as u16));
                             if let Some(base) = is_u16_move {
                                 self.current_function_u16_param_set = Some(base);
                             }
                         } else if self.result.cmdicons.is_some() && c == 0x2 {
-                            let is_u16_move = dest.if_arithmetic_add()
-                                .and_then(|(l, r)| {
-                                    let c = r.if_constant()?;
-                                    match c == self.u16_param_offset as u64 {
-                                        true => Some((l, c as u16)),
-                                        false => None,
-                                    }
-                                });
-                            if let Some(base) = is_u16_move {
-                                self.current_function_u16_param_set = Some(base);
+                            let (base, off) = dest.address();
+                            if off == self.u16_param_offset as u64 {
+                                self.current_function_u16_param_set = Some((base, off as u16));
                             }
                         }
                     }
                 }
                 if mem.size == E::WORD_SIZE {
                     if let Some((base, offset)) = self.current_function_u16_param_set {
-                        let ok = ctrl.if_mem_word(dest)
-                            .and_then(|x| x.if_arithmetic_add_const(offset as u64 + 2))
+                        let ok = dest.if_no_offset()
+                            .and_then(|x| {
+                                ctrl.if_mem_word(x)?
+                                    .if_arithmetic_add_const(offset as u64 + 2)
+                            })
                             .filter(|&x| x == base)
                             .is_some();
                         if ok {
@@ -1047,8 +1041,8 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StatusScreenMode<'e, E> 
                     let ctx = ctrl.ctx();
                     if ctx.and_const(ctrl.resolve(val), 0xff) == ctx.const_0() {
                         let dest = ctrl.resolve(mem.address);
-                        if dest.if_constant().is_some() {
-                            self.result = Some(ctx.mem8(dest));
+                        if let Some(c) = dest.if_constant() {
+                            self.result = Some(ctx.mem8(ctx.const_0(), c));
                             ctrl.end_analysis();
                         }
                     }
@@ -1128,7 +1122,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
                     let address = ctrl.resolve(mem.address);
                     if c == 0 {
                         if let Some(ty) = self.check_return_store.take() {
-                            let dest = ctrl.mem_word(address);
+                            let dest = ctrl.mem_word(address, 0);
                             match ty {
                                 MultiGrpType::Group => self.result.grpwire_grp = Some(dest),
                                 MultiGrpType::Transport => self.result.tranwire_grp = Some(dest),
@@ -1157,7 +1151,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
                         // it written to the global before call)
                         if arg1.if_custom() == Some(1) {
                             self.result.status_screen = self.last_global_store_address.take()
-                                .map(|x| ctrl.mem_word(x));
+                                .map(|x| ctrl.mem_word(x, 0));
                         } else {
                             self.result.status_screen = Some(arg1);
                         }
@@ -1292,7 +1286,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyz
                             // hackfix to fix get_ddsgrp() static constructor
                             // writing 0 to [ddsgrp], causing it be undefined.
                             // Make it back [ddsgrp]
-                            let val = ctrl.mem_word(eax);
+                            let val = ctrl.mem_word(eax, 0);
                             let exec_state = ctrl.exec_state();
                             exec_state.move_resolved(&DestOperand::from_oper(val), val);
                         }
@@ -1333,11 +1327,11 @@ fn find_child_event_handlers<'e, E: ExecutionState<'e>>(
         event_address,
     );
     exec_state.move_to(
-        &DestOperand::from_oper(ctx.mem16(ctx.add_const(event_address, 0x10))),
+        &DestOperand::from_oper(ctx.mem16(event_address, 0x10)),
         ctx.constant(0xe),
     );
     exec_state.move_to(
-        &DestOperand::from_oper(ctx.mem32(ctx.add_const(event_address, 0x0))),
+        &DestOperand::from_oper(ctx.mem32(event_address, 0x0)),
         ctx.constant(0x0),
     );
     let mut analysis = FuncAnalysis::custom_state(
@@ -1418,11 +1412,11 @@ fn find_child_draw_func<'e, E: ExecutionState<'e>>(
     );
     let event_type = struct_layouts::event_type::<E::VirtualAddress>();
     exec_state.move_to(
-        &DestOperand::from_oper(ctx.mem16(ctx.add_const(event_address, event_type))),
+        &DestOperand::from_oper(ctx.mem16(event_address, event_type)),
         ctx.constant(0xe),
     );
     exec_state.move_to(
-        &DestOperand::from_oper(ctx.mem32(event_address)),
+        &DestOperand::from_oper(ctx.mem32(event_address, 0)),
         ctx.constant(0x0),
     );
     let mut analysis = FuncAnalysis::custom_state(
@@ -1969,7 +1963,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GluCmpgnAnalyzer<'a,
                 if condition == ctx.const_1() {
                     if to.if_constant().is_none() {
                         // Case 2 = Activate button (end), 0xa = Init
-                        let ext_param = ctrl.mem_word(self.arg_cache.on_entry(1));
+                        let ext_param = ctrl.mem_word(self.arg_cache.on_entry(1), 0);
                         for &case in &[2u8, 0xa] {
                             let op = ctx.substitute(to, ext_param, ctx.constant(case.into()), 8);
                             let dest = resolve_memory(binary, op);
@@ -2068,7 +2062,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GluCmpgnAnalyzer<'a,
                     if val.if_constant() == Some(8) {
                         let ctx = ctrl.ctx();
                         self.result.dialog_return_code =
-                            Some(ctx.mem_variable_rc(mem.size, mem.address));
+                            Some(ctx.mem_any(mem.size, mem.address, 0));
                         ctrl.user_state().dialog_return_stored = true;
                     }
                 }

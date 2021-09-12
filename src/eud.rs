@@ -235,11 +235,11 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
                     // A1 has to be a1 to this fn ([esp + 4]),
                     // a2 ptr,
                     // a3 length
-                    let a1 = ctrl.resolve(ctx.mem32(esp));
+                    let a1 = ctrl.resolve(ctx.mem32(esp, 0));
                     // Not resolving a2, it'll be resolved later on -- double resolving
                     // ends up being wrong
-                    let a2 = ctx.mem32(ctx.add(esp, ctx.const_4()));
-                    let a3 = ctrl.resolve(ctx.mem32(ctx.add(esp, ctx.const_8())));
+                    let a2 = ctx.mem32(esp, 4);
+                    let a3 = ctrl.resolve(ctx.mem32(esp, 8));
                     let is_a1 = a1.if_mem32()
                         .and_then(|addr| addr.if_arithmetic_add_const(4))
                         .filter(|&x| x == ctx.register(4))
@@ -248,18 +248,10 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
                         if let Some(len) = a3.if_constant() {
                             if len % 0x10 == 0 {
                                 let result = (0..(len / 0x10)).map(|i| {
-                                    let address = ctrl.resolve(ctx.mem32(
-                                        ctx.add_const(a2, i * 0x10)
-                                    ));
-                                    let size = ctrl.resolve(ctx.mem32(
-                                        ctx.add_const(a2, i * 0x10 + 0x4)
-                                    ));
-                                    let operand = ctrl.resolve(ctx.mem32(
-                                        ctx.add_const(a2, i * 0x10 + 0x8)
-                                    ));
-                                    let flags = ctrl.resolve(ctx.mem32(
-                                        ctx.add_const(a2, i * 0x10 + 0xc)
-                                    ));
+                                    let address = ctrl.resolve(ctx.mem32(a2, i * 0x10));
+                                    let size = ctrl.resolve(ctx.mem32(a2, i * 0x10 + 4));
+                                    let operand = ctrl.resolve(ctx.mem32(a2, i * 0x10 + 0x8));
+                                    let flags = ctrl.resolve(ctx.mem32(a1, i * 0x10 + 0xc));
                                     if let Some(address) = address.if_constant() {
                                         if let Some(size) = size.if_constant() {
                                             if let Some(flags) = flags.if_constant() {
@@ -293,7 +285,7 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
             // Check for eud_vec_push(&vec, &eud)
             // Eud is 0x10 bytes
             let ctx = ctrl.ctx();
-            let arg1 = ctrl.resolve(ctx.mem32(ctx.register(4)));
+            let arg1 = ctrl.resolve(ctx.mem32(ctx.register(4), 0));
             let mut arg1_mem = [ctx.const_0(); 4];
             for i in 0..4 {
                 let field = ctrl.read_memory(
@@ -315,23 +307,22 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
 
             let vec = ctrl.resolve(ctx.register(1));
             let vec_buffer = ctrl.read_memory(vec, E::WORD_SIZE);
-            let vec_len_addr = ctx.add_const(vec, E::VirtualAddress::SIZE.into());
+            let vec_len = ctx.mem_access(vec, E::VirtualAddress::SIZE.into(), E::WORD_SIZE);
             // vec.buffer[vec.len] = eud;
             // vec.len += 1;
-            if let Some(len) = ctrl.read_memory(vec_len_addr, E::WORD_SIZE).if_constant() {
+            if let Some(len) =
+                ctrl.read_memory(vec_len.address_op(ctx), vec_len.size).if_constant()
+            {
                 let exec_state = ctrl.exec_state();
                 for i in 0..4 {
-                    let addr = ctx.add_const(
-                        vec_buffer,
-                        len.wrapping_mul(0x10).wrapping_add(i as u64 * 4),
-                    );
+                    let offset = len.wrapping_mul(0x10).wrapping_add(i as u64 * 4);
                     exec_state.move_resolved(
-                        &DestOperand::from_oper(ctx.mem32(addr)),
+                        &DestOperand::from_oper(ctx.mem32(vec_buffer, offset)),
                         arg1_mem[i],
                     );
                 }
                 exec_state.move_resolved(
-                    &DestOperand::from_oper(ctx.mem_variable_rc(E::WORD_SIZE, vec_len_addr)),
+                    &DestOperand::memory(&vec_len),
                     ctx.constant(len.wrapping_add(1)),
                 );
             }

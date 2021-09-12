@@ -271,11 +271,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                 if mem.size != E::WORD_SIZE {
                     return;
                 }
-                let ctx = ctrl.ctx();
                 // first_free_sprite = (*first_free_sprite).next, e.g.
                 // mov [first_free_sprite], [[first_free_sprite] + 4]
                 let first_sprite_next = ctrl.mem_word(
-                    ctx.add_const(ctrl.mem_word(dest_addr), E::VirtualAddress::SIZE as u64),
+                    ctrl.mem_word(dest_addr, 0),
+                    E::VirtualAddress::SIZE as u64,
                 );
                 if value == first_sprite_next {
                     self.set_first_ptr(dest_addr.clone());
@@ -391,8 +391,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                         }
                     }
                     FindSpritesState::CreateLone_Post => {
-                        self.lone_active.head = Some(ctrl.mem_word(head));
-                        self.lone_active.tail = Some(ctrl.mem_word(tail));
+                        self.lone_active.head = Some(ctrl.mem_word(head, 0));
+                        self.lone_active.tail = Some(ctrl.mem_word(tail, 0));
                         ctrl.end_analysis();
                     }
                     _ => (),
@@ -535,8 +535,8 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
             ret: ResolveCustomResult::None,
             arg1: ResolveCustomResult::None,
             arg2: ResolveCustomResult::None,
-            arg1_loc: E::operand_mem_word(ctx, ctx.custom(0)),
-            arg2_loc: E::operand_mem_word(ctx, ctx.custom(1)),
+            arg1_loc: E::operand_mem_word(ctx, ctx.custom(0), 0),
+            arg2_loc: E::operand_mem_word(ctx, ctx.custom(1), 0),
             phantom: Default::default(),
         };
         let mut analysis = FuncAnalysis::custom_state(binary, ctx, addr, exec_state, state);
@@ -613,7 +613,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
     }
 
     fn set_first_ptr(&mut self, value: Operand<'e>) {
-        let value = E::operand_mem_word(self.ctx, value);
+        let value = E::operand_mem_word(self.ctx, value, 0);
         if self.lone_free.head.is_none() {
             self.state = FindSpritesState::CreateLone;
             self.lone_free.head = Some(value);
@@ -637,7 +637,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
                 return;
             }
         };
-        let value = E::operand_mem_word(self.ctx, value);
+        let value = E::operand_mem_word(self.ctx, value, 0);
         if let Some(_old) = out {
             test_assert_eq!(*_old, value);
             return;
@@ -902,14 +902,15 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                 }
                 // The free/active logic is opposite from SpriteAnalyzer, as this function
                 // frees fow sprites while the function SpriteAnalyzer checks allocates sprites
-                let ctx = ctrl.ctx();
-                let dest_addr = ctrl.resolve(mem.address);
-                let dest_value = ctrl.mem_word(dest_addr);
+                let (address, offset) = mem.address();
+                let dest_addr = ctrl.resolve(address);
+                let dest_value = ctrl.mem_word(dest_addr, offset);
                 let value = ctrl.resolve(value);
                 // first_active_sprite = (*first_active_sprite).next, e.g.
                 // mov [first_active_sprite], [[first_active_sprite] + 4]
                 let first_sprite_next = ctrl.mem_word(
-                    ctx.add_const(dest_value, E::VirtualAddress::SIZE as u64),
+                    dest_value,
+                    E::VirtualAddress::SIZE as u64,
                 );
                 if value == first_sprite_next {
                     self.active.head = Some(dest_value);

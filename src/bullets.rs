@@ -149,14 +149,15 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
                 if mem.size != E::WORD_SIZE {
                     return;
                 }
-                let dest_addr = ctrl.resolve(mem.address);
-                let dest_value = ctrl.mem_word(dest_addr);
-                let value = ctrl.resolve(value);
                 let ctx = ctrl.ctx();
+                let dest = ctrl.resolve_mem(mem);
+                let dest_value = ctx.memory(&dest);
+                let value = ctrl.resolve(value);
                 // first_free_bullet = (*first_free_bullet).next, e.g.
                 // mov [first_free_bullet], [[first_free_bullet] + 4]
                 let first_free_next = ctrl.mem_word(
-                    ctx.add_const(dest_value, E::VirtualAddress::SIZE as u64)
+                    dest_value,
+                    E::VirtualAddress::SIZE as u64,
                 );
                 if value == first_free_next {
                     self.first_free = Some(dest_value);
@@ -168,7 +169,10 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
                 // last_free_bullet = (*first_free_bullet).prev
                 // But not (*(*first_free_bullet).next).prev = (*first_free_bullet).prev
                 if let Some(inner) = ctrl.if_mem_word(value).and_then(|x| ctrl.if_mem_word(x)) {
-                    if dest_addr.iter().all(|x| x != inner) {
+                    let (dest_base, dest_offset) = dest.address();
+                    if inner.if_constant() != Some(dest_offset) &&
+                        dest_base.iter().all(|x| x != inner)
+                    {
                         if self.is_unpaired_first_ptr(inner) {
                             self.last_free = Some(dest_value);
                             return;
