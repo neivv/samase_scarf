@@ -5,7 +5,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::ExecutionState;
 use scarf::exec_state::VirtualAddress;
 
-use crate::{AnalysisCtx, ArgCache, ControlExt, OptionExt, OperandExt, single_result_assign};
+use crate::{AnalysisCtx, ArgCache, ControlExt, OperandExt, single_result_assign};
 use crate::struct_layouts::{self, if_unit_sprite};
 use crate::switch;
 
@@ -93,9 +93,9 @@ impl<'a, 'e, E: ExecutionState<'e>> FindStepIscript<'a, 'e, E> {
         let arg_cache = self.arg_cache;
         let this = ctrl.resolve(ctx.register(1));
         let arg1 = ctrl.resolve(arg_cache.on_thiscall_call(0));
-        let is_first_overlay = ctrl.if_mem_word(this)
-            .and_then(|x| x.if_arithmetic_add_const(self.sprite_first_overlay.into()))
-            .and_then(if_unit_sprite::<E::VirtualAddress>) == Some(ctx.register(1));
+        let is_first_overlay = ctrl.if_mem_word_offset(this, self.sprite_first_overlay.into())
+            .and_then(if_unit_sprite::<E::VirtualAddress>) ==
+            Some(ctx.register(1));
         if is_first_overlay {
             let zero = ctx.const_0();
             let ok = ctrl.resolve(arg_cache.on_thiscall_call(1)) == zero &&
@@ -174,14 +174,19 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepIscriptAnalyzer<
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Move(_, val, None) => {
                 if self.result.iscript_bin.is_none() {
                     let val = ctrl.resolve(val);
                     let iscript_bin = val.if_mem8()
-                        .and_then(|addr| addr.if_arithmetic_add())
-                        .and_either_other(|x| {
-                            x.if_mem16().filter(|x| x.if_arithmetic_add().is_some())
+                        .and_then(|mem| {
+                            mem.if_add_either_other(ctx, |x| {
+                                x.if_mem16().filter(|mem| {
+                                    let (base, offset) = mem.address();
+                                    offset != 0 || base.if_arithmetic_add().is_some()
+                                })
+                            })
                         });
                     if let Some(iscript_bin) = iscript_bin {
                         self.result.iscript_bin = Some(iscript_bin);
@@ -198,18 +203,16 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepIscriptAnalyzer<
                         l.if_mem32()
                     })
                     .and_then(|x| {
-                        let (l, r) = x.if_arithmetic_add()?;
-                        let switch_table = r.if_constant()?;
-                        let (switch_op, r) = l.if_arithmetic_mul()?;
+                        let (index, switch_table) = x.address();
+                        let (switch_op, r) = index.if_arithmetic_mul()?;
                         r.if_constant()?;
-                        let iscript_pos = switch_op.if_mem8()?;
+                        let iscript_pos = switch_op.if_mem8()?.address_op(ctx);
                         Some((E::VirtualAddress::from_u64(switch_table), iscript_pos))
                     });
                 if let Some((switch_table, iscript_pos)) = switch_jump {
                     if self.wait_check_seen {
                         self.result.switch_table = Some(switch_table);
                         if let Some(opcode_check) = self.opcode_check {
-                            let ctx = ctrl.ctx();
                             let register_count =
                                 if E::VirtualAddress::SIZE == 4 { 8 } else { 16 };
                             if let Some(script_operand_at_switch) = (0..register_count)
@@ -237,7 +240,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepIscriptAnalyzer<
                 }
                 let condition = ctrl.resolve(condition);
                 let has_wait_check = condition.iter_no_mem_addr()
-                    .filter_map(|x| x.if_mem8()?.if_arithmetic_add_const(7))
+                    .filter_map(|x| x.if_mem8_offset(7))
                     .filter(|&other| other == self.arg_cache.on_thiscall_entry(0))
                     .next()
                     .is_some();
@@ -315,13 +318,9 @@ impl<'e, 'b, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyzer<'
                         return;
                     }
                     let arg2 = ctrl.resolve(self.args.on_thiscall_call(1));
-                    let arg2_ok = ctrl.if_mem_word(arg2)
-                        .and_then(|x| {
-                            x.if_arithmetic_add_const(
-                                struct_layouts::image_parent::<E::VirtualAddress>()
-                            )
-                        })
-                        .is_some();
+
+                    let image_parent = struct_layouts::image_parent::<E::VirtualAddress>();
+                    let arg2_ok = ctrl.if_mem_word_offset(arg2, image_parent).is_some();
                     if !arg2_ok {
                         return;
                     }

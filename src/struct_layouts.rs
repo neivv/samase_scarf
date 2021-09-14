@@ -19,6 +19,13 @@ pub fn sprite_visibility_mask<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn sprite_flags<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xe,
+        false => 0x16,
+    }
+}
+
 pub fn unit_sprite<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xc,
@@ -93,6 +100,13 @@ pub fn unit_movement_state<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x97,
         false => 0xdb,
+    }
+}
+
+pub fn unit_build_queue<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x98,
+        false => 0xdc,
     }
 }
 
@@ -176,7 +190,7 @@ pub fn if_unit_sprite<'e, Va: VirtualAddress>(op: Operand<'e>) -> Option<Operand
             if x.size != word_size {
                 return None;
             }
-            x.address.if_arithmetic_add_const(unit_sprite::<Va>())
+            x.if_offset(unit_sprite::<Va>())
         })
 }
 

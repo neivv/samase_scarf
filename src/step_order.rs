@@ -6,8 +6,8 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::OperandCtx;
 
 use crate::{
-    AnalysisCtx, OptionExt, entry_of_until, single_result_assign, EntryOf, ArgCache,
-    bumpvec_with_capacity, FunctionFinder, OperandExt, ControlExt, is_global,
+    AnalysisCtx, entry_of_until, single_result_assign, EntryOf, ArgCache,
+    bumpvec_with_capacity, FunctionFinder, ControlExt, is_global, if_arithmetic_eq_neq,
 };
 use crate::struct_layouts;
 
@@ -52,10 +52,7 @@ fn step_secondary_order_hallu_jump_check<'e, Va: VirtualAddress>(
         return None;
     }
     condition.iter_no_mem_addr()
-        .filter_map(|x| {
-            x.if_mem8()?
-                .if_arithmetic_add_const(struct_layouts::unit_secondary_order::<Va>())
-        })
+        .filter_map(|x| x.if_mem8_offset(struct_layouts::unit_secondary_order::<Va>()))
         .next()
 }
 
@@ -147,27 +144,16 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
                 val: Operand<'e>,
                 ctrl: &mut Control<'e, '_, '_, Self>,
             ) -> Option<Operand<'e>> {
-                let result = val.if_mem8()
-                    .and_then(|x| {
-                        x.if_arithmetic_add_const(
-                            struct_layouts::unit_secondary_order::<G::VirtualAddress>()
-                        )
-                    })
+                let result = val
+                    .if_mem8_offset(struct_layouts::unit_secondary_order::<G::VirtualAddress>())
                     .filter(|&x| x == self.unit);
                 if let Some(unit) = result.and_then(|x| ctrl.unresolve(x)) {
                     return Some(unit);
                 }
-                let result = val.if_arithmetic_eq()
-                    .map(|(l, r)| {
-                        // Strip == 0 from comparisions
-                        Operand::either(l, r, |x| x.if_constant().filter(|&c| c == 0))
-                            .and_then(|x| x.1.if_arithmetic_eq())
-                            .unwrap_or((l, r))
-                    })
-                    .and_then(|(l, r)| Operand::either(l, r, |x| x.if_mem8()))
-                    .filter(|&(_, c)| c.if_constant() == Some(0x95))
-                    .and_then(|(addr, _)| {
-                        addr.if_arithmetic_add_const(
+                let result = if_arithmetic_eq_neq(val)
+                    .filter(|x| x.1.if_constant() == Some(0x95))
+                    .and_then(|x| {
+                        x.0.if_mem8_offset(
                             struct_layouts::unit_secondary_order::<G::VirtualAddress>()
                         )
                     })
@@ -476,13 +462,10 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'e, E> {
                 // Check for this.order comparision against const
                 self.ok = condition.if_arithmetic_gt()
                     .or_else(|| condition.if_arithmetic_eq())
-                    .and_either_other(Operand::if_constant)
-                    .and_then(|x| {
-                        x.if_mem8()?
-                            .if_arithmetic_add_const(
-                                struct_layouts::unit_order::<E::VirtualAddress>()
-                            )
-                            .filter(|&x| x == ctx.register(1))
+                    .filter(|x| x.1.if_constant().is_some())
+                    .filter(|x| {
+                        x.0.if_mem8_offset(struct_layouts::unit_order::<E::VirtualAddress>()) ==
+                            Some(ctx.register(1))
                     })
                     .is_some();
                 ctrl.end_analysis();
@@ -499,8 +482,7 @@ fn find_unit_for_step_hidden_order_cmp<'e, Va: VirtualAddress>(
     condition.if_arithmetic_gt()
         .filter(|x| x.1.if_constant() == Some(0xb0))
         .and_then(|x| {
-            x.0.if_mem8()?
-                .if_arithmetic_add_const(struct_layouts::unit_order::<Va>())
+            x.0.if_mem8_offset(struct_layouts::unit_order::<Va>())
         })
 }
 
@@ -774,8 +756,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
                             .and_then(|_| {
                                 ctrl.resolve(self.arg_cache.on_thiscall_call(1)).if_mem8()
                             })
-                            .and_then(|addr| addr.if_arithmetic_add())
-                            .and_then(|(_, r)| r.if_constant())
+                            .filter(|x| {
+                                let (base, offset) = x.address();
+                                base != ctx.const_0() && offset != 0
+                            })
                             .is_some();
                         if ok {
                             self.do_attack_main = Some(dest);

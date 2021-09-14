@@ -4,10 +4,10 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, FuncAnalysis, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, Operation, Operand, MemAccessSize, DestOperand};
+use scarf::{BinaryFile, Operation, Operand, OperandCtx, MemAccessSize, DestOperand};
 
 use crate::{
-    AnalysisCtx, ArgCache, OptionExt, single_result_assign,
+    AnalysisCtx, ArgCache, single_result_assign,
     if_callable_const, EntryOf, entry_of_until, FunctionFinder,
 };
 
@@ -119,7 +119,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
             Operation::Jump { condition, to } => {
                 let condition = ctrl.resolve(condition);
                 if let Some(to) = ctrl.resolve_apply_constraints(to).if_constant() {
-                    if let Some(enable) = is_rng_enable_condition(condition) {
+                    let ctx = ctrl.ctx();
+                    if let Some(enable) = is_rng_enable_condition(condition, ctx) {
                         self.jump_conds.push((E::VirtualAddress::from_u64(to), enable));
                         self.no_jump_cond = Some(enable);
                     }
@@ -161,15 +162,13 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
     }
 }
 
-fn is_rng_enable_condition<'e>(cond: Operand<'e>) -> Option<Operand<'e>> {
+fn is_rng_enable_condition<'e>(cond: Operand<'e>, ctx: OperandCtx<'e>) -> Option<Operand<'e>> {
     crate::if_arithmetic_eq_neq(cond)
-        .map(|(l, r, _)| (l, r))
-        .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
+        .filter(|x| x.1 == ctx.const_0())
+        .map(|x| x.0)
         .filter(|x| {
             x.if_mem32()
-                .filter(|x| {
-                    x.iter().all(|part| !part.is_undefined())
-                })
+                .filter(|x| !x.address().0.contains_undefined())
                 .is_some()
         })
 }

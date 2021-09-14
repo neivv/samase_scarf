@@ -254,11 +254,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             })
                             .or_else(|| Some(ecx))
                             .and_then(|x| ctrl.if_mem_word(x))
-                            .filter(|&addr| {
-                                addr == self.fonts ||
-                                    addr.if_arithmetic_add()
-                                        .filter(|&(_, r)| r == self.fonts)
-                                        .is_some()
+                            .filter(|&mem| {
+                                let (base, offset) = mem.address();
+                                base == self.fonts || Some(offset) == self.fonts.if_constant()
                             })
                             .filter(|_| {
                                 self.checked_functions.iter().any(|&x| x == dest) == false

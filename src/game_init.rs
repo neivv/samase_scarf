@@ -5,7 +5,7 @@ use bumpalo::Bump;
 use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashMap;
 
-use scarf::{DestOperand, Operand, OperandCtx, Operation, BinaryFile, BinarySection};
+use scarf::{DestOperand, MemAccess, Operand, OperandCtx, Operation, BinaryFile, BinarySection};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 
@@ -159,7 +159,7 @@ pub(crate) fn play_smk<'e, E: ExecutionState<'e>>(
     });
     let data_rvas = BumpVec::from_iter_in(data_rvas, bump);
     let global_refs = data_rvas.iter().flat_map(|&rva| {
-        let smk_names = ctx.constant((data.virtual_address + rva.0).as_u64());
+        let smk_names = data.virtual_address + rva.0;
         functions.find_functions_using_global(analysis, data.virtual_address + rva.0)
             .into_iter()
             .map(move |x| (x, smk_names))
@@ -190,7 +190,7 @@ pub(crate) fn play_smk<'e, E: ExecutionState<'e>>(
 struct IsPlaySmk<'a, 'e, E: ExecutionState<'e>> {
     result: EntryOf<()>,
     arg_cache: &'a ArgCache<'e, E>,
-    smk_names: Operand<'e>,
+    smk_names: E::VirtualAddress,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsPlaySmk<'a, 'e, E> {
@@ -199,9 +199,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsPlaySmk<'a, 'e,
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if let Operation::Move(_, value, None) = *op {
             let value = ctrl.resolve(value);
-            let ok = ctrl.if_mem_word(value)
-                .and_then(|x| x.if_arithmetic_add())
-                .and_if_either_other(|x| x == self.smk_names)
+            let ok = ctrl.if_mem_word_offset(value, self.smk_names.as_u64())
                 .and_then(|x| x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into()))
                 .filter(|&x| Operand::and_masked(x).0 == self.arg_cache.on_entry(0))
                 .is_some();
@@ -270,9 +268,9 @@ pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
     result
 }
 
-fn collect_game_pointers<'e>(operand: Operand<'e>, out: &mut BumpVec<'_, Operand<'e>>) {
+fn collect_game_pointers<'e>(operand: Operand<'e>, out: &mut BumpVec<'_, (Operand<'e>, u64)>) {
     match operand.ty() {
-        OperandType::Memory(mem) => out.push(mem.address),
+        OperandType::Memory(mem) => out.push(mem.address()),
         OperandType::Arithmetic(arith) if arith.ty == ArithOpType::Xor => {
             collect_game_pointers(arith.left, out);
             collect_game_pointers(arith.right, out);
@@ -284,7 +282,7 @@ fn collect_game_pointers<'e>(operand: Operand<'e>, out: &mut BumpVec<'_, Operand
 struct IsScMain<'a, 'e, E: ExecutionState<'e>> {
     result: EntryOf<()>,
     play_smk: E::VirtualAddress,
-    game_pointers: &'a [Operand<'e>],
+    game_pointers: &'a [(Operand<'e>, u64)],
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsScMain<'a, 'e, E> {
@@ -300,9 +298,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsScMain<'a, 'e, 
                 }
             }
             Operation::Move(DestOperand::Memory(ref mem), _, None) => {
-                let ctx = ctrl.ctx();
                 let mem = ctrl.resolve_mem(mem);
-                let addr = mem.address_op(ctx);
+                let addr = mem.address();
                 if self.game_pointers.iter().any(|&x| addr == x) {
                     self.result = EntryOf::Ok(());
                     ctrl.end_analysis();
@@ -1098,8 +1095,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSelectMapEntr
                     let mem_byte = crate::if_arithmetic_eq_neq(condition)
                         .filter(|x| x.1 == ctx.const_0())
                         .and_then(|x| x.0.if_mem8());
-                    if let Some(addr) = mem_byte {
-                        self.mem_byte_conds.push((ctrl.address(), addr));
+                    if let Some(mem) = mem_byte {
+                        self.mem_byte_conds.push((ctrl.address(), mem.address_op(ctx)));
                     }
                 }
             }
@@ -1496,12 +1493,13 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheckLocalPlayerName<
         match *op {
             Operation::Jump { condition, .. } => {
                 let cond = ctrl.resolve(condition);
-                let address = if_arithmetic_eq_neq(cond)
+                let mem = if_arithmetic_eq_neq(cond)
                     .map(|(l, r, _)| (l, r))
                     .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
                     .and_then(|x| x.if_mem8());
-                if let Some(address) = address {
-                    self.result = Some(address.clone());
+                if let Some(mem) = mem {
+                    let ctx = ctrl.ctx();
+                    self.result = Some(mem.address_op(ctx));
                 }
                 ctrl.end_analysis();
             }
@@ -1897,9 +1895,9 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                             .and_then(|x| {
                                 let (l, r) = x.0.if_arithmetic_and()?;
                                 let bits = r.if_constant()? as u8;
-                                let (l, r) = l.if_mem8()?.if_arithmetic_add()?;
-                                let offset = r.if_constant().and_then(|x| u32::try_from(x).ok())?;
-                                if !self.is_map_entry(l) {
+                                let (base, offset) = l.if_mem8()?.address();
+                                let offset = u32::try_from(offset).ok()?;
+                                if !self.is_map_entry(base) {
                                     return None;
                                 }
                                 Some((bits, offset, x.2))
@@ -1944,7 +1942,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                             let ok = Some(ctrl.resolve(arg_cache.on_call(0)))
                                 .filter(|&x| is_stack_address(x))
                                 .map(|_| ctrl.resolve(arg_cache.on_call(1)))
-                                .and_then(|x| ctrl.if_mem_word(x))
+                                .and_then(|x| ctrl.if_mem_word_offset(x, 0))
                                 .filter(|&x| self.is_game_name(x))
                                 .filter(|_| {
                                     // Some older versions only have 8byte by-value struct,
@@ -1960,10 +1958,12 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                                         // have 64-bit builds, but supporting it instead
                                         // of checking that.
                                         [4u8, 0u8].iter().any(|&off| {
-                                            let val = ctrl.read_memory(
-                                                ctx.add_const(op, off as u64),
+                                            let address = ctx.mem_access(
+                                                op,
+                                                off as u64,
                                                 MemAccessSize::Mem32,
                                             );
+                                            let val = ctrl.read_memory(&address);
                                             self.is_game_input_turn_rate(val)
                                         })
                                     }
@@ -1981,13 +1981,15 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                     Operation::Call(dest) => {
                         let dest = ctrl.resolve(dest);
                         let offset = ctrl.if_mem_word(dest)
-                            .and_then(|addr| addr.if_arithmetic_add())
-                            .and_then(|(l, r)| {
-                                ctrl.if_mem_word(l)
-                                    .filter(|&l| self.is_create_dialog(l))
-                                    .and_then(|_| r.if_constant())
-                                    .map(|x| x as usize)
-                                    .filter(|&x| x > 0x40)
+                            .and_then(|mem| {
+                                let (base, offset) = mem.address();
+                                if offset <= 0x40 {
+                                    return None;
+                                }
+                                if !self.is_create_dialog(ctrl.if_mem_word_offset(base, 0)?) {
+                                    return None;
+                                }
+                                Some(offset)
                             });
                         if let Some(offset) = offset {
                             self.result.create_game_dialog_vtbl_on_multiplayer_create =
@@ -2017,12 +2019,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
 
         fn is_game_input_turn_rate(&self, op: Operand<'e>) -> bool {
             op.if_mem32()
-                .and_then(|x| {
-                    let (l, r) = x.if_arithmetic_add()?;
-                    r.if_constant()?;
-                    Some(l)
-                })
-                .filter(|&x| self.is_game_input(x))
+                .filter(|&x| self.is_game_input(x.address().0))
                 .is_some()
         }
 
@@ -2069,7 +2066,7 @@ pub(crate) fn join_game<'e, E: ExecutionState<'e>>(
     functions: &FunctionFinder<'_, 'e, E>,
 ) -> Option<E::VirtualAddress> {
     let local_storm_id = local_storm_id.if_memory()
-        .and_then(|x| x.address.if_constant())
+        .and_then(|x| x.if_constant_address())
         .map(|x| E::VirtualAddress::from_u64(x))?;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -2119,7 +2116,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsJoinGame<'a, 'e
             Operation::Call(_) => {
                 let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                 let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
-                let ok = ctrl.if_mem_word(arg1)
+                let ok = ctrl.if_mem_word_offset(arg1, 0)
                     .filter(|&val| val == self.arg_cache.on_entry(1))
                     .and_then(|_| arg4.if_constant())
                     .filter(|&c| c == self.local_storm_id.as_u64())
@@ -2233,13 +2230,13 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindChkInitPlayer<'e,
         // Mem8[chk_init_players + x * 0x24 + 0x8]
         // It is also looped from reverse, so the index is actually end_type - 24 * x
         match *op {
-            Operation::Move(DestOperand::Memory(dest), val, None) => {
+            Operation::Move(DestOperand::Memory(ref dest), val, None) => {
                 if !self.inlining && dest.size == MemAccessSize::Mem8 {
                     let val = ctrl.resolve(val);
                     if val.if_mem8().is_some() {
-                        let addr = ctrl.resolve(dest.address);
+                        let mem = ctrl.resolve_mem(dest);
                         let ctx = ctrl.ctx();
-                        let result = addr.if_constant()
+                        let result = mem.if_constant_address()
                             .and_then(|x| Some(ctx.constant(x.checked_sub(0x24 * 11 + 8)?)));
                         if single_result_assign(result, &mut self.result) {
                             ctrl.end_analysis();
@@ -2314,7 +2311,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindOrigPlayerTyp
         // Command_48 does memcpy(original_chk_player_types, arg1 + 0x1f, 0xc)
         // (Well, not a memcpy call)
         match *op {
-            Operation::Move(DestOperand::Memory(dest), val, None) => {
+            Operation::Move(DestOperand::Memory(ref dest), val, None) => {
                 let val = ctrl.resolve(val);
                 let input_ok = val.if_memory()
                     .filter(|x| {
@@ -2325,8 +2322,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindOrigPlayerTyp
                     })
                     .is_some();
                 if input_ok {
-                    let addr = ctrl.resolve(dest.address);
-                    self.result = EntryOf::Ok(addr);
+                    let dest = ctrl.resolve_mem(dest);
+                    let ctx = ctrl.ctx();
+                    self.result = EntryOf::Ok(dest.address_op(ctx));
                     ctrl.end_analysis();
                 }
             }
@@ -2733,15 +2731,18 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
     ) {
         let ctx = ctrl.ctx();
         // Dest.vtable == 0 or 1
-        let is_copy = ctrl.read_memory(this, E::WORD_SIZE)
+        let this_address = ctx.mem_access(this, 0, E::WORD_SIZE);
+        let is_copy = ctrl.read_memory(&this_address)
             .if_constant()
             .filter(|&c| c <= 1)
             .is_some();
         if is_copy {
-            let vtbl = ctrl.read_memory(arg1, E::WORD_SIZE)
+            let arg1_address = ctx.mem_access(arg1, 0, E::WORD_SIZE);
+            let arg1_field1 = ctx.mem_access(arg1, E::VirtualAddress::SIZE.into(), E::WORD_SIZE);
+            let vtbl = ctrl.read_memory(&arg1_address)
                 .if_constant()
                 .map(E::VirtualAddress::from_u64);
-            let param = ctrl.read_memory(ctrl.const_word_offset(arg1, 1), E::WORD_SIZE)
+            let param = ctrl.read_memory(&arg1_field1)
                 .if_constant()
                 .map(E::VirtualAddress::from_u64);
             if let (Some(vtbl), Some(param)) = (vtbl, param) {
@@ -2789,10 +2790,15 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                         .map(E::VirtualAddress::from_u64)
                         .filter(|&x| is_in_section(self.text, x))
                         .or_else(|| {
-                            // Alt function struct:
+                            // Alt function struct, 32bit only since the check
+                            // assumes that a2 points to a3 which cannot be done with
+                            // reg args:
                             // a2 - vtable *func_impl
                             // a3 - vtable
                             // a4 - param
+                            if E::VirtualAddress::SIZE != 4 {
+                                return None;
+                            }
                             arg3.if_constant()
                                 .map(E::VirtualAddress::from_u64)
                                 .filter(|&x| is_in_section(self.rdata, x))?;
@@ -2800,7 +2806,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                                 .if_constant()
                                 .map(E::VirtualAddress::from_u64)
                                 .filter(|&x| is_in_section(self.text, x))?;
-                            let arg3_loc = self.arg_cache.on_call(2).if_memory()?.address;
+                            let arg3_loc = self.arg_cache.on_call(2).if_memory()?.address_op(ctx);
                             if arg2 != ctrl.resolve(arg3_loc) {
                                 None
                             } else {
@@ -2812,12 +2818,19 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                     // Check vtbl and cb, and that *local != 1
                     // Local = 1 implies it being copy_func call instead,
                     // which looks similar as it's this=dest, a1=val
-                    ctrl.read_memory(arg1, MemAccessSize::Mem64).if_constant()
+                    let address = ctx.mem_access(arg1, 0, MemAccessSize::Mem64);
+                    ctrl.read_memory(&address).if_constant()
                         .map(E::VirtualAddress::from_u64)
                         .filter(|&x| is_in_section(self.rdata, x))
-                        .map(|_| ctrl.read_memory(this, MemAccessSize::Mem64))
+                        .map(|_| {
+                            let address = ctx.mem_access(this, 0, MemAccessSize::Mem64);
+                            ctrl.read_memory(&address)
+                        })
                         .filter(|&x| x != ctx.const_1())
-                        .map(|_| ctrl.read_memory(ctx.add_const(arg1, 8), MemAccessSize::Mem64))
+                        .map(|_| {
+                            let address = ctx.mem_access(arg1, 8, MemAccessSize::Mem64);
+                            ctrl.read_memory(&address)
+                        })
                         .and_then(Operand::if_constant)
                         .map(E::VirtualAddress::from_u64)
                         .filter(|&x| is_in_section(self.text, x))
@@ -2832,7 +2845,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                 self.check_simulate_func_copy(ctrl, this, arg1);
             } else if E::VirtualAddress::SIZE == 4 {
                 let is_vtable_fn = ctrl.if_mem_word(dest)
-                    .and_then(|x| x.if_constant())
+                    .and_then(|x| x.if_constant_address())
                     .map(E::VirtualAddress::from_u64)
                     .filter(|&x| is_in_section(self.rdata, x))
                     .is_some();
@@ -3076,8 +3089,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let arg1 = ctrl.resolve(arg_cache.on_call(0));
-                        let ok = arg1.if_mem16()
-                            .and_then(|x| x.if_arithmetic_add_const(0xee))
+                        let ok = arg1.if_mem16_offset(0xee)
                             .filter(|&x| x == self.game)
                             .is_some();
                         if ok {
@@ -3279,7 +3291,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if ctrl.resolve(arg_cache.on_call(1)) == ctx.const_1() {
                             let arg1 = ctrl.resolve(arg_cache.on_call(0));
-                            let ok = ctrl.read_memory(arg1, E::WORD_SIZE)
+                            let arg1_mem = ctx.mem_access(arg1, 0, E::WORD_SIZE);
+                            let ok = ctrl.read_memory(&arg1_mem)
                                 .if_constant()
                                 .filter(|&va| va >= ctrl.binary().base().as_u64())
                                 .is_some();
@@ -3446,7 +3459,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnaly
                         let anti_troll = if_arithmetic_eq_neq(condition)
                             .filter(|x| x.1 == ctx.const_0())
                             .and_then(|x| x.0.if_mem8())
-                            .map(|x| ctx.sub_const(x, 0x1a));
+                            .map(|x| ctx.mem_sub_const_op(x, 0x1a));
                         self.result.anti_troll = anti_troll;
                     }
                     // Check for game.frame_count >= replay_seek_frame
@@ -3455,8 +3468,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnaly
                         .and_either(|x| x.if_arithmetic_eq())
                         .map(|x| x.0)
                         .and_either_other(|x| {
-                            x.if_mem32()
-                                .and_then(|x| x.if_arithmetic_add_const(0x14c))
+                            x.if_mem32_offset(0x14c)
                                 .filter(|&x| x == self.game)
                         });
                     if let Some(replay_seek_frame) = replay_seek_frame {
@@ -3635,9 +3647,14 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
                     // Check for this.services[0].vtable.step()
                     let ok = ctrl.if_mem_word(dest)
                         .and_then(|x| {
-                            let x = x.struct_offset().0;
-                            let x = ctrl.if_mem_word(ctrl.if_mem_word(ctrl.if_mem_word(x)?)?)?;
-                            let x = x.struct_offset().0;
+                            let x = x.address().0;
+                            let x = ctrl.if_mem_word(
+                                ctrl.if_mem_word_offset(
+                                    ctrl.if_mem_word_offset(x, 0)?,
+                                    0,
+                                )?
+                            )?;
+                            let x = x.address().0;
                             match x == ctx.register(1) {
                                 true => Some(()),
                                 false => None,
@@ -3655,10 +3672,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let this = ctrl.resolve(ctx.register(1));
-                        let ok = ctrl.if_mem_word(this)
+                        let ok = ctrl.if_mem_word_offset(this, 0)
                             .and_then(|x| {
                                 let x = ctrl.if_mem_word(x)?;
-                                let x = x.struct_offset().0;
+                                let x = x.address().0;
                                 match x == ctx.register(1) {
                                     true => Some(()),
                                     false => None,
@@ -3674,9 +3691,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
                             }
                         }
                     } else {
-                        if let Some(addr) = ctrl.if_mem_word(dest) {
-                            let offset = addr.struct_offset().1;
-                            ctrl.do_call_with_result(ctx.custom(offset));
+                        if let Some(mem) = ctrl.if_mem_word(dest) {
+                            let offset = mem.address().1;
+                            ctrl.do_call_with_result(ctx.custom(offset as u32));
                         }
                     }
                 } else if let Operation::Jump { condition, to } = *op {
@@ -3866,13 +3883,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, '
         let ctx = ctrl.ctx();
         if let Operation::Call(dest) = *op {
             let dest = ctrl.resolve(dest);
-            if let Some(addr) = ctrl.if_mem_word(dest) {
-                if let Some(value) = self.extract_index_from_call(addr) {
-                    let offset = ctx.sub(value, self.current_variant).if_constant()
+            if let Some(mem) = ctrl.if_mem_word(dest) {
+                if let Some(index_addr) = self.extract_index_from_call(mem) {
+                    let offset = ctx.mem_sub_op(&index_addr, self.current_variant).if_constant()
                         .or_else(|| {
                             (0..3).find_map(|i| {
                                 let arg = ctrl.resolve(self.arg_cache.on_call(i));
-                                ctx.sub(value, arg).if_constant()
+                                ctx.mem_sub_op(&index_addr, arg).if_constant()
                             })
                         });
                     if let Some(c) = offset {
@@ -3903,7 +3920,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, '
                     .map(|x| x.0)
                     .and_then(|x| ctrl.if_mem_word(x));
                 if let Some(op) = compare {
-                    if let Some(c) = ctx.sub(op, self.current_variant).if_constant() {
+                    if let Some(c) = ctx.mem_sub_op(op, self.current_variant).if_constant() {
                         if let Ok(c) = u16::try_from(c) {
                             self.result = Some(c);
                             ctrl.end_analysis();
@@ -3935,18 +3952,21 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, '
         }
     }
 
-    fn extract_index_from_call(&self, op: Operand<'e>) -> Option<Operand<'e>> {
-        let mut ops = collect_arith_add_terms(op, self.bump)?;
+    fn extract_index_from_call(&self, op: &MemAccess<'e>) -> Option<MemAccess<'e>> {
+        let (base, _) = op.address();
+        let mut ops = collect_arith_add_terms(base, self.bump)?;
         let op = ops.remove_get(|x, is_sub| {
             !is_sub && x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into()).is_some()
         })?;
         op.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
             .and_then(|x| {
-                let addr = x.if_memory()?.address;
-                let (l, r) = addr.if_arithmetic_add()?;
-                r.if_constant()?;
-                l.if_custom()?;
-                Some(addr)
+                let mem = x.if_memory()?;
+                let (base, offset) = mem.address();
+                if offset != 0 && base.if_custom().is_some() {
+                    Some(*mem)
+                } else {
+                    None
+                }
             })
     }
 }

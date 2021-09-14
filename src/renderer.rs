@@ -141,14 +141,16 @@ impl<'a, 'e, E: ExecutionState<'e>> FindPrismShaders<'a, 'e, E> {
             return;
         }
         let mut result = Vec::new();
+        let ctx = ctrl.ctx();
+        let word_size = E::VirtualAddress::SIZE as u64;
         for i in 0.. {
-            let name_addr = ctrl.const_word_offset(addr, i * 2);
-            let set_addr = ctrl.const_word_offset(addr, i * 2 + 1);
-            let name = match ctrl.read_memory(name_addr, E::WORD_SIZE).if_constant() {
+            let name_addr = ctx.mem_access(addr, i * 2 * word_size, E::WORD_SIZE);
+            let set_addr = ctx.mem_access(addr, (i * 2 + 1) * word_size, E::WORD_SIZE);
+            let name = match ctrl.read_memory(&name_addr).if_constant() {
                 Some(s) => s,
                 None => break,
             };
-            let set = match ctrl.read_memory(set_addr, E::WORD_SIZE).if_constant() {
+            let set = match ctrl.read_memory(&set_addr).if_constant() {
                 Some(s) => s,
                 None => break,
             };
@@ -175,27 +177,28 @@ impl<'a, 'e, E: ExecutionState<'e>> FindPrismShaders<'a, 'e, E> {
     }
 
     fn check_pixel_shaders(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, value: Operand<'e>) {
-        let addr = match ctrl.if_mem_word(value) {
+        let mem = match ctrl.if_mem_word(value) {
             Some(s) => s,
             None => return,
         };
-        let mut terms = match collect_arith_add_terms(addr, self.bump) {
+        let (mem_base, mem_offset) = mem.address();
+        let mut terms = match collect_arith_add_terms(mem_base, self.bump) {
             Some(s) => s,
             None => return,
         };
         let ctx = ctrl.ctx();
         let ok = terms.remove_one(|term, neg| {
             !neg && term.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
-                .and_then(|x| x.unwrap_sext().if_mem32())
+                .and_then(|x| x.unwrap_sext().if_mem32()?.if_offset(0))
                 .filter(|&x| x == self.arg_cache.on_thiscall_entry(0))
                 .is_some()
         });
         if ok {
-            let base = terms.join(ctx);
+            let base = ctx.add_const(terms.join(ctx), mem_offset);
             let mut result = Vec::with_capacity(0x30);
             for i in 0.. {
-                let addr = ctrl.const_word_offset(base, i);
-                let value = match ctrl.read_memory(addr, E::WORD_SIZE).if_constant() {
+                let addr = ctx.mem_access(base, i * E::VirtualAddress::SIZE as u64, E::WORD_SIZE);
+                let value = match ctrl.read_memory(&addr).if_constant() {
                     Some(s) => s,
                     None => break,
                 };
@@ -286,12 +289,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 
                 let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                 let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
                 let ok = ctx.and_const(arg1, 0xff).if_mem8().is_some() &&
-                    arg3.if_mem16()
-                        .and_then(|x| {
-                            x.if_arithmetic_add_const(
-                                struct_layouts::image_id::<E::VirtualAddress>()
-                            )
-                        })
+                    arg3.if_mem16_offset(struct_layouts::image_id::<E::VirtualAddress>())
                         .filter(|&x| x == ctx.register(1))
                         .is_some();
                 if ok {
@@ -432,14 +430,14 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindVertexBuffer<'a,
                     if self.inline_depth != 0 {
                         // Check for the actual renderer.upload_vertices_indices virtual call
                         let word_size = E::VirtualAddress::SIZE;
-                        let is_vtable_fn_28 = ctrl.if_mem_word(dest)
-                            .and_then(|x| x.if_arithmetic_add_const(0xa * word_size as u64))
+                        let is_vtable_fn_28 = ctrl
+                            .if_mem_word_offset(dest, 0xa * word_size as u64)
                             .is_some();
                         if is_vtable_fn_28 {
                             let arg2 = ctrl.resolve(self.arg_cache.on_entry(1));
                             // Arg2 is Mem32[vertex_buf + 4]
                             let vertex_buf = ctrl.if_mem_word(arg2)
-                                .map(|x| ctx.sub_const(x, word_size as u64));
+                                .map(|x| ctx.mem_sub_const_op(x, word_size as u64));
                             if let Some(vertex_buf) = vertex_buf {
                                 self.result = Some(vertex_buf);
                                 ctrl.end_analysis();
@@ -604,10 +602,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer
                         } else {
                             self.sprite_first_overlay_offset + E::VirtualAddress::SIZE
                         };
-                        let is_overlay = ctrl.if_mem_word(this)
-                            .and_then(|x| {
-                                x.if_arithmetic_add_const(overlay_offset.into())
-                            })
+                        let is_overlay = ctrl.if_mem_word_offset(this, overlay_offset.into())
                             .is_some();
                         if is_overlay {
                             if self.result.prepare_draw_image.is_none() {
@@ -639,15 +634,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let this = ctrl.resolve(ctx.register(1));
                         if dest == draw_image {
-                            let cursor_marker = ctrl.if_mem_word(this)
-                                .and_then(|x| {
-                                    let offset = self.sprite_first_overlay_offset +
-                                        E::VirtualAddress::SIZE;
-                                    let sprite = x.if_arithmetic_add_const(offset.into())?;
+                            let offset = self.sprite_first_overlay_offset +
+                                E::VirtualAddress::SIZE;
+                            let cursor_marker = ctrl.if_mem_word_offset(this, offset.into())
+                                .and_then(|sprite| {
                                     let sprite_offset =
                                         struct_layouts::unit_sprite::<E::VirtualAddress>();
-                                    ctrl.if_mem_word(sprite)?
-                                        .if_arithmetic_add_const(sprite_offset)
+                                    ctrl.if_mem_word_offset(sprite, sprite_offset)
                                 });
                             if let Some(cursor_marker) = cursor_marker {
                                 self.result.cursor_marker = Some(cursor_marker);
@@ -656,13 +649,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer
                         } else {
                             let should_inline = self.inline_depth == 0 ||
                                 (self.inline_depth == 1 && {
-                                    ctrl.if_mem_word(this)
-                                    .and_then(|x| {
-                                        let sprite_offset =
-                                            struct_layouts::unit_sprite::<E::VirtualAddress>();
-                                        x.if_arithmetic_add_const(sprite_offset)
-                                    })
-                                    .is_some()
+                                    let sprite_offset =
+                                        struct_layouts::unit_sprite::<E::VirtualAddress>();
+                                    ctrl.if_mem_word_offset(this, sprite_offset).is_some()
                                 });
                             if should_inline {
                                 self.inline_depth += 1;

@@ -1986,7 +1986,7 @@ fn check_game<Va: VirtualAddressTrait>(
     );
     let data = binary.section(b".data\0\0\0").unwrap();
     let has_const_mem = op.iter().flat_map(|x| {
-        x.if_memory().and_then(|x| x.address.if_constant()).map(|x| Va::from_u64(x))
+        x.if_memory().and_then(|x| x.if_constant_address()).map(|x| Va::from_u64(x))
     }).filter(|&addr| {
         addr >= data.virtual_address && addr < data.virtual_address + data.virtual_size
     }).next().is_some();
@@ -2012,8 +2012,8 @@ fn check_global<Va: VirtualAddressTrait>(
     let mem = op.if_memory().unwrap_or_else(|| {
         panic!("{}: Expected global memory, got {:#?}", name, op)
     });
-    let c = mem.address.if_constant().unwrap_or_else(|| {
-        panic!("{}: Expected constant address, got {:#?}", name, &mem.address)
+    let c = mem.if_constant_address().unwrap_or_else(|| {
+        panic!("{}: Expected constant address, got {:?}", name, mem.address())
     });
     let addr = Va::from_u64(c);
     let data = binary.section(b".data\0\0\0").unwrap();
@@ -2113,7 +2113,7 @@ fn check_euds<Va: VirtualAddressTrait>(
                     println!("EUD {:08x} operand {} is not word-sized mem", addr, eud.operand);
                     ok = false;
                 }
-                if let Some(mem_address) = mem.address.if_constant() {
+                if let Some(mem_address) = mem.if_constant_address() {
                     let address_ok = binary.read_address(Va::from_u64(mem_address)).ok()
                         .filter(|&x| has_section_for_addr(binary, x))
                         .is_some();

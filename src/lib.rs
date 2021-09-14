@@ -6109,7 +6109,6 @@ fn unwrap_sext<'e>(operand: Operand<'e>) -> Operand<'e> {
 }
 
 trait OperandExt<'e> {
-    fn if_mem32_offset(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_add_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_sub_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_mul_const(self, offset: u64) -> Option<Operand<'e>>;
@@ -6132,10 +6131,6 @@ trait OperandExt<'e> {
 }
 
 impl<'e> OperandExt<'e> for Operand<'e> {
-    fn if_mem32_offset(self, offset: u64) -> Option<Operand<'e>> {
-        self.if_mem32()?.if_arithmetic_add_const(offset)
-    }
-
     fn if_arithmetic_add_const(self, offset: u64) -> Option<Operand<'e>> {
         let (l, r) = self.if_arithmetic_add()?;
         let r = r.if_constant()?;
@@ -6352,9 +6347,8 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
             if let Some(mem) = value.if_memory() {
                 if mem.size == MemAccessSize::Mem8 {
                     let value = self.resolve(value);
-                    if let Some((l, r)) =
-                        value.if_mem8().and_then(|x| x.if_arithmetic_add())
-                    {
+                    if let Some(mem) = value.if_mem8() {
+                        let (base, offset) = mem.address();
                         fn check(op: Operand<'_>) -> bool {
                             op.if_arithmetic(scarf::ArithOpType::Modulo)
                                 .or_else(|| op.if_arithmetic(scarf::ArithOpType::And))
@@ -6362,7 +6356,11 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
                                 .filter(|&c| c > 0x400)
                                 .is_some()
                         }
-                        if check(l) || check(r) || r.if_constant() == Some(0xfff) {
+                        let skip = offset == 0xfff ||
+                            check(base) ||
+                            base.if_arithmetic_add().filter(|&(l, r)| check(l) || check(r))
+                                .is_some();
+                        if skip {
                             self.skip_operation();
                             let ctx = self.ctx();
                             let state = self.exec_state();

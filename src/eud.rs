@@ -5,7 +5,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType};
 
-use crate::{AnalysisCtx, EntryOf, OperandExt, bumpvec_with_capacity, FunctionFinder};
+use crate::{AnalysisCtx, EntryOf, bumpvec_with_capacity, FunctionFinder};
 
 pub struct Eud<'e> {
     pub address: u32,
@@ -240,8 +240,7 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
                     // ends up being wrong
                     let a2 = ctx.mem32(esp, 4);
                     let a3 = ctrl.resolve(ctx.mem32(esp, 8));
-                    let is_a1 = a1.if_mem32()
-                        .and_then(|addr| addr.if_arithmetic_add_const(4))
+                    let is_a1 = a1.if_mem32_offset(4)
                         .filter(|&x| x == ctx.register(4))
                         .is_some();
                     if is_a1 {
@@ -289,8 +288,7 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
             let mut arg1_mem = [ctx.const_0(); 4];
             for i in 0..4 {
                 let field = ctrl.read_memory(
-                    ctx.add_const(arg1, (i * 4) as u64),
-                    MemAccessSize::Mem32,
+                    &ctx.mem_access(arg1, (i * 4) as u64, MemAccessSize::Mem32)
                 );
                 arg1_mem[i] = field;
             }
@@ -306,23 +304,24 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
             }
 
             let vec = ctrl.resolve(ctx.register(1));
-            let vec_buffer = ctrl.read_memory(vec, E::WORD_SIZE);
-            let vec_len = ctx.mem_access(vec, E::VirtualAddress::SIZE.into(), E::WORD_SIZE);
+            let vec_buffer_addr = ctx.mem_access(vec, 0, E::WORD_SIZE);
+            let vec_buffer = ctrl.read_memory(&vec_buffer_addr);
+            let vec_len_addr = ctx.mem_access(vec, E::VirtualAddress::SIZE.into(), E::WORD_SIZE);
             // vec.buffer[vec.len] = eud;
             // vec.len += 1;
-            if let Some(len) =
-                ctrl.read_memory(vec_len.address_op(ctx), vec_len.size).if_constant()
-            {
+            if let Some(len) = ctrl.read_memory(&vec_len_addr).if_constant() {
                 let exec_state = ctrl.exec_state();
                 for i in 0..4 {
                     let offset = len.wrapping_mul(0x10).wrapping_add(i as u64 * 4);
                     exec_state.move_resolved(
-                        &DestOperand::from_oper(ctx.mem32(vec_buffer, offset)),
+                        &DestOperand::Memory(
+                            ctx.mem_access(vec_buffer, offset, MemAccessSize::Mem32)
+                        ),
                         arg1_mem[i],
                     );
                 }
                 exec_state.move_resolved(
-                    &DestOperand::memory(&vec_len),
+                    &DestOperand::Memory(vec_len_addr),
                     ctx.constant(len.wrapping_add(1)),
                 );
             }
@@ -361,26 +360,21 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
         type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             let mut call_reserve = 0;
+            let ctx = ctrl.ctx();
             let stop = match op {
-                Operation::Move(to, from, _) => {
+                Operation::Move(ref to, from, _) => {
                     if let Some(mem) = from.if_memory() {
                         // Don't stop on fs:[0] read
-                        mem.address != ctrl.ctx().const_0()
+                        mem.if_constant_address() != Some(0)
                     } else {
                         if let DestOperand::Memory(mem) = to {
+                            let mem = ctrl.resolve_mem(mem);
                             // Offset if this is moving to [esp + offset]
-                            let mut off = if_arithmetic_add_or_sub_const(mem.address)
-                                .filter(|(r, _)| r.if_register() == Some(4))
-                                .map(|(_, off)| off);
-                            if off.is_none() {
-                                if mem.address.if_register() == Some(4) {
-                                    off = Some(0);
-                                }
-                            }
+                            let (base, offset) = mem.address();
                             // Accept stores up to [orig_esp - 0x10000] as part
                             // of stack setup
-                            let is_stack_store = off.map(|off| 0u64.wrapping_sub(off) <= 0x1000)
-                                .unwrap_or(false);
+                            let is_stack_store = 0u64.wrapping_sub(offset) <= 0x1000 &&
+                                base == ctx.register(4);
                             !is_stack_store
                         } else {
                             false
@@ -390,7 +384,7 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
                 Operation::Return(..) => true,
                 Operation::Jump { .. } => true,
                 Operation::Call(..) => {
-                    let eax = ctrl.resolve(ctrl.ctx().register(0));
+                    let eax = ctrl.resolve(ctx.register(0));
                     if let Some(c) = eax.if_constant() {
                         if c & 3 == 0 && c > 0x400 {
                             call_reserve = c;
@@ -401,7 +395,7 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
                 _ => true,
             };
             if stop {
-                let esp = ctrl.resolve(ctrl.ctx().register(4));
+                let esp = ctrl.resolve(ctx.register(4));
                 let off = if_arithmetic_add_or_sub_const(esp)
                     .filter(|(r, _)| r.if_register() == Some(4));
                 if let Some((_, off)) = off {

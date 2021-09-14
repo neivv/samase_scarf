@@ -1189,14 +1189,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let arg_cache = &self.dat_ctx.analysis.arg_cache;
                     let arg1 = ctrl.resolve(arg_cache.on_call(0));
                     let arg2 = ctrl.resolve(arg_cache.on_call(1));
-                    let (word_size, init_cap) = match E::VirtualAddress::SIZE {
-                        4 => (MemAccessSize::Mem32, 0x8000_000f),
-                        _ => (MemAccessSize::Mem64, 0x8000_0000_0000_000f),
+                    let init_cap = match E::VirtualAddress::SIZE {
+                        4 => 0x8000_000f,
+                        _ => 0x8000_0000_0000_000f,
                     };
-                    let arg2_capacity = ctrl.read_memory(
-                        ctx.add_const(arg2, 2 * E::VirtualAddress::SIZE as u64),
-                        word_size,
-                    );
+                    let access =
+                        ctx.mem_access(arg2, 2 * E::VirtualAddress::SIZE as u64, E::WORD_SIZE);
+                    let arg2_capacity = ctrl.read_memory(&access);
                     let ok = Some(())
                         .filter(|_| arg1 == arg_cache.on_entry(0))
                         .and_then(|_| arg2_capacity.if_constant())
@@ -1339,20 +1338,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 // Probably could be better to have analysis to recognize that noreturn
                 // function instead of relying control flow from it reaching switch table.
                 // NOTE: Copypasted to game::GameAnalyzer
-                if let Some(address) = ctrl.if_mem_word(to) {
-                    let address = ctrl.resolve(address);
-                    if let Some((index, base)) = address.if_arithmetic_add() {
-                        let index = index.if_arithmetic_mul()
-                            .and_then(|(l, r)| {
-                                r.if_constant()
-                                    .filter(|&c| c == E::VirtualAddress::SIZE as u64)?;
-                                Some(l)
-                            });
-                        if let (Some(c), Some(index)) = (base.if_constant(), index) {
-                            let exec_state = ctrl.exec_state();
-                            if exec_state.value_limits(index).0 == 0 {
-                                self.switch_table = E::VirtualAddress::from_u64(c);
-                            }
+                if let Some(mem) = ctrl.if_mem_word(to) {
+                    let mem = ctrl.resolve_mem(mem);
+                    let (index, base) = mem.address();
+                    let index = index.if_arithmetic_mul_const(E::VirtualAddress::SIZE as u64);
+                    if let Some(index) = index {
+                        let exec_state = ctrl.exec_state();
+                        if exec_state.value_limits(index).0 == 0 {
+                            self.switch_table = E::VirtualAddress::from_u64(base);
                         }
                     }
                 }
@@ -1636,9 +1629,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             // Hackfix for step_lone_sprites, which does a lone.sprite.id > 0x81
             // check
             if dat == DatType::Weapons {
-                let skip = op.if_mem16()
-                    .and_then(|x| x.if_arithmetic_add_const(8))
-                    .and_then(|x| x.if_mem32())
+                let skip = op.if_mem16_offset(u64::from(E::VirtualAddress::SIZE) * 2)
+                    .and_then(|x| ctrl.if_mem_word(x))
                     .is_some();
                 if skip {
                     return;
@@ -1723,12 +1715,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     ) -> Result<Option<Operand<'e>>, ()> {
         let ctx = ctrl.ctx();
         let is_local = value.if_memory()
-            .and_then(|x| x.address.if_arithmetic_sub())
-            .and_then(|(l, r)| {
-                r.if_constant().filter(|&c| c < 0x2000)?;
-                Some(l)
+            .filter(|x| {
+                let (base, offset) = x.address();
+                (-0x2000..0).contains(&(offset as i32)) && base == ctx.register(4)
             })
-            .filter(|&r| r == ctx.register(4))
             .is_some();
         let is_undef = Operand::and_masked(value).0.is_undefined();
         if is_local || is_undef {
@@ -1752,7 +1742,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
 
         // -- Check arguments and struct offsets --
         if let Some(mem) = value.if_memory() {
-            let (base, offset) = mem.compat_address(ctx);
+            let (base, offset) = mem.address();
             return self.check_mem_widen_value(ctrl, base, offset, mem.size, dat)
                 .map(|()| None);
         }
@@ -2938,11 +2928,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let condition = ctrl.resolve(condition);
                     let inf_kerry_cmp = crate::if_arithmetic_eq_neq(condition)
                         .filter(|x| x.1.if_constant() == Some(0x33))
-                        .and_then(|x| x.0.if_mem16())
                         .and_then(|x| {
-                            x.if_arithmetic_add_const(
-                                struct_layouts::unit_id::<E::VirtualAddress>()
-                            )
+                            x.0.if_mem16_offset(struct_layouts::unit_id::<E::VirtualAddress>())
                         })
                         .is_some();
                     if inf_kerry_cmp {
@@ -3108,13 +3095,14 @@ fn unresolve<'e, E: ExecutionState<'e>>(
         // Unresolving Mem[x] as Mem[unres(x)] is only valid
         // if that address hasn't been written.
         // Which is common enough for stack args that it's worth doing.
-        if exec_state.read_memory(mem.address, mem.size)
+        if exec_state.read_memory(mem)
             .if_memory()
             .filter(|&x| x == mem)
             .is_some()
         {
-            if let Some(addr) = unresolve(ctx, exec_state, mem.address) {
-                return Some(ctx.mem_any(mem.size, addr, 0));
+            let (base, offset) = mem.address();
+            if let Some(base) = unresolve(ctx, exec_state, base) {
+                return Some(ctx.mem_any(mem.size, base, offset));
             }
         }
         return None;

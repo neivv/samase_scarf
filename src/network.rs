@@ -147,10 +147,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetw
                         return;
                     }
                     let ok = Some(())
-                        .and_then(|_| ctrl.if_mem_word(arg1_1)?.if_constant())
+                        .and_then(|_| ctrl.if_mem_word(arg1_1)?.if_constant_address())
                         .and_then(|a| binary.read_address(E::VirtualAddress::from_u64(a)).ok())
                         .filter(|&c| c >= text_start && c < text_end)
-                        .and_then(|_| ctrl.if_mem_word(arg1_2)?.if_constant())
+                        .and_then(|_| ctrl.if_mem_word(arg1_2)?.if_constant_address())
                         .and_then(|a| binary.read_address(E::VirtualAddress::from_u64(a)).ok())
                         .filter(|&c| c >= text_start && c < text_end)
                         .is_some();
@@ -226,6 +226,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SnetHandlePackets
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let searching_for_recv = self.result.recv_packets.is_none();
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
                 let dest = ctrl.resolve(dest);
@@ -258,8 +259,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SnetHandlePackets
                                 (0..3).all(|i| {
                                     Some(())
                                         .map(|_| ctrl.resolve(arg_cache.on_call(i)))
-                                        .map(|x| ctrl.read_memory(x, MemAccessSize::Mem32))
-                                        .filter(|x| x.if_constant() == Some(0))
+                                        .map(|x| {
+                                            let mem = ctx.mem_access(x, 0, MemAccessSize::Mem32);
+                                            ctrl.read_memory(&mem)
+                                        })
+                                        .filter(|&x| x == ctx.const_0())
                                         .is_some()
                                 })
                             })
@@ -279,12 +283,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SnetHandlePackets
                     let ok = condition.if_arithmetic_gt()
                         .filter(|x| x.0.if_constant() == Some(0xc350))
                         .and_then(|x| {
-                            let (l, r) = Operand::and_masked(x.1).0
+                            let mem = Operand::and_masked(x.1).0
                                 .if_arithmetic_sub()?.1
-                                .if_mem32()?
-                                .if_arithmetic_add()?;
-                            l.if_memory()?;
-                            r.if_constant()
+                                .if_mem32()?;
+                            let (base, _offset) = mem.address();
+                            base.if_memory()?;
+                            Some(())
                         })
                         .is_some();
                     if ok {
@@ -342,9 +346,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStartUdpServer<'e, 
         /// Matches val = Mem32[ecx + C]
         fn is_this_mem32<'e>(val: Operand<'e>, ctx: OperandCtx<'e>) -> bool {
             val.if_mem32()
-                .and_then(|x| x.if_arithmetic_add())
-                .filter(|x| x.1.if_constant().is_some())
-                .filter(|x| x.0 == ctx.register(1))
+                .filter(|x| x.address().0 == ctx.register(1))
                 .is_some()
         }
 

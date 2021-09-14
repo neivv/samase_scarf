@@ -220,9 +220,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         }
         match *op {
             Operation::Move(_, val, None) => {
-                if let Some(addr) = val.if_mem8() {
-                    let addr = ctrl.resolve(addr);
-                    if addr.if_arithmetic_add_const(0xc).is_some() {
+                if let Some(mem) = val.if_mem8() {
+                    let mem = ctrl.resolve_mem(mem);
+                    if mem.address().1 == 0xc {
                         self.candidate_instruction = Some(ctrl.address());
                     }
                 }
@@ -230,14 +230,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Call(dest) => {
                 if let Some(cand) = self.candidate_instruction {
                     let dest = ctrl.resolve(dest);
-                    let is_button_cond = ctrl.if_mem_word(dest)
-                        .and_then(|x| x.if_arithmetic_add_const(0x4))
+                    let is_button_cond = ctrl.if_mem_word_offset(dest, 0x4)
                         .is_some();
                     if is_button_cond {
                         let arg_cache = &self.dat_ctx.analysis.arg_cache;
                         let arg1 = ctrl.resolve(arg_cache.on_call(0));
-                        let needs_widen = arg1.if_mem8()
-                            .and_then(|x| x.if_arithmetic_add_const(0xc))
+                        let needs_widen = arg1.if_mem8_offset(0xc)
                             .is_some();
                         if needs_widen {
                             self.widen_instruction(cand);
@@ -323,7 +321,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if self.inline_depth == 0 {
                     // Stop at switch jump
                     let to = ctrl.resolve(to);
-                    if to.if_memory().is_some() {
+                    if to.if_constant().is_none() {
                         ctrl.end_branch();
                         return;
                     }
@@ -340,8 +338,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             None
                         }
                     })
-                    .and_then(|x| x.if_mem16())
-                    .and_then(|x| x.if_arithmetic_add_const(1))
+                    .and_then(|x| x.if_mem16_offset(1))
                     .is_some();
                 if !ok {
                     // Zerg building morph check.
@@ -351,8 +348,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             r.if_constant().filter(|&c| c == 0x16)?;
                             let l = l.if_arithmetic_and_const(0xffff)?;
                             let l = l.if_arithmetic_sub_const(0x82)?;
-                            let l = l.if_mem16()?;
-                            l.if_arithmetic_add_const(1)?;
+                            l.if_mem16_offset(1)?;
                             Some(())
                         })
                         .is_some();

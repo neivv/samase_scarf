@@ -8,7 +8,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
-use crate::{AnalysisCtx, ArgCache, OptionExt, OperandExt, bumpvec_with_capacity};
+use crate::{AnalysisCtx, ArgCache, OptionExt, bumpvec_with_capacity};
 
 pub struct NetPlayers<'e, Va: VirtualAddress> {
     // Array, struct size
@@ -60,8 +60,7 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
                                 Some((l, r))
                                     .and_either_other(|x| {
                                         // Check for [local_player_id] == player
-                                        x.if_mem8()?
-                                            .if_arithmetic_add_const(
+                                        x.if_mem8_offset(
                                                 struct_layouts::unit_player::<E::VirtualAddress>()
                                             )
                                     })
@@ -105,12 +104,9 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
                             let val = ctrl.resolve(val);
                             let has_player_field_access = val.iter_no_mem_addr()
                                 .any(|x| {
-                                    x.if_mem8()
-                                        .and_then(|addr| {
-                                            addr.if_arithmetic_add_const(
-                                                struct_layouts::unit_player::<E::VirtualAddress>()
-                                            )
-                                        })
+                                    x.if_mem8_offset(
+                                            struct_layouts::unit_player::<E::VirtualAddress>()
+                                        )
                                         .and_then(|x| ctrl.if_mem_word(x))
                                         .is_some()
                                 });
@@ -173,12 +169,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindInitNetPlayer<'a
                     // arg4 == mem16[data + 6],
                     let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
                     let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
-                    let arg3_base = arg3.if_mem16()
-                        .and_then(|x| x.if_arithmetic_add())
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 4));
-                    let arg4_base = arg4.if_mem16()
-                        .and_then(|x| x.if_arithmetic_add())
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 6));
+                    let arg3_base = arg3.if_mem16_offset(4);
+                    let arg4_base = arg4.if_mem16_offset(6);
                     match (arg3_base, arg4_base) {
                         (Some(a), Some(b)) if a == b => {
                             if crate::single_result_assign(Some(dest), &mut self.result) {

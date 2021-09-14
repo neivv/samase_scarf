@@ -52,11 +52,11 @@ pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
                     if let Some(dest) = dest.if_constant() {
                         let arg1 = ctrl.resolve(self.arg1);
                         let arg2 = ctrl.resolve(self.arg2);
-                        if let Some(addr) = arg2.if_mem8() {
-                            let addr_plus_1 = self.ctx.add_const(addr, 1);
-                            if addr_plus_1 == arg1 {
-                                let dest =
-                                    <E::VirtualAddress as VirtualAddressTrait>::from_u64(dest);
+                        if let Some(mem) = arg2.if_mem8() {
+                            let offset_1 =
+                                mem.with_offset_size(1, MemAccessSize::Mem8).address_op(self.ctx);
+                            if offset_1 == arg1 {
+                                let dest = E::VirtualAddress::from_u64(dest);
                                 if single_result_assign(Some(dest), &mut self.result) {
                                     ctrl.end_analysis();
                                 }
@@ -195,12 +195,14 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
                 if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
                     // Check if calling send_command(&[COMMAND_STIM], 1)
                     let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                    let arg1_inner = ctrl.read_memory(arg1, MemAccessSize::Mem8);
+                    let arg1_addr = ctx.mem_access(arg1, 0, MemAccessSize::Mem8);
+                    let arg1_inner = ctrl.read_memory(&arg1_addr);
                     if arg1_inner.if_constant() == Some(0x36) {
                         let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
                         if arg2.if_constant() == Some(1) {
@@ -560,12 +562,9 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyze
             Operation::Move(_, val, _) => {
                 if ctrl.user_state().possible_result.is_some() {
                     let val = ctrl.resolve(val);
-                    let is_ok = val.if_mem32()
-                        .and_then(|addr| addr.if_arithmetic_add())
-                        .and_either(|x| x.if_constant().filter(|&c| c == 1))
-                        .is_some();
+                    let is_ok = val.if_mem32_offset(1).is_some();
                     if is_ok {
-                        let new = ctrl.user_state().possible_result.clone();
+                        let new = ctrl.user_state().possible_result;
                         if single_result_assign(new, &mut self.result) {
                             ctrl.end_analysis();
                         }
@@ -713,14 +712,15 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwor
                             ctrl.resolve(arg_cache.on_call(0)).if_memory()
                                 .filter(|&x| {
                                     x.size == E::WORD_SIZE &&
-                                        Some(ctx.sub_const(
-                                            x.address,
+                                        Some(ctx.mem_sub_const_op(
+                                            &x,
                                             7 * E::VirtualAddress::SIZE as u64,
                                         )) == self.result.player_turns
                                 })
                                 .and_then(|_| ctrl.resolve(arg_cache.on_call(1)).if_mem32())
                                 .filter(|&x| {
-                                    Some(ctx.sub_const(x, 7 * 4)) == self.result.player_turns_size
+                                    Some(ctx.mem_sub_const_op(x, 7 * 4)) ==
+                                        self.result.player_turns_size
                                 })
                                 .filter(|_| {
                                     let cmp = match is_process_lobby_commands {
@@ -863,8 +863,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepReplayCommands<
                 let condition = ctrl.resolve(condition);
                 let has_frame = condition.iter_no_mem_addr()
                     .any(|x| {
-                        x.if_mem32()
-                            .and_then(|x| x.if_arithmetic_add_const(0x14c))
+                        x.if_mem32_offset(0x14c)
                             .filter(|&x| x == self.game)
                             .is_some()
                     });
@@ -914,6 +913,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindReplayData<'a
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) if self.inline_depth == 0 => {
                 if self.limit == 0 {
@@ -922,8 +922,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindReplayData<'a
                 }
                 self.limit -= 1;
                 if ctrl.resolve(self.arg_cache.on_call(1)).if_constant() == Some(0xb) {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         let old_limit = self.limit;
                         self.inline_depth = 1;
                         self.limit = 12;
@@ -969,9 +968,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindReplayData<'a
                 self.limit -= 1;
                 let condition = ctrl.resolve(condition);
                 let result = if_arithmetic_eq_neq(condition)
-                    .map(|x| (x.0, x.1))
-                    .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                    .and_then(|x| x.if_mem32())
+                    .filter(|x| x.1 == ctx.const_0())
+                    .and_then(|x| x.0.if_mem32_offset(0))
                     .filter(|x| x.if_memory().is_some());
                 if result.is_some() {
                     self.result = result;

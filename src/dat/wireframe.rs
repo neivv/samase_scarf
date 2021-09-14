@@ -47,7 +47,7 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
     for &(oper, grp) in &grp_op_inputs {
         grp_operands.insert(oper.hash_by_address(), grp);
         let addr = oper.if_constant()
-            .or_else(|| oper.if_memory()?.address.if_constant())
+            .or_else(|| oper.if_memory()?.if_constant_address())
             .map(|x| E::VirtualAddress::from_u64(x));
         if let Some(addr) = addr {
             let function_finder = cache.function_finder();
@@ -164,6 +164,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let eax = ctrl.resolve(ctx.register(0));
                     // Accept deref_this
                     let ok = ctrl.if_mem_word(eax)
+                        .and_then(|x| x.if_no_offset())
                         .filter(|&x| x == self.inline_this)
                         .is_some();
                     self.inline_fail = !ok;
@@ -222,7 +223,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 let arg_match = self.grp_operands.get(&arg1.hash_by_address())
                     .map(|x| (*x, GrpType::Grp))
                     .or_else(|| {
-                        let inner = ctrl.if_mem_word(arg1)?;
+                        let inner = ctrl.if_mem_word(arg1)?.address_op(ctx);
                         self.grp_operands.get(&inner.hash_by_address())
                             .map(|x| (*x, GrpType::DdsGrpSet))
                     })
@@ -234,7 +235,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if is_stack(arg3) && is_stack(arg4) {
                         let binary = self.dat_ctx.binary;
                         let reloc_addr = arg1.if_memory()
-                            .and_then(|x| x.address.if_constant())
+                            .and_then(|x| x.if_constant_address())
                             .map(|x| E::VirtualAddress::from_u64(x))
                             .and_then(|x| reloc_address_of_instruction(ctrl, binary, x));
                         if let Some(addr) = reloc_addr {
@@ -276,15 +277,15 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         ctrl.if_mem_word(x)
                             .and_then(|x| {
                                 // DdsGrpSet
-                                x.if_arithmetic_add()
-                                    .filter(|x| x.1.if_constant().is_some())
-                                    .map(|x| x.0)
+                                Some(x.address().0)
                                     .filter(|x| x.if_custom() == Some(0x10))
                             })
                             .or_else(|| {
                                 // DdsGrp.textures
                                 ctrl.if_mem_word(x)
-                                    .map(|x| ctx.sub_const(x, E::VirtualAddress::SIZE as u64))
+                                    .map(|x| {
+                                        ctx.mem_sub_const_op(x, E::VirtualAddress::SIZE as u64)
+                                    })
                                     .filter(|x| {
                                         self.grp_operands.get(&x.hash_by_address())
                                             .filter(|&&y| y == GrpType::DdsGrp)

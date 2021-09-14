@@ -306,7 +306,7 @@ fn aiscript_find_switch_loop_and_end<'e, E: ExecutionState<'e>>(
     analysis.analyze(&mut analyzer);
 
     let other = aiscript_find_switch_loop_end::<E>(binary, ctx, wait_case);
-    analyzer.result.and_then(|x| other.map(|y| (x, y)))
+    Some((analyzer.result?, other?))
 }
 
 struct AiscriptFindSwitchLoop<'e, E: ExecutionState<'e>> {
@@ -410,7 +410,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchEnd
                             } else if offset == wait_offset {
                                 let val = ctrl.resolve(val);
                                 let ok = val.if_mem16()
-                                    .and_then(|x| x.if_arithmetic_add())
+                                    .and_then(|x| x.address().0.if_arithmetic_add())
                                     .is_some();
                                 if self.not_inlined_op_read || ok {
                                     self.wait_written = true;
@@ -510,9 +510,10 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GuardAiAnalyzer<'e, E
                 let val = ctrl.resolve(val);
                 let ctx = ctrl.ctx();
                 let result = ctrl.if_mem_word(val)
-                    .and_then(|address| address.if_arithmetic_add())
-                    .and_either_other(|x| {
-                        x.if_arithmetic_mul_const(u64::from(2 * E::VirtualAddress::SIZE))
+                    .and_then(|mem| {
+                        mem.if_add_either_other(ctx, |x| {
+                            x.if_arithmetic_mul_const(u64::from(2 * E::VirtualAddress::SIZE))
+                        })
                     })
                     .map(|val| ctx.sub_const(val, E::VirtualAddress::SIZE.into()));
                 if let Some(result) = result {
@@ -919,7 +920,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                         .unwrap_or(condition)
                         .if_arithmetic_and_const(1)
                         .and_then(|op| {
-                            op.if_mem8()?.if_arithmetic_add_const(
+                            op.if_mem8_offset(
                                 struct_layouts::ai_script_flags::<E::VirtualAddress>()
                             )
                         })
@@ -932,12 +933,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                     let ok = Some(()).and_then(|()| {
                         let index = switch.index_operand(ctx)?;
                         let first_ai_script = index.if_mem8()?
-                            .if_arithmetic_add()
-                            .and_either(|x| {
+                            .if_add_either(ctx, |x| {
                                 let pos_off =
                                     struct_layouts::ai_script_pos::<E::VirtualAddress>();
-                                x.if_memory()?.address
-                                    .if_arithmetic_add_const(pos_off)
+                                x.if_memory()?.if_offset(pos_off)
                             })?.0;
                         Some(first_ai_script)
                     });
@@ -965,7 +964,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                     let players = if_arithmetic_eq_neq(condition)
                         .filter(|x| x.1 == ctx.const_1())
                         .and_then(|x| {
-                            x.0.if_mem8()?.if_arithmetic_add_const(8)?.if_arithmetic_add()
+                            x.0.if_mem8_offset(8)?.if_arithmetic_add()
                         })
                         .and_either_other(|x| x.if_arithmetic_mul_const(0x24));
                     single_result_assign(players, &mut self.result.players);
@@ -1023,22 +1022,22 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                     let dest = ctrl.resolve_mem(mem);
                     let ok = val.if_arithmetic_and_const(0xfb)
                         .and_then(|x| x.if_mem8())
-                        .filter(|&x| x == dest.address_op(ctx))
-                        .and_then(|x| x.if_arithmetic_add_const(8)) // flag offset
+                        .filter(|&x| x.address() == dest.address())
+                        .and_then(|x| x.if_offset(8)) // flag offset
                         .and_then(|x| x.if_arithmetic_add()) // addition for regions base + index
                         .and_either(|x| {
                             // One is arg2 * region_size (0x34),
                             // other is ai_regions[arg1], that is, Mem32[ai_regions + arg1 * 4]
                             // Check for just ai_regions[arg1]
                             x.if_memory()
-                                .map(|x| x.address)
-                                .and_then(|x| x.if_arithmetic_add())
-                                .and_either(|x| {
-                                    x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
-                                        .filter(|&x| {
-                                            Operand::and_masked(x).0 ==
-                                                self.arg_cache.on_entry(0)
-                                        })
+                                .and_then(|x| {
+                                    x.if_add_either(ctx, |x| {
+                                        x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
+                                            .filter(|&x| {
+                                                Operand::and_masked(x).0 ==
+                                                    self.arg_cache.on_entry(0)
+                                            })
+                                    })
                                 })
                         })
                         .is_some();
@@ -1132,8 +1131,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GiveAiAnalyzer<'a
                         let is_switch_default_case = condition
                             .if_arithmetic_gt_const(0xd)
                             .and_then(|x| x.if_arithmetic_sub_const(0xd))
-                            .and_then(|x| x.if_mem32())
-                            .and_then(|x| x.if_arithmetic_add_const(0x10))
+                            .and_then(|x| x.if_mem32_offset(0x10))
                             .filter(|&x| x == self.arg_cache.on_entry(0))
                             .is_some();
                         if is_switch_default_case {
@@ -1193,7 +1191,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GiveAiAnalyzer<'a
                             // Arg 3 = y ((location.top + location.bottom) sdiv 2)
                             let ok = Some(())
                                 .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
-                                .and_then(|x| x.if_mem16()?.if_arithmetic_add_const(0x18))
+                                .and_then(|x| x.if_mem16_offset(0x18))
                                 .filter(|&x| x == self.arg_cache.on_entry(0))
                                 .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
                                 .filter(|&x| is_sdiv_2(x))
@@ -1229,12 +1227,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GiveAiAnalyzer<'a
                         let ok = crate::if_arithmetic_eq_neq(condition)
                             .and_then(|x| x.0.if_arithmetic_and())
                             .filter(|x| x.1.if_constant().is_some())
-                            .and_then(|x| x.0.if_mem8())
-                            .and_then(|x| x.if_arithmetic_add())
-                            .and_either_other(|x| {
-                                x.if_constant()
-                                    .filter(|&c| c == self.units_dat_group_flags.as_u64())
-                            })
+                            .and_then(|x| x.0.if_mem8_offset(self.units_dat_group_flags.as_u64()))
                             .is_some();
                         if ok {
                             self.stop_on_first_branch = false;
@@ -1266,12 +1259,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GiveAiAnalyzer<'a
                         let condition = ctrl.resolve(condition);
                         let ok = crate::if_arithmetic_eq_neq(condition)
                             .and_then(|x| x.0.if_arithmetic_and_const(0x2))
-                            .and_then(|x| x.if_mem8())
-                            .and_then(|x| x.if_arithmetic_add())
-                            .and_either_other(|x| {
-                                x.if_constant()
-                                    .filter(|&c| c == self.units_dat_ai_flags.as_u64())
-                            })
+                            .and_then(|x| x.if_mem8_offset(self.units_dat_ai_flags.as_u64()))
                             .is_some();
                         if ok {
                             // Caller fixes this
@@ -1346,10 +1334,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAna
                 let jump_on_null = crate::if_arithmetic_eq_neq(condition)
                     .filter(|x| x.1 == ctx.const_0())
                     .and_then(|x| {
-                        ctrl.if_mem_word(x.0)?
-                            .if_arithmetic_add_const(
-                                struct_layouts::unit_ai::<E::VirtualAddress>()
-                            )
+                        let unit_ai = struct_layouts::unit_ai::<E::VirtualAddress>();
+                        ctrl.if_mem_word_offset(x.0, unit_ai)
                             .filter(|&x| x == ctx.register(1))?;
                         Some(x.2)
                     });
@@ -1387,23 +1373,17 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAna
                 if ecx != ctx.register(1) {
                     return;
                 }
-                let ok = arg1.unwrap_sext().if_mem16()
-                    .and_then(|x| {
-                        x.if_arithmetic_add_const(
-                            struct_layouts::unit_order_target_pos::<E::VirtualAddress>()
-                        )
-                    })
+                let order_target_pos =
+                    struct_layouts::unit_order_target_pos::<E::VirtualAddress>();
+                let ok = arg1.unwrap_sext()
+                    .if_mem16_offset(order_target_pos)
                     .filter(|&x| x == ecx)
                     .is_some();
                 if !ok {
                     return;
                 }
-                let ok = arg2.unwrap_sext().if_mem16()
-                    .and_then(|x| {
-                        x.if_arithmetic_add_const(
-                            struct_layouts::unit_order_target_pos::<E::VirtualAddress>() + 2
-                        )
-                    })
+                let ok = arg2.unwrap_sext()
+                    .if_mem16_offset(order_target_pos + 2)
                     .filter(|&x| x == ecx)
                     .is_some();
                 if !ok {
@@ -1471,14 +1451,14 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 let result = condition.if_arithmetic_eq()
                     .and_either(|x| {
                         x.if_mem32()
-                            .and_then(|x| x.if_arithmetic_add())
-                            .and_either_other(|x| {
-                                x.if_arithmetic_mul_const(4)?
-                                    .if_mem8()?
-                                    .if_arithmetic_add_const(
-                                        struct_layouts::unit_player::<E::VirtualAddress>()
-                                    )
-                                    .filter(|&x| x == ctx.register(1))
+                            .and_then(|x| {
+                                x.if_add_either_other(ctx, |x| {
+                                    x.if_arithmetic_mul_const(4)?
+                                        .if_mem8_offset(
+                                            struct_layouts::unit_player::<E::VirtualAddress>()
+                                        )
+                                        .filter(|&x| x == ctx.register(1))
+                                })
                             })
                     })
                     .map(|x| x.0);
@@ -1505,12 +1485,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     // Also inline to f(this.player, unit_region, dest_region)
                     // ("ai_region_reachable_without_transport")
                     // Only checking for player now
-                    do_inline = ctx.and_const(arg1, 0xff).if_mem8()
-                        .and_then(|x| {
-                            x.if_arithmetic_add_const(
-                                struct_layouts::unit_player::<E::VirtualAddress>()
-                            )
-                        })
+                    do_inline = ctx.and_const(arg1, 0xff)
+                        .if_mem8_offset(struct_layouts::unit_player::<E::VirtualAddress>())
                         .filter(|&x| x == ctx.register(1))
                         .is_some();
                 }
@@ -1604,10 +1580,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TrainMilitaryAnalyzer<'e
 }
 
 fn is_game_seconds<'e>(game: Operand<'e>, operand: Operand<'e>) -> bool {
-    operand.if_mem32()
-        .and_then(|x| x.if_arithmetic_add_const(0xe608))
-        .filter(|&x| x == game)
-        .is_some()
+    operand.if_mem32_offset(0xe608) == Some(game)
 }
 
 pub(crate) fn add_military_to_region<'e, E: ExecutionState<'e>>(
@@ -1652,7 +1625,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddMilitaryAnalyzer<
                         struct_layouts::ai_region_size::<E::VirtualAddress>()
                     )
                     .and_then(|x| ctrl.if_mem_word(x))
-                    .and_then(|x| x.if_arithmetic_add())
+                    .and_then(|x| x.address_op(ctx).if_arithmetic_add())
                     .and_if_either_other(|x| x == self.ai_regions)
                     .and_then(|x| x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into()))
                     .filter(|&x| {

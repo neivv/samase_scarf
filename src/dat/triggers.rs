@@ -83,8 +83,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     false => 0xc,
                 };
                 let ok = condition.if_arithmetic_gt_const(compare)
-                    .and_then(|x| x.if_mem16())
-                    .and_then(|x| x.if_arithmetic_add_const(offset))
+                    .and_then(|x| x.if_mem16_offset(offset))
                     .filter(|&x| x == arg_cache.on_entry(0))
                     .is_some();
                 if ok {
@@ -103,8 +102,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             false => 0xc,
                         };
                         let ok = Some(ctrl.resolve(arg_cache.on_call(1)))
-                            .and_then(|x| x.if_mem16())
-                            .and_then(|x| x.if_arithmetic_add_const(offset))
+                            .and_then(|x| x.if_mem16_offset(offset))
                             .filter(|&x| x == arg_cache.on_entry(0))
                             .is_some();
                         if ok {

@@ -1,4 +1,4 @@
-use scarf::{Operand, OperandCtx, Operation, DestOperand, Rva};
+use scarf::{MemAccess, Operand, OperandCtx, Operation, DestOperand, Rva};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
@@ -37,7 +37,7 @@ pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
     let functions = function_finder.functions();
 
     let sprite_array_address = sprite_array.if_constant()
-        .or_else(|| sprite_array.if_memory()?.address.if_constant());
+        .or_else(|| sprite_array.if_memory()?.if_constant_address());
     let sprite_array_address = match sprite_array_address {
         Some(s) => E::VirtualAddress::from_u64(s),
         None => return result,
@@ -49,12 +49,16 @@ pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
     let mut checked = bumpvec_with_capacity(globals.len(), bump);
     checked.push(Rva((init_sprites.as_u64() - binary.base.as_u64()) as u32));
     let map_height_tiles = ctx.mem16(game, 0xe6);
-    let last_y_hline = ctx.add(
-        ctx.mul_const(
-            ctx.sub_const(map_height_tiles, 1),
-            E::VirtualAddress::SIZE as u64,
+    let last_y_hline = ctx.mem_access(
+        ctx.add(
+            ctx.mul_const(
+                ctx.sub_const(map_height_tiles, 1),
+                E::VirtualAddress::SIZE as u64,
+            ),
+            sprite_hlines_end,
         ),
-        sprite_hlines_end,
+        0,
+        E::WORD_SIZE,
     );
     let arg_cache = &analysis.arg_cache;
     for global_ref in globals {
@@ -108,7 +112,7 @@ enum SpriteSerializationFunc {
 struct SpriteSerializationAnalysis<'a, 'e, E: ExecutionState<'e>> {
     use_address: E::VirtualAddress,
     result: EntryOf<SpriteSerializationFunc>,
-    last_y_hline: Operand<'e>,
+    last_y_hline: MemAccess<'e>,
     map_height_tiles: Operand<'e>,
     sprite_size: u32,
     arg_cache: &'a ArgCache<'e, E>,
@@ -147,8 +151,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             Operation::Move(DestOperand::Memory(ref mem), value, None) => {
                 let value = ctrl.resolve(value);
                 let ctx = ctrl.ctx();
-                let dest = ctrl.resolve_mem(mem).address_op(ctx);
-                if dest == self.last_y_hline {
+                let dest_mem = ctrl.resolve_mem(mem);
+                if dest_mem == self.last_y_hline {
                     if let Some(mut terms) = collect_arith_add_terms(value, self.bump) {
                         let ok = terms.remove_one(|op, _neg| {
                             op.if_arithmetic_mul_const(self.sprite_size as u64)
@@ -158,9 +162,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                                     // [esp - x + game.map_height_tiles] in newer.
                                     x.is_undefined() ||
                                         x.if_mem32()
-                                            .filter(|&addr| {
-                                                self.is_stack_temp_hlines(ctx, addr) ||
-                                                    addr == self.last_y_hline
+                                            .filter(|&mem| {
+                                                self.is_stack_temp_hlines(ctx, mem) ||
+                                                    mem == &self.last_y_hline
                                             })
                                             .is_some()
                                 })
@@ -175,8 +179,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             ctrl.end_analysis();
                         }
                     }
-                } else if !self.had_file_call && self.is_stack_temp_hlines(ctx, dest) {
-                    if value.iter().any(|x| x == self.last_y_hline) {
+                } else if !self.had_file_call && self.is_stack_temp_hlines(ctx, &dest_mem) {
+                    if value.iter().any(|x| x.if_memory() == Some(&self.last_y_hline)) {
                         self.result = EntryOf::Ok(SpriteSerializationFunc::Serialize);
                         ctrl.end_analysis();
                     }
@@ -188,8 +192,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
 }
 impl<'a, 'e, E: ExecutionState<'e>> SpriteSerializationAnalysis<'a, 'e, E>
 {
-    fn is_stack_temp_hlines(&self, ctx: OperandCtx<'e>, addr: Operand<'e>) -> bool {
-        collect_arith_add_terms(addr, self.bump)
+    fn is_stack_temp_hlines(&self, ctx: OperandCtx<'e>, mem: &MemAccess<'e>) -> bool {
+        collect_arith_add_terms(mem.address().0, self.bump)
             .as_mut()
             .map(|terms| {
                 let ok = terms.remove_one(|op, _neg| op == ctx.register(4));

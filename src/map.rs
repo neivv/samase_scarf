@@ -56,9 +56,7 @@ pub(crate) fn map_tile_flags<'e, E: ExecutionState<'e>>(
                     // isn't necessarily correct
                     let ctx = ctrl.ctx();
                     let arg_this = ctrl.resolve(ctx.register(1));
-                    let ok = ctrl.if_mem_word(arg_this)
-                        .and_then(|x| x.if_arithmetic_add_const(offset))
-                        .is_some();
+                    let ok = ctrl.if_mem_word_offset(arg_this, offset).is_some();
                     if ok {
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             let result = tile_flags_from_update_visibility_point(
@@ -119,15 +117,16 @@ fn tile_flags_from_update_visibility_point<'e, E: ExecutionState<'e>>(
             match *op {
                 Operation::Move(_, from, None) => {
                     let from = ctrl.resolve(from);
+                    let ctx = ctrl.ctx();
                     // Check for mem_any[map_tile_flags + 4 * (x + y * map_width)]
                     let result = from.if_memory()
-                        .and_then(|x| x.address.if_arithmetic_add())
-                        .and_then(|(l, r)| Operand::either(l, r, |x| {
-                            let x = x.if_arithmetic_mul_const(4)?
-                                .unwrap_sext();
-                            Operand::and_masked(x).0.if_arithmetic_add()
-                        }))
-                        .map(|(_, map_tile_flags)| map_tile_flags);
+                        .and_then(|x| {
+                            x.if_add_either_other(ctx, |x| {
+                                let x = x.if_arithmetic_mul_const(4)?
+                                    .unwrap_sext();
+                                Operand::and_masked(x).0.if_arithmetic_add()
+                            })
+                        });
                     if let Some(result) = result {
                         self.result = Some(result.clone());
                         ctrl.end_analysis();
@@ -218,22 +217,20 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                 Operation::Call(dest) => {
                     let dest = ctrl.resolve(dest);
                     let base_index = ctrl.if_mem_word(dest)
-                        .and_then(|x| x.if_arithmetic_add())
-                        .and_then(|(l, r)| {
-                            let base = E::VirtualAddress::from_u64(r.if_constant()?);
+                        .and_then(|mem| {
+                            let (index, base) = mem.address();
+                            let base = E::VirtualAddress::from_u64(base);
                             let index =
-                                l.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())?;
+                                index.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())?;
                             Some((base, index))
                         });
                     if let Some((base, index)) = base_index {
-                        if let Some(offset) = index.if_mem8()
-                            .and_then(|x| x.if_arithmetic_add())
-                            .and_then(|x| x.1.if_constant())
-                        {
+                        if let Some(mem) = index.if_mem8() {
                             // For some reason the trigger pointer is aligned past linked list
                             // prev/next, but check for x + 8 offsets as well to be safe
                             // The trigger structure is same size in 32/64bit outside
                             // those linked list prev/next.
+                            let offset = mem.address().1;
                             let two_words = u64::from(E::VirtualAddress::SIZE * 2);
                             if offset == 0xf || offset == 0xf + two_words {
                                 // Condition is at trigger + 8 + 0xf
@@ -286,8 +283,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                     let left = ctrl.resolve(arith.left);
                     let right = ctrl.resolve(arith.right);
                     if left == right {
-                        if let Some(addr) = left.if_memory().map(|x| x.address) {
-                            if is_complex_address(addr) {
+                        if let Some(mem) = left.if_memory() {
+                            if is_complex_address(mem.address().0) {
                                 ctrl.skip_operation();
                                 let exec_state = ctrl.exec_state();
                                 exec_state.update(&Operation::SetFlags(

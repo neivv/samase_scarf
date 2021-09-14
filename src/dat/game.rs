@@ -33,7 +33,7 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
         .filter_map(|x| {
             x.if_memory()
                 .filter(|x| x.size == E::WORD_SIZE)
-                .and_then(|x| x.address.if_constant())
+                .and_then(|x| x.if_constant_address())
                 .map(|x| E::VirtualAddress::from_u64(x))
         })
         .next()?;
@@ -290,20 +290,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 // Probably could be better to have analysis to recognize that noreturn
                 // function instead of relying control flow from it reaching switch table.
                 // NOTE: Copypaste from DatReferringFuncAnalysis
-                if let Some(address) = ctrl.if_mem_word(to) {
-                    let address = ctrl.resolve(address);
-                    if let Some((index, base)) = address.if_arithmetic_add() {
-                        let index = index.if_arithmetic_mul()
-                            .and_then(|(l, r)| {
-                                r.if_constant()
-                                    .filter(|&c| c == E::VirtualAddress::SIZE as u64)?;
-                                Some(l)
-                            });
-                        if let (Some(c), Some(index)) = (base.if_constant(), index) {
-                            let exec_state = ctrl.exec_state();
-                            if exec_state.value_limits(index).0 == 0 {
-                                self.switch_table = E::VirtualAddress::from_u64(c);
-                            }
+                if let Some(mem) = ctrl.if_mem_word(to) {
+                    let mem = ctrl.resolve_mem(mem);
+                    let (index, base) = mem.address();
+                    let index = index.if_arithmetic_mul_const(E::VirtualAddress::SIZE as u64);
+                    if let Some(index) = index {
+                        let exec_state = ctrl.exec_state();
+                        if exec_state.value_limits(index).0 == 0 {
+                            self.switch_table = E::VirtualAddress::from_u64(base);
                         }
                     }
                 }
@@ -406,7 +400,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                 (self.game_ctx.trigger_all_units, 0xe4 * 4 * 12),
                 (self.game_ctx.trigger_completed_units, 0xe4 * 4 * 12),
             ];
-            let (index, base) = mem.compat_address(ctx);
+            let (index, base) = mem.address();
             for &(start, len) in &others {
                 if let Some(c2) = start.if_constant() {
                     let offset = base.wrapping_sub(c2);
@@ -1100,7 +1094,7 @@ fn if_const_or_mem_const<'e, E: ExecutionState<'e>>(
         .or_else(|| {
             val.if_memory()
                 .filter(|x| x.size == E::WORD_SIZE)
-                .and_then(|x| x.address.if_constant())
+                .and_then(|x| x.if_constant_address())
         })
         .map(|x| E::VirtualAddress::from_u64(x))
 }

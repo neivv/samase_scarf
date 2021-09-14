@@ -128,8 +128,8 @@ impl<'a, 'e, E: ExecutionState<'e>> RegionsAnalyzer<'a, 'e, E> {
                         ).filter(|x| x.contains_undefined())
                     })
                     .and_then(|x| ctrl.if_mem_word(x));
-                if let Some(ai_regions_addr) = ai_regions {
-                    self.result.ai_regions = Some(ai_regions_addr);
+                if let Some(ai_regions_mem) = ai_regions {
+                    self.result.ai_regions = Some(ai_regions_mem.address_op(ctx));
                     self.result.change_ai_region_state = Some(dest);
                 }
             }
@@ -167,16 +167,17 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindPathing<'e, E> {
         match *op {
             Operation::Jump { condition, .. } => {
                 let condition = ctrl.resolve(condition);
+                // Match against u16 arr pathing.map_tile_regions[]
+                // So `(pathing + x * 2) + const_regions_offset`
                 let addr = condition.iter_no_mem_addr()
-                    .flat_map(|x| x.if_mem16())
-                    .next();
-                if let Some(addr) = addr {
-                    // Match against u16 arr pathing.map_tile_regions[]
-                    // So `(pathing + x * 2) + const_regions_offset`
-                    let val = addr.if_arithmetic_add_const(
+                    .flat_map(|x| {
+                        x.if_mem16_offset(
                             struct_layouts::pathing_map_tile_regions::<E::VirtualAddress>()
                         )
-                        .and_then(|x| x.if_arithmetic_add())
+                    })
+                    .next();
+                if let Some(addr) = addr {
+                    let val = addr.if_arithmetic_add()
                         .and_either_other(|x| x.if_arithmetic_mul_const(2));
                     if single_result_assign(val, &mut self.result) {
                         ctrl.end_analysis();

@@ -78,8 +78,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitReqsAnalyzer<
             Operation::Move(_, val, None) if !self.offsets_read => {
                 let val = ctrl.resolve(val);
                 let ctx = ctrl.ctx();
-                let ok = val.if_mem16()
-                    .and_then(|x| x.if_arithmetic_add_const(self.requirement_offsets.as_u64()))
+                let ok = val.if_mem16_offset(self.requirement_offsets.as_u64())
                     .and_then(|x| x.if_arithmetic_mul_const(2))
                     .filter(|&x| {
                         let arg1 = self.arg_cache.on_entry(0);
@@ -171,10 +170,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for DatReqsAnalyzer<'
                         ctrl.resolve(self.arg_cache.on_call(4)),
                         0xffff_ffff,
                     );
-                    let ok = arg5.if_mem16()
-                        .and_then(|x| {
-                            x.if_arithmetic_add_const(self.requirement_offsets.as_u64())
-                        })
+                    let ok = arg5.if_mem16_offset(self.requirement_offsets.as_u64())
                         .and_then(|x| x.if_arithmetic_mul_const(2))
                         .is_some();
                     if ok {

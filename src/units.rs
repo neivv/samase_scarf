@@ -149,7 +149,7 @@ fn check_active_hidden_cond<'e, Va: VirtualAddress>(
         .filter(|&(_, r)| r == ctx.const_0())
         .and_then(|(l, _)| {
             l.if_memory()?
-                .address.if_arithmetic_add_const(struct_layouts::unit_subunit_linked::<Va>())
+                .if_offset(struct_layouts::unit_subunit_linked::<Va>())
                 .filter(|x| !x.contains_undefined())
         })
 }
@@ -330,12 +330,13 @@ impl<'a, 'e, E: ExecutionState<'e>> OrderIssuingAnalyzer<'a, 'e, E> {
             if ctrl.resolve(self.arg_cache.on_thiscall_call(0)) != self.order {
                 return false;
             }
-            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
-            if ctrl.read_memory(arg1, MemAccessSize::Mem32) != ctx.const_0() {
+            let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+            let xy = ctx.mem_access(arg2, 0, MemAccessSize::Mem32);
+            if ctrl.read_memory(&xy) != ctx.const_0() {
                 return false;
             }
-            let unit_pointer = ctx.add_const(arg1, 8);
-            if ctrl.read_memory(unit_pointer, MemAccessSize::Mem64) != ctx.const_0() {
+            let unit_pointer = ctx.mem_access(arg2, 8, MemAccessSize::Mem64);
+            if ctrl.read_memory(&unit_pointer) != ctx.const_0() {
                 return false;
             }
             if ctrl.resolve(self.arg_cache.on_thiscall_call(2)).if_constant() != Some(0xe4) {
@@ -619,10 +620,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnaly
                             .filter(|&x| x.if_constant() == Some(0x21))
                             .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
                             .and_then(|x| {
-                                x.if_mem8()?
-                                    .if_arithmetic_add_const(
-                                        struct_layouts::unit_player::<E::VirtualAddress>()
-                                    )
+                                x.if_mem8_offset(
+                                    struct_layouts::unit_player::<E::VirtualAddress>()
+                                )
                             })
                             .is_some();
                         if ok {
@@ -777,7 +777,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGiveUnit<'a, 
                 let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
                 let ctx = ctrl.ctx();
                 let offset = if E::VirtualAddress::SIZE == 4 { 0xc } else { 0x10 };
-                let func = ctrl.read_memory(ctx.add_const(arg3, offset), E::WORD_SIZE);
+                let trigger_action_callback = ctx.mem_access(arg3, offset, E::WORD_SIZE);
+                let func = ctrl.read_memory(&trigger_action_callback);
                 if let Some(func) = func.if_constant() {
                     if func >= ctrl.binary().base().as_u64() {
                         self.result = Some(E::VirtualAddress::from_u64(func));
@@ -842,12 +843,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
                     //      or set_sprite_iscript(this = unit.sprite, a1/a2 same)
                     if self.inline_depth != 0 {
                         let this_ok = this == input_unit ||
-                            ctrl.if_mem_word(this)
-                                .and_then(|x| {
-                                    x.if_arithmetic_add_const(
-                                        struct_layouts::unit_sprite::<E::VirtualAddress>()
-                                    )
-                                })
+                            ctrl.if_mem_word_offset(
+                                    this,
+                                    struct_layouts::unit_sprite::<E::VirtualAddress>(),
+                                )
                                 .filter(|&x| x == input_unit)
                                 .is_some();
                         if this_ok && ctx.and_const(tc_arg1, 0xff).if_constant() == Some(0x14) {
@@ -949,7 +948,7 @@ pub(crate) fn analyze_set_unit_player<'e, E: ExecutionState<'e>>(
         inline_depth: 0,
         inline_limit: 0,
         stop_inlining: false,
-        selections,
+        selections_mem: ctx.mem_access(selections, 0, E::WORD_SIZE),
         current_entry: E::VirtualAddress::from_u64(0),
     };
     analysis.analyze(&mut analyzer);
@@ -981,7 +980,7 @@ struct SetUnitPlayerAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     // Limit depth 2 inline length to small functions
     inline_limit: u8,
     stop_inlining: bool,
-    selections: Operand<'e>,
+    selections_mem: MemAccess<'e>,
     current_entry: E::VirtualAddress,
 }
 
@@ -1071,7 +1070,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                 SetUnitPlayerState::RemoveFromSelections => {
                     if let Operation::Move(_, val, None) = *op {
                         let val = ctrl.resolve(val);
-                        if ctrl.if_mem_word(val).filter(|&x| x == self.selections).is_some() {
+                        if ctrl.if_mem_word(val).filter(|&x| x == &self.selections_mem).is_some() {
                             self.result.remove_from_selections = Some(self.current_entry);
                             self.stop_inlining = true;
                             self.state = SetUnitPlayerState::RemoveFromClientSelection;
@@ -1102,10 +1101,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                             } else {
                                 return None;
                             };
-                            let sprite = rest.if_mem8()?
-                                .if_arithmetic_add_const(0xe)?;
-                            let unit = ctrl.if_mem_word(sprite)?
-                                .if_arithmetic_add_const(0xc)?;
+                            let sprite = rest.if_mem8_offset(
+                                struct_layouts::sprite_flags::<E::VirtualAddress>()
+                            )?;
+                            let unit_sprite = struct_layouts::unit_sprite::<E::VirtualAddress>();
+                            let unit = ctrl.if_mem_word_offset(sprite, unit_sprite)?;
                             if unit == ctx.register(1) {
                                 Some(())
                             } else {
@@ -1123,7 +1123,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                 SetUnitPlayerState::ClearBuildQueue => {
                     if let Operation::Move(DestOperand::Memory(ref mem), val, None) = *op {
                         let (base, offset) = ctrl.resolve_mem(mem).address();
-                        let addr_ok = base == ctx.register(1) && offset == 0x98;
+                        let addr_ok = base == ctx.register(1) &&
+                            offset == struct_layouts::unit_build_queue::<E::VirtualAddress>();
                         if addr_ok {
                             let val_u16 = ctx.and_const(ctrl.resolve(val), 0xffff);
                             if val_u16.if_constant() == Some(0xe4) {
@@ -1228,8 +1229,8 @@ pub(crate) fn unit_apply_speed_upgrades<'e, E: ExecutionState<'e>>(
         end_caller_branch: false,
         func_entry: E::VirtualAddress::from_u64(0),
         step_iscript,
-        units_dat_flingy: ctx.constant(units_dat_flingy.as_u64()),
-        flingy_dat_movement_type: ctx.constant(flingy_dat_movement_type.as_u64()),
+        units_dat_flingy: units_dat_flingy,
+        flingy_dat_movement_type: flingy_dat_movement_type,
         flingy_dat_speed: flingy_dat_speed,
         flingy_dat_acceleration: flingy_dat_acceleration,
         flingy_dat_turn_speed: flingy_dat_turn_speed,
@@ -1246,11 +1247,11 @@ struct UnitSpeedAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     entry_esp: Operand<'e>,
     func_entry: E::VirtualAddress,
     step_iscript: E::VirtualAddress,
-    flingy_dat_movement_type: Operand<'e>,
+    flingy_dat_movement_type: E::VirtualAddress,
     flingy_dat_speed: E::VirtualAddress,
     flingy_dat_acceleration: E::VirtualAddress,
     flingy_dat_turn_speed: E::VirtualAddress,
-    units_dat_flingy: Operand<'e>,
+    units_dat_flingy: E::VirtualAddress,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitSpeedAnalyzer<'a, 'e, E> {
@@ -1294,14 +1295,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitSpeedAnalyzer
                         let to = ctrl.resolve(to);
                         // Just assuming u8 cases
                         let switch_table = ctrl.if_mem_word(to)
-                            .and_then(|x| x.if_arithmetic_add())
                             .and_then(|x| {
-                                let base_table = E::VirtualAddress::from_u64(x.1.if_constant()?);
-                                let small_table = x.0.if_arithmetic_mul_const(4)
+                                let (index, base) = x.address();
+                                let base_table = E::VirtualAddress::from_u64(base);
+                                let small_table = index.if_arithmetic_mul_const(4)
                                     .and_then(|x| x.if_mem8())
-                                    .and_then(|x| x.if_arithmetic_add())
-                                    .and_then(|x| x.1.if_constant())
-                                    .map(|x| E::VirtualAddress::from_u64(x))?;
+                                    .map(|x| E::VirtualAddress::from_u64(x.address().1))?;
                                 Some((base_table, small_table))
                             });
                         if let Some((base_table, table)) = switch_table {
@@ -1359,14 +1358,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitSpeedAnalyzer
                 if let Operation::Jump { condition, .. } = *op {
                     let condition = ctrl.resolve(condition);
                     let ok = if_arithmetic_eq_neq(condition)
-                        .map(|x| (x.0, x.1))
-                        .and_either_other(|x| x.if_constant())
-                        .and_then(|x| x.if_mem8())
-                        .and_then(|x| x.if_arithmetic_add())
-                        .and_if_either_other(|x| x == self.flingy_dat_movement_type)
+                        .filter(|x| x.1.if_constant().is_some())
+                        .and_then(|x| x.0.if_mem8_offset(self.flingy_dat_movement_type.as_u64()))
                         .and_then(|x| x.if_memory())
-                        .and_then(|x| x.address.if_arithmetic_add())
-                        .and_if_either_other(|x| x == self.units_dat_flingy)
+                        .and_then(|x| x.if_offset(self.units_dat_flingy.as_u64()))
                         .is_some();
                     if ok {
                         // update_speed can be sometimes inlined :l
@@ -1516,10 +1511,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     .if_arithmetic_gt()
                     .and_either_other(|x| x.if_constant())
                     .and_then(|x| {
-                        x.if_mem8()?
-                            .if_arithmetic_add_const(
-                                struct_layouts::unit_movement_state::<E::VirtualAddress>()
-                            )
+                        x.if_mem8_offset(
+                            struct_layouts::unit_movement_state::<E::VirtualAddress>()
+                        )
                     })
                     .filter(|&x| x == ctx.register(1))
                     .is_some();
@@ -1691,14 +1685,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         if is_bfix && self.inline_depth == 0 {
                             let arg1 =
                                 ctx.and_const(ctrl.resolve(self.arg_cache.on_call(0)), 0xff);
-                            let is_this_order = arg1.if_mem8()
-                                .and_then(|x| {
-                                    x.if_arithmetic_add_const(
-                                        struct_layouts::unit_order::<E::VirtualAddress>()
-                                    )
-                                })
-                                .filter(|&x| x == ctx.register(1))
-                                .is_some();
+                            let is_this_order =
+                                arg1.if_mem8_offset(
+                                    struct_layouts::unit_order::<E::VirtualAddress>()
+                                ) == Some(ctx.register(1));
                             if is_this_order {
                                 inline_limit = 0;
                             }
@@ -1744,14 +1734,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
 
                         let result = if_arithmetic_eq_neq(condition)
-                            .and_then(|(l, r, _)| {
-                                if r != ctx.const_0() {
-                                    return None;
-                                }
-                                l.if_arithmetic_and_const(4)?.if_mem8()
-                            });
+                            .filter(|x| x.1 == ctx.const_0())
+                            .and_then(|(l, _, _)| l.if_arithmetic_and_const(4)?.if_mem8());
                         if let Some(result) = result {
-                            self.result.replay_bfix = Some(result);
+                            self.result.replay_bfix = Some(result.address_op(ctx));
                             self.state = PrepareIssueOrderState::Gcfg;
                         }
                     } else {
@@ -1760,7 +1746,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 if r.if_constant() != Some(5) {
                                     return None;
                                 }
-                                l.if_mem8().map(|x| ctx.sub_const(x, 0x10))
+                                l.if_mem8().map(|x| ctx.mem_sub_const_op(x, 0x10))
                             });
                         if let Some(result) = result {
                             self.result.replay_gcfg = Some(result);
@@ -1826,9 +1812,10 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
                 return false;
             }
             let arg2 = ctrl.resolve(arg_cache.on_thiscall_call(1));
-            let ok = ctrl.read_memory(arg2, MemAccessSize::Mem64) ==
+            let arg2_mem = ctx.mem_access(arg2, 0, MemAccessSize::Mem64);
+            let ok = ctrl.read_memory(&arg2_mem) ==
                 ctx.mem64(arg_cache.on_thiscall_entry(1), 0) &&
-                ctrl.read_memory(ctx.add_const(arg2, 8), MemAccessSize::Mem64) ==
+                ctrl.read_memory(&ctx.mem_access(arg2, 8, MemAccessSize::Mem64)) ==
                     ctx.mem64(arg_cache.on_thiscall_entry(1), 8);
             if !ok {
                 return false;

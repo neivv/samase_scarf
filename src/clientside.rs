@@ -155,9 +155,11 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
                     if let Operation::Move(_, ref val, _) = *op {
                         // No need to resolve here, as the constant
                         // was found by just binary scanning,
-                        self.call_found = val.iter()
-                            .flat_map(|x| x.if_constant())
-                            .any(|x| x == global_addr.as_u64());
+                        self.call_found = val.if_memory()
+                            .map(|x| x.address().1)
+                            .or_else(|| val.if_constant())
+                            .map(|x| x == global_addr.as_u64())
+                            .is_some();
                     }
                 } else {
                     self.call_found = address == self.middle_of_func;
@@ -314,9 +316,8 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
                         .and_then(|(l, divisor)| {
                             if_int_to_float(l)
                                 .map(unwrap_sext)
-                                .and_then(|x| x.if_mem16()?.if_arithmetic_add())
-                                .and_either(|x| x.if_constant())
-                                .map(|(c, _)| (screen_coord, divisor, c as u32))
+                                .and_then(|x| x.if_mem16())
+                                .map(|mem| (screen_coord, divisor, mem.address().1 as u32))
                         })
                 })
         }
@@ -619,9 +620,7 @@ impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
                 let dest = ctrl.resolve(dest);
                 // call [[ecx] + offset]
                 let is_vtable_fn = ctrl.if_mem_word(dest)
-                    .and_then(|x| x.if_arithmetic_add())
-                    .and_either_other(|x| x.if_constant())
-                    .and_then(|x| ctrl.if_mem_word(x))
+                    .and_then(|x| ctrl.if_mem_word_offset(x.address().0, 0))
                     .filter(|&x| x == ctx.register(1))
                     .is_some();
                 if is_vtable_fn {

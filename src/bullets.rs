@@ -1,11 +1,11 @@
 use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashMap;
 
-use scarf::{Operand, Operation, DestOperand};
+use scarf::{MemAccess, Operand, Operation, DestOperand};
 use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{AnalysisCtx, ArgCache, ControlExt, OperandExt, OptionExt, bumpvec_with_capacity};
+use crate::{AnalysisCtx, ArgCache, ControlExt, OptionExt, bumpvec_with_capacity};
 use crate::switch;
 use crate::struct_layouts;
 
@@ -72,12 +72,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a,
                     }
                 }
                 let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
-                let is_player = arg4.if_mem8()
-                    .and_then(|x| {
-                        x.if_arithmetic_add_const(
-                            struct_layouts::unit_player::<E::VirtualAddress>()
-                        )
-                    })
+                let is_player = arg4
+                    .if_mem8_offset(struct_layouts::unit_player::<E::VirtualAddress>())
                     .map(|x| x == unit)
                     .unwrap_or(false);
                 if !is_player {
@@ -168,16 +164,19 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
                 }
                 // last_free_bullet = (*first_free_bullet).prev
                 // But not (*(*first_free_bullet).next).prev = (*first_free_bullet).prev
-                if let Some(inner) = ctrl.if_mem_word(value).and_then(|x| ctrl.if_mem_word(x)) {
+                if let Some(inner) = ctrl.if_mem_word_offset(value, 0)
+                    .and_then(|x| ctrl.if_mem_word(x))
+                {
+                    let inner_op = inner.address_op(ctx);
                     let (dest_base, dest_offset) = dest.address();
-                    if inner.if_constant() != Some(dest_offset) &&
-                        dest_base.iter().all(|x| x != inner)
+                    if inner.if_constant_address() != Some(dest_offset) &&
+                        dest_base.iter().all(|x| x != inner_op)
                     {
                         if self.is_unpaired_first_ptr(inner) {
                             self.last_free = Some(dest_value);
                             return;
                         } else {
-                            self.last_ptr_candidates.push((inner, dest_value));
+                            self.last_ptr_candidates.push((inner_op, dest_value));
                         }
                     }
                 }
@@ -249,10 +248,10 @@ impl<'acx, 'e, E: ExecutionState<'e>> FindBulletLists<'acx, 'e, E> {
         self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1)
     }
 
-    fn is_unpaired_first_ptr(&self, first: Operand<'e>) -> bool {
+    fn is_unpaired_first_ptr(&self, first: &MemAccess<'e>) -> bool {
         if let Some(_) = self.first_free
             .and_then(|x| x.if_memory())
-            .filter(|x| x.address == first)
+            .filter(|x| x.address() == first.address())
         {
             return self.last_free.is_none();
         }

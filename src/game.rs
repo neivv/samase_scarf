@@ -62,7 +62,7 @@ pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
     // Use addresses of RNG or call location addresses of RNG set func
     let mut rng_refs = bumpvec_with_capacity(16, bump);
     for part in rng_enable.iter_no_mem_addr() {
-        if let Some(enable_addr) = part.if_memory().and_then(|x| x.address.if_constant()) {
+        if let Some(enable_addr) = part.if_memory().and_then(|x| x.if_constant_address()) {
             let enable_addr = E::VirtualAddress::from_u64(enable_addr);
             let globals = functions.find_functions_using_global(analysis, enable_addr);
             for global_ref in globals {
@@ -375,20 +375,20 @@ fn game_detect_check<'e>(ctx: OperandCtx<'e>, val: Operand<'e>) -> Option<Operan
     // (They're at game + 0xe4 and game + 0xe6)
     val.iter_no_mem_addr().filter_map(|x| x.if_arithmetic_mul())
         .filter_map(|(l, r)| {
-            l.if_memory().and_then(|l| r.if_memory().map(|r| (l, r)))
-        }).filter(|&(l, r)| {
-            l.size == MemAccessSize::Mem16 && r.size == MemAccessSize::Mem16
+            Some((l.if_mem16()?, r.if_mem16()?))
         }).filter_map(|(l, r)| {
-            let l_minus_2 = ctx.sub_const(l.address, 2);
-            if l_minus_2 == r.address {
-                Some(ctx.sub_const(r.address, 0xe4))
-            } else {
-                let r_minus_2 = ctx.sub_const(r.address, 2);
-                if r_minus_2 == l.address {
-                    Some(ctx.sub_const(l.address, 0xe4))
+            let (l_base, l_offset) = l.address();
+            let (r_base, r_offset) = r.address();
+            if l_base == r_base {
+                if l_offset.wrapping_add(2) == r_offset {
+                    Some(ctx.add_const(l_base, l_offset.wrapping_sub(0xe4)))
+                } else if r_offset.wrapping_add(2) == l_offset {
+                    Some(ctx.add_const(r_base, r_offset.wrapping_sub(0xe4)))
                 } else {
                     None
                 }
+            } else {
+                None
             }
         }).next()
 }
@@ -490,12 +490,9 @@ impl<'e, E: ExecutionState<'e>> AllocatorFromSMemAlloc<'e, E> {
         // Ok if dest is MemWord[[this] + 1 * word_size]
         let ctx = ctrl.ctx();
         let ecx = ctrl.resolve(ctx.register(1));
-        self.result = ctrl.if_mem_word(dest)
-            .and_then(|x| {
-                let x = x.if_arithmetic_add_const(1 * E::VirtualAddress::SIZE as u64)?;
-                ctrl.if_mem_word(x)
-                    .filter(|&x| x == ecx)
-            });
+        self.result = ctrl.if_mem_word_offset(dest, 1 * E::VirtualAddress::SIZE as u64)
+            .and_then(|x| ctrl.if_mem_word_offset(x, 0))
+            .filter(|&x| x == ecx);
     }
 }
 
@@ -667,10 +664,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest_unres) => {
                 let dest_op = ctrl.resolve(dest_unres);
-                let ctx = ctrl.ctx();
                 let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                 let arg1_not_this = ctrl.resolve(self.arg_cache.on_call(0));
                 let ecx = ctrl.resolve(ctx.register(1));
@@ -693,12 +690,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if is_thiscall_alloc {
                         // Check for call word[word[ecx] + 4],
                         // allocator.vtable.alloc(size, align)
-                        let allocator = ctrl.if_mem_word(dest_op)
-                            .and_then(|x| {
-                                let x = x.if_arithmetic_add_const(1 * word_size as u64)?;
-                                ctrl.if_mem_word(x)
-                                    .filter(|&x| x == ecx)
-                            });
+                        let allocator = ctrl.if_mem_word_offset(dest_op, 1 * word_size as u64)
+                            .and_then(|x| ctrl.if_mem_word_offset(x, 0))
+                            .filter(|&x| x == ecx);
                         if let Some(allocator) = allocator {
                             self.result.allocator =
                                 Some(self.call_tracker.resolve_calls(allocator));
@@ -759,10 +753,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         if self.inline_depth == 0 {
                             for &(dest, value) in &self.depth_0_arg1_global_stores {
                                 exec_state.move_resolved(
-                                    &DestOperand::Memory(scarf::operand::MemAccess {
-                                        size: MemAccessSize::Mem32,
-                                        address: dest,
-                                    }),
+                                    &DestOperand::Memory(
+                                        ctx.mem_access(dest, 0, MemAccessSize::Mem32)
+                                    ),
                                     value,
                                 );
                             }
@@ -773,7 +766,6 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let was_checking_malloc_free = self.check_malloc_free;
                         self.inlining_object_subfunc = inline;
                         let esp = self.func_initial_esp;
-                        let ctx = ctrl.ctx();
                         self.func_initial_esp = ctx.sub_const(
                             ctrl.resolve(ctx.register(4)),
                             E::VirtualAddress::SIZE as u64,
@@ -888,17 +880,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> SetLimitsAnalyzer<'a, 'acx, 'e, E> {
                 x.if_mem32()
                     .and_then(|x| {
                         let self_arg1 = self.arg_cache.on_entry(0);
-                        x.if_arithmetic_add()
-                            .filter(|&(l, _)| l == self_arg1)
-                            .and_then(|(_, r)| r.if_constant())
-                            .or_else(|| {
-                                if x == self_arg1 {
-                                    Some(0)
-                                } else {
-                                    None
-                                }
-                            })
-                            .map(|x| (x as u32, add, mul))
+                        let (base, offset) = x.address();
+                        if base == self_arg1 {
+                            Some((offset as u32, add, mul))
+                        } else {
+                            None
+                        }
                     })
             })
     }
@@ -1126,7 +1113,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         .map(|x| (x.0, x.2))
                     {
                         let assume_zero = cmp == self.first_active_unit ||
-                            cmp.if_mem32().filter(|&x| x == ctx.add_const(self.game, 0x70d0))
+                            cmp.if_mem32()
+                                .filter(|&x| {
+                                    let (base, offset) = x.address();
+                                    base == self.game && offset == 0x70d0
+                                })
                                 .is_some();
                         if assume_zero {
                             let dest = match eq_zero {
@@ -1211,9 +1202,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         // The not Mem[x + 4] check is to avoid confusing other_list.next
                         // from loops.
                         let is_unit_next = this.if_memory()
-                            .and_then(|x| {
-                                x.address.if_arithmetic_add_const(E::VirtualAddress::SIZE.into())
-                            })
+                            .and_then(|x| x.if_offset(E::VirtualAddress::SIZE.into()))
                             .is_some();
                         if this == active_iscript_unit &&
                             this != self.first_active_unit &&
@@ -1273,7 +1262,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let offset = struct_layouts::unit_invisibility_effects::<E::VirtualAddress>();
                     let result = if_arithmetic_eq_neq(condition)
                         .filter(|x| x.1 == ctx.const_0())
-                        .and_then(|x| x.0.if_mem8()?.if_arithmetic_add_const(offset));
+                        .and_then(|x| x.0.if_mem8_offset(offset));
                     if let Some(result) = result {
                         self.result.first_invisible_unit = Some(result);
                         if self.invisible_unit_inline_depth != 0 || self.inline_depth != 0 {
@@ -1318,13 +1307,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 } else if let Operation::Jump { condition, .. } = *op {
                     let condition = ctrl.resolve(condition);
                     let ok = condition.if_arithmetic_gt()
-                        .and_either(|x| x.if_mem8())
-                        .and_then(|x| {
-                            x.0.if_arithmetic_add_const(
-                                struct_layouts::unit_order::<E::VirtualAddress>(),
-                            )
+                        .and_either(|x| {
+                            x.if_mem8_offset(struct_layouts::unit_order::<E::VirtualAddress>())
                         })
-                        .filter(|&x| x == self.first_active_bullet)
+                        .filter(|&x| x.0 == self.first_active_bullet)
                         .is_some();
                     if ok {
                         self.result.step_bullet_frame = Some(E::VirtualAddress::from_u64(0));
@@ -1419,9 +1405,7 @@ fn analyze_simulate_short<'e, E: ExecutionState<'e>>(
 
     let mut exec = E::initial_state(ctx, binary);
     exec.move_resolved(
-        &DestOperand::Memory(
-            scarf::operand::MemAccess { size: E::WORD_SIZE, address: ctx.register(4) }
-        ),
+        &DestOperand::Memory(ctx.mem_access(ctx.register(4), 0, E::WORD_SIZE)),
         ctx.mem_any(E::WORD_SIZE, ctx.register(4), 0),
     );
     exec.move_to(

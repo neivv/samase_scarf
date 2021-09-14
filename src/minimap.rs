@@ -34,7 +34,7 @@ pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
 
     let first_fow_addr = first_fow_sprite
         .if_memory()
-        .and_then(|x| x.address.if_constant())
+        .and_then(|x| x.if_constant_address())
         .map(|x| E::VirtualAddress::from_u64(x));
     let first_fow_addr = match first_fow_addr {
         Some(s) => s,
@@ -169,8 +169,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayFowAnalyzer<'a
                         let checks_fow_unit_id = condition.if_arithmetic_gt()
                             .and_either_other(|x| x.if_constant())
                             .and_then(|x| x.if_arithmetic_sub_const(0xcb))
-                            .and_then(|x| x.if_mem16())
-                            .and_then(|x| x.if_arithmetic_add_const(fow_unit_id_offset))
+                            .and_then(|x| x.if_mem16_offset(fow_unit_id_offset))
                             .filter(|&x| x == self.first_fow_sprite)
                             .is_some();
                         if checks_fow_unit_id {
@@ -255,10 +254,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayVisionsAnalyze
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         fn is_unit_flags_access<Va: VirtualAddress>(val: Operand<'_>) -> bool {
-            val.if_mem32()
-                .and_then(|x| {
-                    x.if_arithmetic_add_const(struct_layouts::unit_flags::<Va>())
-                })
+            val.if_mem32_offset(struct_layouts::unit_flags::<Va>())
                 .is_some()
         }
 
@@ -376,17 +372,16 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayVisionsAnalyze
                             struct_layouts::sprite_visibility_mask::<E::VirtualAddress>();
                         let unit_sprite =
                             struct_layouts::unit_sprite::<E::VirtualAddress>();
-                        let sprite = x.if_mem8()?
-                            .if_arithmetic_add_const(sprite_visibility_mask)?;
-                        let unit = ctrl.if_mem_word(sprite)?
-                            .if_arithmetic_add_const(unit_sprite)?;
+                        let sprite = x.if_mem8_offset(sprite_visibility_mask)?;
+                        let unit = ctrl.if_mem_word_offset(sprite, unit_sprite)?;
                         ctrl.if_mem_word(unit)
-                            .and_then(|x| x.if_arithmetic_add())
-                            .and_either_other(|x| {
-                                x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
-                                    .and_then(|x| {
-                                        Operand::and_masked(x).0.if_custom().filter(|&c| c == 0)
-                                    })
+                            .and_then(|x| {
+                                x.if_add_either_other(ctx, |x| {
+                                    x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
+                                        .filter(|&x| {
+                                            Operand::and_masked(x).0.if_custom() == Some(0)
+                                        })
+                                })
                             })
                     });
                 if let Some((first_player_unit, replay_visions)) = result {
