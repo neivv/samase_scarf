@@ -1,3 +1,5 @@
+use std::convert::TryFrom;
+
 use bumpalo::collections::Vec as BumpVec;
 
 use scarf::{BinaryFile, Operand, OperandCtx, Operation, DestOperand, OperandType, MemAccessSize};
@@ -5,7 +7,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType};
 
-use crate::{AnalysisCtx, EntryOf, bumpvec_with_capacity, FunctionFinder};
+use crate::{AnalysisCtx, ArgCache, EntryOf, bumpvec_with_capacity, FunctionFinder};
 
 pub struct Eud<'e> {
     pub address: u32,
@@ -70,7 +72,7 @@ pub(crate) fn eud_table<'e, E: ExecutionState<'e>>(
             }
             None => continue,
         };
-        let mut result = analyze_eud_init_fn::<E>(ctx, binary, entry);
+        let mut result = analyze_eud_init_fn::<E>(analysis, entry);
         if result.euds.len() > 0x100 {
             finish_euds(&mut result);
             return result;
@@ -97,7 +99,7 @@ pub(crate) fn eud_table<'e, E: ExecutionState<'e>>(
             }
             None => continue,
         };
-        let mut result = analyze_eud_init_fn::<E>(ctx, binary, func);
+        let mut result = analyze_eud_init_fn::<E>(analysis, func);
         if result.euds.len() > 0x100 {
             finish_euds(&mut result);
             return result;
@@ -216,41 +218,62 @@ fn find_init_eud_table_from_parent<'e, E: ExecutionState<'e>>(
 }
 
 fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
-    ctx: OperandCtx<'e>,
-    binary: &'e BinaryFile<E::VirtualAddress>,
+    actx: &AnalysisCtx<'e, E>,
     addr: E::VirtualAddress,
 ) -> EudTable<'e> {
-    struct Analyzer<'e, E: ExecutionState<'e>> {
+    struct Analyzer<'a, 'e, E: ExecutionState<'e>> {
         result: EudTable<'e>,
-        phantom: std::marker::PhantomData<(*const E, &'e ())>,
+        arg_cache: &'a ArgCache<'e, E>,
+        first_call: bool,
     }
-    impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
+    impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'a, 'e, E> {
         type State = analysis::DefaultState;
         type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             match op {
                 Operation::Call(..) => {
                     let ctx = ctrl.ctx();
-                    let esp = ctx.register(4);
-                    // A1 has to be a1 to this fn ([esp + 4]),
+                    if self.first_call {
+                        // The large_stack_alloc call on 64bit (Or maybe recent versions?)
+                        // is just a probe with stack sub being done later after the call,
+                        // for at least some 32bit versions it does actually move esp.
+                        // Don't clobber eax (stack alloc size) on 64bit
+                        self.first_call = false;
+                        if E::VirtualAddress::SIZE == 8 {
+                            if let Some(eax) = ctrl.resolve(ctx.register(0)).if_constant() {
+                                if eax > 0x1000 {
+                                    ctrl.skip_operation();
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    // A1 has to be a1 to this fn
                     // a2 ptr,
                     // a3 length
-                    let a1 = ctrl.resolve(ctx.mem32(esp, 0));
-                    // Not resolving a2, it'll be resolved later on -- double resolving
-                    // ends up being wrong
-                    let a2 = ctx.mem32(esp, 4);
-                    let a3 = ctrl.resolve(ctx.mem32(esp, 8));
-                    let is_a1 = a1.if_mem32_offset(4)
-                        .filter(|&x| x == ctx.register(4))
-                        .is_some();
-                    if is_a1 {
-                        if let Some(len) = a3.if_constant() {
-                            if len % 0x10 == 0 {
-                                let result = (0..(len / 0x10)).map(|i| {
-                                    let address = ctrl.resolve(ctx.mem32(a2, i * 0x10));
-                                    let size = ctrl.resolve(ctx.mem32(a2, i * 0x10 + 4));
-                                    let operand = ctrl.resolve(ctx.mem32(a2, i * 0x10 + 0x8));
-                                    let flags = ctrl.resolve(ctx.mem32(a1, i * 0x10 + 0xc));
+                    let a1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let a2 = ctrl.resolve(self.arg_cache.on_call(1));
+                    let a3 = ctrl.resolve(self.arg_cache.on_call(2));
+                    let eud_size = if E::VirtualAddress::SIZE == 4 { 0x10 } else { 0x18 };
+                    if a1 == self.arg_cache.on_entry(0) {
+                        if let Some(len) = a3.if_constant().and_then(|x| u32::try_from(x).ok()) {
+                            if len % eud_size == 0 {
+                                let result = (0..(len / eud_size)).map(|i| {
+                                    let mem = ctx.mem_access(
+                                        a2,
+                                        u64::from(i * eud_size),
+                                        MemAccessSize::Mem32,
+                                    );
+                                    let address = ctrl.read_memory(&mem);
+                                    let mem = mem.with_offset_size(4, MemAccessSize::Mem32);
+                                    let size = ctrl.read_memory(&mem);
+                                    let mem = mem.with_offset_size(4, E::WORD_SIZE);
+                                    let operand = ctrl.read_memory(&mem);
+                                    let mem = mem.with_offset_size(
+                                        E::VirtualAddress::SIZE.into(),
+                                        MemAccessSize::Mem32,
+                                    );
+                                    let flags = ctrl.read_memory(&mem);
                                     if let Some(address) = address.if_constant() {
                                         if let Some(size) = size.if_constant() {
                                             if let Some(flags) = flags.if_constant() {
@@ -279,17 +302,32 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
             }
         }
     }
-    impl<'e, E: ExecutionState<'e>> Analyzer<'e, E> {
+    impl<'a, 'e, E: ExecutionState<'e>> Analyzer<'a, 'e, E> {
         fn check_eud_vec_push(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
             // Check for eud_vec_push(&vec, &eud)
-            // Eud is 0x10 bytes
+            // Eud is 0x10 / 0x18 bytes
             let ctx = ctrl.ctx();
-            let arg1 = ctrl.resolve(ctx.mem32(ctx.register(4), 0));
+            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+            let eud_size = if E::VirtualAddress::SIZE == 4 { 0x10 } else { 0x18 };
+            let offsets_sizes = if E::VirtualAddress::SIZE == 4 {
+                &[
+                    (0u8, MemAccessSize::Mem32),
+                    (0x4, MemAccessSize::Mem32),
+                    (0x8, MemAccessSize::Mem32),
+                    (0xc, MemAccessSize::Mem32),
+                ]
+            } else {
+                &[
+                    (0u8, MemAccessSize::Mem32),
+                    (0x4, MemAccessSize::Mem32),
+                    (0x8, MemAccessSize::Mem64),
+                    (0x10, MemAccessSize::Mem32),
+                ]
+            };
             let mut arg1_mem = [ctx.const_0(); 4];
             for i in 0..4 {
-                let field = ctrl.read_memory(
-                    &ctx.mem_access(arg1, (i * 4) as u64, MemAccessSize::Mem32)
-                );
+                let (offset, size) = offsets_sizes[i];
+                let field = ctrl.read_memory(&ctx.mem_access(arg1, offset as u64, size));
                 arg1_mem[i] = field;
             }
             // Sanity check address/size/flags
@@ -312,11 +350,10 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
             if let Some(len) = ctrl.read_memory(&vec_len_addr).if_constant() {
                 let exec_state = ctrl.exec_state();
                 for i in 0..4 {
-                    let offset = len.wrapping_mul(0x10).wrapping_add(i as u64 * 4);
+                    let (offset, size) = offsets_sizes[i];
+                    let offset = len.wrapping_mul(eud_size).wrapping_add(offset as u64);
                     exec_state.move_resolved(
-                        &DestOperand::Memory(
-                            ctx.mem_access(vec_buffer, offset, MemAccessSize::Mem32)
-                        ),
+                        &DestOperand::Memory(ctx.mem_access(vec_buffer, offset, size)),
                         arg1_mem[i],
                     );
                 }
@@ -328,11 +365,15 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
         }
     }
 
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let arg_cache = &actx.arg_cache;
     let mut analyzer = Analyzer::<E> {
         result: EudTable {
             euds: Vec::new(),
         },
-        phantom: Default::default(),
+        arg_cache,
+        first_call: true,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, addr);
     analysis.analyze(&mut analyzer);
@@ -371,9 +412,9 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
                             let mem = ctrl.resolve_mem(mem);
                             // Offset if this is moving to [esp + offset]
                             let (base, offset) = mem.address();
-                            // Accept stores up to [orig_esp - 0x10000] as part
+                            // Accept stores up to [orig_esp - 0x1000] as part
                             // of stack setup
-                            let is_stack_store = 0u64.wrapping_sub(offset) <= 0x1000 &&
+                            let is_stack_store = (-0x1000..0x40).contains(&(offset as i64)) &&
                                 base == ctx.register(4);
                             !is_stack_store
                         } else {
