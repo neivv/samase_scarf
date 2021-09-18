@@ -359,13 +359,12 @@ fn dump<'e, E: ExecutionState<'e>>(
         out!(&mut out, "crt_fastfail: {:?}", analysis.crt_fastfail());
     }
 
-    let undef = ctx.new_undef();
     out.push_str("\n");
-    out!(&mut out, "Undefined count: {}", match *undef.ty() {
-        scarf::operand::OperandType::Undefined(x) => x.0,
-        _ => 0,
-    });
-    out!(&mut out, "Interned count: {}", ctx.interned_count());
+    let counts = ctx.interned_counts();
+    out!(&mut out, "Interned undef count: {}", counts.undefined);
+    out!(&mut out, "Interned constant count: {}", counts.constant);
+    out!(&mut out, "Interned other count: {}", counts.other);
+    out!(&mut out, "Interned total count: {}", counts.total());
     out
 }
 
