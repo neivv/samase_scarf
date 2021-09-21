@@ -48,7 +48,6 @@ pub(crate) fn eud_table<'e, E: ExecutionState<'e>>(
     functions: &FunctionFinder<'_, 'e, E>,
 ) -> EudTable<'e> {
     fn finish_euds(result: &mut EudTable) {
-        result.euds.retain(|x| x.operand.if_constant() != Some(0));
         result.euds.sort_unstable_by_key(|x| x.address);
     }
 

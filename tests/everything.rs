@@ -1686,6 +1686,13 @@ fn test_nongeneric<'e>(
         assert_eq!(sprite_size, 0x28);
     }
 
+    // Currently 1238d, 1238e, but not 1238f.
+    // Assuming that 1239a or 1240a will be built on that branch too.
+    let is_major_2021_patch =
+        (minor_version == 23 && patch_version == 8 && revision >= b'd' && revision <= b'e') ||
+        (minor_version == 23 && patch_version >= 9) ||
+        (minor_version >= 24);
+
     let euds = analysis.eud_table();
     if minor_version < 21 {
         assert_eq!(euds.euds.len(), 0);
@@ -1694,30 +1701,37 @@ fn test_nongeneric<'e>(
         if patch_version < 3 {
             assert_eq!(euds.euds.len(), 0);
         } else {
-            assert_eq!(euds.euds.len(), 698);
-            check_euds(binary, &euds.euds, "698_euds.txt");
+            // Has double 00000000:0 for some reason
+            assert_eq!(euds.euds.len(), 796);
+            check_euds(binary, &euds.euds, "795_euds.txt");
         }
     } else if minor_version == 22 {
         if patch_version < 1 && revision < b'e' {
             // 1220 to 1220d, added logic for editing race sounds?
-            assert_eq!(euds.euds.len(), 698);
-            check_euds(binary, &euds.euds, "698_euds_2.txt");
+            assert_eq!(euds.euds.len(), 795);
+            check_euds(binary, &euds.euds, "795_euds_2.txt");
         } else if patch_version < 2 {
             // Status screen marked as uneditable(?) from 1220e to 1221c
-            assert_eq!(euds.euds.len(), 698);
-            check_euds(binary, &euds.euds, "698_euds_3.txt");
+            assert_eq!(euds.euds.len(), 795);
+            check_euds(binary, &euds.euds, "795_euds_3.txt");
         } else {
             // 1222 =>
-            assert_eq!(euds.euds.len(), 705);
-            check_euds(binary, &euds.euds, "705_euds.txt");
+            // Adds editable bullets, sprites, images and orders
+            assert_eq!(euds.euds.len(), 799);
+            check_euds(binary, &euds.euds, "799_euds.txt");
         }
     } else {
-        // 1230 =>
-        // Removed keystate (00596A18)
-        // 0068c204, and mouse pos (006cddc4)
-        // They probably are now emulated in a different path not detected by this
-        assert_eq!(euds.euds.len(), 702);
-        check_euds(binary, &euds.euds, "702_euds.txt");
+        if !is_major_2021_patch {
+            // 1230 =>
+            // keystate (00596A18) 0068c204, and mouse pos (006cddc4)
+            // have now zero address
+            assert_eq!(euds.euds.len(), 799);
+            check_euds(binary, &euds.euds, "799_euds_2.txt");
+        } else {
+            // Removes 00000000:0, 00200000:1000, 00201000:6000 addresses
+            assert_eq!(euds.euds.len(), 796);
+            check_euds(binary, &euds.euds, "796_euds.txt");
+        }
     }
 
     let vtables = analysis.renderer_vtables();
@@ -1757,12 +1771,6 @@ fn test_nongeneric<'e>(
     }
 
     let limits = analysis.limits();
-    // Currently 1238d, 1238e, but not 1238f.
-    // Assuming that 1239a or 1240a will be built on that branch too.
-    let is_major_2021_patch =
-        (minor_version == 23 && patch_version == 8 && revision >= b'd' && revision <= b'e') ||
-        (minor_version == 23 && patch_version >= 9) ||
-        (minor_version >= 24);
     if extended_limits {
         assert!(limits.set_limits.is_some());
         // 1238d removed (inlined?) SMemAlloc and SMemFree
@@ -2061,8 +2069,8 @@ fn check_euds<Va: VirtualAddressTrait>(
     euds: &[Eud],
     compare_file: &str,
 ) {
-    // addr, size, flags
-    fn parse_line(line: &str) -> Option<(u32, u32, u32)> {
+    // addr, size, flags, is_zero_scr_addr
+    fn parse_line(line: &str) -> Option<(u32, u32, u32, bool)> {
         let mut tokens = line.split_whitespace();
         let addr_len = tokens.next()?;
         let addr = addr_len.split(":").nth(0)?;
@@ -2070,18 +2078,19 @@ fn check_euds<Va: VirtualAddressTrait>(
         let len = addr_len.split(":").nth(1).unwrap_or_else(|| panic!("Line {}", line));
         let len = u32::from_str_radix(len, 16).ok()?;
         let _ = tokens.next()?;
-        let _ = tokens.next()?;
+        let scr_op = tokens.next()?;
         let flags = tokens.next()?;
         let flags = flags.get(1..(flags.len() - 1))?;
         let flags = u32::from_str_radix(flags, 16).ok()?;
-        Some((addr, len, flags))
+        let zero_scr = scr_op == "0";
+        Some((addr, len, flags, zero_scr))
     }
 
     let mut ok = true;
     let data = std::fs::read(&format!("tests/euds/{}", compare_file)).unwrap();
     let data = String::from_utf8_lossy(&data);
     for line in data.lines().filter(|x| !x.trim().is_empty()) {
-        let (addr, size, flags) = parse_line(line)
+        let (addr, size, flags, zero_scr) = parse_line(line)
             .unwrap_or_else(|| panic!("Line {}", line));
         let start_index = euds.binary_search_by(|x| match x.address < addr {
             true => std::cmp::Ordering::Less,
@@ -2101,6 +2110,13 @@ fn check_euds<Va: VirtualAddressTrait>(
                     addr, eud.flags, flags,
                 );
                 ok = false;
+            }
+            if zero_scr {
+                if eud.operand.if_constant() != Some(0) {
+                    println!("EUD {:08x} was expected to have zero operand", addr);
+                    ok = false;
+                }
+                continue;
             }
             if let Some(c) = eud.operand.if_constant() {
                 let c = Va::from_u64(c);
