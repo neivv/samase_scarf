@@ -186,7 +186,9 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
                     let client_selection = condition.if_arithmetic_eq()
                         .filter(|x| x.1 == ctx.const_0())
                         .and_then(|x| x.0.if_memory())
-                        .map(|mem| ctx.mem_sub_const_op(mem, 11 * 4));
+                        .map(|mem| {
+                            ctx.mem_sub_const_op(mem, u64::from(11 * E::VirtualAddress::SIZE))
+                        });
                     if let Some(csl) = client_selection {
                         self.result = Some(csl);
                     }
