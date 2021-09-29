@@ -1452,6 +1452,12 @@ fn everything_1238f() {
     });
 }
 
+#[test]
+fn everything_1239a() {
+    test_with_extra_checks(Path::new("1239a.exe"), |_ctx, _analysis| {
+    });
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
 }
@@ -1686,11 +1692,10 @@ fn test_nongeneric<'e>(
         assert_eq!(sprite_size, 0x28);
     }
 
-    // Currently 1238d, 1238e, but not 1238f.
-    // Assuming that 1239a or 1240a will be built on that branch too.
+    // Currently 1238d, 1238e, but not 1238f nor 1239a
+    // Assuming that 1240a will be built on that branch too.
     let is_major_2021_patch =
         (minor_version == 23 && patch_version == 8 && revision >= b'd' && revision <= b'e') ||
-        (minor_version == 23 && patch_version >= 9) ||
         (minor_version >= 24);
 
     let euds = analysis.eud_table();
