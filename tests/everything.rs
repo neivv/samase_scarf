@@ -1979,6 +1979,23 @@ fn test_nongeneric<'e>(
     }
 
     assert_eq!(analysis.bnet_message_vtable_type(), Some(4));
+
+    let dump_text = samase_scarf::dump::dump_all(analysis);
+    let compare_path = format!("tests/compare/{}-32.txt", filename_str);
+    let compare_path = Path::new(&compare_path);
+    let compare = match std::fs::read(compare_path) {
+        Ok(o) => o,
+        Err(e) => panic!("Couldn't read compare file: {}", e),
+    };
+    let compare = String::from_utf8_lossy(&compare);
+    if dump_text != compare {
+        for (i, (a, b)) in dump_text.lines().zip(compare.lines()).enumerate() {
+            if a != b {
+                panic!("Text dump mismatch at line {}:\n{}\n{}\n", i, a, b);
+            }
+        }
+        panic!("Text dump didn't match compare (no lines in dump??)");
+    }
 }
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<u8> {

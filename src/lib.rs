@@ -53,6 +53,9 @@ mod x86_64_globals;
 
 pub mod dat;
 
+#[cfg(any(feature = "test_assertions", feature = "binaries_32", feature = "binaries_64"))]
+pub mod dump;
+
 use std::rc::Rc;
 
 use bumpalo::collections::Vec as BumpVec;

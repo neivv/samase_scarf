@@ -40,6 +40,7 @@ fern = { version = "0.6", optional = true }
 anyhow = { version = "1.0", optional = true }
 winapi = { version = "0.3", features = ["d3dcompiler"], optional = true }
 scopeguard = { version = "1.1", optional = true }
+rayon = { version = "1.5", optional = true }
 
 [dependencies.scarf]
 git = "https://github.com/neivv/scarf"
@@ -51,7 +52,7 @@ fern = "0.6"
 [features]
 test_assertions = []
 x86 = []
-binaries = ['fern', 'anyhow', 'winapi', 'scopeguard']
+binaries = ['fern', 'anyhow', 'winapi', 'scopeguard', 'rayon']
 binaries_32 = ['binaries']
 binaries_64 = ['binaries']
 

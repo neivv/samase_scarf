@@ -48,7 +48,10 @@ pub(crate) fn eud_table<'e, E: ExecutionState<'e>>(
     functions: &FunctionFinder<'_, 'e, E>,
 ) -> EudTable<'e> {
     fn finish_euds(result: &mut EudTable) {
-        result.euds.sort_unstable_by_key(|x| x.address);
+        // Note: Euds can have duplicate start adderesses sometimes, for
+        // consistent results also sort by size.
+        // At least some button sets have copies with different size/flags
+        result.euds.sort_unstable_by_key(|x| (x.address, x.size));
     }
 
     let binary = analysis.binary;

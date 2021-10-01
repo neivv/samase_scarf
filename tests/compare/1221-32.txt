@@ -1,0 +1,1924 @@
+-- Main --
+add_asset_change_callback: 00528320
+add_overlay_iscript: 0054d6e0
+ai_add_military_to_region: 00615e80
+ai_attack_prepare: 00616d20
+ai_prepare_moving_to: 005a9170
+ai_spell_cast: 00603440
+ai_spend_money: 005fb740
+ai_step_region: 00619800
+ai_train_military: 006176e0
+ai_update_attack_target: 00575ba0
+anim_asset_change_cb: 0054f820
+change_ai_region_state: 00612650
+check_dat_requirements: 00512790
+check_unit_requirements: 0061eb90
+choose_snp: 006fef60
+clamp_zoom: 005e3360
+clear_build_queue: 00562950
+create_bullet: 00541b70
+create_game_multiplayer: 006fd070
+create_lone_sprite: 0055bde0
+create_unit: 00583580
+deserialize_sprites: 00552fb0
+do_attack: 00575aa0
+do_attack_main: 00573e80
+do_next_queued_order: 0058d630
+draw_f10_menu_tooltip: 0076e3d0
+draw_game_layer: 005e5ab0
+draw_graphic_layers: 00942b10
+draw_image: 00551240
+draw_minimap_units: 006dfc80
+draw_tooltip_layer: 005d8660
+finish_unit_post: 00584110
+finish_unit_pre: 005844c0
+font_cache_render_ascii: 009443a0
+game_loop: 006d5ca0
+game_screen_rclick: 00729690
+get_mouse_x: None
+get_mouse_y: None
+get_region: 00735cd0
+give_ai: 0061b370
+give_unit: 00626520
+glucmpgn_event_handler: 006b4420
+init_game: 00690880
+init_game_network: 006fc9c0
+init_map_from_path: 006d7c30
+init_net_player: 00712530
+init_real_time_lighting: 0054d130
+init_skins: None
+init_sprites: 00552df0
+init_storm_networking: 006ff230
+init_units: 005853b0
+is_outside_game_screen: 006616a0
+join_game: None
+layout_draw_text: 009466a0
+load_dat: 006954d0
+load_images: 0054d1e0
+load_pcx: 006957c0
+load_snp_list: 0091a4c0
+mainmenu_entry_hook: 006d5a1e
+map_entry_load_map: 005db6c0
+map_entry_load_replay: 005da820
+map_entry_load_save: 005db060
+map_init_chk_callbacks: 00cd51e0
+menu_swish_in: 006c2d60
+menu_swish_out: 006c20c0
+open_anim_multi_file: 005159b0
+open_anim_single_file: 005153e0
+open_file: 00527860
+order_init_arbiter: 00596970
+play_smk: 00728360
+play_sound: 0075bbd0
+player_gained_upgrade: 005b10f0
+pre_mission_glue: 0065c370
+prepare_draw_image: 0054a830
+prepare_issue_order: 0058cee0
+print_text: 006dbe90
+process_commands: 00705d10
+process_events: 006869e0
+process_lobby_commands: 00705a10
+receive_storm_turns: 006f9f20
+remove_from_client_selection: 00588ac0
+remove_from_selections: 007510e0
+render_screen: 00943420
+reset_ui_event_handlers: 00694db0
+reveal_unit_area: 0057dc80
+run_dialog: 009573c0
+run_menus: 006c15c0
+sc_main: 006d4a20
+select_map_entry: 005e7350
+send_command: 0070a1a0
+serialize_sprites: 00553b10
+set_briefing_music: 006bbf20
+set_music: 0075c7f0
+set_unit_player: 0058b8c0
+show_mission_glue: 0065c430
+single_player_start: 006fd7f0
+snet_initialize_provider: 0091a290
+snet_recv_packets: 0091bed0
+snet_send_packets: 00918d50
+spawn_dialog: 00955ac0
+start_udp_server: 007cb540
+step_active_unit_frame: 005af110
+step_ai_script: 006077c0
+step_bnet_controller: 007aca40
+step_bullet_frame: 00543f20
+step_game_logic: 00696880
+step_game_loop: None
+step_hidden_unit_frame: 005af5d0
+step_iscript: 0054dbe0
+step_iscript_switch: 0054effc
+step_network: 0070a030
+step_objects: 006a8960
+step_order: 005adac0
+step_replay_commands: 00709b90
+step_unit_movement: 00590c10
+ttf_cache_character: 0094b7c0
+ttf_malloc: 00c5b188
+ttf_render_sdf: 0094fc60
+ui_default_scroll_handler: 00694cf0
+unit_apply_speed_upgrades: 005af9b0
+unit_buffed_acceleration: 0058b5d0
+unit_buffed_flingy_speed: 0058b690
+unit_buffed_turn_speed: 0058b630
+unit_changing_player: 00588fc0
+unit_update_speed: 005b0230
+unit_update_speed_iscript: 00595160
+update_visibility_point: 0055c470
+active_iscript_bullet: Mem32[ea2b38]
+active_iscript_flingy: Mem32[ea2b34]
+active_iscript_unit: Mem32[ea2b30]
+ai_regions: ed758c
+ai_transport_reachability_cached_region: edc3f8
+allocated_order_count: Mem32[eaf950]
+anti_troll: None
+asset_scale: Mem32[e4b998]
+base_anim_set: ead908
+bnet_controller: (Mem32[e59d00] ^ f2407e96)
+campaigns: e59c58
+cheat_flags: Mem32[106a910]
+chk_init_players: 10a8318
+client_selection: 10b75d8
+cmdbtns_ddsgrp: 10b6ab8
+cmdicons_ddsgrp: 10b6abc
+command_user: Mem32[e5480c]
+continue_game_loop: Mem8[107c1fe]
+current_tooltip_ctrl: Mem32[eb0cac]
+cursor_marker: Mem32[eb05ec]
+dat_requirement_error: Mem32[ee422c]
+dialog_return_code: Mem32[10d7c54]
+draw_cursor_marker: Mem8[eb05b9]
+fire_overlay_max: ea2b40
+first_active_bullet: Mem32[ea1a5c]
+first_active_unit: Mem32[eb080c]
+first_ai_script: Mem32[ed1eb8]
+first_dying_unit: Mem32[eb086c]
+first_fow_sprite: Mem32[eb05e0]
+first_free_bullet: Mem32[ea1a64]
+first_free_fow_sprite: Mem32[eb05d8]
+first_free_lone_sprite: Mem32[eb05c8]
+first_free_order: Mem32[eaf948]
+first_free_sprite: Mem32[eaf960]
+first_guard_ai: ee41b8
+first_hidden_unit: Mem32[eb081c]
+first_invisible_unit: Mem32[eb0b90]
+first_lone_sprite: Mem32[eb05d0]
+first_player_unit: eb0824
+first_revealer: Mem32[eb0820]
+fonts: 10d5450
+game: (Mem32[e4db18] ^ c27dacd8)
+game_data: 10a68b0
+global_event_handlers: 107b9e8
+graphic_layers: 10d5368
+image_grps: ea2f60
+image_overlays: ea7a50
+images_loaded: Mem8[10820e2]
+is_multiplayer: Mem8[10a5138]
+is_paused: Mem32[eb1f8c]
+is_placing_building: Mem8[10a4f34]
+is_replay: Mem32[10aa0b0]
+is_targeting: Mem32[10a9fd4]
+iscript_bin: Mem32[ea2f5c]
+last_active_bullet: Mem32[ea1a60]
+last_bullet_spawner: Mem32[ea1a6c]
+last_fow_sprite: Mem32[eb05e4]
+last_free_bullet: Mem32[ea1a68]
+last_free_fow_sprite: Mem32[eb05dc]
+last_free_lone_sprite: Mem32[eb05cc]
+last_free_order: Mem32[eaf94c]
+last_free_sprite: Mem32[eaf964]
+last_lone_sprite: Mem32[eb05d4]
+loaded_save: Mem32[e5511c]
+lobby_state: Mem8[10a4fad]
+local_player_id: Mem32[e54818]
+local_player_name: 10a5178
+local_storm_player_id: Mem32[e54820]
+local_unique_player_id: Mem32[e5481c]
+main_palette: eb0e58
+map_tile_flags: Mem32[eb1264]
+menu_screen_id: (((((Mem16[e8dc9c] >> 6) | (Mem32[e8dc9a] << a)) - 278d0497) ^ Mem32[107f094]) & ffffffff)
+mouse_x: Mem16[e547ec]
+mouse_y: Mem16[e547f0]
+net_player_flags: 10a5144
+net_player_to_game: 10a5268
+net_player_to_unique: 10a5238
+net_players: 10a79f0
+network_ready: Mem8[10a5139]
+next_game_step_tick: Mem32[107c208]
+original_chk_player_types: 10a5094
+palette_set: 10d5df0
+pathing: Mem32[10abf74]
+player_ai: eb2480
+player_ai_towns: ed0970
+player_skins: 10a52a0
+player_turns: 10a6d00
+player_turns_size: 10a6d30
+player_unit_skins: None
+players: ((Mem32[10a6880] ^ Mem32[e8d512]) ^ f2b5db5a)
+replay_bfix: None
+replay_data: Mem32[10a82f8]
+replay_gcfg: None
+replay_seek_frame: Mem32[10aa0a4]
+replay_show_entire_map: Mem32[10aa0ac]
+replay_visions: Mem8[10aa0a8]
+rng_enable: Mem32[10a82f0]
+rng_seed: Mem32[10a7ee0]
+scmain_state: Mem32[10820e4]
+screen_x: Mem32[eea508]
+screen_y: Mem32[eea50c]
+selections: 10b55f8
+skins: e55158
+sprite_hlines: eafc80
+sprite_hlines_end: eb0080
+sprites: Mem32[eafc70]
+status_screen_mode: Mem8[10b6bba]
+step_game_frames: Mem32[e4f0d8]
+storm_command_user: Mem32[e54814]
+sync_active: Mem32[10a6cf8]
+sync_data: 10a8ba8
+tfontgam: 10d5480
+tooltip_draw_func: Mem32[eb0ca8]
+unique_command_user: Mem32[e54810]
+unit_should_reveal_area: Mem32[eb08e8]
+unit_strength: ed2030
+units: Mem32[eb085c]
+vertex_buffer: e5da00
+vision_update_counter: Mem32[107c1c8]
+vision_updated: Mem8[107c1d0]
+wirefram_ddsgrp: 10b7984
+zoom: Mem32[e4ce58]
+join_param_variant_type_offset: None
+Buttonsets: [VirtualAddress(00e58230)]
+Unit status: [VirtualAddress(00e58de8)]
+Req tables:
+Units: [(VirtualAddress(0061ea8f), 2), (VirtualAddress(0061ea9b), 2), (VirtualAddress(0061eb35), 0), (VirtualAddress(0061eb45), 0), (VirtualAddress(0061eb4c), 0), (VirtualAddress(0061ecfe), 0), (VirtualAddress(0061ed54), 2), (VirtualAddress(0061edbe), 2), (VirtualAddress(0061eff6), 2), (VirtualAddress(0061f058), 2), (VirtualAddress(0061f0b3), 2), (VirtualAddress(0061f0c5), 2), (VirtualAddress(0061f30d), 0), (VirtualAddress(0061f317), 2), (VirtualAddress(00e4d9bc), 0)]
+Upgrades: [(VirtualAddress(0051359a), 2), (VirtualAddress(005135b3), 2), (VirtualAddress(00513625), 0), (VirtualAddress(00513630), 0), (VirtualAddress(00513637), 0), (VirtualAddress(0051373f), 0), (VirtualAddress(00e4ac64), 0)]
+Tech use: [(VirtualAddress(0051335f), 2), (VirtualAddress(0051336a), 2), (VirtualAddress(005133f5), 0), (VirtualAddress(00513400), 0), (VirtualAddress(00513407), 0), (VirtualAddress(00513502), 0), (VirtualAddress(00e4ac60), 0)]
+Tech research: [(VirtualAddress(005130dd), 2), (VirtualAddress(005130e8), 2), (VirtualAddress(00513185), 0), (VirtualAddress(00513190), 0), (VirtualAddress(00513197), 0), (VirtualAddress(005132a6), 0), (VirtualAddress(00e4ac6c), 0)]
+Orders: [(VirtualAddress(00512e01), 2), (VirtualAddress(00512e0d), 2), (VirtualAddress(00512ea5), 0), (VirtualAddress(00512eb0), 0), (VirtualAddress(00512eb7), 0), (VirtualAddress(0051302c), 0), (VirtualAddress(00e4ac68), 0)]
+Aiscript hook: Some(
+    AiScriptHook {
+        op_limit_hook_begin: VirtualAddress(0060784b),
+        op_limit_hook_end: VirtualAddress(0060785d),
+        op_limit_ok: VirtualAddress(0060785d),
+        op_limit_fail: VirtualAddress(00609785),
+        opcode_operand: rcx,
+        script_operand_at_switch: rsi,
+        switch_table: VirtualAddress(00609bf0),
+        switch_base: None,
+        switch_loop_address: VirtualAddress(0060974e),
+        return_address: VirtualAddress(006097b2),
+    },
+)
+step_order_hidden: [Inlined { entry: VirtualAddress(005af683), exit: VirtualAddress(005af763), unit: rsi }]
+step_secondary_order: [Inlined { entry: VirtualAddress(005af464), exit: VirtualAddress(005af50d), unit: rsi }]
+command_lengths: len 67, [-1, -1, -1, -1, -1, 1, 33, 33, 1, 26, 26, 26, 8, 3, 5, 2, 1, 1, 5, 3, 10, 11, -1, -1, 1, 1, 2, 1, 1, 1, 2, 3, 3, 2, 2, 3, 1, 2, 2, 1, 2, 3, 1, 2, 2, 2, 1, 5, 2, 1, 2, 1, 1, 3, 1, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 10, 2, 5, -1, 1, -1, 82, 5, -1, 2, 12, 13, 5, 50, 50, 50, 4]
+units.dat: e4a528 (entry size 16)
+weapons.dat: e4aa70 (entry size 16)
+flingy.dat: e4a000 (entry size 16)
+sprites.dat: e4a3b0 (entry size 16)
+images.dat: e4a0a0 (entry size 16)
+orders.dat: e4a1b0 (entry size 16)
+upgrades.dat: e4a970 (entry size 16)
+techdata.dat: e4a438 (entry size 16)
+sfxdata.dat: None
+portdata.dat: e4a340 (entry size 16)
+mapdata.dat: e5a7fc (entry size 32)
+step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdi, opcode_check: (VirtualAddress(0054dc2a), 2) })
+sprite_x: Custom_0
+sprite_x_offset: Some(14)
+sprite_x_size: Some(Mem16)
+sprite_y: Custom_0
+sprite_y_offset: Some(16)
+sprite_y_size: Some(Mem16)
+795 euds
+renderer_vtables: [VirtualAddress(00d115f8), VirtualAddress(00d11664)]
+skins_size: 15e
+snp_definitions: e59e58, 90 bytes
+sprite_struct_size: Some("0x24")
+anim_struct_size: Some("0x4c")
+set_limits: Some(VirtualAddress(005de6b0))
+limits.images: [(ea2f48, 0, 0)]
+limits.sprites: [(eafc70, 0, 0), (eb1f98, 1, 0), (eb1fa8, 0, 0)]
+limits.lone_sprites: [(eb05ac, 0, 0)]
+limits.units: [(ea1a40, 0, 0), (eb0610, 0, 2), (eb061c, 0, 2), (eb06e8, 1, 0), (eb06f4, 1, 0), (eb085c, 0, 0)]
+limits.bullets: [(ea1a4c, 0, 0)]
+limits.orders: [(eaf93c, 0, 0)]
+limits.fow_sprites: [(eb05bc, 0, 0)]
+CreateGameScreen.on_multiplayer_create offset: Some(a8)
+Prism vertex shader sets: 0x0
+Prism pixel shader sets: 0x0
+Prism vertex shaders: []
+Prism pixel shaders: []
+set_status_screen_tooltip: None
+SMemAlloc: Some(VirtualAddress(0090b5a0))
+SMemFree: Some(VirtualAddress(0090b5e0))
+allocator: None
+grpwire_grp: Mem32[10b6b7c]
+grpwire_ddsgrp: 10b6b84
+tranwire_grp: Mem32[10b6b78]
+tranwire_ddsgrp: 10b6b90
+status_screen: Mem32[10b6b80]
+status_screen_event_handler: Some(VirtualAddress(00765820))
+init_status_screen: Some(VirtualAddress(00765bb0))
+trigger_conditions: Some(VirtualAddress(00e4dab0))
+trigger_actions: Some(VirtualAddress(00e4d9c0))
+trigger_all_units_cache: ee77b0
+trigger_completed_units_cache: ee4cf0
+replay_minimap_unexplored_fog_patch: Some((VirtualAddress(006dfd2a), [90, 90]))
+crt_fastfail: [VirtualAddress(00c45bbe), VirtualAddress(00c45cc5), VirtualAddress(00c46fb5), VirtualAddress(00c52c12), VirtualAddress(00c53fb5)]
+
+-- Euds --
+00000000:0 = 0 (00000000)
+00200000:1000 = 0 (07010000)
+00201000:6000 = 0 (07010000)
+0041e0d0:4 = 0 (07010000)
+00423180:4 = Mem32[e581f0] (06000010)
+004231d0:4 = Mem32[e581fc] (06000010)
+004231f0:4 = Mem32[e5811c] (06000010)
+00423210:4 = Mem32[e58138] (06000010)
+00423230:4 = Mem32[e5818c] (06000010)
+00423270:4 = Mem32[e58060] (06000010)
+00423290:4 = Mem32[e580f0] (06000010)
+004232b0:4 = Mem32[e580e8] (06000010)
+004232d0:4 = Mem32[e58194] (06000010)
+004232f0:4 = Mem32[e581b8] (06000010)
+00423310:4 = Mem32[e581a0] (06000010)
+00423330:4 = Mem32[e581b0] (06000010)
+00423350:4 = Mem32[e581a8] (06000010)
+00423370:4 = Mem32[e58048] (06000010)
+00423390:4 = Mem32[e58150] (06000010)
+004233b0:4 = Mem32[e5815c] (06000010)
+004233d0:4 = Mem32[e58140] (06000010)
+004233f0:4 = Mem32[e58038] (06000010)
+00423410:4 = Mem32[e580d8] (06000010)
+00423430:4 = Mem32[e581ec] (06000010)
+00423450:4 = Mem32[e5807c] (06000010)
+00423470:4 = Mem32[e58084] (06000010)
+00423490:4 = Mem32[e58158] (06000010)
+004234b0:4 = Mem32[e58170] (06000010)
+004234d0:4 = Mem32[e58050] (06000010)
+00423730:4 = Mem32[e58058] (06000010)
+00423760:4 = Mem32[e580a8] (06000010)
+00423790:4 = Mem32[e580d4] (06000010)
+00423860:4 = Mem32[e581c8] (06000010)
+00423930:4 = Mem32[e581c4] (06000010)
+004239e0:4 = Mem32[e580cc] (06000010)
+00423a40:4 = Mem32[e5806c] (06000010)
+00423aa0:4 = Mem32[e581d8] (06000010)
+00423b00:4 = Mem32[e580c8] (06000010)
+00423b40:4 = Mem32[e580c0] (06000010)
+00423b70:4 = Mem32[e580a0] (06000010)
+00423bd0:4 = Mem32[e58098] (06000010)
+00423c30:4 = Mem32[e58184] (06000010)
+00423c40:4 = Mem32[e581d0] (06000010)
+00423c50:4 = Mem32[e58200] (06000010)
+00423d10:4 = Mem32[e5817c] (06000010)
+00423dd0:4 = Mem32[e58208] (06000010)
+00423e90:4 = Mem32[e581dc] (06000010)
+00423eb0:4 = Mem32[e58204] (06000010)
+00423f70:4 = Mem32[e58064] (06000010)
+00424140:4 = Mem32[e58044] (06000010)
+004241a0:4 = Mem32[e58164] (06000010)
+00424200:4 = Mem32[e58148] (06000010)
+00424260:4 = Mem32[e5813c] (06000010)
+004242c0:4 = Mem32[e581c0] (06000010)
+00424320:4 = Mem32[e58108] (06000010)
+00424380:4 = Mem32[e58040] (06000010)
+00424440:4 = Mem32[e58034] (06000010)
+004244a0:4 = Mem32[e58178] (06000010)
+00424500:4 = Mem32[e59950] (09000010)
+00424520:4 = Mem32[e59954] (09000010)
+00424980:4 = Mem32[e59934] (09000010)
+00424ac0:4 = Mem32[e59974] (09000010)
+00424af0:4 = Mem32[e5993c] (09000010)
+00424b50:4 = Mem32[e59964] (09000010)
+00424f10:4 = Mem32[e59938] (09000010)
+00425180:4 = Mem32[e59960] (09000010)
+00425900:4 = Mem32[e5996c] (09000010)
+00425ee0:4 = Mem32[e59978] (09000010)
+00426918:4 = 0 (07010000)
+00426ee0:4 = Mem32[e5994c] (09000010)
+00426f50:4 = Mem32[e59958] (09000010)
+00427260:4 = Mem32[e59970] (09000010)
+004273e0:4 = Mem32[e59940] (09000010)
+004274a0:4 = Mem32[e59968] (09000010)
+00427890:4 = Mem32[e5995c] (09000010)
+00427900:4 = 0 (07010000)
+00427c90:4 = Mem32[e59944] (09000010)
+00427cdc:4 = 0 (07010000)
+00427d30:4 = Mem32[e59948] (09000010)
+004282d0:4 = Mem32[e58030] (06000010)
+00428310:4 = Mem32[e580b8] (06000010)
+00428340:4 = Mem32[e581cc] (06000010)
+00428360:4 = Mem32[e58168] (06000010)
+004283c0:4 = Mem32[e580dc] (06000010)
+004283f0:4 = Mem32[e58180] (06000010)
+00428420:4 = Mem32[e5816c] (06000010)
+00428440:4 = Mem32[e581d4] (06000010)
+00428480:4 = Mem32[e58124] (06000010)
+004284b0:4 = Mem32[e58120] (06000010)
+004284e0:4 = Mem32[e581e8] (06000010)
+00428500:4 = Mem32[e581f4] (06000010)
+00428530:4 = Mem32[e58154] (06000010)
+00428560:4 = Mem32[e580a4] (06000010)
+004285a0:4 = Mem32[e5809c] (06000010)
+004285e0:4 = Mem32[e58094] (06000010)
+00428610:4 = Mem32[e58090] (06000010)
+00428640:4 = Mem32[e5808c] (06000010)
+00428670:4 = Mem32[e58088] (06000010)
+004286a0:4 = Mem32[e58160] (06000010)
+004286e0:4 = Mem32[e58144] (06000010)
+00428730:4 = Mem32[e580fc] (06000010)
+00428780:4 = Mem32[e580f8] (06000010)
+004287d0:4 = Mem32[e58188] (06000010)
+00428810:4 = Mem32[e58068] (06000010)
+00428860:4 = Mem32[e58074] (06000010)
+004288e0:4 = Mem32[e581ac] (06000010)
+00428900:4 = Mem32[e581b4] (06000010)
+00428920:4 = Mem32[e58190] (06000010)
+00428960:4 = Mem32[e58198] (06000010)
+00428990:4 = Mem32[e580b4] (06000010)
+00428a10:4 = Mem32[e580ac] (06000010)
+00428ad0:4 = Mem32[e5812c] (06000010)
+00428b80:4 = Mem32[e58128] (06000010)
+00428c30:4 = Mem32[e58104] (06000010)
+00428cb0:4 = Mem32[e58100] (06000010)
+00428d40:4 = Mem32[e58210] (06000010)
+00428da0:4 = Mem32[e5820c] (06000010)
+00428e00:4 = Mem32[e5814c] (06000010)
+00428e60:4 = Mem32[e580d0] (06000010)
+00428ea0:4 = Mem32[e580c4] (06000010)
+00428ed0:4 = Mem32[e581bc] (06000010)
+00428f30:4 = Mem32[e5803c] (06000010)
+00428fa0:4 = Mem32[e580e0] (06000010)
+00428ff0:4 = Mem32[e580bc] (06000010)
+00429070:4 = Mem32[e580ec] (06000010)
+004290f0:4 = Mem32[e580e4] (06000010)
+00429170:4 = Mem32[e58080] (06000010)
+004291c0:4 = Mem32[e58078] (06000010)
+00429210:4 = Mem32[e58110] (06000010)
+004292c0:4 = Mem32[e5810c] (06000010)
+00429370:4 = Mem32[e5805c] (06000010)
+004293e0:4 = Mem32[e58054] (06000010)
+00429450:4 = Mem32[e5819c] (06000010)
+00429470:4 = Mem32[e58070] (06000010)
+004294e0:4 = Mem32[e5804c] (06000010)
+00429500:4 = Mem32[e581a4] (06000010)
+00429520:4 = Mem32[e58174] (06000010)
+00429640:4 = Mem32[e58118] (06000010)
+00429680:4 = Mem32[e58114] (06000010)
+004296b0:4 = Mem32[e58134] (06000010)
+004296f0:4 = Mem32[e58130] (06000010)
+00429720:4 = Mem32[e580f4] (06000010)
+00429740:4 = Mem32[e581f8] (06000010)
+00429770:4 = Mem32[e581e0] (06000010)
+00429780:4 = Mem32[e581e4] (06000010)
+0045134c:4 = 0 (07010000)
+00451350:4 = 0 (07010000)
+00459af0:4 = Mem32[e580b0] (06000010)
+0046044c:4 = 0 (07010000)
+004887c0:4 = 0 (07010000)
+00489204:4 = 0 (07010000)
+00492f90:4 = 0 (07010000)
+004a3898:4 = 0 (07010000)
+004a389c:4 = 0 (07010000)
+004b995c:4 = 0 (07010000)
+004bd5ec:4 = 0 (07010000)
+004bd5f0:4 = 0 (07010000)
+004d68f4:4 = 0 (07010000)
+004d98bc:4 = 0 (07010000)
+004deac0:4 = Mem32[e58214] (06000010)
+004deaf0:4 = Mem32[e58224] (06000010)
+004deb40:4 = Mem32[e5821c] (06000010)
+004df260:4 = Mem32[e58228] (06000010)
+004df2c0:4 = Mem32[e58218] (06000010)
+004df300:4 = Mem32[e58220] (06000010)
+004f3288:4 = 0 (07010000)
+004f3360:4 = 0 (07010000)
+004fdfbc:4 = 0 (07010000)
+004ff900:c = 0 (07010000)
+0050cdc0:101 = 0 (2d000000)
+0050e064:4 = Mem32[e4f68c] (00000000)
+005124d8:1c = Mem32[e4f110] (00000000)
+00512678:4 = Mem32[e54824] (30000000)
+0051267c:4 = Mem32[e5482c] (30000000)
+00512684:4 = Mem32[e54828] (30000000)
+00512688:4 = Mem32[e54830] (30000000)
+00512708:4c = 0 (2b000000)
+005128f8:a0 = 0 (07010000)
+00513b68:31 = Mem32[e55120] (00000000)
+00514178:442 = Mem32[e4d9bc] (00000000)
+005145bc:4 = 106dd50 (00000000)
+005145c0:346 = Mem32[e4ac64] (00000000)
+00514908:13e = Mem32[e4ac6c] (00000000)
+00514a48:2b0 = Mem32[e4ac60] (00000000)
+00514cf8:524 = Mem32[e4ac68] (00000000)
+0051521c:8 = 0 (07010000)
+005152a8:54 = 0 (07010000)
+005152fc:4 = 106ddc0 (00000000)
+00515300:48 = 0 (07010000)
+00515348:3c = 0 (07010000)
+00515384:4 = 106ddbc (00000000)
+00515388:60 = 0 (07010000)
+00515af8:10 = Mem32[e54ce8] (00000000)
+00515b08:10 = Mem32[e54cec] (00000000)
+00515b18:20 = Mem32[e54cf0] (00000000)
+00515b38:20 = Mem32[e54cf4] (00000000)
+00515b58:8 = Mem32[e54cf8] (00000000)
+00515b60:8 = Mem32[e54cfc] (00000000)
+00515b68:8 = Mem32[e54d00] (00000000)
+00515b70:78 = Mem32[e4ebe0] (00000000)
+00515be8:4 = Mem32[e58028] (0b000010)
+00515be8:3c = Mem32[e58028] (06000000)
+00515c24:4 = Mem32[e5802c] (0b000010)
+00515c24:3c = Mem32[e5802c] (06000000)
+00515c60:4 = Mem32[e57fe0] (0b000010)
+00515c60:14 = Mem32[e57fe0] (06000000)
+00515c74:4 = Mem32[e57fe4] (0b000010)
+00515c74:14 = Mem32[e57fe4] (06000000)
+00515c88:4 = Mem32[e57fe8] (0b000010)
+00515c88:14 = Mem32[e57fe8] (06000000)
+00515c9c:4 = Mem32[e57fec] (0b000010)
+00515c9c:28 = Mem32[e57fec] (06000000)
+00515cc4:4 = Mem32[e57ff0] (0b000010)
+00515cc4:14 = Mem32[e57ff0] (06000000)
+00515cd8:4 = Mem32[e57ff4] (0b000010)
+00515cd8:28 = Mem32[e57ff4] (06000000)
+00515d00:4 = Mem32[e57ff8] (0b000010)
+00515d00:14 = Mem32[e57ff8] (06000000)
+00515d14:4 = Mem32[e57ffc] (0b000010)
+00515d14:3c = Mem32[e57ffc] (06000000)
+00515d50:4 = Mem32[e58000] (0b000010)
+00515d50:14 = Mem32[e58000] (06000000)
+00515d64:4 = 106dca0 (00000000)
+00515d68:4 = Mem32[e5801c] (0b000010)
+00515d68:64 = Mem32[e5801c] (06000000)
+00515dd0:4 = Mem32[e560dc] (0b000010)
+00515dd0:64 = Mem32[e560dc] (06000000)
+00515e34:4 = 106dcb8 (00000000)
+00515e38:4 = Mem32[e58020] (0b000010)
+00515e38:64 = Mem32[e58020] (06000000)
+00515e9c:4 = 106ddf0 (00000000)
+00515ea0:4 = Mem32[e564c4] (0b000010)
+00515ea0:8c = Mem32[e564c4] (06000000)
+00515f2c:4 = Mem32[e57f68] (0b000010)
+00515f2c:28 = Mem32[e57f68] (06000000)
+00515f54:4 = 106dcd8 (00000000)
+00515f58:4 = Mem32[e56884] (0b000010)
+00515f58:b4 = Mem32[e56884] (06000000)
+0051600c:4 = Mem32[e56914] (0b000010)
+0051600c:14 = Mem32[e56914] (06000000)
+00516020:4 = Mem32[e56b14] (0b000010)
+00516020:b4 = Mem32[e56b14] (06000000)
+005160d4:4 = 106ddf4 (00000000)
+005160d8:4 = Mem32[e58004] (0b000010)
+005160d8:8c = Mem32[e58004] (06000000)
+00516164:4 = 106dd30 (00000000)
+00516168:4 = Mem32[e58010] (0b000010)
+00516168:78 = Mem32[e58010] (06000000)
+005161e0:4 = Mem32[e569a4] (0b000010)
+005161e0:8c = Mem32[e569a4] (06000000)
+0051626c:4 = 106dcc4 (00000000)
+00516270:4 = Mem32[e56aac] (0b000010)
+00516270:a0 = Mem32[e56aac] (06000000)
+00516310:4 = Mem32[e56dfc] (0b000010)
+00516310:8c = Mem32[e56dfc] (06000000)
+0051639c:4 = 106ddc8 (00000000)
+005163a0:4 = Mem32[e57e24] (0b000010)
+005163a0:8c = Mem32[e57e24] (06000000)
+0051642c:4 = 106ddf8 (00000000)
+00516430:4 = Mem32[e56e64] (0b000010)
+00516430:b4 = Mem32[e56e64] (06000000)
+005164e4:4 = 106ddfc (00000000)
+005164e8:4 = Mem32[e56f44] (0b000010)
+005164e8:b4 = Mem32[e56f44] (06000000)
+0051659c:4 = 106dccc (00000000)
+005165a0:4 = Mem32[e5704c] (0b000010)
+005165a0:8c = Mem32[e5704c] (06000000)
+0051662c:4 = 106ddcc (00000000)
+00516630:4 = Mem32[e57104] (0b000010)
+00516630:c8 = Mem32[e57104] (06000000)
+005166f8:4 = Mem32[e57f2c] (0b000010)
+005166f8:b4 = Mem32[e57f2c] (06000000)
+005167ac:4 = 106dda0 (00000000)
+005167b0:4 = Mem32[e57f74] (0b000010)
+005167b0:64 = Mem32[e57f74] (06000000)
+00516814:4 = 106dcbc (00000000)
+00516818:4 = Mem32[e57f78] (0b000010)
+00516818:b4 = Mem32[e57f78] (06000000)
+005168cc:4 = 106ddd0 (00000000)
+005168d0:4 = Mem32[e57f7c] (0b000010)
+005168d0:a0 = Mem32[e57f7c] (06000000)
+00516970:4 = Mem32[e57f80] (0b000010)
+00516970:14 = Mem32[e57f80] (06000000)
+00516984:4 = 106ddd4 (00000000)
+00516988:4 = Mem32[e57f9c] (0b000010)
+00516988:50 = Mem32[e57f9c] (06000000)
+005169d8:4 = Mem32[e57f8c] (0b000010)
+005169d8:3c = Mem32[e57f8c] (06000000)
+00516a14:4 = Mem32[e57fa0] (0b000010)
+00516a14:3c = Mem32[e57fa0] (06000000)
+00516a50:4 = Mem32[e57fa4] (0b000010)
+00516a50:28 = Mem32[e57fa4] (06000000)
+00516a78:4 = Mem32[e57f84] (0b000010)
+00516a78:64 = Mem32[e57f84] (06000000)
+00516adc:4 = 106dcb0 (00000000)
+00516ae0:4 = Mem32[e57f90] (0b000010)
+00516ae0:64 = Mem32[e57f90] (06000000)
+00516b44:4 = 106de00 (00000000)
+00516b48:4 = Mem32[e57f88] (0b000010)
+00516b48:64 = Mem32[e57f88] (06000000)
+00516bac:4 = 106dcb4 (00000000)
+00516bb0:4 = Mem32[e57f94] (0b000010)
+00516bb0:50 = Mem32[e57f94] (06000000)
+00516c00:4 = Mem32[e57f98] (0b000010)
+00516c00:3c = Mem32[e57f98] (06000000)
+00516c3c:4 = Mem32[e57fa8] (0b000010)
+00516c3c:3c = Mem32[e57fa8] (06000000)
+00516c78:4 = Mem32[e57484] (0b000010)
+00516c78:8c = Mem32[e57484] (06000000)
+00516d04:4 = 106ddd8 (00000000)
+00516d08:4 = Mem32[e5800c] (0b000010)
+00516d08:b4 = Mem32[e5800c] (06000000)
+00516dbc:4 = 106dddc (00000000)
+00516dc0:4 = Mem32[e58018] (0b000010)
+00516dc0:b4 = Mem32[e58018] (06000000)
+00516e74:4 = 106dde0 (00000000)
+00516e78:4 = Mem32[e57514] (0b000010)
+00516e78:a0 = Mem32[e57514] (06000000)
+00516f18:4 = Mem32[e57224] (0b000010)
+00516f18:8c = Mem32[e57224] (06000000)
+00516fa4:4 = 106dcd0 (00000000)
+00516fa8:4 = Mem32[e57b84] (0b000010)
+00516fa8:8c = Mem32[e57b84] (06000000)
+00517034:4 = 106dda4 (00000000)
+00517038:4 = Mem32[e57d94] (0b000010)
+00517038:8c = Mem32[e57d94] (06000000)
+005170c4:4 = 106ddb8 (00000000)
+005170c8:4 = Mem32[e5789c] (0b000010)
+005170c8:8c = Mem32[e5789c] (06000000)
+00517154:4 = 106dde4 (00000000)
+00517158:4 = Mem32[e57c64] (0b000010)
+00517158:8c = Mem32[e57c64] (06000000)
+005171e4:4 = 106dcdc (00000000)
+005171e8:4 = Mem32[e571bc] (0b000010)
+005171e8:78 = Mem32[e571bc] (06000000)
+00517260:4 = Mem32[e572dc] (0b000010)
+00517260:8c = Mem32[e572dc] (06000000)
+005172ec:4 = 106dd34 (00000000)
+005172f0:4 = Mem32[e57fac] (0b000010)
+005172f0:64 = Mem32[e57fac] (06000000)
+00517354:4 = 106dca4 (00000000)
+00517358:4 = Mem32[e57fb4] (0b000010)
+00517358:78 = Mem32[e57fb4] (06000000)
+005173d0:4 = Mem32[e57fc8] (0b000010)
+005173d0:78 = Mem32[e57fc8] (06000000)
+00517448:4 = Mem32[e57fb8] (0b000010)
+00517448:28 = Mem32[e57fb8] (06000000)
+00517470:4 = Mem32[e57fbc] (0b000010)
+00517470:50 = Mem32[e57fbc] (06000000)
+005174c0:4 = Mem32[e57fc0] (0b000010)
+005174c0:a0 = Mem32[e57fc0] (06000000)
+00517560:4 = Mem32[e57fc4] (0b000010)
+00517560:50 = Mem32[e57fc4] (06000000)
+005175b0:4 = Mem32[e57fcc] (0b000010)
+005175b0:8c = Mem32[e57fcc] (06000000)
+0051763c:4 = 106de10 (00000000)
+00517640:4 = Mem32[e57fd0] (0b000010)
+00517640:64 = Mem32[e57fd0] (06000000)
+005176a4:4 = 106dcac (00000000)
+005176a8:4 = Mem32[e57fd4] (0b000010)
+005176a8:50 = Mem32[e57fd4] (06000000)
+005176f8:4 = Mem32[e57fd8] (0b000010)
+005176f8:14 = Mem32[e57fd8] (06000000)
+0051770c:4 = Mem32[e57fb0] (0b000010)
+0051770c:3c = Mem32[e57fb0] (06000000)
+00517748:4 = Mem32[e58024] (0b000010)
+00517748:8c = Mem32[e58024] (06000000)
+005177d4:4 = 106dca8 (00000000)
+005177d8:4 = Mem32[e55e64] (0b000010)
+005177d8:78 = Mem32[e55e64] (06000000)
+00517850:4 = Mem32[e567f4] (0b000010)
+00517850:8c = Mem32[e567f4] (06000000)
+005178dc:4 = 106dda8 (00000000)
+005178e0:4 = Mem32[e56314] (0b000010)
+005178e0:b4 = Mem32[e56314] (06000000)
+00517994:4 = 106dde8 (00000000)
+00517998:4 = Mem32[e58008] (0b000010)
+00517998:b4 = Mem32[e58008] (06000000)
+00517a4c:4 = 106de04 (00000000)
+00517a50:4 = Mem32[e58014] (0b000010)
+00517a50:64 = Mem32[e58014] (06000000)
+00517ab4:4 = 106de08 (00000000)
+00517ab8:4 = Mem32[e55ef4] (0b000010)
+00517ab8:b4 = Mem32[e55ef4] (06000000)
+00517b6c:4 = 106dd4c (00000000)
+00517b70:4 = Mem32[e56634] (0b000010)
+00517b70:a0 = Mem32[e56634] (06000000)
+00517c10:4 = Mem32[e56074] (0b000010)
+00517c10:78 = Mem32[e56074] (06000000)
+00517c88:4 = Mem32[e56194] (0b000010)
+00517c88:8c = Mem32[e56194] (06000000)
+00517d14:4 = 106dcc0 (00000000)
+00517d18:4 = Mem32[e5637c] (0b000010)
+00517d18:8c = Mem32[e5637c] (06000000)
+00517da4:4 = 106dd48 (00000000)
+00517da8:4 = Mem32[e563e4] (0b000010)
+00517da8:a0 = Mem32[e563e4] (06000000)
+00517e48:4 = Mem32[e5657c] (0b000010)
+00517e48:78 = Mem32[e5657c] (06000000)
+00517ec0:4 = Mem32[e56764] (0b000010)
+00517ec0:78 = Mem32[e56764] (06000000)
+00517f38:4 = Mem32[e57f30] (0b000010)
+00517f38:c8 = Mem32[e57f30] (06000000)
+00518000:4 = Mem32[e57f34] (0b000010)
+00518000:14 = Mem32[e57f34] (06000000)
+00518014:4 = Mem32[e57f38] (0b000010)
+00518014:28 = Mem32[e57f38] (06000000)
+0051803c:4 = Mem32[e57f6c] (0b000010)
+0051803c:28 = Mem32[e57f6c] (06000000)
+00518068:4 = Mem32[e57f3c] (0b000010)
+00518068:dc = Mem32[e57f3c] (06000000)
+00518144:4 = 106dd44 (00000000)
+00518148:4 = Mem32[e57f44] (0b000010)
+00518148:f0 = Mem32[e57f44] (06000000)
+00518238:4 = Mem32[e57f50] (0b000010)
+00518238:f0 = Mem32[e57f50] (06000000)
+00518328:4 = Mem32[e57f48] (0b000010)
+00518328:104 = Mem32[e57f48] (06000000)
+0051842c:4 = 106dd38 (00000000)
+00518430:4 = Mem32[e57f4c] (0b000010)
+00518430:50 = Mem32[e57f4c] (06000000)
+00518480:4 = Mem32[e57f60] (0b000010)
+00518480:8c = Mem32[e57f60] (06000000)
+0051850c:4 = 106dcd4 (00000000)
+00518510:4 = Mem32[e57f54] (0b000010)
+00518510:78 = Mem32[e57f54] (06000000)
+00518588:4 = Mem32[e57f58] (0b000010)
+00518588:50 = Mem32[e57f58] (06000000)
+005185d8:4 = Mem32[e57f64] (0b000010)
+005185d8:64 = Mem32[e57f64] (06000000)
+0051863c:4 = 106dd3c (00000000)
+00518640:4 = Mem32[e57f40] (0b000010)
+00518640:8c = Mem32[e57f40] (06000000)
+005186cc:4 = 106dd40 (00000000)
+005186d0:4 = Mem32[e57f5c] (0b000010)
+005186d0:78 = Mem32[e57f5c] (06000000)
+00518748:4 = Mem32[e57f70] (0b000010)
+00518748:8c = Mem32[e57f70] (06000000)
+005187d4:4 = Mem32[e57fdc] (0b000010)
+005187d4:14 = Mem32[e57fdc] (06000000)
+005187e8:bb8 = Mem32[e55cf4] (0b000000)
+005193a0:ab0 = Mem32[e55dac] (09000000)
+0051a280:c = 0 (04000000)
+0051a28c:c = 0 (04000000)
+0051a298:c = 0 (04000000)
+0051a2a4:c = 0 (04000000)
+0051a2b0:c = 0 (04000000)
+0051a2bc:c = 0 (04000000)
+0051a2c8:c = 0 (04000000)
+0051a2d4:c = 0 (04000000)
+0051a424:16 = 0 (07010000)
+0051a440:17 = 0 (07010000)
+0051aab0:17 = 0 (07010000)
+0051aac8:17 = 0 (07010000)
+0051aae0:17 = 0 (07010000)
+0051ab94:19 = 0 (07010000)
+0051abb0:10 = 0 (07010000)
+0051abc0:14 = 0 (07010000)
+0051abd4:1a = 0 (07010000)
+0051abf0:c = 0 (07010000)
+0051abfc:14 = Mem32[e4c740] (00000000)
+0051ac10:19 = 0 (07010000)
+0051ac2c:18 = 0 (07010000)
+0051ac48:12 = 0 (07010000)
+0051ac5c:17 = 0 (07010000)
+0051ac74:10 = 0 (07010000)
+0051ad18:16 = 0 (07010000)
+0051baf8:100 = 0 (07010000)
+0051ca14:4 = Mem32[e5494c] (00000000)
+0051ce70:1c = Mem32[e4f118] (00000002)
+0051ce8c:4 = Mem32[e4f11c] (00000000)
+0051ce98:4 = Mem32[e4f120] (00000000)
+0051cea0:4 = Mem32[e4f114] (00000002)
+0051ced0:f9c = 1073be0 (00000002)
+0051f2a8:4e0c = 106de30 (00000002)
+005240d0:3e7 = Mem32[e4c5f8] (00000000)
+0052e4c0:4 = 1075b1c (00000000)
+0052e5c8:f9c = 1072c40 (00000002)
+0052f568:4e200 = 0 (18000002)
+0057eb68:4 = 106de28 (00000002)
+0057eb70:4 = 106de2c (00000002)
+0057eee0:1b0 = 0 (08000000)
+0057f090:4 = Mem32[e54838] (00000002)
+0057f0b4:1 = Mem32[e54834] (00000002)
+0057f0d8:4 = Mem32[e5483c] (00000002)
+005967f8:8d = Mem32[e54840] (00000000)
+00596a18:ff = Mem32[e4f000] (35000000)
+00597208:34 = 0 (33000000)
+00597238:4 = 1077a5c (00000000)
+0059723c:1 = Mem32[e59b20] (00000000)
+005973a0:2000 = 0 (07010000)
+005993c4:4 = 0 (23000020)
+005993d4:4 = 0 (01000020)
+0059c6c0:400 = 0 (07010000)
+0059cb5c:4 = Mem32[e54738] (36000020)
+0059cb60:100 = 0 (07010000)
+0059cc78:4 = Mem32[e54950] (00000000)
+0059cc80:4 = Mem32[e54954] (00000000)
+0059cca8:8b740 = 0 (15000000)
+006283f0:4 = Mem32[e4c778] (00000002)
+006283f8:30 = Mem32[e4c774] (2e000000)
+00628428:4 = Mem32[e4c764] (19000000)
+0062842c:4 = Mem32[e4c768] (19000000)
+00628430:4 = Mem32[e4c76c] (19000000)
+00628434:4 = Mem32[e4c770] (19000000)
+00628438:4 = Mem32[e4c760] (19000000)
+0062843c:4 = Mem32[e4c75c] (19000000)
+00628444:4 = 0 (27000020)
+00628448:4 = Mem32[e4dc28] (00000002)
+00628454:4 = 0 (26000020)
+00628458:4 = 0 (2a000020)
+00628470:4 = Mem32[e4dc2c] (00000002)
+0062848c:4 = Mem32[e4dc30] (00000002)
+00628494:4 = 0 (24000020)
+00628498:2 = Mem32[e4dc38] (00000002)
+006284a8:4 = Mem32[e4dc34] (00000002)
+006284ac:2 = Mem32[e4dc3c] (00000002)
+006284b8:30 = 0 (2f000000)
+006284e8:180 = 0 (0a000000)
+00629c90:100 = Mem32[e4c728] (00000000)
+00629d98:15f90 = 0 (17000002)
+0063fe30:4 = Mem32[e4c720] (31000000)
+0063fe34:4 = Mem32[e4c724] (31000000)
+0063fed8:4 = Mem32[e4bcb0] (00000000)
+0063ff40:4 = Mem32[e4bcb4] (00000000)
+0063ff78:33c = Mem32[e4f140] (38000000)
+006402b8:290 = Mem32[e4f144] (38000000)
+00640550:31a = Mem32[e4f148] (38000000)
+0064086c:4 = Mem32[e4f14c] (00000000)
+00640b58:1 = Mem32[e5454c] (00000000)
+00640b5c:4 = 106ddb4 (00000000)
+00640b60:b12 = Mem32[e54540] (32000000)
+0064169c:4 = 106ddec (00000000)
+0064debc:4 = Mem32[e4bc30] (00000002)
+0064eed8:4 = 106de18 (00000002)
+0064eedc:4 = 106de1c (00000002)
+006509a0:2 = Mem32[e59c78] (00000000)
+006509b0:4 = Mem32[e59c7c] (00000000)
+00654880:200 = Mem32[e54940] (00000000)
+00654aa0:4 = Mem32[e54944] (00000000)
+006556e4:4 = 1073bdc (00000000)
+00655700:3d = Mem32[e4aa60] (00000000)
+00655740:7a = Mem32[e4aa64] (00000000)
+006557bc:4 = 106dd94 (00000000)
+006557c0:7a = Mem32[e4aa68] (00000000)
+0065583c:4 = 106dd98 (00000000)
+00655840:7a = Mem32[e4aa6c] (00000000)
+006558c0:7a = Mem32[e4aa40] (00000000)
+00655940:7a = Mem32[e4aa50] (00000000)
+006559bc:4 = 106dd9c (00000000)
+006559c0:7a = Mem32[e4aa54] (00000000)
+00655a40:7a = Mem32[e4aa48] (00000000)
+00655ac0:7a = Mem32[e4aa44] (00000000)
+00655b3c:3d = Mem32[e4aa4c] (00000000)
+00655b7c:4 = 106ddc4 (00000000)
+00655b80:7a = Mem32[e4aa58] (00000000)
+00655bfc:3d = Mem32[e4aa5c] (00000000)
+00655c58:1b8 = 0 (07010000)
+00655e80:1b8 = 0 (07010000)
+00656198:58 = Mem32[e4a50c] (00000000)
+006561f0:58 = Mem32[e4a514] (00000000)
+00656248:58 = Mem32[e4a510] (00000000)
+006562a0:58 = Mem32[e4a51c] (00000000)
+006562f8:58 = Mem32[e4a508] (00000000)
+00656350:2c = Mem32[e4a520] (00000000)
+0065637c:4 = 106dd54 (00000000)
+00656380:58 = Mem32[e4a4f8] (00000000)
+006563d8:58 = Mem32[e4a518] (00000000)
+00656430:58 = Mem32[e4a4fc] (00000000)
+00656488:2c = Mem32[e4a500] (00000000)
+006564b4:2c = Mem32[e4a504] (00000000)
+006564e0:82 = Mem32[e4ac30] (00000000)
+00656568:104 = Mem32[e4ac5c] (00000000)
+00656670:82 = Mem32[e4ac34] (00000000)
+006566f4:4 = 106ddac (00000000)
+006566f8:82 = Mem32[e4ac38] (00000000)
+0065677c:4 = 106dd58 (00000000)
+00656780:104 = Mem32[e4ac3c] (00000000)
+00656884:4 = 106dd5c (00000000)
+00656888:104 = Mem32[e4ac40] (00000000)
+0065698c:4 = 106dd60 (00000000)
+00656990:82 = Mem32[e4ac44] (00000000)
+00656a14:4 = 106dd64 (00000000)
+00656a18:208 = Mem32[e4ac48] (00000000)
+00656c20:82 = Mem32[e4ac04] (00000000)
+00656ca4:4 = 106dd68 (00000000)
+00656ca8:208 = Mem32[e4ac4c] (00000000)
+00656eb0:104 = Mem32[e4ac50] (00000000)
+00656fb4:4 = 106dd6c (00000000)
+00656fb8:82 = Mem32[e4ac54] (00000000)
+0065703c:4 = 106dd70 (00000000)
+00657040:82 = Mem32[e4ac58] (00000000)
+006570c4:4 = 106dd74 (00000000)
+006570c8:104 = Mem32[e4ac00] (00000000)
+006571cc:4 = 106dd78 (00000000)
+006571d0:82 = Mem32[e4ac0c] (00000000)
+00657254:4 = 106dd7c (00000000)
+00657258:82 = Mem32[e4ac14] (00000000)
+006572dc:4 = 106dd80 (00000000)
+006572e0:104 = Mem32[e4ac08] (00000000)
+006573e4:4 = 106dd8c (00000000)
+006573e8:82 = Mem32[e4ac18] (00000000)
+0065746c:4 = 106dd84 (00000000)
+00657470:208 = Mem32[e4ac1c] (00000000)
+00657678:104 = Mem32[e4ac20] (00000000)
+00657780:104 = Mem32[e4ac24] (00000000)
+00657888:82 = Mem32[e4ac10] (00000000)
+0065790c:4 = 106dd88 (00000000)
+00657910:82 = Mem32[e4ac28] (00000000)
+00657998:104 = Mem32[e4ac2c] (00000000)
+00657a9c:1 = Mem32[e545d0] (00000000)
+00657aa0:1000 = 0 (07010000)
+0065fc18:e4 = Mem32[e4a8fc] (00000000)
+0065fd00:1c8 = Mem32[e4a900] (00000000)
+0065fec8:e4 = Mem32[e4a8cc] (00000000)
+0065ffb0:1c8 = Mem32[e4a904] (00000000)
+00660178:e4 = Mem32[e4a908] (00000000)
+00660260:1c8 = Mem32[e4a90c] (00000000)
+00660428:1c8 = Mem32[e4a910] (00000000)
+006605f0:e4 = Mem32[e4a8d0] (00000000)
+006606d8:e4 = Mem32[e4a914] (00000000)
+006607c0:1c8 = Mem32[e4a918] (00000000)
+00660988:e4 = Mem32[e4a91c] (00000000)
+00660a70:1c8 = Mem32[e4a920] (00000000)
+00660c38:1c8 = Mem32[e4a924] (00000000)
+00660e00:1c8 = Mem32[e4a928] (00000000)
+00660fc8:e4 = Mem32[e4a92c] (00000000)
+006610ac:4 = 106dd2c (00000000)
+006610b0:390 = Mem32[e4a8d4] (00000000)
+00661440:d4 = Mem32[e4a930] (00000000)
+00661514:4 = 106dcc8 (00000000)
+00661518:1c8 = Mem32[e4a8f4] (00000000)
+006616e0:e4 = Mem32[e4a8d8] (00000000)
+006617c4:4 = 106de0c (00000000)
+006617c8:720 = Mem32[e4a8dc] (00000000)
+00661ee8:d4 = Mem32[e4a934] (00000000)
+00661fbc:4 = 106dd28 (00000000)
+00661fc0:d4 = Mem32[e4a938] (00000000)
+00662094:4 = 106dd24 (00000000)
+00662098:e4 = Mem32[e4a8f0] (00000000)
+0066217c:4 = 106dd20 (00000000)
+00662180:e4 = Mem32[e4a8e0] (00000000)
+00662264:4 = 106dd1c (00000000)
+00662268:e4 = Mem32[e4a8e4] (00000000)
+00662350:390 = Mem32[e4a8e8] (00000000)
+006626e0:180 = Mem32[e4a93c] (00000000)
+00662860:390 = Mem32[e4a8ec] (00000000)
+00662bf0:1c8 = Mem32[e4a940] (00000000)
+00662db8:e4 = Mem32[e4a89c] (00000000)
+00662e9c:4 = 106dd18 (00000000)
+00662ea0:e4 = Mem32[e4a8a0] (00000000)
+00662f84:4 = 106dd14 (00000000)
+00662f88:1c8 = Mem32[e4a8a4] (00000000)
+00663150:e4 = Mem32[e4a8a8] (00000000)
+00663234:4 = 106dd10 (00000000)
+00663238:e4 = Mem32[e4a898] (00000000)
+0066331c:4 = 106dd0c (00000000)
+00663320:e4 = Mem32[e4a8ac] (00000000)
+00663404:4 = 106dd08 (00000000)
+00663408:1c8 = Mem32[e4a944] (00000000)
+006635d0:e4 = Mem32[e4a948] (00000000)
+006636b4:4 = 106dd04 (00000000)
+006636b8:e4 = Mem32[e4a8b0] (00000000)
+0066379c:4 = 106dd00 (00000000)
+006637a0:e4 = Mem32[e4a8b4] (00000000)
+00663884:4 = 106dcfc (00000000)
+00663888:1c8 = Mem32[e4a94c] (00000000)
+00663a50:e4 = Mem32[e4a8b8] (00000000)
+00663b38:d4 = Mem32[e4a950] (00000000)
+00663c0c:4 = 106ddb0 (00000000)
+00663c10:d4 = Mem32[e4a954] (00000000)
+00663ce4:4 = 106dcf8 (00000000)
+00663ce8:e4 = Mem32[e4a8bc] (00000000)
+00663dcc:4 = 106dcf4 (00000000)
+00663dd0:e4 = Mem32[e4a958] (00000000)
+00663eb8:1c8 = Mem32[e4a95c] (00000000)
+00664080:390 = Mem32[e4a8c0] (00000000)
+00664410:e4 = Mem32[e4a960] (00000000)
+006644f4:4 = 106de14 (00000000)
+006644f8:e4 = Mem32[e4a8c4] (1e000000)
+006645dc:4 = 106dcf0 (00000000)
+006645e0:e4 = Mem32[e4a964] (00000000)
+006646c4:4 = 106dcec (00000000)
+006646c8:e4 = Mem32[e4a968] (00000000)
+006647ac:4 = 106dce0 (00000000)
+006647b0:e4 = Mem32[e4a8f8] (00000000)
+00664894:4 = 106dce4 (00000000)
+00664898:e4 = Mem32[e4a8c8] (00000000)
+0066497c:4 = 106dce8 (00000000)
+00664980:c0 = Mem32[e4a96c] (00000000)
+00664a40:bd = Mem32[e4a308] (00000000)
+00664b00:bd = Mem32[e4a2f8] (00000000)
+00664bc0:bd = Mem32[e4a2fc] (00000000)
+00664c80:bd = Mem32[e4a30c] (00000000)
+00664d40:bd = Mem32[e4a310] (00000000)
+00664e00:bd = Mem32[e4a314] (00000000)
+00664ec0:17a = Mem32[e4a318] (00000000)
+00665040:bd = Mem32[e4a31c] (00000000)
+00665100:bd = Mem32[e4a320] (00000000)
+006651c0:bd = Mem32[e4a324] (00000000)
+00665280:17a = Mem32[e4a328] (00000000)
+00665400:bd = Mem32[e4a32c] (00000000)
+006654c0:bd = Mem32[e4a300] (00000000)
+00665580:17a = Mem32[e4a2f4] (00000000)
+00665700:bd = Mem32[e4a304] (00000000)
+006657c0:bd = Mem32[e4a330] (00000000)
+00665880:bd = Mem32[e4a2f0] (00000000)
+00665940:bd = Mem32[e4a334] (00000000)
+00665a00:bd = Mem32[e4a338] (00000000)
+00665ac0:183 = Mem32[e4a420] (00000002)
+00665c48:205 = Mem32[e4a42c] (00000000)
+00665e50:183 = Mem32[e4c5fc] (00000002)
+00665fd8:183 = Mem32[e4a428] (00000002)
+00666160:40a = Mem32[e4a424] (14000400)
+00666570:205 = Mem32[e4a430] (00000000)
+00666778:f9c = 1077a60 (00000002)
+00667718:3e7 = Mem32[e4a1a0] (00000000)
+00667b00:f9c = 1076ac0 (00000002)
+00668aa0:f9c = 10799a0 (00000002)
+00669a40:3e7 = Mem32[e4a194] (00000000)
+00669e28:3e7 = Mem32[e4a190] (1a000000)
+0066a210:f9c = 1075b20 (00000002)
+0066b1b0:f9c = 1074b80 (00000002)
+0066c150:3e7 = Mem32[e4a1a4] (00000000)
+0066c538:f9c = 107a940 (00000002)
+0066d4d8:3e7 = Mem32[e4a1a8] (00000000)
+0066d8c0:f9c = 1078a00 (00000002)
+0066e860:3e7 = Mem32[e4a19c] (00000000)
+0066ec48:f9c = Mem32[e4a198] (1f000000)
+0066fd0c:4 = 106dd90 (00000000)
+0066ff78:6a40 = 0 (16000002)
+0068ac74:1 = Mem32[e59afc] (00000000)
+0068ac8c:4 = Mem32[e59b00] (36000020)
+0068c104:4 = 0 (20000020)
+0068c108:4 = 0 (21000020)
+0068c10c:32 = Mem32[e59bb0] (00000000)
+0068c140:4 = Mem32[e59bb4] (36000020)
+0068c144:1 = Mem32[e59bac] (00000000)
+0068c148:4 = Mem32[e5989c] (36000020)
+0068c14c:2 = Mem32[e59898] (00000000)
+0068c1e0:4 = 1076abc (00000000)
+0068c1f0:4 = Mem32[e59910] (36000020)
+0068c1f4:4 = Mem32[e5990c] (1d000000)
+0068c1fc:4 = Mem32[e59908] (1c000000)
+0068c204:4 = Mem32[e59b30] (1b000000)
+0068c208:18 = 0 (07010000)
+0068c224:4 = Mem32[e59af8] (36000020)
+0068c234:4 = Mem32[e59b1c] (36000020)
+0068c238:4 = Mem32[e59b18] (00000002)
+006bb210:720 = Mem32[e4d560] (00000000)
+006bd3d0:1a94 = Mem32[e4c758] (37000002)
+006c9858:d1 = Mem32[e4a080] (00000000)
+006c9930:344 = Mem32[e4a084] (00000000)
+006c9c78:1a2 = Mem32[e4a088] (00000000)
+006c9e20:d1 = Mem32[e4a08c] (00000000)
+006c9ef8:344 = Mem32[e4a090] (00000000)
+006ca240:d1 = Mem32[e4a098] (00000000)
+006ca318:1a2 = Mem32[e4a094] (00000000)
+006ca4bc:30 = Mem32[e4dc1c] (00000000)
+006ca4ec:30 = Mem32[e4dc20] (00000000)
+006ca51c:30 = Mem32[e4dc24] (00000000)
+006ca550:fc = 0 (07010000)
+006ca64c:18 = 0 (07010000)
+006ca94c:30 = Mem32[e5997c] (00000000)
+006caf98:4 = Mem32[e54d50] (00000000)
+006cafa0:2a00 = Mem32[e54d54] (00000000)
+006cd9a0:204 = Mem32[e54d58] (00000000)
+006cdba8:204 = Mem32[e54d5c] (00000000)
+006cddc0:2 = Mem32[e547e8] (00000000)
+006cddc4:8 = Mem32[e547e4] (00000000)
+006cdfd4:24 = 0 (07010000)
+006ce000:c0 = 0 (07010000)
+006ce320:400 = 0 (07010000)
+006ce720:400 = 0 (07010000)
+006ceb20:1a = 0 (07010000)
+006ceff0:8 = 106de20 (00000002)
+006ceff8:4b0 = 0 (28000000)
+006d0f14:4 = Mem32[e54af0] (00000000)
+006d0f24:4 = 1072c3c (00000002)
+006d0f30:279 = Mem32[e54aec] (00000002)
+006d1200:4 = 0 (2c000020)
+006d1234:4 = 1074b7c (00000000)
+006d1260:4 = 0 (25000020)
+006d5a6c:4 = Mem32[e4dce0] (00000000)
+006d5cd8:4 = Mem32[e54b28] (03000020)
+006d5e14:4 = 0 (34000020)
+006d5e1c:4 = 10789fc (00000000)
+006d5ec8:4 = 0 (29000020)
+006d6394:18 = 0 (07010000)
+1505e670:400 = 0 (0d000002)
+19018f38:4 = 0 (07010000)
+190452c8:80 = 0 (07010000)
+19046134:4 = 107a93c (00000000)
+19046138:100 = 0 (07010000)
+190913d8:4 = 107999c (00000000)
+
+-- Dat patches --
+Units entry count patches: [e4a530, e4a540, e4a550, e4a560, e4a570, e4a580, e4a590, e4a5a0, e4a5b0, e4a5c0, e4a5d0, e4a5e0, e4a5f0, e4a600, e4a610, e4a620, e4a630, e4a640, e4a650, e4a660, e4a670, e4a680, e4a690, e4a6a0, e4a6b0, e4a6c0, e4a6d0, e4a6e0, e4a6f0, e4a700, e4a710, e4a720, e4a730, e4a740, e4a750, e4a760, e4a770, e4a780, e4a790, e4a7a0, e4a7b0, e4a7c0, e4a7d0, e4a7e0, e4a7f0, e4a800, e4a810, e4a820, e4a830, e4a840, e4a850, e4a860, e4a870, e4a880]
+Units array patches:
+    00: [552dc8, 5610d0, 585613, 58b5ed, 58b64d, 58b6ae, 5a86ec, 5b0240, 5b5d3c, 5b771c, 726b45, 727ae8, e4a528, e4a8c4]
+    01: ["583607:0+0", "583655:0+0", "583cff:0+0", "585431:0+0", "610056:0+0", "6100f3:0+0", "6d99e8:e3+0", "6d9b68:e3+0", "e4a538:0+0", "e4a918:0+0"]
+    02: [e4a548, e4a924]
+    03: ["5b5642:0+0", "e4a558:6a+0", "e4a96c:6a+0"]
+    04: [57de27, 5b3ece, 5b5719, e4a568, e4a8d4]
+    05: [584598, 5a81fa, 5a8219, 5a8395, e4a578, e4a8d0]
+    06: [541d27, 54c80a, 56ca22, 56f62d, 577b57, 58a1aa, 596794, 599e16, 59ac1d, 59be24, 59c14f, 59d6fb, 59dcd3, 5a12d6, 5a4617, 5aa5ec, 5aead9, 60f595, 60f76d, 60f8c7, 60fc17, 60fc78, 60fdb7, 60fe1f, 612069, 61636d, 61688e, 61691d, 626bed, 6c61e5, 769a3e, 76aa1f, 76ac5e, 76b597, 76ba27, 773953, 773ba5, 7748b0, e4a588, e4a8f8]
+    07: ["541d55:0+0", "5688e2:0+0", "568b48:0+0", "568fac:49+0", "577b65:0+0", "5844f7:0+0", "58569e:0+0", "58a1be:0+0", "58a1e3:0+0", "58f68b:0+0", "5967cf:0+0", "596cc7:0+0", "596d05:0+0", "596d23:0+0", "5aa5fe:0+0", "5aeae4:0+0", "60f5a0:0+0", "60f77b:0+0", "60f8d2:0+0", "60fc22:0+0", "60fc83:0+0", "60fdc2:0+0", "60fe2a:0+0", "612074:0+0", "616377:0+0", "616899:0+0", "616928:0+0", "626bfe:0+0", "6c6091:0+0", "6c6578:0+0", "6c6593:0+0", "6c67e8:0+0", "6c7e97:0+0", "6d7789:0+0", "6d7fa9:0+0", "6d9a06:e3+0", "6d9b86:e3+0", "6db970:0+0", "76aae2:0+0", "76acb8:0+0", "773967:0+0", "773bba:0+0", "773f5e:0+0", "7748c4:0+0", "e4a598:0+0", "e4a928:0+0"]
+    08: ["541d31:0+0", "541d60:0+0", "55f2f8:0+0", "561459:6e+0", "5615c8:0+0", "5615f6:0+0", "561629:0+0", "561666:0+0", "561d00:0+0", "562076:0+0", "5627a8:0+0", "562ca3:0+0", "562e23:0+0", "562fa3:0+0", "569d23:49+0", "56a6c3:49+0", "56c2ba:6a+0", "577b75:0+0", "57d496:0+0", "57d4d8:0+0", "57d4f0:0+0", "57d506:0+0", "5840e7:0+0", "5844ec:0+0", "584e2d:0+0", "5851db:0+0", "588872:0+0", "5889e4:0+0", "5889f4:0+0", "58a157:0+0", "58a904:0+0", "58c6f1:0+0", "58fd10:0+0", "59c01d:0+0", "5a50ec:6a+0", "5a8a08:0+0", "5a8af7:0+0", "5aa5b1:0+0", "5aebbd:0+0", "5aed01:0+0", "5aed61:0+0", "5b37b9:0+0", "5b37c0:0+0", "5b418a:0+0", "5b454d:0+0", "5b576f:0+0", "5b7446:6a+0", "6017dd:0+0", "603317:0+0", "60f5ab:0+0", "60f78b:0+0", "60f8dd:0+0", "60fc2d:0+0", "60fdcd:0+0", "61207f:0+0", "61638a:0+0", "6168ac:0+0", "61693b:0+0", "61a20a:0+0", "61b64a:0+0", "6264be:0+0", "6ac81a:0+0", "6ac875:0+0", "6af96d:0+0", "6af9c8:0+0", "6c624f:0+0", "6c652f:0+0", "6c68bc:0+0", "6c8587:0+0", "6d776e:0+0", "6d7f8e:0+0", "6d99f7:e3+0", "6d9b77:e3+0", "6db90d:0+0", "76aab4:0+0", "76ab05:0+0", "76ab66:0+0", "76abaf:0+0", "76ac10:0+0", "773d60:0+0", "773dbd:0+0", "773e4e:0+0", "773ea9:0+0", "e4a5a8:0+0", "e4a8e8:0+0"]
+    09: [56132b, 5617b3, 56246a, 5856df, 585791, 58a605, 58a848, 58abeb, 5a8565, 5b5c36, 5b6002, e4a5b8, e4a8a8]
+    0a: [59b234, 5b42de, e4a5c8, e4a92c]
+    0b: [5991c4, 75069c, 7506ac, 7519fe, 751a0e, e4a5d8, e4a958]
+    0c: [58443a, 58bad9, 5a5376, 602954, 602a24, e4a5e8, e4a8a0]
+    0d: [584442, 584489, 584e16, 5851f0, 58ba9f, 58fd3a, 5978bd, 6031d6, 603215, e4a5f8, e4a8e4]
+    0e: ["561367:0+0", "5614c9:0+0", "5617db:0+0", "5624d8:0+0", "57e28b:0+0", "58a567:0+0", "58a647:0+0", "58a72d:0+0", "58a8c7:0+0", "58acc2:0+0", "58b04a:0+0", "58caa7:0+0", "58d5b4:0+0", "58d61d:0+0", "58d719:0+0", "58ee29:0+0", "58ee31:0+0", "5953b5:0+0", "59697c:47+0", "596b1f:0+0", "596e41:0+0", "598750:0+0", "598d73:0+0", "5a10e0:0+0", "5a57c2:0+0", "5a697f:0+0", "5a6de5:0+0", "5a6e3f:0+0", "5a70bd:0+0", "5a7c85:0+0", "5a82c0:0+0", "5a8447:0+0", "5a846c:0+0", "5a8d48:0+0", "5a97c1:0+0", "5aa47b:0+0", "5b309c:0+0", "5b3fcc:0+0", "5b43d8:0+0", "5b5d81:0+0", "5b602a:0+0", "5b60e7:0+0", "5b620c:0+0", "5b66f3:0+0", "5b6a3c:0+0", "602e95:0+0", "602eea:0+0", "6f4425:0+0", "729388:0+0", "e4a608:0+0", "e4a8c8:0+0"]
+    0f: ["568961:49+0", "568bc6:49+0", "568d01:55+0", "569ea0:55+0", "56ac7b:0+0", "56c7be:0+0", "57320d:0+0", "57335a:0+0", "5739c2:1f+0", "5739dc:1e+0", "573a0b:0+0", "5782c7:0+0", "57830b:0+0", "57839a:5+0", "57897e:0+0", "578a0a:0+0", "58a0be:0+0", "58a0da:0+0", "58ac1f:0+0", "58ad0e:0+0", "58af6f:0+0", "58afd3:0+0", "58ee3c:0+0", "58ee44:0+0", "602e5b:0+0", "602e80:0+0", "602f11:0+0", "729b11:0+0", "729e1b:0+0", "729e34:0+0", "751680:0+0", "7516b2:0+0", "e4a618:0+0", "e4a8ac:0+0"]
+    10: [58ee4f, 58ee57, 75167a, 7516bd, e4a628, e4a8b8]
+    11: ["56a124:0+0", "56c09d:0+0", "56c183:0+0", "56c36d:0+0", "56c382:0+0", "573945:6+0", "57394c:1f+0", "5759f9:0+0", "575b05:0+0", "5761f4:0+0", "57620c:0+0", "576237:0+0", "5778ad:0+0", "578c48:0+0", "578fd1:0+0", "5790bb:0+0", "57b47f:0+0", "585440:0+0", "59b02a:0+0", "61010e:0+0", "6d9a5c:0+0", "6d9bdc:0+0", "e4a638:0+0", "e4a8b0:0+0"]
+    12: [e4a648, e4a964]
+    13: [56c0aa, 56c18c, 56c288, 575a00, 575adc, 576146, 57615e, 578fb7, 5790a3, 5791b9, 57b467, 585464, 5a166d, 5a16ac, 5aa4cb, 610071, 61145c, 6d9a8a, 6d9c0a, 769a1d, e4a658, e4a8d8]
+    14: [e4a668, e4a8fc]
+    15: [61117d, 6115c1, 61b38c, 61b478, e4a678, e4a908]
+    16: ["5128fb:0+0", "512a64:0+0", "512a7c:0+0", "512aa9:0+0", "512d74:0+0", "542ec2:0+0", "54c7c9:0+0", "54e057:0+0", "54e304:0+0", "552db4:0+0", "55dc25:0+0", "55dc62:0+0", "55eb55:0+0", "55efc3:0+0", "55f0a2:0+0", "561d46:0+0", "56213d:0+0", "562844:0+0", "562917:0+0", "5629b5:0+0", "562af2:0+0", "562bed:0+0", "5633e2:0+0", "5638cf:0+0", "56a3be:0+0", "56a3e3:0+0", "56c22c:0+0", "56c337:0+0", "56c436:0+0", "56c44c:0+0", "56c494:0+0", "56c5a7:0+0", "56c5e8:0+0", "56c87e:0+0", "56f587:0+0", "56f9a8:0+0", "56fa41:0+0", "5729e3:0+0", "572cd6:0+0", "573416:0+0", "5737b0:0+0", "573b3e:0+0", "575c85:0+0", "575f57:0+0", "577c04:0+0", "577d04:0+0", "57818b:0+0", "5781b8:0+0", "5781d9:0+0", "5781f7:0+0", "578242:0+0", "578301:0+0", "5783f7:0+0", "578513:0+0", "578552:0+0", "578f2b:0+0", "578f9f:0+0", "57908b:0+0", "579193:0+0", "57b44f:0+0", "57cd5d:0+0", "57ce4f:0+0", "57cefd:0+0", "57d037:0+0", "57d1d8:0+0", "57d5bd:0+0", "57d670:0+0", "57d6ef:0+0", "57d85d:0+0", "57d8de:0+0", "57d97b:0+0", "57def4:0+0", "57df50:0+0", "57e33f:0+0", "57e57d:0+0", "57e6cb:0+0", "57eae2:0+0", "57eda2:0+0", "57f32c:0+0", "57f3a6:0+0", "57f4ec:0+0", "57f57d:0+0", "57f5c3:0+0", "57f625:0+0", "57f775:0+0", "57f83a:0+0", "57f855:0+0", "57f8f3:0+0", "57f97f:0+0", "57fa3e:0+0", "57fb5b:0+0", "57fbbd:0+0", "580061:0+0", "58007c:0+0", "580372:0+0", "5804d8:0+0", "580684:0+0", "5807cf:0+0", "580937:0+0", "580a1d:6c+0", "580a63:0+0", "580aaf:0+0", "580b6d:0+0", "580bb3:0+0", "580bff:0+0", "580d85:0+0", "580dcb:0+0", "580e17:0+0", "580ecf:9c+0", "580f14:0+0", "580f60:0+0", "581013:0+0", "581130:0+0", "58117c:0+0", "58122f:0+0", "58134c:0+0", "581398:0+0", "581454:0+0", "581570:0+0", "5815b6:0+0", "5817b5:0+0", "5817fb:0+0", "581847:0+0", "58189e:0+0", "581943:9c+0", "5819f5:0+0", "581bb9:0+0", "581cf3:0+0", "581e9f:0+0", "581fea:0+0", "582152:0+0", "582238:6c+0", "58227e:0+0", "5822ca:0+0", "582388:0+0", "5823ce:0+0", "58241a:0+0", "5825a0:0+0", "5825e6:0+0", "582632:0+0", "5826ea:9c+0", "58272f:0+0", "58277b:0+0", "58282e:0+0", "58294b:0+0", "582997:0+0", "582a4a:0+0", "582b67:0+0", "582bb3:0+0", "582c6f:0+0", "582d8b:0+0", "582dd1:0+0", "582fd0:0+0", "583016:0+0", "583062:0+0", "5830b9:0+0", "58315e:9c+0", "583210:0+0", "583707:0+0", "583a30:0+0", "583af8:0+0", "5840c1:0+0", "584143:0+0", "58417e:0+0", "58445a:0+0", "584883:0+0", "584946:0+0", "584ab7:0+0", "584cf7:0+0", "5851c5:0+0", "585302:0+0", "585718:0+0", "585736:0+0", "58574e:0+0", "585768:0+0", "5857d3:0+0", "585802:0+0", "585820:0+0", "5858c1:0+0", "585b0e:0+0", "5883e3:0+0", "5885a8:0+0", "58860d:0+0", "58884c:0+0", "588cb3:0+0", "588e28:0+0", "588f2f:0+0", "588f97:0+0", "589149:0+0", "589170:0+0", "589216:0+0", "5896fb:0+0", "5897ac:0+0", "5897f3:0+0", "589981:0+0", "589a09:0+0", "589b43:0+0", "589c04:0+0", "589db8:0+0", "589e88:0+0", "58a0d0:0+0", "58b0be:0+0", "58b2c3:0+0", "58b84b:0+0", "58b9db:0+0", "58be68:0+0", "58be78:0+0", "58c6dc:0+0", "58c732:0+0", "58c793:0+0", "58edfc:0+0", "58ee19:0+0", "58f758:0+0", "58fc30:0+0", "58fc46:0+0", "58fcc8:0+0", "58fd73:0+0", "58fe06:0+0", "590502:0+0", "590928:0+0", "591680:0+0", "592244:0+0", "592324:0+0", "59833e:0+0", "598368:0+0", "5988a3:0+0", "598a23:0+0", "598a51:0+0", "598ab5:0+0", "598b2c:0+0", "598c83:0+0", "598ce6:0+0", "598d5b:0+0", "59913c:0+0", "5992be:0+0", "599a33:0+0", "599bfd:0+0", "599dc3:0+0", "599eda:0+0", "599f74:0+0", "59ac06:0+0", "59ac4a:0+0", "59afe9:0+0", "59b099:0+0", "59b365:0+0", "59b95c:0+0", "59bb97:0+0", "59bcbe:0+0", "59bf17:0+0", "59bf28:0+0", "59c0b0:0+0", "59c804:0+0", "59cfc4:0+0", "59d08f:0+0", "59d188:0+0", "59d3b4:0+0", "59d9d3:0+0", "59db7e:0+0", "59dd30:0+0", "59e015:0+0", "59e14a:0+0", "5a1108:0+0", "5a17fb:0+0", "5a1824:0+0", "5a1aa7:0+0", "5a50c9:0+0", "5a523f:0+0", "5a54ef:0+0", "5a552c:0+0", "5a5d0c:0+0", "5a64e7:0+0", "5a6535:0+0", "5a68e2:0+0", "5a692e:0+0", "5a6eb8:0+0", "5a6f03:0+0", "5a6ff3:0+0", "5a70de:0+0", "5a71bd:0+0", "5a7247:0+0", "5a8659:0+0", "5a8958:0+0", "5a89cb:0+0", "5a8b73:0+0", "5a8f7b:0+0", "5a90a5:0+0", "5a919c:0+0", "5a92d2:0+0", "5a970f:0+0", "5aa1d3:0+0", "5aaabf:0+0", "5aea2b:0+0", "5aebac:0+0", "5aebd6:0+0", "5aeceb:0+0", "5aeedb:0+0", "5af05e:0+0", "5af153:0+0", "5af3b4:0+0", "5af51b:0+0", "5af623:0+0", "5afb93:0+0", "5afcae:0+0", "5b382a:0+0", "5b38a6:0+0", "5b3c41:0+0", "5b4229:0+0", "5b4702:0+0", "5b4789:0+0", "5b4b89:0+0", "5b4d8d:0+0", "5b5548:0+0", "5b5862:0+0", "5b5be0:0+0", "5faa62:0+0", "5faae6:0+0", "5fd487:0+0", "5fd513:0+0", "5fd5a6:0+0", "5fe783:0+0", "5fe7e7:0+0", "5fe9a7:0+0", "5fef8f:0+0", "5fefa5:0+0", "600080:0+0", "600125:0+0", "600324:0+0", "6018b5:0+0", "601937:0+0", "602a40:0+0", "602ad9:0+0", "602cb0:0+0", "602e41:0+0", "602e73:0+0", "602ece:0+0", "602f04:0+0", "603184:0+0", "6033d0:0+0", "603f37:0+0", "606428:0+0", "6066dc:0+0", "60f9df:0+0", "60fd36:0+0", "6104db:0+0", "611107:0+0", "61116d:0+0", "611220:0+0", "611326:0+0", "611436:0+0", "6115b2:0+0", "611e5a:0+0", "611fea:0+0", "613dd2:0+0", "613de8:0+0", "614488:0+0", "615902:0+0", "616303:0+0", "616b5a:0+0", "616df4:0+0", "616e52:0+0", "616eaf:0+0", "617026:ffffffff+0", "6186c7:0+0", "61a2f4:0+0", "61aeef:0+0", "61b63a:0+0", "6248e1:0+0", "625526:0+0", "625798:0+0", "625837:0+0", "625c10:0+0", "625cbb:0+0", "625d49:0+0", "625d80:0+0", "626029:0+0", "62608e:0+0", "62633e:0+0", "626601:0+0", "6268fe:0+0", "6277c7:0+0", "6277f3:0+0", "62858e:0+0", "62a019:0+0", "6407cc:0+0", "640a13:0+0", "640beb:0+0", "649826:0+0", "649d04:0+0", "64a792:0+0", "64a89c:0+0", "64a9b4:0+0", "64aa30:0+0", "64ad4d:0+0", "659014:0+0", "659a0b:0+0", "659d3d:0+0", "659d9f:0+0", "659dc6:0+0", "668b2c:0+0", "668c7c:0+0", "668dd2:0+0", "66ab5b:0+0", "66ad28:0+0", "66af8b:0+0", "6ae7d4:0+0", "6af8e0:0+0", "6b241c:0+0", "6c6a1d:0+0", "6c6a8f:0+0", "6c7e89:0+0", "6c84be:0+0", "6c84f0:0+0", "6d930e:0+0", "6da5e4:0+0", "6db9f8:0+0", "6e2403:0+0", "6e24f2:0+0", "6e2763:0+0", "6e285b:0+0", "6e2aa3:0+0", "6e2b5a:0+0", "6f3a8c:0+0", "6f3d72:0+0", "6f43b4:0+0", "6f61ca:0+0", "7253aa:0+0", "7265ef:0+0", "726605:0+0", "7268d8:0+0", "7268e5:0+0", "726ff9:0+0", "727216:0+0", "7274c7:0+0", "72751d:0+0", "7292b9:0+0", "729360:0+0", "729516:0+0", "729573:0+0", "72a109:0+0", "72a189:0+0", "72a1ef:0+0", "72a400:0+0", "72a43e:0+0", "72a500:0+0", "735199:0+0", "735212:0+0", "735388:0+0", "7354e1:0+0", "735548:0+0", "7414da:0+0", "742000:0+0", "742750:0+0", "7427c5:0+0", "743577:0+0", "743a46:0+0", "743b72:0+0", "743b96:0+0", "744498:0+0", "744962:0+0", "7458f6:0+0", "74591f:0+0", "7459c2:0+0", "745a31:0+0", "745da4:0+0", "745e33:0+0", "745e44:0+0", "745e92:0+0", "7516a2:0+0", "75dd96:0+0", "75de19:0+0", "7640df:0+0", "7643db:0+0", "764409:0+0", "764444:0+0", "766099:0+0", "76ad71:0+0", "76afd0:0+0", "76b12d:0+0", "76b16f:0+0", "76c231:0+0", "76c277:0+0", "76c2b7:0+0", "76c92b:0+0", "77c98d:0+0", "77cbc3:0+0", "77d6c0:0+0", "77e667:0+0", "77e685:0+0", "96481f:0+0", "e4a688:0+0", "e4a8c0:0+0"]
+    17: [573bf2, 573c1d, 573c46, 573c6d, 573c94, 585447, 585481, e4a698, e4a89c]
+    18: [57dc09, 5853f5, 599c59, 59a21b, e4a6a8, e4a898]
+    19: [5afb6d, 5afbb8, 76a716, 76a741, 76ba04, e4a6b8, e4a948]
+    1a: [56cab8, e4a6c8, e4a8e0]
+    1b: ["56ca95:0+0", "6d77a4:0+0", "6d7fc4:0+0", "6d9a14:ffffffff+0", "6d9b94:ffffffff+0", "768e73:0+0", "e4a6d8:0+0", "e4a8cc:0+0"]
+    1c: [57d418, e4a6e8, e4a8f0]
+    1d: [6ae6d9, e4a6f8, e4a938]
+    1e: [58a538, 6b02ac, e4a708, e4a904]
+    1f: [58a898, 6b02a4, e4a718, e4a940]
+    20: [6b0240, e4a728, e4a950]
+    21: [6b0252, e4a738, e4a934]
+    22: [6ac979, e4a748, e4a954]
+    23: [6ac986, e4a758, e4a930]
+    24: ["54a56a:0+0", "54a572:0+2", "55c671:0+0", "55c795:0+0", "55c7a6:0+2", "55c989:0+0", "55c9cd:0+2", "55ce7a:0+2", "55ce82:0+0", "55d4e4:0+2", "55d4ec:0+0", "55ea62:0+0", "55ea71:0+2", "55ebdf:0+0", "55ebee:0+2", "55ecd9:0+0", "55ece8:0+2", "55ef32:0+0", "55ef41:0+2", "55f1c2:0+0", "55f1d6:0+2", "561297:0+2", "56129f:0+0", "5618aa:0+0", "5618ca:0+0", "5618d2:0+2", "56192e:0+2", "56327c:0+2", "563284:0+0", "56378b:0+2", "563793:0+0", "5883f2:0+0", "588426:0+2", "599a69:0+0", "599a8b:0+2", "599ab1:0+0", "599ad4:0+2", "59a009:0+0", "59a011:0+2", "5a55f7:0+0", "5a5606:0+0", "5a5632:0+2", "5a69e9:0+0", "5a6a4e:0+2", "5a6abb:0+2", "5a6ac3:0+0", "5a86a5:0+0", "5a86b2:0+0", "5a86c3:0+2", "5a86dc:0+2", "5aaded:0+2", "5aadf6:0+0", "5b383b:0+0", "5b3a7c:0+0", "5b3afa:0+2", "5b3b7c:0+0", "5b3bac:0+2", "5b40b7:86+2", "5b40e2:86+0", "5b4403:0+0", "5b440b:0+0", "5b4451:0+2", "5b4459:0+2", "5b4714:0+0", "5b5f4f:0+2", "5b5f57:0+0", "625b05:0+0", "625b30:0+2", "649435:0+0", "649444:0+2", "64a7a4:0+0", "64a7b8:0+2", "64a8ad:0+0", "64a8c4:0+2", "64a9c2:0+2", "64a9d7:0+0", "64aac1:0+0", "64aad5:0+2", "64aee6:bc+0", "6dff83:0+2", "6dff8c:0+0", "6e24fe:0+2", "6e2508:0+0", "6e2867:0+2", "6e2871:0+0", "6e2b66:0+2", "6e2b70:0+0", "7252c8:0+0", "725328:0+2", "726b63:0+0", "726b6e:0+2", "7272bb:0+0", "7272ce:0+2", "72734d:0+0", "72736a:0+2", "7275ba:0+0", "7275de:0+2", "7279de:0+0", "7279ed:0+2", "7414fc:0+0", "741530:0+2", "7415ca:0+0", "7415fa:0+2", "741a61:0+0", "741a7c:0+2", "742e66:0+2", "7430fe:0+0", "743110:0+2", "743211:0+0", "743220:0+2", "77d7c5:0+2", "77d7cd:0+0", "77d884:0+2", "77d88c:0+0", "878a7b:0+0", "9644b9:0+0", "9644c8:0+2", "9652d2:0+0", "e4a768:0+0", "e4a8ec:0+0"]
+    25: ["599afe:0+0", "599b25:0+2", "5a55fe:0+0", "5a86cb:0+0", "5a86f4:0+2", "727255:0+0", "727279:0+2", "7275d3:0+0", "7275f2:0+2", "7277d2:0+2", "7277f0:0+0", "727853:0+0", "72785b:0+2", "74150e:0+0", "741550:0+2", "7415a8:0+2", "7415b0:0+0", "e4a778:6a+0", "e4a93c:6a+0"]
+    26: ["5445f3:0+2", "544604:0+0", "544612:0+4", "544625:0+6", "55dcb7:0+0", "55dcc1:0+2", "55de2d:0+4", "55de35:0+6", "561134:0+0", "561146:0+4", "561162:0+4", "561176:0+2", "56118c:0+6", "5618f7:0+0", "5618ff:0+4", "561914:0+2", "561936:0+6", "5635f5:0+2", "563601:0+6", "563613:0+0", "56361f:0+4", "56ad62:49+0", "56ad81:49+4", "56ada2:49+2", "56adb0:49+6", "56add3:49+0", "56adee:49+4", "56ae03:49+4", "56ae12:49+2", "56ae24:49+6", "5760f8:0+2", "576104:0+6", "576116:0+0", "576121:0+4", "57be42:80000000+0", "57bec6:0+0", "57bfac:0+0", "57bfb6:0+4", "57bfc1:0+4", "57bfc9:0+0", "57bfdd:0+6", "57bfe5:0+2", "57bff3:0+2", "57c000:0+6", "57cba2:0+0", "57cc95:0+2", "57fe32:0+4", "57fe3a:0+0", "57fe4b:0+0", "57fe55:0+4", "57fe5f:0+2", "57fe6d:0+6", "57fe82:0+6", "57fe8a:0+2", "583467:0+0", "583477:0+4", "583495:0+2", "5834a5:0+6", "583be0:0+0", "583bf3:0+4", "583c22:0+2", "583c36:0+6", "583f51:0+0", "583f5d:0+4", "583f77:0+2", "583f83:0+6", "585fb6:0+4", "585fc7:0+0", "585ff4:0+6", "586005:0+2", "58f8d7:69+0", "58f8e7:69+4", "58f902:69+4", "58f90e:69+2", "58f91a:69+6", "591e09:0+4", "591e11:0+0", "591e1b:0+2", "591e24:0+6", "591e9e:0+0", "591ec7:0+4", "591efb:0+2", "591f23:0+6", "592462:0+0", "59246c:0+4", "592476:0+4", "59247e:0+0", "592491:0+6", "592499:0+2", "5924a9:0+2", "5924b3:0+6", "592c58:0+0", "592c62:0+4", "592fee:0+0", "59300a:0+4", "593026:0+4", "593037:0+2", "59304e:0+6", "593ea0:0+0", "593eaf:0+6", "593eb7:0+4", "593ed3:0+2", "593f19:0+4", "593f28:0+0", "593f3e:0+6", "593f4d:0+2", "594541:0+4", "594550:0+0", "594562:0+6", "594574:0+2", "5945c1:0+0", "5945d4:0+2", "5945e2:0+4", "5945f7:0+6", "594771:0+0", "594784:0+2", "594792:0+4", "5947a7:0+6", "594d64:0+4", "594d89:0+0", "594da2:0+6", "594dbf:0+2", "59535d:0+2", "595369:0+6", "59537b:0+0", "595387:0+4", "595667:0+2", "595673:0+6", "595687:0+0", "595692:0+4", "595700:0+6", "595708:0+4", "59571a:0+2", "595725:0+0", "59572d:0+4", "595735:0+0", "595744:0+6", "59574f:0+2", "5957b5:0+4", "5957c5:0+4", "5957cd:0+2", "5957d5:0+0", "5957de:0+6", "5957f1:0+0", "5957fc:0+6", "595807:0+2", "59591f:0+6", "59593a:0+2", "595941:0+4", "59594c:0+0", "595954:0+4", "59595b:0+6", "595966:0+0", "59596e:0+2", "595a25:0+2", "595a31:0+6", "595a43:0+0", "595a4f:0+4", "59604a:0+0", "596061:0+4", "596082:0+2", "596094:0+6", "5960b9:0+2", "5960c5:0+6", "5960de:0+4", "5961a4:0+6", "5961ae:0+2", "5961b9:0+4", "5961c3:0+0", "596209:0+0", "596213:0+4", "59622e:0+2", "596238:0+6", "5964d2:0+0", "5964dc:0+4", "5964f7:0+2", "596501:0+6", "5a799a:e+2", "5a7a8b:e+2", "5a7a97:e+0", "5ab050:0+2", "5ab05c:0+6", "5ab06e:0+0", "5ab07a:0+4", "5b5084:28+0", "5b5097:28+4", "5b50b2:28+4", "5b50c1:28+2", "5b50ce:28+6", "5b7010:0+4", "5b701a:0+0", "5b7099:0+4", "5b70a3:0+0", "5b7149:0+2", "5b7153:0+6", "5b71a4:0+2", "5b71ac:0+6", "5b725e:0+2", "5b7268:0+6", "5b72b7:0+2", "5b72bf:0+6", "5b7367:0+4", "5b7371:0+0", "5b73c2:0+0", "5b73ca:0+4", "625a8a:0+4", "625a9b:0+0", "625ac5:0+6", "625ad6:0+2", "649456:0+0", "649465:0+2", "649471:0+4", "649480:0+6", "64a441:0+2", "64a44f:0+6", "64a466:0+0", "64a477:0+4", "64a573:0+4", "64a57d:0+0", "64a58d:0+2", "64a59a:0+6", "724fc7:0+2", "724fd3:0+6", "724fe5:0+0", "724ff1:0+4", "72511f:0+4", "725127:0+0", "725134:0+2", "725142:0+6", "7254d6:83+4", "7254db:83+0", "7254f4:83+6", "7254fd:83+2", "725ddb:0+0", "725de3:0+4", "725ed2:0+2", "725ede:0+6", "725ef6:0+4", "725ffc:0+6", "72600e:0+0", "72601a:0+4", "726099:0+2", "7260a5:0+6", "7260b9:0+0", "7260c5:0+4", "7261e2:0+6", "7261ea:0+0", "7261f5:0+2", "72629c:0+2", "7262a8:0+6", "7262ba:0+0", "7262c6:0+4", "7350da:0+0", "7350ef:0+4", "73511a:0+2", "735135:0+6", "738d02:0+6", "738d0a:0+4", "738d14:0+2", "738d1c:0+0", "73df8e:0+0", "73dfa4:0+2", "73dfba:0+4", "73dfcd:0+6", "73e947:0+0", "73e95d:0+2", "73e973:0+4", "73e986:0+6", "73ed39:0+2", "73ed45:0+6", "73ed58:0+0", "73ed63:0+4", "73ed79:0+4", "73ed91:0+0", "73edb1:0+6", "73edcf:0+2", "7509e4:0+2", "7509ee:0+6", "7509f9:0+4", "750a03:0+0", "750de8:0+0", "750dfb:0+4", "750e19:0+4", "750e2e:0+2", "750e41:0+6", "e4a788:0+0", "e4a8dc:0+0"]
+    27: ["76ec6b:0+0", "76ec92:4e+0", "76ecaf:98+0", "e4a798:0+0", "e4a8a4:0+0"]
+    28: ["562dea:0+0", "59d0c5:0+0", "59d0cc:3d+0", "64072d:0+0", "64076e:0+0", "6409e9:0+0", "640bc2:0+0", "6d77da:0+0", "6d7ffa:0+0", "6d9a32:e3+0", "6d9bb2:e3+0", "764174:0+0", "76419b:0+0", "e4a7a8:0+0", "e4a94c:0+0"]
+    29: ["562df2:0+0", "59d0d6:0+0", "59d0dd:3d+0", "64073d:0+0", "640791:0+0", "6409f8:0+0", "640bd3:0+0", "6d77f5:0+0", "6d8015:0+0", "6d9a41:e3+0", "6d9bc1:e3+0", "764165:0+0", "76418c:0+0", "e4a7b8:0+0", "e4a900:0+0"]
+    2a: ["562568:0+0", "5625a6:0+0", "585872:0+0", "58a14b:0+0", "58a1d6:0+0", "5b3635:0+0", "5b36ec:0+0", "5b4041:0+0", "5b449b:0+0", "61ba05:0+0", "61ba22:43+0", "61ba2b:3d+0", "61ba34:2b+0", "61ba3d:26+0", "6d77bf:0+0", "6d7fdf:0+0", "6d9a23:e3+0", "6d9ba3:e3+0", "e4a7c8:0+0", "e4a910:0+0"]
+    2b: [61eaee, 61eb23, 61eb63, 61eb75, 61ecca, 61ece3, 61f2e5, 61f2f9, e4a7d8, e4a920]
+    2c: [58b816, 5feced, 5fecfb, 5fed0c, 5fed49, 6255c4, 6256e9, 62589c, 6259ff, 625da4, 6274b6, 627516, 6278d6, 62845e, 62a022, 64981f, 649cfd, 64ab46, 659004, 6591dc, 6593b8, 6597d4, 659a45, 659d72, 6af90d, 6af942, 6afa05, 6d8fa3, 727499, 7640eb, 764103, 964828, e4a7e8, e4a8b4]
+    2d: [5fe5f4, 5fe5ff, 659a9b, 7694dd, 7699ee, 76a7b4, 76a924, 76c8cf, e4a7f8, e4a968]
+    2e: ["6407c5:0+0", "640803:26+0", "640a0c:0+0", "640a4a:26+0", "640be2:0+0", "659d95:0+0", "659dd0:0+0", "659e22:0+0", "7640f5:0+0", "764121:0+0", "764139:0+0", "e4a808:0+0", "e4a8bc:0+0"]
+    2f: [5a90c3, 5a90fb, 5a914a, 5aa9d6, 5aabb3, 5aac80, 76813b, 76c1e9, e4a818, e4a960]
+    30: [5a8df2, 5a9004, 5a90dd, 5a9383, 5a9545, 5a99a6, 5a9b48, 5a9bcd, 5aa285, 5aa2c5, 5aa584, 5aa718, 5aa77d, 5aa932, 5aa979, 5aa9d0, 5aabc6, 62557a, 625694, 625fcc, 76c183, e4a828, e4a91c]
+    31: ["5b2ded:29+0", "659b35:0+0", "659b6d:0+0", "659bd5:0+0", "e4a838:0+0", "e4a944:0+0"]
+    32: [576068, e4a848, e4a95c]
+    33: ["58b762:0+0", "58b7ed:0+0", "599166:52+0", "599194:0+0", "6d7810:0+0", "6d8030:0+0", "6d9a50:e3+0", "6d9bd0:e3+0", "e4a858:0+0", "e4a90c:0+0"]
+    34: [e4a868, e4a914]
+    35: [552dbe, 585fa7, 6da55b, e4a878, e4a8f4]
+    36: []
+    37: []
+    38: []
+    39: []
+    3a: []
+    3b: []
+    3c: []
+    3d: []
+    3e: []
+    3f: []
+    40: []
+    41: [58548c, 5892f5]
+    fe: ["763cba:0+4", "763cff:0+0", "763d72:0+0", "763da1:0+0", "764484:0+4", "76448b:0+4", "76449a:0+8", "7644ae:0+8", "e55cf4:0+0"]
+    ff: ["766f6a:0+0", "766fab:0+4", "766fcb:0+8", "768990:0+0", "7689d2:0+4", "7689f2:0+8", "e55dac:0+0"]
+Weapons entry count patches: [e4aa78, e4aa88, e4aa98, e4aaa8, e4aab8, e4aac8, e4aad8, e4aae8, e4aaf8, e4ab08, e4ab18, e4ab28, e4ab38, e4ab48, e4ab58, e4ab68, e4ab78, e4ab88, e4ab98, e4aba8, e4abb8, e4abc8, e4abd8, e4abe8]
+Weapons array patches:
+    00: [768d0f, 768d7d, 768dce, e4aa70, e4ac08]
+    01: [542d94, 573e2c, 578101, 578c5f, e4aa80, e4ac4c]
+    02: [e4aa90, e4ac18]
+    03: [56c3f5, 56c41d, e4aaa0, e4ac2c]
+    04: [573f6b, 577dd1, 5790fb, 579252, 57b4c2, 59a249, 59a257, 59a272, e4aab0, e4ac48]
+    05: [5431ab, 5431d6, 57b328, 57b359, 585455, 585472, 60f5e2, e4aac0, e4ac1c]
+    06: [541cf2, 57790f, 57b19f, 76c63c, e4aad0, e4ac0c]
+    07: [56ca3a, 56ca79, 56caaa, 56cb06, 56f642, e4aae0, e4ac14]
+    08: [541e07, 542743, 542ab3, 543051, 543f4c, 5444b2, 577f6b, 59e000, 59e02f, e4aaf0, e4ac34]
+    09: [542dac, e4ab00, e4ac58]
+    0a: [541ce0, 541de4, 54245c, 543230, e4ab10, e4ac38]
+    0b: ["5424cd:0+0", "5425e3:0+0", "5426b9:0+0", "56a12c:0+0", "59f26c:21+0", "e4ab20:0+0", "e4ac40:0+0"]
+    0c: [542515, e4ab30, e4ac00]
+    0d: ["541eae:0+0", "541f56:0+0", "542496:0+0", "5425d1:0+0", "5734a6:36+0", "57362f:36+0", "e4ab40:0+0", "e4ac24:0+0"]
+    0e: ["541ceb:0+0", "57793e:0+0", "57b23d:0+0", "5a5d64:22+0", "5b4a70:3c+0", "60f5cd:0+0", "60f64b:0+0", "6d7837:0+0", "6d7847:0+0", "6d7a03:0+0", "6d804b:0+0", "6d9a74:0+0", "6d9aa2:0+0", "6d9bf4:0+0", "6d9c22:0+0", "e4ab50:0+0", "e4ac50:0+0"]
+    0f: [541d0f, 577933, 57b1db, 6d7863, 6d7873, 6d7a1a, 6d8066, 6d9a84, 6d9ab2, 6d9c04, 6d9c32, e4ab60, e4ac20]
+    10: ["576185:0+0", "5a5d6d:22+0", "5a60c4:22+0", "60f5d3:0+0", "60f657:0+0", "e4ab70:0+0", "e4ac54:0+0"]
+    11: [573d51, 573d93, 573df1, 573e56, 575a3f, 575a83, 57b1a5, 57b20d, 60f5db, 60f651, e4ab80, e4ac30]
+    12: [561c4d, 561f70, 574389, 577ce1, 577ea0, 5792c2, e4ab90, e4ac44]
+    13: [542e56, 542e7c, e4aba0, e4ac10]
+    14: [54ed5b, 5780a1, e4abb0, e4ac28]
+    15: [5780ee, e4abc0, e4ac04]
+    16: [77d241, e4abd0, e4ac5c]
+    17: [76c707, e4abe0, e4ac3c]
+Flingy entry count patches: [e4a008, e4a018, e4a028, e4a038, e4a048, e4a058, e4a068]
+Flingy array patches:
+    00: [544a18, 54550b, 552dd0, 5610d8, 5a8703, 5b5d44, 5b7724, 726b4d, 727af0, e4a000, e4a094]
+    01: [544988, 5450d5, 54547c, 58b6b5, e4a010, e4a090]
+    02: [544993, 5450e3, 545487, 58b5f5, e4a020, e4a088]
+    03: [5450ec, e4a030, e4a084]
+    04: [54499e, 545492, 58b654, e4a040, e4a08c]
+    05: [e4a050, e4a098]
+    06: [5449a8, 54549c, 5b0249, e4a060, e4a080]
+Upgrades entry count patches: [e4a978, e4a988, e4a998, e4a9a8, e4a9b8, e4a9c8, e4a9d8, e4a9e8, e4a9f8, e4aa08, e4aa18, e4aa28]
+Upgrades array patches:
+    00: [5afd0a, 5b0198, 5b2ccd, 6d788c, 6d7899, 6d7a2e, 6d807e, 6d9cd7, 6d9db7, e4a970, e4aa64]
+    01: [5afd00, 5b018e, 5b2cc1, 6d78b2, 6d78bf, 6d7a42, 6d8096, 6d9ce7, 6d9dc7, e4a980, e4aa54]
+    02: [5afd3b, 5b01d5, 5b2c8d, 6d78d8, 6d78e5, 6d7a56, 6d80ae, 6d9cf7, 6d9dd7, e4a990, e4aa6c]
+    03: [5afd31, 5b01cb, 5b2c81, 6d78fe, 6d790b, 6d7a6a, 6d80c6, 6d9d07, 6d9de7, e4a9a0, e4aa68]
+    04: [5b0ffb, 5b2d0d, 6d7924, 6d7931, 6d7a82, 6d80de, 6d9d17, 6d9df7, e4a9b0, e4aa58]
+    05: [5b0feb, 5b2d01, 6d794a, 6d7957, 6d7a9a, 6d80f2, 6d9d24, 6d9e04, e4a9c0, e4aa50]
+    06: [51358f, 5135d1, 51360a, 513658, 51366c, 513722, e4a9d0, e4aa40]
+    07: [76a71e, 76c547, e4a9e0, e4aa44]
+    08: [766bd2, 768e8e, 768f17, e4a9f0, e4aa48]
+    09: [e4aa00, e4aa5c]
+    0a: ["647f87:0+0", "6db409:0+0", "6db422:10+0", "6db431:20+0", "6db43e:28+0", "6db44b:2c+0", "6db460:2e+0", "6db478:36+0", "6db485:3a+0", "6db491:3c+0", "7641eb:0+0", "e4aa10:0+0", "e4aa60:0+0"]
+    0b: [e4aa20, e4aa4c]
+TechData entry count patches: [e4a440, e4a450, e4a460, e4a470, e4a480, e4a490, e4a4a0, e4a4b0, e4a4c0, e4a4d0, e4a4e0]
+TechData array patches:
+    00: [5afbfa, 5b00cb, 640992, 640b91, 6d7970, 6d797d, 6d7ab2, 6d8106, 6d9e97, 6d9f57, 76429f, e4a438, e4a510]
+    01: [5afc0b, 5b00ef, 6409a5, 640ba2, 6d7992, 6d799f, 6d7aca, 6d811a, 6d9ea7, 6d9f67, 764290, e4a448, e4a514]
+    02: [5b0f18, 5f188c, 6d79b4, 6d79c1, 6d7ae2, 6d812e, 6d9eb7, 6d9f74, 76b230, e4a458, e4a518]
+    03: ["588738:0+0", "597e16:15+0", "597e65:15+0", "5a0e15:0+0", "5a1d89:0+0", "5a7fad:4+0", "5a80fd:4+0", "6091cb:19+0", "60921b:15+0", "615549:4+0", "6d79d6:0+0", "6d79e3:0+0", "6d7afa:0+0", "6d8142:0+0", "6d9ec4:0+0", "6d9f81:0+0", "721902:0+0", "721ea9:0+0", "764242:0+0", "76425d:0+0", "764276:0+0", "e4a468:0+0", "e4a4f8:0+0"]
+    04: [5130cb, 513137, 51316c, 5131a9, 5131bd, 51328b, e4a478, e4a50c]
+    05: [51334d, 5133b2, 5133e7, 513419, 51342d, 5134e5, e4a488, e4a508]
+    06: [76b314, e4a498, e4a4fc]
+    07: [766bec, e4a4a8, e4a51c]
+    08: [e4a4b8, e4a500]
+    09: [e4a4c8, e4a520]
+    0a: [e4a4d8, e4a504]
+Orders entry count patches: [e4a1b8, e4a1c8, e4a1d8, e4a1e8, e4a1f8, e4a208, e4a218, e4a228, e4a238, e4a248, e4a258, e4a268, e4a278, e4a288, e4a298, e4a2a8, e4a2b8, e4a2c8, e4a2d8]
+Orders array patches:
+    00: [e4a1b0, e4a328]
+    01: [56c580, 56c5ba, 56c5fb, 575d43, 578d74, 5a12f6, 5a4637, 6115e7, 6f33ad, 6f59ed, 77cfcd, e4a1c0, e4a2f8]
+    02: [58d16d, 58d285, 58e5de, e4a1d0, e4a334]
+    03: [e4a1e0, e4a338]
+    04: [58ee65, e4a1f0, e4a308]
+    05: [e4a200, e4a330]
+    06: [588a30, 58cf7a, 58e61e, e4a210, e4a31c]
+    07: [5ae7ce, 5ae948, e4a220, e4a320]
+    08: [58ef39, e4a230, e4a304]
+    09: [5a1e98, e4a240, e4a324]
+    0a: [7514dd, e4a250, e4a300]
+    0b: [578252, e4a260, e4a30c]
+    0c: [e4a270, e4a2fc]
+    0d: [54ece4, 54ed0d, 5a114c, 5a4541, 5a4793, 5a47de, 5a4809, 77cfd6, e4a280, e4a2f0]
+    0e: [588729, 5a130c, 5a464d, 75154c, 77cffc, e4a290, e4a314]
+    0f: [5a14da, 5a1537, e4a2a0, e4a310]
+    10: [58c4c1, 58cb48, 58cd77, 58d090, 764883, 7648a1, e4a2b0, e4a318]
+    11: [512def, 512e59, 512e8e, 512ed3, 512ee9, 513010, e4a2c0, e4a2f4]
+    12: [58a050, 58a0a9, 77cfea, e4a2d0, e4a32c]
+--- Replaces ---
+00512d6c = [75, 03]
+00512dcc = [eb, 11]
+00512e1f = [eb, 28]
+005130a9 = [75, 10]
+005130fd = [75, 28]
+00513329 = [75, 11]
+0051337d = [75, 23]
+0051356b = [75, 12]
+005135c0 = [74, 4c]
+00542443 = [89, 5d, 0c]
+005425a3 = [89, 5d, 08]
+00542683 = [89, 5d, 08]
+00542d50 = [75, 30]
+00543192 = [75, 3f]
+0054ece9 = [0f, 84, 2c, ef, ff, ff]
+0054ed56 = [90, 8b, c0]
+00552de1 = [75, ce]
+0055d391 = [75, 1e]
+00561c47 = [90, 8b, c0]
+00561f6a = [90, 8b, c0]
+0056233c = [75, 32]
+0056273b = [8b, 5d, 08]
+00562740 = [90, 8b, c3]
+0056279a = [90, 8b, cb]
+005633d9 = [0f, 84, a2, 00, 00, 00]
+005638ca = [74, 5e]
+0056c32f = [74, 62]
+0056c3a3 = [8b, 45, 08]
+0056c3ad = [75, 35]
+0056c3eb = [90, 8b, c0]
+0056c411 = [90, 8b, c0]
+0056c8b5 = [75, 2c]
+0056ca34 = [90, 8b, 45, 0c]
+0056ca70 = [90, 8b, 75, 0c]
+0056f5b1 = [8b, 5d, 08]
+0056f5b7 = [75, 2c]
+0056f63d = [90, 8b, c3]
+0056f9a3 = [74, 0c]
+00573d1d = [75, 2c]
+00573d4c = [90, 8b, fb]
+00573db4 = [8b, 5d, 08]
+00573dbe = [75, 2c]
+00573dec = [90, 8b, fb]
+00573e9b = [75, 33]
+00573f08 = [75, 30]
+00573f65 = [90, 8b, f8]
+005759f3 = [89, 5d, 08]
+00575a04 = [8b, 18]
+00575a06 = [89, 5d, 08]
+00575a0c = [75, 2c]
+00575a3a = [90, 8b, db]
+00575b09 = [89, 45, fc]
+00575b11 = [ff, 75, fc]
+00575f52 = [74, 0c]
+00576173 = [90, 8b, 45, 08]
+005778a6 = [89, 5d, fc]
+005778b1 = [89, 5d, fc]
+005778b7 = [75, 2c]
+005778fa = [ff, 75, fc]
+00577909 = [90, 8b, f3]
+00577944 = [ff, 75, fc]
+00577bfc = [75, 03]
+00577ccf = [90, 8b, 45, 08]
+00577cfc = [75, 03]
+00577d6e = [75, 2c]
+00577dc8 = [90, 8b, c3]
+00577f26 = [8b, 45, 08]
+00577f32 = [75, 2f]
+00577f56 = [8b, 45, 08]
+00577f63 = [90, 8b, f0]
+00578182 = [0f, 84, 0f, 01, 00, 00]
+005781b3 = [74, 0c]
+005781d4 = [74, 0c]
+0057850e = [74, 0c]
+00578c57 = [90, 8b, c0]
+00578f1f = [75, 04]
+00578fd5 = [89, 45, 08]
+005790f5 = [90, 8b, c3]
+00579133 = [83, ec, 10]
+005791c6 = [8b, d8]
+005791d1 = [89, 5d, f0]
+005791d7 = [75, 2c]
+00579249 = [90, 8b, c3]
+00579262 = [ff, 75, f0]
+005792fe = [ff, 75, f0]
+0057b196 = [90, 8b, 7d, 08]
+0057b203 = [90, 8b, 55, 08]
+0057b25b = [8b, 5d, 08]
+0057b303 = [90, 8b, c3]
+0057b30d = [75, 47]
+0057b483 = [89, 5d, 08]
+0057b4ba = [74, 38]
+0057b4bc = [90, 8b, c3]
+0057d66b = [74, 0c]
+0057df47 = [75, 04]
+0057e336 = [75, 04]
+0057e574 = [75, 04]
+0057ed9d = [74, 49]
+0057f323 = [75, 04]
+0057f4e3 = [75, 04]
+0057f61c = [75, 04]
+0057f76c = [75, 04]
+0057f850 = [74, 0c]
+0057f976 = [75, 04]
+0057fa35 = [75, 04]
+00580077 = [74, 0c]
+00580369 = [75, 04]
+005804cf = [0f, 84, 49, 01, 00, 00]
+00580678 = [75, 04]
+005807c3 = [75, 04]
+0058092b = [75, 04]
+00580aa3 = [75, 04]
+00580bf3 = [75, 04]
+00580e0b = [75, 04]
+00580f54 = [75, 04]
+00581170 = [75, 04]
+0058138c = [75, 04]
+0058144b = [0f, 84, 2f, 02, 00, 00]
+0058183b = [75, 04]
+00581899 = [74, 10]
+005819ec = [75, 04]
+00581bb0 = [75, 04]
+00581cea = [0f, 84, 49, 01, 00, 00]
+00581e93 = [75, 04]
+00581fde = [75, 04]
+00582146 = [75, 04]
+005822be = [75, 04]
+0058240e = [75, 04]
+00582626 = [75, 04]
+0058276f = [75, 04]
+0058298b = [75, 04]
+00582ba7 = [75, 04]
+00582c66 = [0f, 84, 2f, 02, 00, 00]
+00583056 = [75, 04]
+005830b4 = [74, 10]
+00583207 = [75, 04]
+005835f8 = [90, 90, 90, 90, 90, 90]
+00583af3 = [74, 2a]
+0058487e = [74, 1c]
+00584941 = [74, 10]
+00584a65 = [90, 90]
+00585450 = [74, 0f]
+0058546d = [74, 0f]
+0058548a = [90, 90, 90, 90, 90, 90]
+00585496 = [0f, 85, 57, ff, ff, ff]
+005857cc = [74, 19]
+0058581b = [74, 0d]
+00585b09 = [74, 2c]
+00585f5c = [75, 43]
+0058872f = [74, 14]
+00588731 = [90, 8b, c0]
+00588cae = [74, 1c]
+00588e23 = [74, 42]
+0058916b = [74, 39]
+005896f2 = [75, 04]
+005897a3 = [75, 04]
+00589978 = [75, 04]
+00589bfb = [75, 04]
+00589db3 = [74, 2b]
+00589e7f = [75, 04]
+0058b752 = [75, 07]
+0058b7dd = [75, 07]
+0058b864 = [74, 0d]
+0058b90c = [90, 90]
+0058be63 = [74, 10]
+0058c64e = [eb, 29]
+0058c6d1 = [0f, 84, 15, 01, 00, 00]
+0058fc2b = [74, 0c]
+0058fc41 = [74, 17]
+0058fcc3 = [74, 0c]
+00590923 = [74, 0d]
+0059889e = [74, 0c]
+00599bec = [0f, 84, dd, 00, 00, 00]
+00599dbe = [74, 45]
+00599ed5 = [74, 13]
+00599f6f = [74, 30]
+0059a237 = [8b, d8]
+0059a243 = [90, 8b, cb]
+0059a251 = [90, 8b, c0]
+0059a26c = [90, 8b, c0]
+0059ac01 = [74, 0c]
+0059ac45 = [74, 30]
+0059b094 = [74, 13]
+0059bcfd = [74, 09]
+0059bf12 = [74, 1d]
+0059bf23 = [74, 0c]
+0059c7ff = [74, 34]
+0059d183 = [74, 0c]
+0059d3ab = [0f, 84, 02, 01, 00, 00]
+0059dd2b = [74, 10]
+0059dffb = [90, 8b, c0]
+0059e029 = [90, 8b, c0]
+0059f497 = [75, 30]
+005a1103 = [74, 13]
+005a1133 = [83, ec, 18]
+005a1150 = [89, 45, ec]
+005a1220 = [89, 45, e8]
+005a12fe = [ff, 75, e8]
+005a1312 = [74, 4a]
+005a131e = [90, 8b, c0]
+005a1407 = [8b, 7d, ec]
+005a1443 = [90, 8b, 45, ec]
+005a1497 = [8b, 7d, ec]
+005a1672 = [75, 30]
+005a17f6 = [74, 10]
+005a4545 = [89, 45, 08]
+005a4653 = [74, 23]
+005a465f = [90, 8b, c0]
+005a4798 = [75, 23]
+005a50c0 = [0f, 84, 86, 00, 00, 00]
+005a5236 = [75, 04]
+005a5d07 = [74, 79]
+005a64e2 = [74, 2b]
+005a6eaf = [75, 04]
+005a70f1 = [74, 07]
+005a71b4 = [75, 04]
+005a89c6 = [74, 78]
+005a90a0 = [74, 2c]
+005a970a = [74, 0c]
+005aa4b2 = [90, 8b, c0]
+005aaaba = [74, 1c]
+005aadb7 = [75, 2d]
+005afca5 = [0f, 84, 12, 01, 00, 00]
+005b0eed = [0f, 84, 9b, 00, 00, 00]
+005b0f0b = [90, 8b, c3]
+005b0fad = [0f, 84, cc, 00, 00, 00]
+005b0fd0 = [90, 8b, f3]
+005b0fe0 = [90, 8b, d3]
+005b2c63 = [90, 8b, 45, 0c]
+005b2c73 = [90, 8b, 55, 0c]
+005b2ca3 = [90, 8b, 45, 0c]
+005b2cb3 = [90, 8b, 55, 0c]
+005b2ce3 = [90, 8b, 45, 0c]
+005b2cf3 = [90, 8b, 55, 0c]
+005b3c3c = [74, 1f]
+005b4b84 = [74, 10]
+005b4d88 = [74, 0c]
+005b553f = [75, 04]
+005b5651 = [75, 2c]
+005b5723 = [90, 90]
+005b5859 = [75, 04]
+005b5bd7 = [75, 04]
+005f17b3 = [83, ec, 28]
+005f189c = [89, 4d, d8]
+005fd47e = [0f, 84, 35, 01, 00, 00]
+005fd50a = [75, 04]
+005fd5a1 = [74, 16]
+005fe7e2 = [74, 16]
+005fef8a = [74, 22]
+005fefa0 = [74, 0c]
+0060011c = [0f, 84, 97, 02, 00, 00]
+006018ac = [75, 04]
+00602ad4 = [74, 17]
+006033cb = [74, 1a]
+00603f32 = [74, 1c]
+0060670e = [75, 09]
+00607997 = [0f, 84, 6e, 21, 00, 00]
+00607a83 = [0f, 84, 82, 20, 00, 00]
+00607b26 = [0f, 84, df, 1f, 00, 00]
+00607f49 = [0f, 84, bc, 1b, 00, 00]
+00607f98 = [0f, 84, 6d, 1b, 00, 00]
+00608368 = [0f, 84, 9d, 17, 00, 00]
+00608493 = [0f, 84, 72, 16, 00, 00]
+00608545 = [0f, 84, c0, 15, 00, 00]
+00608785 = [0f, 84, 80, 13, 00, 00]
+006087d3 = [0f, 84, 32, 13, 00, 00]
+00608821 = [0f, 84, e4, 12, 00, 00]
+0060886f = [0f, 84, 96, 12, 00, 00]
+006088bd = [0f, 84, 48, 12, 00, 00]
+0060890b = [0f, 84, fa, 11, 00, 00]
+00608959 = [0f, 84, ac, 11, 00, 00]
+006089a7 = [0f, 84, 5e, 11, 00, 00]
+00608c0c = [0f, 84, f9, 0e, 00, 00]
+00608c61 = [0f, 84, a4, 0e, 00, 00]
+00608eb0 = [0f, 84, 55, 0c, 00, 00]
+00609039 = [0f, 84, cc, 0a, 00, 00]
+0060934d = [0f, 84, b8, 07, 00, 00]
+00609504 = [0f, 84, 01, 06, 00, 00]
+006095bc = [0f, 84, 49, 05, 00, 00]
+00609625 = [90, 8b, c0]
+0060f565 = [75, 2c]
+0060f5bf = [90, 8b, 45, 0c]
+0060f5fc = [8b, 45, 0c]
+0060f60b = [74, 07]
+0060f9da = [74, 4f]
+00610099 = [75, 2c]
+0061015d = [0f, 85, c7, fe, ff, ff]
+00611203 = [83, ec, 28]
+00611217 = [75, 04]
+00611321 = [74, 34]
+00611469 = [89, 45, d8]
+00611470 = [ff, 75, d8]
+00614483 = [74, 7f]
+006158f9 = [75, 04]
+006162fa = [0f, 84, d3, 00, 00, 00]
+0061647e = [90, 8b, c0]
+00616dff = [74, 1e]
+00616eaa = [74, 42]
+00618774 = [90, 8b, c0]
+0061aeea = [74, 0c]
+0061eab9 = [75, 23]
+0061ebe0 = [75, 11]
+0061eca1 = [90, e9, 46, 05, 00, 00]
+0061f2a1 = [75, 2c]
+006248dc = [74, 0d]
+00624ad5 = [74]
+00625521 = [74, 32]
+00625791 = [74, 0f]
+00625832 = [74, 1f]
+00625d44 = [74, 17]
+00626024 = [74, 3e]
+006262b5 = [74]
+00628589 = [74, 42]
+00628653 = [84]
+00628b96 = [84]
+00629cf7 = [84]
+00640983 = [90, 8b, 55, 0c]
+00640c10 = [8b, 5d, 0c]
+00640c28 = [89, 5d, 10]
+00640c2e = [8b, 45, 0c]
+00640c31 = [89, 45, 10]
+00659171 = [75, 2c]
+00659351 = [75, 2c]
+006597a0 = [75, 2c]
+0065999a = [75, 23]
+00659cc9 = [75, 23]
+00668fe4 = [0f, 84, 3f, 02, 00, 00]
+0066b28a = [0f, 84, df, 02, 00, 00]
+006ac973 = [90, 90]
+006ae665 = [eb, 23]
+006af8d7 = [0f, 84, bf, 01, 00, 00]
+006b023a = [90, 90]
+006b2417 = [74, 0c]
+006c7e7b = [75, 09]
+006d9a65 = [90, 8b, d1]
+006d9a93 = [90, 8b, d1]
+006d9be5 = [90, 8b, d1]
+006d9c13 = [90, 8b, d1]
+006dbb19 = [90, 8b, c0]
+006e24e9 = [75, 04]
+006e2852 = [75, 04]
+006e2b51 = [75, 04]
+006f390d = [90, 90]
+006f3a87 = [74, 5b]
+006f3c6e = [90, 8b, c0]
+006f3d6d = [74, 3f]
+006f3e2e = [90, 8b, c0]
+006f61c5 = [74, 31]
+007218f3 = [90, 8b, 45, 08]
+00721ea0 = [90, 8b, c0]
+0072956e = [74, 0c]
+0072a3f7 = [75, 04]
+00735194 = [74, 10]
+0073520d = [74, 0c]
+00735383 = [74, 10]
+007354dc = [74, 0c]
+00735543 = [74, 0c]
+00741408 = [75, 2c]
+00751554 = [90, 8b, c0]
+0075dacd = [90, 8b, c0]
+0075db3d = [90, 8b, c0]
+0075dd91 = [74, 3d]
+0075de14 = [74, 3d]
+00763d52 = [b7]
+007643d2 = [75, 04]
+0076443f = [74, 1d]
+00768c13 = [81, ec, 90, 00, 00, 00]
+00768c79 = [89, 9d, 70, ff, ff, ff]
+00768c8b = [89, 9d, 70, ff, ff, ff]
+00768cb9 = [89, 9d, 70, ff, ff, ff]
+00768cbf = [ff, b5, 70, ff, ff, ff]
+00768ced = [8b, 85, 70, ff, ff, ff]
+00768d5b = [8b, 85, 70, ff, ff, ff]
+00768da6 = [8b, 85, 70, ff, ff, ff]
+00769987 = [90, 90]
+0076afc7 = [0f, 84, 95, 00, 00, 00]
+0076b128 = [74, 52]
+0076b16a = [74, 10]
+0076ba53 = [90, 8b, c0]
+0076ba83 = [8b, d8]
+0076ba8a = [3b, d8]
+0076ba99 = [90, 8b, c0]
+0076c44e = [89, 45, fc]
+0076c454 = [ff, 75, fc]
+0076c5f5 = [8b, 5d, 10]
+0076c5fd = [75, 2c]
+0076c633 = [90, 8b, c3]
+0076c715 = [90, 8b, c3]
+0077cf33 = [83, ec, 24]
+0077cfda = [89, 45, e0]
+0077d000 = [89, 45, dc]
+0077d0f2 = [ff, 75, e0]
+0077d138 = [8b, 45, dc]
+0077d142 = [90, 8b, c0]
+0077d230 = [8b, 45, e0]
+0077d23a = [90, 8b, c0]
+--- Hooks ---
+00541cef:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+0054ece2:7 = [81, 3c, 85, ff, ff, ff, ff, 82, 00, 00, 00]
+0054ed0a:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+00552dc5:7 = [90, 8b, 0c, 85, ff, ff, ff, ff]
+005610cd:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+00561c10:2 = [3d, 82, 00, 00, 00]
+00561f33:2 = [3d, 82, 00, 00, 00]
+0056a121:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+0056c09b:7 = [81, 3c, 95, ff, ff, ff, ff, 82, 00, 00, 00]
+0056c0a8:7 = [81, 3c, 95, ff, ff, ff, ff, 82, 00, 00, 00]
+0056c181:7 = [81, 3c, 8d, ff, ff, ff, ff, 82, 00, 00, 00]
+0056c18a:7 = [81, 3c, 8d, ff, ff, ff, ff, 82, 00, 00, 00]
+0056c286:7 = [81, 3c, 8d, ff, ff, ff, ff, 82, 00, 00, 00]
+0056c29b:2 = [3d, 82, 00, 00, 00]
+0056c36b:6 = [8b, 04, 85, ff, ff, ff, ff]
+0056c371:2 = [3d, 82, 00, 00, 00]
+0056c380:6 = [8b, 04, 85, ff, ff, ff, ff]
+0056cae2:4 = [81, 7d, 0c, 22, 00, 00, 00]
+0056f603:3 = [81, fb, 22, 00, 00, 00]
+0056f610:3 = [81, fb, 22, 00, 00, 00]
+00575ad9:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+00575b03:6 = [8b, 04, 85, ff, ff, ff, ff]
+005778ab:6 = [8b, 1c, 85, ff, ff, ff, ff]
+0057790c:7 = [90, 8b, 04, b5, ff, ff, ff, ff]
+00578c46:6 = [8b, 04, 85, ff, ff, ff, ff]
+00578c4c:2 = [3d, 82, 00, 00, 00]
+00578fb5:6 = [8b, 04, 85, ff, ff, ff, ff]
+00578fcf:6 = [8b, 04, 85, ff, ff, ff, ff]
+00578fd8:2 = [3d, 82, 00, 00, 00]
+005790a1:6 = [8b, 1c, 85, ff, ff, ff, ff]
+005790b9:6 = [8b, 1c, 85, ff, ff, ff, ff]
+005790bf:3 = [81, fb, 82, 00, 00, 00]
+005791b7:6 = [8b, 1c, 85, ff, ff, ff, ff]
+0057b19c:7 = [90, 8b, 04, bd, ff, ff, ff, ff]
+0057b2d0:3 = [81, fb, 08, 00, 00, 00]
+0057b2e8:3 = [81, fb, 0a, 00, 00, 00]
+0057b465:6 = [8b, 1c, 85, ff, ff, ff, ff]
+0057b47d:6 = [8b, 1c, 85, ff, ff, ff, ff]
+0057b486:3 = [81, fb, 82, 00, 00, 00]
+0058543d:7 = [90, 8b, 04, 95, ff, ff, ff, ff]
+00585461:7 = [90, 8b, 04, 95, ff, ff, ff, ff]
+00585610:7 = [90, 8b, 04, bd, ff, ff, ff, ff]
+00588727:6 = [8b, 04, 85, ff, ff, ff, ff]
+0058b5ea:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+0058b64a:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+0058b6ab:7 = [90, 8b, 04, bd, ff, ff, ff, ff]
+0059a23e:3 = [81, fb, 82, 00, 00, 00]
+0059b027:7 = [90, 8b, 04, b5, ff, ff, ff, ff]
+005a114a:6 = [8b, 04, 9d, ff, ff, ff, ff]
+005a130a:6 = [8b, 04, 9d, ff, ff, ff, ff]
+005a166b:7 = [81, 3c, 95, ff, ff, ff, ff, 82, 00, 00, 00]
+005a16a9:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+005a453f:6 = [8b, 04, 9d, ff, ff, ff, ff]
+005a464b:6 = [8b, 04, 9d, ff, ff, ff, ff]
+005a4791:7 = [81, 3c, 85, ff, ff, ff, ff, 82, 00, 00, 00]
+005a47db:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+005a4806:7 = [90, 8b, 0c, 85, ff, ff, ff, ff]
+005a86e9:7 = [90, 8b, 04, b5, ff, ff, ff, ff]
+005aa4c9:6 = [8b, 04, 85, ff, ff, ff, ff]
+005aa4cf:2 = [3d, 82, 00, 00, 00]
+005afb6a:7 = [90, 8b, 04, 95, ff, ff, ff, ff]
+005afbb5:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+005b023d:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+005b5d39:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+005b7719:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+005f1855:6 = [0f, b6, 8f, c9, 00, 00, 00]
+00609617:2 = [3d, 2c, 00, 00, 00]
+0060f5ff:2 = [3d, 82, 00, 00, 00]
+0061006f:6 = [8b, 04, 85, ff, ff, ff, ff]
+00610075:2 = [3d, 82, 00, 00, 00]
+0061010c:6 = [8b, 04, 85, ff, ff, ff, ff]
+00610112:2 = [3d, 82, 00, 00, 00]
+0061145a:6 = [8b, 04, 85, ff, ff, ff, ff]
+00611f8a:2 = [3d, 82, 00, 00, 00]
+00611f9e:2 = [3d, 82, 00, 00, 00]
+00612190:2 = [3d, 82, 00, 00, 00]
+00616474:2 = [3d, 2c, 00, 00, 00]
+0061876a:2 = [3d, 2c, 00, 00, 00]
+006d9a5a:6 = [8b, 0c, 9d, ff, ff, ff, ff]
+006d9a60:3 = [81, f9, 82, 00, 00, 00]
+006d9a88:6 = [8b, 0c, 9d, ff, ff, ff, ff]
+006d9a8e:3 = [81, f9, 82, 00, 00, 00]
+006d9bda:6 = [8b, 0c, 9d, ff, ff, ff, ff]
+006d9be0:3 = [81, f9, 82, 00, 00, 00]
+006d9c08:6 = [8b, 0c, 9d, ff, ff, ff, ff]
+006d9c0e:3 = [81, f9, 82, 00, 00, 00]
+00726b42:7 = [90, 8b, 04, b5, ff, ff, ff, ff]
+00727ae5:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+0075154a:6 = [8b, 04, 85, ff, ff, ff, ff]
+00769a1b:7 = [81, 3c, 85, ff, ff, ff, ff, 82, 00, 00, 00]
+00769a2f:2 = [3d, 82, 00, 00, 00]
+0076a713:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+0076a73e:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+0076ba02:7 = [81, 3c, 85, ff, ff, ff, ff, 3c, 00, 00, 00]
+0076ba44:2 = [3d, 82, 00, 00, 00]
+0076ba6e:2 = [3d, 82, 00, 00, 00]
+0076c448:6 = [0f, b6, 81, c9, 00, 00, 00]
+0076c639:7 = [90, 8b, 04, 85, ff, ff, ff, ff]
+0077cfd4:6 = [8b, 04, b5, ff, ff, ff, ff]
+0077cffa:6 = [8b, 04, b5, ff, ff, ff, ff]
+0077d06e:4 = [81, 7d, e0, 82, 00, 00, 00]
+0077d13b:2 = [3d, 2c, 00, 00, 00]
+0077d26c:4 = [81, 7d, e0, 82, 00, 00, 00]
+--- Two step hooks ---
+00542440:3 = [0f, b6, 5f, 60] (Free @ 00542401)
+005425a0:3 = [0f, b6, 5f, 60] (Free @ 0054257b)
+00542680:3 = [0f, b6, 5f, 60] (Free @ 0054265b)
+0056c386:2 = [3d, 82, 00, 00, 00] (Free @ 0056c331)
+0056c3ab:2 = [3d, 82, 00, 00, 00] (Free @ 0056c3af)
+0056c8b1:4 = [81, 7d, 0c, 82, 00, 00, 00] (Free @ 0056c8b7)
+0056f5b4:3 = [81, fb, 82, 00, 00, 00] (Free @ 0056f5b9)
+00573d1a:3 = [81, fb, 82, 00, 00, 00] (Free @ 00573d1f)
+00573dbb:3 = [81, fb, 82, 00, 00, 00] (Free @ 00573dc0)
+00573e97:2 = [3d, 82, 00, 00, 00] (Free @ 00573e9d)
+00573f06:2 = [3d, 82, 00, 00, 00] (Free @ 00573ea8)
+005759f1:2 = [bb, 82, 00, 00, 00] (Free @ 005759de)
+00575a09:3 = [81, fb, 82, 00, 00, 00] (Free @ 00575a15)
+005778a4:2 = [bb, 82, 00, 00, 00] (Free @ 005778c0)
+005778b4:3 = [81, fb, 82, 00, 00, 00] (Free @ 005778cc)
+00577d6b:3 = [81, fb, 82, 00, 00, 00] (Free @ 00577d70)
+00577f30:2 = [3d, 82, 00, 00, 00] (Free @ 00577f34)
+00578fcb:2 = [b8, 82, 00, 00, 00] (Free @ 00578f7a)
+005790b5:2 = [bb, 82, 00, 00, 00] (Free @ 00579080)
+005791d4:3 = [81, fb, 82, 00, 00, 00] (Free @ 005791a1)
+0057b479:2 = [bb, 82, 00, 00, 00] (Free @ 0057b426)
+0057b4b7:3 = [81, fb, 82, 00, 00, 00] (Free @ 0057b48b)
+0058872d:2 = [3d, 2c, 00, 00, 00] (Free @ 00588734)
+0059a24d:2 = [3d, 82, 00, 00, 00] (Free @ 0059a212)
+0059a268:2 = [3d, 82, 00, 00, 00] (Free @ 0059a227)
+0059dff7:2 = [3d, 82, 00, 00, 00] (Free @ 0059dfc1)
+0059e025:2 = [3d, 82, 00, 00, 00] (Free @ 0059dfcd)
+005a1310:2 = [3d, 2c, 00, 00, 00] (Free @ 005a12d4)
+005a4651:2 = [3d, 2c, 00, 00, 00] (Free @ 005a4615)
+005b0eea:3 = [81, fb, 2c, 00, 00, 00] (Free @ 005b0ef3)
+005b0faa:3 = [81, fb, 3d, 00, 00, 00] (Free @ 005b0fb3)
+0061146c:2 = [3d, 82, 00, 00, 00] (Free @ 00611448)
+00751550:2 = [3d, 2c, 00, 00, 00] (Free @ 00751528)
+00768cb6:3 = [0f, b6, 5e, 08] (Free @ 00768c5f)
+0076c5fa:3 = [81, fb, 82, 00, 00, 00] (Free @ 0076c5ff)
+0077d236:2 = [3d, 82, 00, 00, 00] (Free @ 0077d1f3)
+--- Extended array patches ---
+00: VirtualAddress(0074ddb3):7 = (Mem32[rsp + 8] + (rcx * c))
+00: VirtualAddress(0074dde3):7 = (Mem32[rsp + c] + (rcx * c))
+00: VirtualAddress(0074df12):7 = (Mem32[rsp + 8] + (Mem16[rsp + c] * c))
+00: VirtualAddress(0074df33):7 = (Mem32[rsp + 8] + (Mem16[rsp + c] * c))
+01: VirtualAddress(006db418):7 = (((((rdx - 2e) % 2e) * c) + ((rdx - 2e) / 2e)) + 90)
+01: VirtualAddress(006db426):7 = (((((rdx - 2e) % 2e) * c) + ((rdx - 2e) / 2e)) + 150)
+01: VirtualAddress(006db435):8 = (((((rdx - 2e) % 2e) * c) + ((rdx - 2e) / 2e)) + 1b0)
+01: VirtualAddress(006db442):6 = (((((rdx - 2e) % 2e) * c) + ((rdx - 2e) / 2e)) + 1e0)
+01: VirtualAddress(006db44f):7 = (((((rdx - 2e) % 2e) * c) + ((rdx - 2e) / 2e)) + 210)
+01: VirtualAddress(006db46f):8 = (((((rsi - f) % f) * c) + ((rsi - f) / f)) + 258)
+01: VirtualAddress(006db47c):6 = (((((rsi - f) % f) * c) + ((rsi - f) / f)) + 288)
+01: VirtualAddress(006db489):7 = (((((rsi - f) % f) * c) + ((rsi - f) / f)) + 2b8)
+01: VirtualAddress(006db495):6 = (((((rsi - f) % f) * c) + ((rsi - f) / f)) + 2d0)
+01: VirtualAddress(0074de15):7 = (Mem32[rsp + 8] + (Mem16[rsp + c] * c))
+01: VirtualAddress(0074de2a):7 = (Mem32[rsp + 8] + (Mem16[rsp + c] * c))
+01: VirtualAddress(0074df62):7 = (Mem32[rsp + 8] + (Mem16[rsp + c] * c))
+01: VirtualAddress(0074df83):7 = (Mem32[rsp + 8] + (Mem16[rsp + c] * c))
+02: VirtualAddress(0074dcf9):7 = (Mem32[rsp + 8] + (Mem16[rsp + c] * c))
+02: VirtualAddress(0074dd19):7 = (Mem32[rsp + c] + (Mem16[rsp + 10] * c))
+02: VirtualAddress(0074dea4):7 = (Mem32[rsp + c] + (rsi * c))
+02: VirtualAddress(0074deb4):7 = (Mem32[rsp + c] + (rsi * c))
+03: VirtualAddress(0074dca6):7 = (Mem32[rsp + 8] + (Mem16[rsp + c] * c))
+03: VirtualAddress(0074dcb8):7 = (Mem32[rsp + 8] + (Mem16[rsp + c] * c))
+03: VirtualAddress(0074de64):7 = (Mem32[rsp + c] + (rsi * c))
+03: VirtualAddress(0074de74):7 = (Mem32[rsp + c] + (rsi * c))
+04: VirtualAddress(0074c7c1):7 = 0
+04: VirtualAddress(0074c7cf):7 = 2
+04: VirtualAddress(0074c7dd):7 = 4
+04: VirtualAddress(0074c7eb):7 = 6
+04: VirtualAddress(0074c7fa):8 = 8
+04: VirtualAddress(0075e831):7 = (rax + ((Mem8[rsp + 8] >> 3) * c))
+04: VirtualAddress(0075e83b):6 = (Mem32[rsp + c] + ((Mem8[rsp + 8] >> 3) * c))
+04: VirtualAddress(0075e8ae):8 = (rax + ((Mem8[rsp + 8] >> 3) * c))
+04: VirtualAddress(0075e931):7 = (rax + ((Mem8[rsp + 8] >> 3) * c))
+04: VirtualAddress(0075e93b):6 = (Mem32[rsp + c] + ((Mem8[rsp + 8] >> 3) * c))
+05: VirtualAddress(0074c78f):7 = 0
+05: VirtualAddress(0074c79d):7 = 32
+05: VirtualAddress(0074c7aa):6 = 1d
+05: VirtualAddress(0075e7fc):3 = (Mem32[rsp + 10] + ((Mem8[rsp + c] >> 3) * c))
+05: VirtualAddress(0075e802):2 = (Mem32[rsp + 10] + ((Mem8[rsp + c] >> 3) * c))
+05: VirtualAddress(0075e875):8 = (Mem32[rsp + c] + ((Mem8[rsp + 8] >> 3) * c))
+05: VirtualAddress(0075e8fc):3 = (Mem32[rsp + 10] + ((Mem8[rsp + c] >> 3) * c))
+05: VirtualAddress(0075e902):2 = (Mem32[rsp + 10] + ((Mem8[rsp + c] >> 3) * c))
+06: VirtualAddress(0061ec77):8 = ((rbx * e4) + (rsi * c))
+06: VirtualAddress(006da068):7 = ((((rax + rsi) % e4) * c) + ((rax + rsi) / e4))
+07: VirtualAddress(00512894):7 = ((rdx + (Mem16[(Mem32[rsp + 30] + (rsi * 2))] * c)) * 4)
+07: VirtualAddress(005fdb03):7 = ((((((rdx * 4) / 30) * c) + (((rdx * 4) % 30) / 4)) * 4) + 1d40)
+07: VirtualAddress(0061f072):7 = ((rdx + (Mem16[(rbx * 2) + e4d578] * c)) * 4)
+07: VirtualAddress(0065959e):7 = ((rcx + (Mem16[rsp + c] * c)) * 4)
+07: VirtualAddress(00659d69):7 = ((rdi + (rdx * c)) * 4)
+07: VirtualAddress(00659ea4):8 = ((rdi + (Mem16[rsi + 64] * c)) * 4)
+07: VirtualAddress(00659eae):b = ((rdi + (Mem16[rsi + 64] * c)) * 4)
+08: VirtualAddress(00512835):7 = ((Mem32[rsp + 28] + (rdi * c)) * 4)
+08: VirtualAddress(00512b4f):7 = ((rdx + (Mem16[(Mem32[rsp + 30] + (rsi * 2))] * c)) * 4)
+08: VirtualAddress(005fdb0a):7 = ((((((rdx * 4) / 30) * c) + (((rdx * 4) % 30) / 4)) * 4) + 1d40)
+08: VirtualAddress(0061f014):7 = ((Mem32[rbp + c] + (rdi * c)) * 4)
+08: VirtualAddress(0061f0a2):7 = ((rdx + (Mem16[(rbx * 2) + e4d578] * c)) * 4)
+08: VirtualAddress(006595ce):7 = ((rcx + (Mem16[rsp + c] * c)) * 4)
+08: VirtualAddress(00659a38):7 = ((rdi + (Mem16[rsi + 64] * c)) * 4)
+08: VirtualAddress(00659bf5):8 = ((Mem8[rsi + 4c] + (Mem16[rsi + 64] * c)) * 4)
+08: VirtualAddress(00659bff):b = ((Mem8[rsi + 4c] + (Mem16[rsi + 64] * c)) * 4)
+09: VirtualAddress(00628cba):7 = (((((rax * 4) / 30) * c) + (((rax * 4) % 30) / 4)) * 4)
+09: VirtualAddress(0065914b):7 = ((rdi + (Mem16[rbx + 64] * c)) * 4)
+0a: VirtualAddress(00624aef):6 = ((rsi + (rbx * c)) * 4)
+0a: VirtualAddress(006262cc):7 = ((rsi + (rbx * c)) * 4)
+0a: VirtualAddress(00626ddc):3 = (((((rcx - b274) / 30) * c) + (((rcx - b274) % 30) / 4)) * 4)
+0a: VirtualAddress(00626de5):3 = (((((rcx - b274) / 30) * c) + (((rcx - b274) % 30) / 4)) * 4)
+0a: VirtualAddress(00626ded):7 = (((((rcx - b274) / 30) * c) + (((rcx - b274) % 30) / 4)) * 4)
+0a: VirtualAddress(006287ec):7 = (((((rax * 4) / 30) * c) + (((rax * 4) % 30) / 4)) * 4)
+0a: VirtualAddress(00659087):7 = ((rdx + (Mem16[rbx + 64] * c)) * 4)
+0b: VirtualAddress(0060f96a):6 = (rbx * 4)
+0b: VirtualAddress(0060fd0a):7 = ((rax * 8) + (rbx * 4))
+0b: VirtualAddress(0060fd25):7 = (rbx * 4)
+0b: VirtualAddress(0060fed6):7 = (rax * 8)
+0b: VirtualAddress(0060fee6):7 = ((rax * 8) + 4)
+0b: VirtualAddress(00610141):7 = (rsi * 8)
+0b: VirtualAddress(00610153):7 = ((rsi * 8) + 4)
+0c: VirtualAddress(005f992e):2 = (rbx + (rdi * c))
+0c: VirtualAddress(005f9964):3 = (rbx + (rdi * c))
+0c: VirtualAddress(005facc6):7 = (rsi + (rdi * c))
+0c: VirtualAddress(005fbbae):2 = (rbx + (rsi * c))
+0c: VirtualAddress(005fbbe3):3 = (rbx + (rsi * c))
+0d: VirtualAddress(00629eb4):7 = (rax * 4)
+0d: VirtualAddress(0062a030):7 = (rax * 4)
+0e: VirtualAddress(00628471):7 = (rax * 4)
+0e: VirtualAddress(00628576):7 = (rcx * 4)
+0e: VirtualAddress(006285bb):7 = (rax * 4)
+0e: VirtualAddress(006285e1):7 = ((rax * 4) + 2a0)
+0e: VirtualAddress(00629e29):7 = (rax * 4)
+--- Extended array arg patches ---
+00628992: [(0, 14), (1, 8)]
+006289a8: [(0, 13), (1, 7)]
+006296e9: [(0, 14)]
+006296fa: [(0, 13)]
+--- Grp texture hooks ---
+007667e5:6: rax <= 10b6b84, rax
+00768918:6: rax <= 10b6b90, rax
+Grp index hooks: ["00766126", "00768107"]
+--- Func replaces ---
+00576140 = SelfOrSubunitAirWeapon
+005761e0 = SelfOrSubunitGroundWeapon
+00576220 = UnitGroundWeapon
+005a1a60 = UnitCloakTech
