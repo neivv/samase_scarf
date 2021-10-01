@@ -638,12 +638,6 @@ declare_dat! {
     mapdata, "mapdata.dat", MapData,
 }
 
-#[derive(Clone, Debug)]
-pub struct SwitchTable<Va: VirtualAddressTrait> {
-    address: Va,
-    cases: Vec<Va>,
-}
-
 // When not testing, immediatly end once a value is found, for tests require all values
 // to be same.
 #[cfg(not(feature = "test_assertions"))]
@@ -733,6 +727,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 arg_cache: ArgCache::new(ctx),
             },
         }
+    }
+
+    pub fn ctx(&self) -> OperandCtx<'e> {
+        self.shareable.ctx
     }
 
     fn is_valid_function(address: E::VirtualAddress) -> bool {
@@ -4513,6 +4511,10 @@ impl<'e> AnalysisX86<'e> {
         ctx: scarf::OperandCtx<'e>,
     ) -> AnalysisX86<'e> {
         AnalysisX86(Analysis::new(binary, ctx))
+    }
+
+    pub fn ctx(&self) -> OperandCtx<'e> {
+        self.0.ctx()
     }
 
     pub fn firegraft_addresses(&mut self) -> Rc<FiregraftAddresses<VirtualAddress>> {
