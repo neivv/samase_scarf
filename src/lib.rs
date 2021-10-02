@@ -316,6 +316,7 @@ results! {
         MapEntryLoadReplay => "map_entry_load_replay",
         GetMouseX => "get_mouse_x",
         GetMouseY => "get_mouse_y",
+        AddPylonAura => "add_pylon_aura",
     }
 }
 
@@ -443,6 +444,9 @@ results! {
         BnetController => "bnet_controller",
         MouseX => "mouse_x",
         MouseY => "mouse_y",
+        FirstPylon => "first_pylon",
+        PylonAurasVisible => "pylon_auras_visible",
+        PylonRefresh => "pylon_refresh",
     }
 }
 
@@ -881,6 +885,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             MapEntryLoadReplay => self.map_entry_load_replay(),
             GetMouseX => self.get_mouse_x(),
             GetMouseY => self.get_mouse_y(),
+            AddPylonAura => self.add_pylon_aura(),
         }
     }
 
@@ -1009,6 +1014,9 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             BnetController => self.bnet_controller(),
             MouseX => self.mouse_x(),
             MouseY => self.mouse_y(),
+            FirstPylon => self.first_pylon(),
+            PylonAurasVisible => self.pylon_auras_visible(),
+            PylonRefresh => self.pylon_refresh(),
         }
     }
 
@@ -2523,6 +2531,22 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn mouse_y(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(OperandAnalysis::MouseY, AnalysisCache::cache_mouse_xy)
+    }
+
+    pub fn pylon_auras_visible(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::PylonAurasVisible, AnalysisCache::cache_pylon_aura)
+    }
+
+    pub fn first_pylon(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::FirstPylon, AnalysisCache::cache_pylon_aura)
+    }
+
+    pub fn pylon_refresh(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::PylonRefresh, AnalysisCache::cache_pylon_aura)
+    }
+
+    pub fn add_pylon_aura(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::AddPylonAura, AnalysisCache::cache_pylon_aura)
     }
 
     /// Mainly for tests/dump
@@ -4504,6 +4528,20 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             }
         }
         Some(self.join_param_variant_type_offset).filter(|&x| x < 0xfffe).map(|x| x as usize)
+    }
+
+    fn cache_pylon_aura(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[AddPylonAura], &[FirstPylon, PylonAurasVisible, PylonRefresh], |s| {
+            let step_order = s.step_order(actx)?;
+            let order_pylon_init = step_order::find_order_function(actx, step_order, 0xa4)?;
+            let result = units::pylon_aura(actx, order_pylon_init);
+            Some((
+                [result.add_pylon_aura],
+                [result.first_pylon, result.pylon_auras_visible, result.pylon_refresh],
+            ))
+        })
     }
 }
 

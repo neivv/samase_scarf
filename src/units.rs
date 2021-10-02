@@ -8,7 +8,7 @@ use scarf::{BinaryFile, DestOperand, MemAccess, MemAccessSize, Operand, OperandC
 
 use crate::{
     AnalysisCtx, ControlExt, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
-    entry_of_until, bumpvec_with_capacity, FunctionFinder, if_arithmetic_eq_neq,
+    entry_of_until, bumpvec_with_capacity, FunctionFinder, if_arithmetic_eq_neq, is_global,
 };
 use crate::struct_layouts;
 
@@ -59,6 +59,13 @@ pub(crate) struct PrepareIssueOrderAnalysis<'e> {
     pub allocated_order_count: Option<Operand<'e>>,
     pub replay_bfix: Option<Operand<'e>>,
     pub replay_gcfg: Option<Operand<'e>>,
+}
+
+pub(crate) struct PylonAura<'e, Va: VirtualAddress> {
+    pub first_pylon: Option<Operand<'e>>,
+    pub pylon_auras_visible: Option<Operand<'e>>,
+    pub pylon_refresh: Option<Operand<'e>>,
+    pub add_pylon_aura: Option<Va>,
 }
 
 pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
@@ -1904,5 +1911,120 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
             return address.if_offset(struct_layouts::order_id::<E::VirtualAddress>());
         }
         None
+    }
+}
+
+pub(crate) fn pylon_aura<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    order_pylon_init: E::VirtualAddress,
+) -> PylonAura<'e, E::VirtualAddress> {
+    let mut result = PylonAura {
+        first_pylon: None,
+        add_pylon_aura: None,
+        pylon_auras_visible: None,
+        pylon_refresh: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, order_pylon_init);
+    let mut analyzer = PylonInitAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        state: PylonInitState::FirstPylon,
+        inline_depth: 0,
+        limit: 0,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct PylonInitAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut PylonAura<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: PylonInitState,
+    inline_depth: u8,
+    limit: u8,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum PylonInitState {
+    // Search for this.next_pylon = first_pylon
+    FirstPylon,
+    // Should be first call immediately after, verify from create_sprite(141, ...)
+    AddPylonAura,
+    AddPylonAuraVerify,
+    // Assign 1 to a global in add_pylon_aura
+    PylonAurasVisible,
+    // Back to depth 0, assign 1 right after add_pylon_aura
+    PylonRefresh,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PylonInitAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            PylonInitState::FirstPylon => {
+                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    let mem = ctrl.resolve_mem(mem);
+                    let offset = struct_layouts::unit_next_pylon::<E::VirtualAddress>();
+                    if mem.address() == (ctx.register(1), offset) {
+                        self.result.first_pylon = Some(ctrl.resolve(value));
+                        self.state = PylonInitState::AddPylonAura;
+                    }
+                }
+            }
+            PylonInitState::AddPylonAura => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.inline_depth = 1;
+                        self.state = PylonInitState::AddPylonAuraVerify;
+                        self.limit = 2;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth = 0;
+                        if self.state != PylonInitState::AddPylonAuraVerify {
+                            self.result.add_pylon_aura = Some(dest);
+                        } else {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            PylonInitState::AddPylonAuraVerify => {
+                if let Operation::Call(_) = *op {
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    if arg1.if_constant() == Some(0x141) {
+                        self.state = PylonInitState::PylonAurasVisible;
+                    } else {
+                        if self.limit == 0 {
+                            ctrl.end_analysis();
+                        } else {
+                            self.limit -= 1;
+                        }
+                    }
+                }
+            }
+            PylonInitState::PylonAurasVisible | PylonInitState::PylonRefresh => {
+                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if ctrl.resolve(value) == ctx.const_1() {
+                        let mem = ctrl.resolve_mem(mem);
+                        if is_global(mem.address().0) {
+                            let dest = ctx.memory(&mem);
+                            if self.state == PylonInitState::PylonAurasVisible {
+                                self.result.pylon_auras_visible = Some(dest);
+                                self.state = PylonInitState::PylonRefresh;
+                                if self.inline_depth != 0 {
+                                    ctrl.end_analysis();
+                                }
+                            } else {
+                                self.result.pylon_refresh = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

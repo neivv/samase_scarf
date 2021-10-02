@@ -145,6 +145,13 @@ pub fn unit_flags<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_next_pylon<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xfc,
+        false => 0x178,
+    }
+}
+
 pub fn unit_ai<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x134,

@@ -1,6 +1,7 @@
 -- Main --
 add_asset_change_callback: 1401630e0
 add_overlay_iscript: 14018d670
+add_pylon_aura: 1401d67c0
 ai_add_military_to_region: 140281520
 ai_attack_prepare: 140282150
 ai_prepare_moving_to: 1401ed560
@@ -165,6 +166,7 @@ first_hidden_unit: Mem64[140d30878]
 first_invisible_unit: Mem64[140d30d20]
 first_lone_sprite: Mem64[140d30680]
 first_player_unit: 140d30890
+first_pylon: Mem64[140d30978]
 first_revealer: Mem64[140d30880]
 fonts: 140f84208
 game: (Mem64[140c6bf20] ^ 5c84fa250fa90006)
@@ -216,6 +218,8 @@ player_turns: 140f4a910
 player_turns_size: 140f4a970
 player_unit_skins: 140f5a4c0
 players: ((Mem64[140cf9d02] + 605797f615d890fc) ^ Mem64[140f4a3c0])
+pylon_auras_visible: Mem32[140d30994]
+pylon_refresh: Mem32[140d30990]
 replay_bfix: 140c92678
 replay_data: Mem64[140f4bf18]
 replay_gcfg: 140f4f9f0
