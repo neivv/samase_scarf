@@ -247,6 +247,7 @@ pub(crate) fn analyze_process_fn_switch<'e, E: ExecutionState<'e>>(
     let mut analyzer = AnalyzeFirstSwitch::<E> {
         result: None,
         phantom: Default::default(),
+        first_branch: true,
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
@@ -255,12 +256,31 @@ pub(crate) fn analyze_process_fn_switch<'e, E: ExecutionState<'e>>(
 struct AnalyzeFirstSwitch<'e, E: ExecutionState<'e>> {
     result: Option<CompleteSwitch<'e>>,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
+    first_branch: bool,
 }
 
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeFirstSwitch<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if E::VirtualAddress::SIZE == 8 {
+            // Skip over 64bit stack_probe to keep rax same as the probe length.
+            // arguments would be spilled to unreachable stack otherwise.
+            if self.first_branch {
+                if let Operation::Jump { .. } = *op {
+                    self.first_branch = false;
+                } else if let Operation::Call(..) = *op {
+                    let ctx = ctrl.ctx();
+                    if let Some(c) = ctrl.resolve(ctx.register(0)).if_constant() {
+                        if c >= 0x4000 {
+                            ctrl.skip_operation();
+                            return;
+                        }
+                    }
+                    self.first_branch = false;
+                }
+            }
+        }
         ctrl.aliasing_memory_fix(op);
         if let Operation::Jump { to, .. } = *op {
             let to = ctrl.resolve(to);
@@ -545,8 +565,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyze
         match *op {
             Operation::Call(dest) => {
                 if self.inline_depth < 2 {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         if !self.checked_calls.iter().any(|&x| x == dest) {
                             self.checked_calls.push(dest);
                             self.inline_depth += 1;
@@ -580,9 +599,11 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyze
                     }
                 }
                 let condition = ctrl.resolve(condition);
+                let ctx = ctrl.ctx();
                 let other = condition.if_arithmetic_eq()
-                    .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                    .filter(|other| other.iter().all(|x| !x.is_undefined()));
+                    .filter(|x| x.1 == ctx.const_0())
+                    .map(|x| x.0)
+                    .filter(|&x| is_global(x));
 
                 ctrl.user_state().possible_result = other;
             }

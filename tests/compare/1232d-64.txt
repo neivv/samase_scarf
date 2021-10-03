@@ -16,7 +16,7 @@ check_dat_requirements: 140143650
 check_unit_requirements: 140287a20
 choose_snp: 140388970
 clamp_zoom: 14022f760
-clear_build_queue: None
+clear_build_queue: 14019c0a0
 create_bullet: None
 create_game_multiplayer: 140387280
 create_lone_sprite: 1401961c0
@@ -29,7 +29,7 @@ draw_f10_menu_tooltip: 1403f1a30
 draw_game_layer: 140231b30
 draw_graphic_layers: 1405e9e80
 draw_image: None
-draw_minimap_units: None
+draw_minimap_units: 1403653f0
 draw_tooltip_layer: 140226690
 finish_unit_post: 1401bc430
 finish_unit_pre: 1401bc740
@@ -80,8 +80,8 @@ process_commands: 14038e400
 process_events: 1402fba60
 process_lobby_commands: 14038e0d0
 receive_storm_turns: 140383150
-remove_from_client_selection: None
-remove_from_selections: None
+remove_from_client_selection: 1401bfa00
+remove_from_selections: 1403d6810
 render_screen: 1405ea460
 reset_ui_event_handlers: 14030e060
 reveal_unit_area: None
@@ -143,7 +143,7 @@ chk_init_players: 140f249e0
 client_selection: 140f35470
 cmdbtns_ddsgrp: None
 cmdicons_ddsgrp: None
-command_user: None
+command_user: Mem32[140c6f170]
 continue_game_loop: Mem8[140ef8e5e]
 current_tooltip_ctrl: Mem64[140d09ec0]
 cursor_marker: None
@@ -165,7 +165,7 @@ first_guard_ai: 140d5eb70
 first_hidden_unit: Mem64[140d09960]
 first_invisible_unit: None
 first_lone_sprite: Mem64[140d09760]
-first_player_unit: None
+first_player_unit: 140d09970
 first_pylon: Mem64[140d09a58]
 first_revealer: None
 fonts: 140f5f9e8
@@ -179,7 +179,7 @@ images_loaded: Mem8[140efe5aa]
 is_multiplayer: Mem8[140f216fc]
 is_paused: Mem32[140d114f0]
 is_placing_building: Mem32[140f266bc]
-is_replay: None
+is_replay: Mem32[140f26780]
 is_targeting: Mem8[140f35646]
 iscript_bin: None
 last_active_bullet: None
@@ -221,17 +221,17 @@ players: ((Mem64[140f22e50] ^ Mem64[140cd56a9]) ^ 6b8e8ab65f75bc1a)
 pylon_auras_visible: Mem32[140d09a74]
 pylon_refresh: Mem32[140d09a70]
 replay_bfix: None
-replay_data: None
+replay_data: Mem64[140f249b8]
 replay_gcfg: None
 replay_seek_frame: Mem32[140f26ea0]
-replay_show_entire_map: None
-replay_visions: None
+replay_show_entire_map: Mem32[140f26ea8]
+replay_visions: Mem8[140f26ea4]
 rng_enable: Mem32[140f249b0]
 rng_seed: Mem32[140f245a0]
 scmain_state: Mem32[140efe5ac]
 screen_x: Mem32[140d64ed4]
 screen_y: Mem32[140d64ed8]
-selections: None
+selections: 140f32ab0
 skins: 140c704a4
 sprite_hlines: 140d085d0
 sprite_hlines_end: 140d08dd0
@@ -243,7 +243,7 @@ sync_active: Mem32[140f23398]
 sync_data: 140f25250
 tfontgam: 140f5fa30
 tooltip_draw_func: Mem64[140d09eb8]
-unique_command_user: None
+unique_command_user: Mem32[140c6f174]
 unit_should_reveal_area: None
 unit_strength: None
 units: Mem64[140d099d0]
@@ -332,7 +332,7 @@ trigger_conditions: Some(VirtualAddress(140c49090))
 trigger_actions: Some(VirtualAddress(140c48eb0))
 trigger_all_units_cache: 140d62180
 trigger_completed_units_cache: 140d5f6c0
-replay_minimap_unexplored_fog_patch: None
+replay_minimap_unexplored_fog_patch: Some((VirtualAddress(14036566c), [90, 90]))
 crt_fastfail: []
 
 -- Euds --
