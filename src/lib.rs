@@ -6330,6 +6330,10 @@ trait ControlExt<'e, E: ExecutionStateTrait<'e>> {
     fn get_new_esp_for_call(&mut self) -> Operand<'e>;
     /// Adds word size to esp (Does not actually return the operand at [esp])
     fn pop_stack(&mut self);
+    /// If this looks like a stack probe call (may be first call in 64bit), skip clobbering
+    /// rax which will keep it's value of stack alloc size after call.
+    /// Return true if the operation was skipped.
+    fn check_stack_probe(&mut self) -> bool;
 }
 
 impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
@@ -6440,5 +6444,18 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
                 <A::Exec as ExecutionStateTrait<'e>>::VirtualAddress::SIZE.into(),
             ),
         );
+    }
+
+    fn check_stack_probe(&mut self) -> bool {
+        if A::Exec::WORD_SIZE == MemAccessSize::Mem64 {
+            let ctx = self.ctx();
+            if let Some(c) = self.resolve(ctx.register(0)).if_constant() {
+                if c >= 0x4000 {
+                    self.skip_operation();
+                    return true;
+                }
+            }
+        }
+        false
     }
 }

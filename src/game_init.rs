@@ -766,6 +766,7 @@ pub(crate) fn single_player_start<'e, E: ExecutionState<'e>>(
                 local_player_id: &local_player_id,
                 inlining: false,
                 inline_limit: 0,
+                first_call: true,
             };
             let exec = E::initial_state(ctx, binary);
             let state = SinglePlayerStartState::SearchingStorm101;
@@ -791,6 +792,7 @@ struct SinglePlayerStartAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     local_player_id: &'a Operand<'e>,
     inlining: bool,
     inline_limit: u8,
+    first_call: bool,
 }
 
 /// These are ordered from first step to last
@@ -825,6 +827,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         match *ctrl.user_state() {
             SinglePlayerStartState::SearchingStorm101 => {
                 if let Operation::Call(_) = op {
+                    let was_first_call = self.first_call;
+                    self.first_call = false;
                     let ctx = ctrl.ctx();
                     let zero = ctx.const_0();
                     let ok = Some(ctrl.resolve(self.arg_cache.on_call(3)))
@@ -840,6 +844,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let arg10 = ctrl.resolve(self.arg_cache.on_call(9));
                         *ctrl.user_state() = SinglePlayerStartState::AssigningPlayerMappings;
                         self.result.local_storm_player_id = Some(ctx.mem32(arg10, 0));
+                    } else if was_first_call {
+                        ctrl.check_stack_probe();
                     }
                 }
             }

@@ -270,14 +270,10 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeFirstSwitch<'e
                 if let Operation::Jump { .. } = *op {
                     self.first_branch = false;
                 } else if let Operation::Call(..) = *op {
-                    let ctx = ctrl.ctx();
-                    if let Some(c) = ctrl.resolve(ctx.register(0)).if_constant() {
-                        if c >= 0x4000 {
-                            ctrl.skip_operation();
-                            return;
-                        }
-                    }
                     self.first_branch = false;
+                    if ctrl.check_stack_probe() {
+                        return;
+                    }
                 }
             }
         }
