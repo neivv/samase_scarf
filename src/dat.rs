@@ -2189,7 +2189,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                     if rex_off == 0 {
                         full_bytes[1] = 0x8b;
                     } else {
-                        full_bytes[1] = bytes[0];
+                        if full_bytes[0] == 0x40 {
+                            // Not adding unnecessary 0x40 REX prefix
+                            // (It may have been necessary for accessing sil or
+                            // such new low register, but unnecessary with u32-u32 move)
+                            full_bytes[1] = 0x90;
+                        } else {
+                            full_bytes[1] = full_bytes[0];
+                        }
                         full_bytes[2] = 0x8b;
                     }
                     full_bytes[0] = 0x90;
