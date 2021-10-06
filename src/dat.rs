@@ -1581,9 +1581,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 // limit > value should be converted to always jump
                 l.if_constant()
                     .and_then(|c| {
+                        let (right_inner, mask) = Operand::and_masked(r);
                         Some(()).and_then(|()| {
                             // Check signed comparisions
-                            let (right_inner, mask) = Operand::and_masked(r);
                             if let Some((add_l, add_r)) = right_inner.if_arithmetic_add() {
                                 // `8000_0050 > (x + 8000_0000) & ffff_ffff`
                                 // is signed 50 > x
@@ -1598,7 +1598,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                                 // is signed x > 50
                                 // (7fff_ffaf + 51 == 8000_0000)
                                 let sub_r = sub_r.if_constant()?;
-                                if sub_r.wrapping_add(c).count_ones() == 1 {
+                                let sum = sub_r.wrapping_add(c);
+                                if matches!(sum, 0x8000 | 0x8000_0000 | 0x8000_0000_0000_0000) {
                                     // Catch signed comparision (value > last_valid)
                                     // c = last_valid + 1, but since entry_limit_to_dat
                                     // takes last_valid + 1 too, just pass c directly there
@@ -1608,6 +1609,16 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                             }
                             None
                         }).or_else(|| {
+                            if let Some((_, sub_r)) = right_inner.if_arithmetic_sub() {
+                                if sub_r.if_constant().is_some() {
+                                    // c1 > (x - c2) is a range check,
+                                    // assuming that you never get dat id by subtracting a
+                                    // constant and then checking if it's less than invalid
+                                    // Repair order check does check 0x6a..0x80 range which
+                                    // shouldn't be (just) removed
+                                    return None;
+                                }
+                            }
                             let dat = entry_limit_to_dat(c.try_into().ok()?)?;
                             Some((true, r, dat))
                         })

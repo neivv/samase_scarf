@@ -292,11 +292,11 @@ sfxdata.dat: None
 portdata.dat: 140c88520 (entry size 24)
 mapdata.dat: 140cb3cd0 (entry size 48)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress(14018b10e), 2) })
-sprite_x: (((((((((Custom_0 << 20) ^ (((Mem32[140d1d3bd] - ((Custom_0 ^ (7ef0d55d - (Mem64[Mem64[60] + 18] >> b))) ^ 4c52cb34)) & ffffffff) << 20)) ^ ((Custom_0 - Mem32[140d1d386]) << 20)) ^ (Mem16[140d1d3c1] << 35)) ^ (Custom_0 & ffffffff)) ^ ((Mem32[140d1d3c1] << 15) & 1fffff00000000)) ^ (7b0ff7f47ef0d55d - ((Mem64[Mem64[60] + 18] >> b) | (Mem16[Mem64[60] + 18] << 35)))) ^ ((((Custom_0 << 21) ^ ((7b0ff7f47ef0d55d - ((Mem64[Mem64[60] + 18] >> b) | (Mem16[Mem64[60] + 18] << 35))) << 21)) ^ 98a5966800000000) + 241b805d00000000)) ^ 2e120dc04c52cb34)
+sprite_x: ((((((((Custom_0 ^ (Custom_0 << 20)) ^ ((Custom_0 - Mem32[140d1d386]) << 20)) ^ ((Mem32[140d1d3bd] - ((Custom_0 ^ (7b0ff7f47ef0d55d - ((Mem64[Mem64[60] + 18] >> b) | (Mem16[Mem64[60] + 18] << 35)))) ^ d1edf23f4c52cb34)) << 20)) ^ (Mem16[140d1d3c1] << 35)) ^ ((Mem32[140d1d3c1] << 15) & 1fffff00000000)) ^ (7b0ff7f47ef0d55d - ((Mem64[Mem64[60] + 18] >> b) | (Mem16[Mem64[60] + 18] << 35)))) ^ ((((Custom_0 << 21) ^ ((7b0ff7f47ef0d55d - ((Mem64[Mem64[60] + 18] >> b) | (Mem16[Mem64[60] + 18] << 35))) << 21)) ^ 98a5966800000000) + 241b805d00000000)) ^ 2e120dc04c52cb34)
 sprite_x_offset: Some(20)
 sprite_x_size: Some(Mem64)
-sprite_y: None
-sprite_y_offset: None
+sprite_y: ((((((((Custom_0 ^ (Custom_0 << 20)) ^ ((Custom_0 - Mem32[140d1d386]) << 20)) ^ ((Mem32[140d1d3bd] - ((Custom_0 ^ (7b0ff7f47ef0d55d - ((Mem64[Mem64[60] + 18] >> b) | (Mem16[Mem64[60] + 18] << 35)))) ^ d1edf23f4c52cb34)) << 20)) ^ (Mem16[140d1d3c1] << 35)) ^ ((Mem32[140d1d3c1] << 15) & 1fffff00000000)) ^ (7b0ff7f47ef0d55d - ((Mem64[Mem64[60] + 18] >> b) | (Mem16[Mem64[60] + 18] << 35)))) ^ ((((Custom_0 << 21) ^ ((7b0ff7f47ef0d55d - ((Mem64[Mem64[60] + 18] >> b) | (Mem16[Mem64[60] + 18] << 35))) << 21)) ^ 98a5966800000000) + 241b805d00000000)) ^ 2e120dc04c52cb34)
+sprite_y_offset: Some(28)
 sprite_y_size: Some(Mem64)
 799 euds
 renderer_vtables: [VirtualAddress(140ad27e8), VirtualAddress(140ad28c0)]
