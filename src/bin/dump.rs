@@ -445,7 +445,7 @@ fn dump_test_compares(
         }
         if let Some(filter) = filter {
             if let Some(stem) = path.file_stem().and_then(|x| x.to_str()) {
-                if stem.contains(filter) {
+                if !stem.contains(filter) {
                     continue;
                 }
             }
