@@ -697,7 +697,7 @@ struct StrengthAnalyzer<'e, E: ExecutionState<'e>> {
     result: Option<Operand<'e>>,
     init_units: E::VirtualAddress,
     init_units_seen: bool,
-    candidate: Option<Operand<'e>>,
+    candidate: Option<MemAccess<'e>>,
     inline_depth: u8,
 }
 
@@ -729,18 +729,20 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StrengthAnalyzer<'e, 
                 if self.init_units_seen && mem.size == MemAccessSize::Mem32 {
                     let dest = ctrl.resolve_mem(mem);
                     let ctx = ctrl.ctx();
-                    let base = dest.if_add_either_other(ctx, |x| x.if_arithmetic_mul_const(4));
-                    if let Some(base) = base {
+                    if is_global(dest.address().0) {
                         if let Some(old) = self.candidate {
-                            let ctx = ctrl.ctx();
                             // Ground strength is guaranteed to be 0xe4 * 4 bytes after air
-                            if ctx.add_const(old, 0xe4 * 4) == base {
-                                self.result = Some(old);
+                            let (old_base, old_offset) = old.address();
+                            let (new_base, new_offset) = dest.address();
+                            if old_base == new_base &&
+                                old_offset.wrapping_add(0xe4 * 4) == new_offset
+                            {
+                                self.result = Some(old.address_op(ctx));
                                 ctrl.end_analysis();
                                 return;
                             }
                         }
-                        self.candidate = Some(base);
+                        self.candidate = Some(dest);
                     }
                 }
             }
