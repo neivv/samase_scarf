@@ -452,6 +452,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                 ctx.const_0()
             }
         };
+        let index_zero = index == ctx.const_0();
         match offset {
             // Unit availability
             0x18c ..= 0xc3b => self.patch_unit_array(ctrl, 0x6, true, 1, offset - 0x18c, index),
@@ -480,13 +481,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
             // Upgrade level sc
             0xe1c0 ..= 0xe3e7 => self.patch_upgrade_array_sc(ctrl, 0, offset - 0xe1c0, index),
             // Tech availability bw
-            0xff48 => self.patch_tech_array(ctrl, 3, 0x14, 0, 0, index),
+            0xff48 if !index_zero => self.patch_tech_array(ctrl, 3, 0x14, 0, 0, index),
             // Tech level bw
-            0x10038 => self.patch_tech_array(ctrl, 2, 0x14, 0, 0, index),
+            0x10038 if !index_zero => self.patch_tech_array(ctrl, 2, 0x14, 0, 0, index),
             // Upgrade limit bw
-            0x1015a => self.patch_upgrade_array_bw(ctrl, 1, 0, 0, index),
+            0x1015a if !index_zero => self.patch_upgrade_array_bw(ctrl, 1, 0, 0, index),
             // Upgrade level bw
-            0x1020e => self.patch_upgrade_array_bw(ctrl, 0, 0, 0, index),
+            0x1020e if !index_zero => self.patch_upgrade_array_bw(ctrl, 0, 0, 0, index),
             // Tech availability bw (Real)
             0xff60 ..= 0x1004f => {
                 self.patch_tech_array(ctrl, 3, 0x14, 0x18, offset - 0xff60, index)
