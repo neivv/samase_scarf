@@ -48,7 +48,7 @@ use scarf::{
 use crate::{
     ArgCache, AnalysisCtx, EntryOf, StringRefs, DatType, entry_of_until, single_result_assign,
     if_callable_const, OperandExt, bumpvec_with_capacity, AnalysisCache,
-    FunctionFinder,
+    FunctionFinder, is_global,
 };
 use crate::hash_map::{HashMap, HashSet};
 use crate::range_list::RangeList;
@@ -3087,6 +3087,40 @@ where A: analysis::Analyzer<'e, Exec=E>
     None
 }
 
+fn unresolve_add_chain_part<'e>(
+    ctx: OperandCtx<'e>,
+    op: Operand<'e>,
+    resolved: Operand<'e>,
+    unresolved: Operand<'e>,
+) -> Option<(Operand<'e>, UnresolvedAddChainComplexity)> {
+    let (l, r) = resolved.if_arithmetic_add()?;
+    if l == op && is_global(r) {
+        let complexity = if r.if_constant().is_some() {
+            UnresolvedAddChainComplexity::Constant
+        } else {
+            UnresolvedAddChainComplexity::Complex
+        };
+        return Some((ctx.sub(unresolved, r), complexity));
+    } else if r == op && is_global(l) {
+        let complexity = UnresolvedAddChainComplexity::Complex;
+        return Some((ctx.sub(unresolved, l), complexity));
+    }
+    let result = unresolve_add_chain_part(ctx, op, l, unresolved)?.0;
+    if is_global(r) {
+        Some((ctx.sub(result, r), UnresolvedAddChainComplexity::Complex))
+    } else {
+        None
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum UnresolvedAddChainComplexity {
+    // Subtracts just a constant from a register to get the unresolved value.
+    Constant,
+    // Subtracts global memory/arith (e.g. game ptr) from register to get unresolved value
+    Complex,
+}
+
 fn unresolve<'e, E: ExecutionState<'e>>(
     ctx: OperandCtx<'e>,
     exec_state: &mut E,
@@ -3095,18 +3129,46 @@ fn unresolve<'e, E: ExecutionState<'e>>(
     if op.if_constant().is_some() {
         return Some(op);
     }
-    for i in 0..8 {
+    let register_count = if E::VirtualAddress::SIZE == 4 { 8 } else { 16 };
+    let mut sub_cand = None;
+    let mut complex_sub_cand = false;
+    for i in 0..register_count {
         let reg = ctx.register(i);
         let val = exec_state.resolve(reg);
         if val == op {
             return Some(reg);
         }
-        if let Some((l, r)) = val.if_arithmetic_add() {
-            if l == op {
-                if let Some(c) = r.if_constant() {
-                    return Some(ctx.sub_const(reg, c));
+        if sub_cand.is_none() || complex_sub_cand {
+            if let Some((cand, complexity)) = unresolve_add_chain_part(ctx, op, val, reg) {
+                if sub_cand.is_none() || complexity == UnresolvedAddChainComplexity::Constant {
+                    sub_cand = Some(cand);
+                    complex_sub_cand = complexity == UnresolvedAddChainComplexity::Complex;
                 }
             }
+        }
+        if let Some((l, r)) = op.if_arithmetic_mul() {
+            if let Some(c) = r.if_constant() {
+                if l == val {
+                    return Some(ctx.mul_const(reg, c));
+                }
+                if let Some((l2, r2)) = val.if_arithmetic_mul() {
+                    if l == l2 {
+                        if let Some(c2) = r2.if_constant() {
+                            let scale = c / c2;
+                            let remainder = c % c2;
+                            if remainder == 0 {
+                                return Some(ctx.mul_const(reg, scale));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !complex_sub_cand {
+        // If the add chain candidate is complex, try memory candidates first
+        if let Some(sub_cand) = sub_cand {
+            return Some(sub_cand);
         }
     }
     if let Some(mem) = op.if_memory() {
@@ -3142,6 +3204,10 @@ fn unresolve<'e, E: ExecutionState<'e>>(
                 return Some(ctx.arithmetic(arith.ty, left, right));
             }
         }
+    }
+    // Now return any complex add chain result
+    if let Some(sub_cand) = sub_cand {
+        return Some(sub_cand);
     }
     None
 }

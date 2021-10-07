@@ -1696,7 +1696,7 @@ Orders array patches:
 09: VirtualAddress(0068f1f3):7 = (((((rax * 4) / 30) * c) + (((rax * 4) % 30) / 4)) * 4)
 0a: VirtualAddress(0065f5bf):6 = ((rdx + (rsi * c)) * 4)
 0a: VirtualAddress(00660b07):7 = ((rsi + (rdi * c)) * 4)
-0a: VirtualAddress(0066140b):3 = (((((rcx - b274) / 30) * c) + (((rcx - b274) % 30) / 4)) * 4)
+0a: VirtualAddress(0066140b):3 = (((((rax * 4) / 30) * c) + (((rax * 4) % 30) / 4)) * 4)
 0a: VirtualAddress(00661414):3 = (((((rcx - b274) / 30) * c) + (((rcx - b274) % 30) / 4)) * 4)
 0a: VirtualAddress(0066141c):7 = (((((rcx - b274) / 30) * c) + (((rcx - b274) % 30) / 4)) * 4)
 0a: VirtualAddress(00662b04):7 = ((rdx + (Mem16[rbp + c] * c)) * 4)

@@ -552,6 +552,22 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         });
     }
 
+    fn player_upgrade_from_index(
+        &self,
+        index: Operand<'e>,
+        byte_offset: u32,
+        array_size: u32,
+    ) -> (Operand<'e>, Operand<'e>) {
+        let ctx = self.game_ctx.analysis.ctx;
+        // player = (byte_offset + index) / arr_size
+        // upgrade = (byte_offset + index) % arr_size
+        let arr_size = ctx.constant(array_size.into());
+        let index = ctx.add_const(index, u64::from(byte_offset));
+        let player = ctx.div(index, arr_size);
+        let upgrade = ctx.modulo(index, arr_size);
+        (player, upgrade)
+    }
+
     fn patch_upgrade_array_sc(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
@@ -575,9 +591,16 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
             (self.unresolve(ctrl, player), self.unresolve(ctrl, upgrade))
         {
             (Some(a), Some(b)) => (a, b),
-            _ => {
-                dat_warn!(self, "Unable to find operands for player/upgrade");
-                return;
+            (a, b) => {
+                if let Some(index_unres) = self.unresolve(ctrl, index) {
+                    let fallback = self.player_upgrade_from_index(index_unres, byte_offset, 0x2e);
+                    let player = a.unwrap_or(fallback.0);
+                    let upgrade = b.unwrap_or(fallback.1);
+                    (player, upgrade)
+                } else {
+                    dat_warn!(self, "Unable to find operands for player/upgrade");
+                    return;
+                }
             }
         };
         let mut index = ctx.add(ctx.mul_const(upgrade, 0xc), player);
@@ -629,9 +652,16 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
             (self.unresolve(ctrl, player), self.unresolve(ctrl, upgrade))
         {
             (Some(a), Some(b)) => (a, b),
-            _ => {
-                dat_warn!(self, "Unable to find operands for player/upgrade");
-                return;
+            (a, b) => {
+                if let Some(index_unres) = self.unresolve(ctrl, index) {
+                    let fallback = self.player_upgrade_from_index(index_unres, byte_offset, 0xf);
+                    let player = a.unwrap_or(fallback.0);
+                    let upgrade = b.unwrap_or(fallback.1);
+                    (player, upgrade)
+                } else {
+                    dat_warn!(self, "Unable to find operands for player/upgrade");
+                    return;
+                }
             }
         };
         let upgrade = ctx.add_const(upgrade, start_index as u64);
@@ -657,6 +687,16 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         index: Operand<'e>,
     ) {
         let ctx = ctrl.ctx();
+        let player_tech_from_index = |index| {
+            // player = (byte_offset + index) / arr_size
+            // tech = (byte_offset + index) % arr_size
+            let arr_size = ctx.constant(array_size.into());
+            let index = ctx.add_const(index, u64::from(byte_offset));
+            let player = ctx.div(index, arr_size);
+            let tech = ctx.modulo(index, arr_size);
+            (player, tech)
+        };
+
         let (player, tech) = match index.if_arithmetic_add()
             .and_either(|x| x.if_arithmetic_mul_const(array_size as u64))
         {
@@ -670,11 +710,19 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
             (self.unresolve(ctrl, player), self.unresolve(ctrl, tech))
         {
             (Some(a), Some(b)) => (a, b),
-            _ => {
-                dat_warn!(self, "Unable to find operands for player/tech");
-                return;
+            (a, b) => {
+                if let Some(index_unres) = self.unresolve(ctrl, index) {
+                    let fallback = player_tech_from_index(index_unres);
+                    let player = a.unwrap_or(fallback.0);
+                    let tech = b.unwrap_or(fallback.1);
+                    (player, tech)
+                } else {
+                    dat_warn!(self, "Unable to find operands for player/tech");
+                    return;
+                }
             }
         };
+
         let tech = ctx.add_const(tech, start_index as u64);
         let mut index = ctx.add(ctx.mul_const(tech, 0xc), player);
         if byte_offset != 0 {
@@ -703,8 +751,32 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         // It'll be patched to
         // [player_0_bits_0_7, player_1_bits_0_7, ...]
         // index = (id >> 3) * 0xc + player
+        let player_id_from_index = |index| {
+            // player = index / expected_bytes_per_player
+            // id = index % expected_bytes_per_player
+            let divisor = ctx.constant(expected_bytes_per_player.into());
+            let id = ctx.modulo(
+                index,
+                divisor,
+            );
+            let player = ctx.div(
+                index,
+                divisor,
+            );
+            (player, id)
+        };
         let player_id = index.if_arithmetic_add()
-            .and_either(|x| Some(x).filter(|x| x.if_arithmetic_rsh_const(3).is_some()))
+            .and_either(|x| {
+                // Accept (id >> 3) and (id >> 3) & 1f, and mask gets used
+                // when id is u8(register_arg)
+                if x.if_arithmetic_and_const(0x1f).unwrap_or(x)
+                    .if_arithmetic_rsh_const(3).is_some()
+                {
+                    Some(x)
+                } else {
+                    None
+                }
+            })
             .and_then(|(id, other)| {
                 let player = other.if_arithmetic_mul_const(expected_bytes_per_player as u64)
                     .or_else(|| {
@@ -725,8 +797,15 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         let (player, id) = match (self.unresolve(ctrl, player), self.unresolve(ctrl, id)) {
             (Some(a), Some(b)) => (a, b),
             _ => {
-                dat_warn!(self, "Unable to find operands for player/id");
-                return;
+                if let Some(index_unres) = self.unresolve(ctrl, index) {
+                    player_id_from_index(index_unres)
+                } else {
+                    dat_warn!(
+                        self, "Unable to find operands for player {} / id {} @ {:?}",
+                        player, id, ctrl.address(),
+                    );
+                    return;
+                }
             }
         };
         let mut index = ctx.add(ctx.mul_const(id, 0xc), player);
