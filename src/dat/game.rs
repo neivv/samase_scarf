@@ -7,6 +7,7 @@ use scarf::{BinaryFile, DestOperand, MemAccess, Operand, Operation, Rva};
 
 use crate::{
     AnalysisCache, AnalysisCtx, EntryOf, entry_of_until, OperandExt, OptionExt, FunctionFinder,
+    ControlExt,
 };
 use crate::hash_map::{HashSet, HashMap};
 use super::{
@@ -239,27 +240,27 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         }
         match *op {
             Operation::Move(ref dest, unres_val, None) => {
-                if !self.game_ref_seen {
-                    // Any instruction referring to a global must be at least 5 bytes
-                    let instruction_len = ctrl.current_instruction_end().as_u64()
-                        .wrapping_sub(ctrl.address().as_u64());
-                    if instruction_len >= 5 {
-                        let const_addr = if_const_or_mem_const::<E>(unres_val)
-                            .or_else(|| {
-                                if let OperandType::Arithmetic(ref arith) = *unres_val.ty() {
-                                    if_const_or_mem_const::<E>(arith.left)
-                                        .or_else(|| if_const_or_mem_const::<E>(arith.right))
-                                } else {
-                                    None
-                                }
-                            });
-                        if let Some(const_addr) = const_addr {
-                            if const_addr == self.game_ctx.game_address {
-                                self.reached_game_ref(ctrl);
-                                self.game_ref_seen = true;
+                // Any instruction referring to a global must be at least 5 bytes
+                let instruction_len = ctrl.current_instruction_end().as_u64()
+                    .wrapping_sub(ctrl.address().as_u64());
+                if instruction_len >= 5 {
+                    let const_addr = if_const_or_mem_const::<E>(unres_val)
+                        .or_else(|| {
+                            if let OperandType::Arithmetic(ref arith) = *unres_val.ty() {
+                                if_const_or_mem_const::<E>(arith.left)
+                                    .or_else(|| if_const_or_mem_const::<E>(arith.right))
+                            } else {
+                                None
                             }
+                        });
+                    if let Some(const_addr) = const_addr {
+                        if const_addr == self.game_ctx.game_address {
+                            self.reached_game_ref(ctrl);
+                            self.game_ref_seen = true;
                         }
                     }
+                }
+                if !self.game_ref_seen {
                     return;
                 }
                 if let Some(mem) = unres_val.if_memory() {
@@ -274,9 +275,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Jump { to, .. } => {
-                if let Some(to) = ctrl.resolve(to).if_constant() {
-                    let to = E::VirtualAddress::from_u64(to);
+            Operation::Jump { to, condition } => {
+                let ctx = ctrl.ctx();
+                if let Some(to) = ctrl.resolve_va(to) {
                     let binary = self.binary;
                     if let Err(e) = self.required_stable_addresses.add_jump_dest(binary, to) {
                         dat_warn!(
@@ -377,7 +378,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         let mut imm_addr = ctrl.current_instruction_end() - 4;
         while imm_addr > ctrl.address() {
             if let Ok(imm) = self.binary.read_u32(imm_addr) {
-                if imm == self.game_ctx.game_address.as_u64() as u32 {
+                let imm = if E::VirtualAddress::SIZE == 4 {
+                    u64::from(imm)
+                } else {
+                    ctrl.current_instruction_end().as_u64().wrapping_add(imm as i32 as i64 as u64)
+                };
+                if imm == self.game_ctx.game_address.as_u64() {
                     self.game_ctx.unchecked_refs.remove(&imm_addr);
                     return;
                 }
@@ -1159,7 +1165,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                             _ => (),
                         }
                     } else {
-                        warn!("Can't free space for hook @ {:?}", address);
+                        warn!("Can't find free space for hook @ {:?}", address);
                     }
                 }
             }

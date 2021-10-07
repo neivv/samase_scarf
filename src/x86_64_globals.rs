@@ -77,20 +77,23 @@ pub fn x86_64_globals<Va: VirtualAddress>(binary: &BinaryFile<Va>) -> Vec<RelocV
             (b.wrapping_sub(4) < 2) as u8 &
             ((b == 5) | (win[3] & 7 == 5) | (modrm & 0x80 != 0)) as u8;
         if ok != 0 {
+            let offset_pos;
             let value = if b == 5 {
                 // RIP-relative
                 let offset = LittleEndian::read_u32(&win[3..]);
+                offset_pos = 3;
                 let end_pos = text_pos.wrapping_add(7)
                     .wrapping_add(IMM_SIZE[win[1] as usize].into());
                 text.virtual_address + end_pos.wrapping_add(offset)
             } else {
                 // SIB offset, assuming that one of registers contains binary base
                 let offset = LittleEndian::read_u32(&win[4..]);
+                offset_pos = 4;
                 binary.base() + offset
             };
             if value >= global_min && value < global_max {
                 out.push(RelocValues {
-                    address: text.virtual_address + text_pos + 1,
+                    address: text.virtual_address + text_pos + offset_pos,
                     value,
                 });
             }
