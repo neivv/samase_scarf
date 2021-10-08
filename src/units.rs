@@ -1,5 +1,3 @@
-use std::convert::TryInto;
-
 use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
@@ -11,6 +9,7 @@ use crate::{
     entry_of_until, bumpvec_with_capacity, FunctionFinder, if_arithmetic_eq_neq, is_global,
 };
 use crate::struct_layouts;
+use crate::switch::CompleteSwitch;
 
 #[derive(Clone, Debug)]
 pub struct ActiveHiddenUnits<'e> {
@@ -1014,9 +1013,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                         if self.state == SetUnitPlayerState::UnitChangingPlayer {
                             let ok = Some(())
                                 .map(|_| ctrl.resolve(self.arg_cache.on_thiscall_call(0)))
-                                .filter(|&x| x == self.arg_cache.on_thiscall_entry(0))
+                                .filter(|&x| {
+                                    ctx.and_const(x, 0xff) ==
+                                        ctx.and_const(self.arg_cache.on_thiscall_entry(0), 0xff)
+                                })
                                 .map(|_| ctrl.resolve(self.arg_cache.on_thiscall_call(1)))
-                                .filter(|&x| x.if_constant() == Some(1))
+                                .filter(|&x| x == ctx.const_1())
                                 .is_some();
                             if ok {
                                 self.result.unit_changing_player = Some(dest);
@@ -1302,35 +1304,29 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitSpeedAnalyzer
                 if let Operation::Jump { to, condition } = *op {
                     if condition == ctx.const_1() {
                         let to = ctrl.resolve(to);
-                        // Just assuming u8 cases
-                        let switch_table = ctrl.if_mem_word(to)
-                            .and_then(|x| {
-                                let (index, base) = x.address();
-                                let base_table = E::VirtualAddress::from_u64(base);
-                                let small_table = index.if_arithmetic_mul_const(4)
-                                    .and_then(|x| x.if_mem8())
-                                    .map(|x| E::VirtualAddress::from_u64(x.address().1))?;
-                                Some((base_table, small_table))
-                            });
-                        if let Some((base_table, table)) = switch_table {
+                        let exec = ctrl.exec_state();
+                        if let Some(switch) = CompleteSwitch::new(to, ctx, exec) {
                             let binary = ctrl.binary();
-                            let cases = binary.slice_from_address(table, 0x40)
-                                .ok()
-                                .and_then(|x| x.try_into().ok())
-                                .filter(|x: &[_; 0x40]| {
-                                    x[2] == x[0x13] &&
-                                        x[0x2a] != x[0x2] &&
-                                        x[0x25] != x[0x2] &&
-                                        (4..15).all(|i| x[i] == x[3])
-                                });
-                            if let Some(cases) = cases {
+                            let cases_ok = Some(()).and_then(|()| {
+                                let case_2 = switch.branch(binary, ctx, 0x2)?;
+                                let case_3 = switch.branch(binary, ctx, 0x3)?;
+                                let ok = case_2 == switch.branch(binary, ctx, 0x13)? &&
+                                    case_2 != switch.branch(binary, ctx, 0x25)? &&
+                                    case_2 != switch.branch(binary, ctx, 0x2a)? &&
+                                    (4..15)
+                                        .all(|i| switch.branch(binary, ctx, i) == Some(case_3));
+                                if ok {
+                                    Some(())
+                                } else {
+                                    None
+                                }
+                            }).is_some();
+                            if cases_ok {
                                 self.result.apply_speed_upgrades = Some(self.func_entry);
                                 // Continue analysis, update_speed gets called
                                 // by apply_speed_upgrades
                                 // Take case 0x36 (Devouring one)
-                                let case_n = cases[0x36];
-                                let address = base_table + 4 * case_n as u32;
-                                if let Some(dest) = binary.read_address(address).ok() {
+                                if let Some(dest) = switch.branch(binary, ctx, 0x36) {
                                     ctrl.analyze_with_current_state(self, dest);
                                 }
                                 ctrl.end_analysis();
@@ -1350,10 +1346,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitSpeedAnalyzer
                     if let Some(dest) = dest {
                         self.inline_depth = 2;
                         self.func_entry = dest;
-                        self.entry_esp = ctx.sub_const(
-                            ctrl.resolve(ctx.register(4)),
-                            E::VirtualAddress::SIZE.into(),
-                        );
+                        self.entry_esp = ctrl.get_new_esp_for_call();
                         ctrl.analyze_with_current_state(self, dest);
                         self.inline_depth = 1;
                         if self.result.update_speed.is_some() {
@@ -1366,12 +1359,20 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitSpeedAnalyzer
                 }
                 if let Operation::Jump { condition, .. } = *op {
                     let condition = ctrl.resolve(condition);
+                    // 32bit seems to compile (x == 0 || x == 1), 64bit as (x < 2)
                     let ok = if_arithmetic_eq_neq(condition)
                         .filter(|x| x.1.if_constant().is_some())
-                        .and_then(|x| x.0.if_mem8_offset(self.flingy_dat_movement_type.as_u64()))
+                        .map(|x| x.0)
+                        .or_else(|| {
+                            condition.if_arithmetic_gt()
+                                .filter(|x| x.0.if_constant() == Some(2))
+                                .map(|x| x.1)
+                        })
+                        .and_then(|x| x.if_mem8_offset(self.flingy_dat_movement_type.as_u64()))
                         .and_then(|x| x.if_memory())
                         .and_then(|x| x.if_offset(self.units_dat_flingy.as_u64()))
                         .is_some();
+
                     if ok {
                         // update_speed can be sometimes inlined :l
                         // If inline_depth == 1 leave it as None
