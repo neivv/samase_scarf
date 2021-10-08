@@ -5691,6 +5691,8 @@ fn first_definite_entry<Va: VirtualAddressTrait>(
         binary: &BinaryFile<Va>,
         entry: Va,
     ) -> bool {
+        use std::convert::TryInto;
+
         if entry.as_u64() & 0xf != 0 {
             return false;
         }
@@ -5708,49 +5710,37 @@ fn first_definite_entry<Va: VirtualAddressTrait>(
                 first_bytes == [0x55, 0x8b, 0xec] ||
                 first_bytes == [0x55, 0x89, 0xe5]
         } else {
-            let first_bytes = match binary.slice_from(relative..relative + 32) {
-                Ok(o) => o,
+            let first_bytes: &[u8; 48] = match binary.slice_from(relative..relative + 48) {
+                Ok(o) => match o.try_into() {
+                    Ok(o) => o,
+                    Err(_) => return false,
+                },
                 Err(_) => return false,
             };
             // Check for 48, 89, xx, 24, [08|10|18|20]
             // for mov [rsp + x], reg
             if first_bytes[0] == 0x48 &&
                 first_bytes[1] == 0x89 &&
+                first_bytes[2] & 0x7 == 4 &&
                 first_bytes[3] == 0x24 &&
                 first_bytes[4] & 0x7 == 0 &&
                 first_bytes[4].wrapping_sub(1) < 0x20
             {
                 return true;
             }
-            // Push 0~7 registers, followed by
-            // Sub rsp, constant.
-            // If the sub is at start of function it should be 8-misaligned to 16-align
-            // to fixup stack back to 16-align.
-            let mut push_count = 0;
-            let mut pos = 0usize;
-            for _ in 0..8 {
-                if let Some(slice) = first_bytes.get(pos..pos.wrapping_add(2)) {
-                    if slice[0] & 0xf8 == 0x50 {
-                        pos += 1;
-                    } else if slice[0] & 0xf0 == 0x40 && slice[1] & 0xf8 == 0x50 {
-                        pos += 2;
-                    } else {
-                        break;
-                    }
-                    push_count += 1;
-                }
+            // Also 88, xx, 24, [08|10|18|20]
+            // for u8 move
+            if first_bytes[0] == 0x88 &&
+                first_bytes[1] & 0x7 == 4 &&
+                first_bytes[2] == 0x24 &&
+                first_bytes[3] & 0x7 == 0 &&
+                first_bytes[3].wrapping_sub(1) < 0x20
+            {
+                return true;
             }
-            let misalign = if push_count & 1 == 0 { 8 } else { 0 };
-            if let Some(slice) = first_bytes.get(pos..pos + 4) {
-                if slice[0] == 0x48 &&
-                    matches!(slice[1], 0x81 | 0x83) &&
-                    slice[2] == 0xec &&
-                    slice[3] & 0xf == misalign
-                {
-                    return true;
-                }
+            if complex_x86_64_entry_check(&first_bytes).unwrap_or(false) {
+                return true;
             }
-
             false
         }
     }
@@ -5766,6 +5756,196 @@ fn first_definite_entry<Va: VirtualAddressTrait>(
         index -= 1;
     }
     (index, end)
+}
+
+#[inline]
+fn slice_to_arr_ref<const SIZE: usize>(slice: &[u8]) -> Option<&[u8; SIZE]> {
+    use std::convert::TryInto;
+    slice.get(..SIZE)?.try_into().ok()
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum RegisterState {
+    Any,
+    Caller,
+    Stack,
+}
+
+fn check_rsp_move(bytes: &[u8; 3]) -> Option<u8> {
+    if bytes[0] & 0xf8 == 0x48 {
+        // Accept both mov r, rm and mov rm, r
+        if bytes[1] == 0x89 && bytes[2] & 0xf8 == 0xe0 {
+            let add_8 = (bytes[0] & 1) << 3;
+            Some((bytes[2] & 7) | add_8)
+        } else if bytes[1] == 0x8b && bytes[2] & 0xc7 == 0xc4 {
+            let add_8 = (bytes[0] & 4) << 1;
+            Some(((bytes[2] >> 3) & 7) | add_8)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+fn complex_x86_64_entry_check(bytes: &[u8; 48]) -> Option<bool> {
+    use RegisterState::*;
+    // Accepts following
+    //   mov volatilereg, rsp
+    //      (optional)
+    //   push 0~7 non-volatile registers
+    //   lea rbp, [volatilereg - C]
+    //      (Optional; only if rsp was copied to volatilereg and rbp was pushed)
+    //   mov rbp, rsp
+    //      (Alt for the lea)
+    //   sub rsp, C
+    //      where C aligns the stack to 16 (function entry is in 8-misalign)
+
+    let mut register_state = [
+        Any, Any, Any, Caller,
+        Stack, Caller, Caller, Caller,
+        Any, Any, Any, Any,
+        Caller, Caller, Caller, Caller,
+    ];
+    let mut next = slice_to_arr_ref::<45>(bytes)?;
+
+    // -- mov volatilereg, rsp --
+    if let Some(dest) = check_rsp_move(slice_to_arr_ref(bytes)?) {
+        let dest = (dest & 0xf) as usize;
+        if register_state[dest] != Any {
+            return Some(false);
+        }
+        register_state[dest] = Stack;
+        next = slice_to_arr_ref(&bytes[3..])?;
+    }
+    // -- pushes --
+    let bytes = next;
+    let mut push_count = 0;
+    let mut pos = 0usize;
+    for _ in 0..8 {
+        if let Some(slice) = bytes.get(pos..pos.wrapping_add(2)) {
+            if slice[0] & 0xf8 == 0x50 {
+                let dest = (slice[0] & 0x7) as usize;
+                if register_state[dest] != Caller {
+                    return Some(false);
+                }
+                register_state[dest] = Any;
+                pos += 1;
+            } else if slice[0] & 0xf0 == 0x40 && slice[1] & 0xf8 == 0x50 {
+                let dest = ((slice[1] & 0x7) | ((slice[0] & 0x1) << 3) & 0xf) as usize;
+                if register_state[dest] != Caller {
+                    return Some(false);
+                }
+                register_state[dest] = Any;
+                pos += 2;
+            } else {
+                break;
+            }
+            push_count += 1;
+        }
+    }
+    let bytes = slice_to_arr_ref::<29>(&bytes[pos..])?;
+    // -- lea reg, [rsp(or copy) - x] --
+    let mut next = slice_to_arr_ref::<21>(bytes)?;
+    if bytes[0] & 0xf0 == 0x40 && bytes[1] == 0x8d {
+        let dest = ((bytes[2] >> 3) & 7) | ((bytes[0] & 0x4) << 1);
+        let dest = (dest & 0xf) as usize;
+        let src = (bytes[2] & 7) | ((bytes[0] & 0x1) << 3);
+        let src = (src & 0xf) as usize;
+        if bytes[2] & 0xc0 == 0x80 {
+            if src & 7 == 4 {
+                // SIB, require no scale (mask 0x18 = 0x20),
+                // assume rsp/r12 for base (mask 0x7 = 0x4)
+                if bytes[3] & 0x3f == 0x24 {
+                    if register_state[src] != Stack || register_state[dest] != Any {
+                        return Some(false);
+                    }
+                    next = slice_to_arr_ref(&bytes[8..])?;
+                }
+            } else {
+                if register_state[src] != Stack || register_state[dest] != Any {
+                    return Some(false);
+                }
+                next = slice_to_arr_ref(&bytes[7..])?;
+            }
+        } else if bytes[2] & 0xc0 == 0x40 {
+            if src & 7 == 4 {
+                // SIB, require no scale (mask 0x18 = 0x20),
+                // assume rsp/r12 for base (mask 0x7 = 0x4)
+                if bytes[3] & 0x3f == 0x24 {
+                    if register_state[src] != Stack || register_state[dest] != Any {
+                        return Some(false);
+                    }
+                    next = slice_to_arr_ref(&bytes[5..])?;
+                }
+            } else {
+                if register_state[src] != Stack || register_state[dest] != Any {
+                    return Some(false);
+                }
+                next = slice_to_arr_ref(&bytes[4..])?;
+            }
+        }
+    }
+
+    let bytes = next;
+    // -- second possible move of rsp  --
+    let mut next = slice_to_arr_ref::<18>(bytes)?;
+    if let Some(dest) = check_rsp_move(slice_to_arr_ref(bytes)?) {
+        let dest = (dest & 0xf) as usize;
+        if register_state[dest] != Any {
+            return Some(false);
+        }
+        register_state[dest] = Stack;
+        next = slice_to_arr_ref(&bytes[3..])?;
+    }
+
+    let bytes = next;
+    let misalign = if push_count & 1 == 0 { 8 } else { 0 };
+    if bytes[0] == 0x48 &&
+        matches!(bytes[1], 0x81 | 0x83) &&
+        bytes[2] == 0xec &&
+        bytes[3] & 0xf == misalign
+    {
+        return Some(true);
+    }
+    Some(false)
+}
+
+#[test]
+fn test_complex_x86_64_entry() {
+    fn do_test(input: &[u8]) -> bool {
+        let mut buf = [0u8; 48];
+        (&mut buf[..input.len()]).copy_from_slice(input);
+        complex_x86_64_entry_check(&buf) == Some(true)
+    }
+
+    assert!(do_test(&[
+        0x48, 0x8b, 0xc4, // mov rax, rsp
+        0x55, 0x41, 0x56, 0x41, 0x57, // push rbp, r14, r15
+        0x48, 0x8d, 0xa8, 0x38, 0xfd, 0xff, 0xff, // lea rbp, [rax - 2c8]
+        0x48, 0x81, 0xec, 0xb0, 0x03, 0x00, 0x00, // sub rsp, 3b0
+    ]));
+    assert!(do_test(&[
+        0x57, // push rdi
+        0x48, 0x83, 0xEC, 0x20, // sub rsp, 20
+    ]));
+    assert!(do_test(&[
+        0x48, 0x81, 0xec, 0x98, 0x00, 0x00, 0x00, // sub rsp, 98
+    ]));
+    assert!(do_test(&[
+        // Odd to have r11 == rbp + 8 but that can happen.
+        // They both end up being used too.
+        0x4c, 0x8b, 0xdc, // mov r11, rsp
+        0x55, // push rbp,
+        0x48, 0x8b, 0xec, // mov rbp, rsp
+        0x48, 0x81, 0xec, 0x80, 0x00, 0x00, 0x00, // sub rsp, 80
+    ]));
+    assert!(do_test(&[
+        0x40, 0x55, // push rbp
+        0x41, 0x54, // push r12,
+        0x48, 0x8d, 0x6c, 0x24, 0xb1, // lea rbp, [rsp - 4f]
+        0x48, 0x81, 0xec, 0xc8, 0x00, 0x00, 0x00, // sub rsp, c8
+    ]));
 }
 
 #[derive(Debug)]
