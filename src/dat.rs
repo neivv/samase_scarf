@@ -1779,8 +1779,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         }
         // -- Check return value --
         let custom = value.if_arithmetic_and_const(0xff)
-            .and_then(|x| x.if_custom())
-            .or_else(|| value.if_custom());
+            .or_else(|| value.if_arithmetic_and_const(0xffff_ffff))
+            .unwrap_or(value)
+            .if_custom();
         if let Some(custom) = custom {
             // If the high byte is 0x1000_0000 then it was added as a cfg request earlier.
             if custom & 0xf000_0000 == 0 {
@@ -3029,10 +3030,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> RecognizeDatPatchFunc<'a, 'b, 'acx
                     }
                 });
             if let Some((offset, size)) = this_field {
-                if offset == 0xc8 && size == MemAccessSize::Mem8 {
+                if offset == struct_layouts::unit_current_tech::<E::VirtualAddress>() &&
+                    size == MemAccessSize::Mem8
+                {
                     return Ok(Some(UnitCurrentTech));
                 }
-                if offset == 0xc9 && size == MemAccessSize::Mem8 {
+                if offset == struct_layouts::unit_current_upgrade::<E::VirtualAddress>() &&
+                    size == MemAccessSize::Mem8
+                {
                     return Ok(Some(UnitCurrentUpgrade));
                 }
             }

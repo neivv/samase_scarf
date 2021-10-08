@@ -728,6 +728,8 @@ Orders array patches:
 1408abbf7 = [90, 42, 8b, 94, 20, b0, b1, 07, 01]
 1408abc63 = [90, 42, 8b, 94, 20, d0, af, 07, 01]
 1408abcb8 = [0f, 85, f6, fe, ff, ff]
+1408afddd = [90, 8b, c0]
+1408afe31 = [90, 8b, c0]
 1408b0efd = [90, 90, 8b, d6]
 1408b0f63 = [90, 90, 8b, d6]
 1408b10f6 = [90, 41, 8b, d6]
@@ -1019,6 +1021,8 @@ Orders array patches:
 Grp index hooks: ["1404525af", "140455389", "140457e54"]
 --- Func replaces ---
 140458970 = UpdateStatusScreenTooltip
+1404e8170 = UnitCurrentTech
+1404e89f0 = UnitCurrentUpgrade
 1404ea0f0 = UnitOrderWeapon
 140524a50 = SelfOrSubunitAirWeapon
 140524b30 = SelfOrSubunitGroundWeapon
