@@ -140,6 +140,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
                         required_stable_addresses: rsa,
                         switch_table: E::VirtualAddress::from_u64(0),
                         patch_indices: BumpVec::new_in(bump),
+                        func_start: entry,
+                        greatest_address: entry,
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
@@ -195,6 +197,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
                         required_stable_addresses: rsa,
                         switch_table: E::VirtualAddress::from_u64(0),
                         patch_indices: BumpVec::new_in(bump),
+                        func_start: entry,
+                        greatest_address: entry,
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
@@ -224,6 +228,8 @@ pub struct GameAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     required_stable_addresses: &'a mut RequiredStableAddresses<'acx, E::VirtualAddress>,
     switch_table: E::VirtualAddress,
     patch_indices: BumpVec<'acx, usize>,
+    func_start: E::VirtualAddress,
+    greatest_address: E::VirtualAddress,
 }
 
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
@@ -232,17 +238,19 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        if ctrl.address() == self.switch_table {
+        let address = ctrl.address();
+        if address == self.switch_table {
             // Executed to switch table cases, stop
             ctrl.skip_operation();
             ctrl.end_branch();
             return;
         }
+        self.greatest_address = self.greatest_address.max(address);
         match *op {
             Operation::Move(ref dest, unres_val, None) => {
                 // Any instruction referring to a global must be at least 5 bytes
                 let instruction_len = ctrl.current_instruction_end().as_u64()
-                    .wrapping_sub(ctrl.address().as_u64());
+                    .wrapping_sub(address.as_u64());
                 if instruction_len >= 5 {
                     let const_addr = if_const_or_mem_const::<E>(unres_val)
                         .or_else(|| {
@@ -277,12 +285,23 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             Operation::Jump { to, condition } => {
                 let ctx = ctrl.ctx();
+                let to_op = to;
                 if let Some(to) = ctrl.resolve_va(to) {
+                    let is_tail_call = condition == ctx.const_1() &&
+                        ctrl.resolve(ctx.register(4)) == ctx.register(4) &&
+                        (to < self.func_start || to > self.greatest_address + 0x4000);
+                    if is_tail_call {
+                        self.operation(ctrl, &Operation::Call(to_op));
+                        ctrl.end_branch();
+                        return;
+                    } else {
+                        self.greatest_address = self.greatest_address.max(to);
+                    }
                     let binary = self.binary;
                     if let Err(e) = self.required_stable_addresses.add_jump_dest(binary, to) {
                         dat_warn!(
                             self, "Overlapping stable addresses {:?} for jump {:?} -> {:?}",
-                            e, ctrl.address(), to,
+                            e, address, to,
                         );
                     }
                 }
@@ -317,7 +336,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     };
                     if let Some(id) = ext_array_id {
                         // Hacky way to reuse the patched addr array
-                        let address = ctrl.address();
                         let dummy = self.game_ctx.game;
                         if self.game_ctx.patched_addresses.insert(address, (!0, dummy)).is_some()
                         {
@@ -343,12 +361,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         patches.push(DatPatch::ExtendedArrayArg(address, args));
                         if let Err(e) = self.required_stable_addresses.try_add_for_patch(
                             self.binary,
-                            ctrl.address(),
+                            address,
                             ctrl.current_instruction_end(),
                         ) {
                             dat_warn!(
                                 self, "Can't add stable address for patch @ {:?}, conflict {:?}",
-                                ctrl.address(), e,
+                                address, e,
                             );
                         }
                     }

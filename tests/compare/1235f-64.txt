@@ -1782,32 +1782,6 @@ Orders array patches:
 07: VirtualAddress(1402c0fab):8 = ((rsi + (rdx * c)) * 4)
 07: VirtualAddress(1402c113c):9 = (((((r12 * 4) / 30) * c) + (((r12 * 4) % 30) / 4)) * 4)
 07: VirtualAddress(1402c1150):c = (((((r12 * 4) / 30) * c) + (((r12 * 4) % 30) / 4)) * 4)
-07: VirtualAddress(1409d03c0):4 = 0
-07: VirtualAddress(1409d0418):4 = 10
-07: VirtualAddress(1409d041c):5 = 20
-07: VirtualAddress(1409d0430):5 = 30
-07: VirtualAddress(1409d0435):5 = 40
-07: VirtualAddress(1409d0445):5 = 50
-07: VirtualAddress(1409d044a):5 = 60
-07: VirtualAddress(1409d0457):5 = 70
-07: VirtualAddress(1409d045c):5 = 80
-07: VirtualAddress(1409d04d0):4 = 10
-07: VirtualAddress(1409d04d4):5 = 20
-07: VirtualAddress(1409d04e8):5 = 30
-07: VirtualAddress(1409d04ed):5 = 40
-07: VirtualAddress(1409d04fd):5 = 50
-07: VirtualAddress(1409d0502):5 = 60
-07: VirtualAddress(1409d0517):5 = 70
-07: VirtualAddress(1409d051c):5 = 80
-07: VirtualAddress(1409d0533):5 = 2ab0
-07: VirtualAddress(1409d0577):5 = 2aa0
-07: VirtualAddress(1409d057c):5 = 2a90
-07: VirtualAddress(1409d0590):5 = 2a80
-07: VirtualAddress(1409d0595):5 = 2a70
-07: VirtualAddress(1409d05a5):5 = 2a60
-07: VirtualAddress(1409d05aa):5 = 2a50
-07: VirtualAddress(1409d05b7):5 = 2a40
-07: VirtualAddress(1409d05bc):4 = 2a30
 08: VirtualAddress(14014610d):7 = ((r12 + (rdi * c)) * 4)
 08: VirtualAddress(1401461a1):8 = ((r12 + (Mem16[(r14 + (rbx * 2))] * c)) * 4)
 08: VirtualAddress(140146447):7 = ((r12 + (r10 * c)) * 4)
@@ -1843,32 +1817,6 @@ Orders array patches:
 0c: VirtualAddress(140255831):4 = ((((r14 - 140e21f08) % 4e8) * c) + ((r14 - 140e21f08) / 4e8))
 0d: VirtualAddress(14028d486):7 = (rax * 4)
 0d: VirtualAddress(14028d63d):3 = ((rcx + (rax * 4)) - 140e72550)
-0d: VirtualAddress(1409d03f4):4 = 0
-0d: VirtualAddress(1409d0410):4 = 70
-0d: VirtualAddress(1409d0414):4 = 80
-0d: VirtualAddress(1409d0428):4 = 10
-0d: VirtualAddress(1409d042c):4 = 20
-0d: VirtualAddress(1409d043d):4 = 30
-0d: VirtualAddress(1409d0441):4 = 40
-0d: VirtualAddress(1409d044f):4 = 50
-0d: VirtualAddress(1409d0453):4 = 60
-0d: VirtualAddress(1409d04c0):4 = 70
-0d: VirtualAddress(1409d04c4):4 = 80
-0d: VirtualAddress(1409d04e0):4 = 10
-0d: VirtualAddress(1409d04e4):4 = 20
-0d: VirtualAddress(1409d04f5):4 = 30
-0d: VirtualAddress(1409d04f9):4 = 40
-0d: VirtualAddress(1409d050f):4 = 50
-0d: VirtualAddress(1409d0513):4 = 60
-0d: VirtualAddress(1409d0565):3 = 2ab0
-0d: VirtualAddress(1409d0570):4 = 2a40
-0d: VirtualAddress(1409d0574):3 = 2a30
-0d: VirtualAddress(1409d0588):4 = 2aa0
-0d: VirtualAddress(1409d058c):4 = 2a90
-0d: VirtualAddress(1409d059d):4 = 2a80
-0d: VirtualAddress(1409d05a1):4 = 2a70
-0d: VirtualAddress(1409d05af):4 = 2a60
-0d: VirtualAddress(1409d05b3):4 = 2a50
 0e: VirtualAddress(14028bb37):3 = ((rdx + (rax * 4)) - 140e6fa90)
 0e: VirtualAddress(14028bbba):3 (Two step VirtualAddress(14028bb47)) = ((rdx + (rcx * 4)) - 140e6fa90)
 0e: VirtualAddress(14028bc05):3 = ((rcx + (rax * 4)) - 140e6fa90)
@@ -1876,6 +1824,7 @@ Orders array patches:
 0e: VirtualAddress(14028d336):7 = (rax * 4)
 --- Extended array arg patches ---
 14028c12a: [(0, 14), (1, 8)]
+14028c14c: [(0, 13), (1, 7)]
 14028cd8e: [(0, 14)]
 14028cda2: [(0, 13)]
 --- Grp texture hooks ---
