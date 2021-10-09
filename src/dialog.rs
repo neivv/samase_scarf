@@ -111,6 +111,7 @@ pub(crate) fn run_dialog<'e, E: ExecutionState<'e>>(
                 string_address: str_ref.string_address,
                 result: &mut result,
                 args,
+                func_entry: entry,
             };
 
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -132,6 +133,7 @@ struct RunDialogAnalyzer<'exec, 'b, E: ExecutionState<'exec>> {
     string_address: E::VirtualAddress,
     args: &'b ArgCache<'exec, E>,
     result: &'b mut RunDialog<E::VirtualAddress>,
+    func_entry: E::VirtualAddress,
 }
 
 impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
@@ -193,6 +195,18 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
                     let dest2 = DestOperand::from_oper(ctrl.mem_word(arg1, 0));
                     let state = ctrl.exec_state();
                     state.move_resolved(&dest2, ctx.constant(self.string_address.as_u64()));
+                }
+            }
+            Operation::Jump { condition, to } => {
+                if condition == ctx.const_1() {
+                    if ctrl.resolve(ctx.register(4)) == ctx.register(4) {
+                        if let Some(dest) = ctrl.resolve_va(to) {
+                            if dest < self.func_entry || dest > ctrl.address() + 0x400 {
+                                // Tail call (probably)
+                                self.operation(ctrl, &Operation::Call(to));
+                            }
+                        }
+                    }
                 }
             }
             _ => (),
@@ -340,6 +354,7 @@ pub(crate) fn spawn_dialog<'e, E: ExecutionState<'e>>(
                 string_address: str_ref.string_address,
                 result: &mut result,
                 args,
+                func_entry: entry,
             };
 
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
