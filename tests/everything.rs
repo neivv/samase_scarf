@@ -2037,12 +2037,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(replay_gcfg.is_none());
     }
 
-    if E::VirtualAddress::SIZE == 4 {
-        assert_eq!(analysis.crt_fastfail().len(), 0x5);
-    } else {
-        // TODO
-        assert_eq!(analysis.crt_fastfail().len(), 0x0);
-    }
+    assert_eq!(analysis.crt_fastfail().len(), 0x5);
 
     // Exists from 1.22.4 forward
     let anti_troll = analysis.anti_troll();

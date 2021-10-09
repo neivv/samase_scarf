@@ -1,5 +1,5 @@
 use byteorder::{ByteOrder, LittleEndian};
-use scarf::exec_state::{ExecutionState};
+use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::{AnalysisCtx, find_bytes};
 
@@ -18,6 +18,9 @@ pub(crate) fn fastfail<'e, E: ExecutionState<'e>>(
     // and that the jmp_import call is quickly (less than ~16 bytes) followed by
     //   int 29 (0xcd, 0x29)
     //
+    // On 64-bit it is similar, but instead of push 17, it is mov ecx, 17
+    // (0xb9, 0x17, 0x00, 0x00, 0x00)
+    //
     // Returned addresses are at the push 0x17
     // Also some variants just do call dword [xx] instead of jump_import
 
@@ -29,15 +32,23 @@ pub(crate) fn fastfail<'e, E: ExecutionState<'e>>(
     }
 
     let text = analysis.binary_sections.text;
-    let matches = find_bytes(bump, &text.data, &[0x6a, 0x17, 0xe8]);
+    let call_bytes: &[u8] = if E::VirtualAddress::SIZE == 4 {
+        &[0x6a, 0x17, 0xe8]
+    } else {
+        &[0xb9, 0x17, 0x00, 0x00, 0x00, 0xe8]
+    };
+    let matches = find_bytes(bump, &text.data, call_bytes);
     let mut result = Vec::with_capacity(8);
     for pos in matches {
-        let int29 = has_int29(&text.data, (pos.0 as usize).wrapping_add(7));
+        let call_end = call_bytes.len() + 4;
+        let call_offset = call_bytes.len();
+        let int29 = has_int29(&text.data, (pos.0 as usize).wrapping_add(call_end));
         if int29 {
             let call_is_to_memjmp = Some(()).and_then(|()| {
-                let offset = text.data.get((pos.0 as usize).wrapping_add(3)..)?.get(..4)?;
+                let offset =
+                    text.data.get((pos.0 as usize).wrapping_add(call_offset)..)?.get(..4)?;
                 let offset = LittleEndian::read_u32(&offset);
-                let dest = pos.0.wrapping_add(offset).wrapping_add(7);
+                let dest = pos.0.wrapping_add(offset).wrapping_add(call_end as u32);
                 let callee_bytes = text.data.get(dest as usize..)?.get(..2)?;
                 (callee_bytes == &[0xff, 0x25]).then(|| ())
             }).is_some();
@@ -47,9 +58,15 @@ pub(crate) fn fastfail<'e, E: ExecutionState<'e>>(
             }
         }
     }
-    let matches = find_bytes(bump, &text.data, &[0x6a, 0x17, 0xff, 0x15]);
+    let call_bytes: &[u8] = if E::VirtualAddress::SIZE == 4 {
+        &[0x6a, 0x17, 0xff, 0x15]
+    } else {
+        &[0xb9, 0x17, 0x00, 0x00, 0x00, 0xff, 0x15]
+    };
+    let matches = find_bytes(bump, &text.data, call_bytes);
     for pos in matches {
-        let int29 = has_int29(&text.data, (pos.0 as usize).wrapping_add(8));
+        let call_end = call_bytes.len() + 4;
+        let int29 = has_int29(&text.data, (pos.0 as usize).wrapping_add(call_end));
         if int29 {
             let address = text.virtual_address + pos.0;
             result.push(address);
