@@ -5,7 +5,10 @@ extern crate scarf;
 
 use std::path::Path;
 
-use scarf::{Operand, OperandType, VirtualAddress, ExecutionStateX86, OperandContext, OperandCtx};
+use scarf::{
+    ExecutionState, Operand, OperandType, VirtualAddress, ExecutionStateX86, ExecutionStateX86_64,
+    OperandContext, OperandCtx,
+};
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 use samase_scarf::{DatType, Eud};
 
@@ -705,7 +708,7 @@ fn everything_1224c() {
 
 #[test]
 fn everything_1230a() {
-    test_with_extra_checks(Path::new("1230a.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1230a.exe"), |ctx, analysis| {
         let secondary_order = analysis.step_secondary_order();
         assert_eq!(secondary_order[0], samase_scarf::SecondaryOrderHook::Inlined {
             entry: VirtualAddress(0x005b6c80),
@@ -723,6 +726,7 @@ fn everything_1230a() {
 
 #[test]
 fn everything_1230b() {
+    // TODO 64bit
     test_with_extra_checks(Path::new("1230b.exe"), |_ctx, analysis| {
         assert_eq!(analysis.unit_apply_speed_upgrades().unwrap().0, 0x005B7A10);
         assert_eq!(analysis.unit_update_speed().unwrap().0, 0x005B8190);
@@ -735,25 +739,26 @@ fn everything_1230b() {
 
 #[test]
 fn everything_1230c() {
+    // TODO 64bit
     test_with_extra_checks(Path::new("1230c.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1230d() {
-    test_with_extra_checks(Path::new("1230d.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1230d.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1230e() {
-    test_with_extra_checks(Path::new("1230e.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1230e.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1230f() {
-    test_with_extra_checks(Path::new("1230f.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1230f.exe"), |ctx, analysis| {
         let add_overlay_iscript = analysis.add_overlay_iscript();
         assert_eq!(add_overlay_iscript.unwrap().0, 0x00559350);
         let secondary_order = analysis.step_secondary_order();
@@ -767,7 +772,7 @@ fn everything_1230f() {
 
 #[test]
 fn everything_1230g() {
-    test_with_extra_checks(Path::new("1230g.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1230g.exe"), |ctx, analysis| {
         let campaigns = analysis.campaigns();
         assert_eq!(campaigns.unwrap(), ctx.constant(0x00DB2138));
         let run_dialog = analysis.run_dialog();
@@ -783,7 +788,7 @@ fn everything_1230g() {
 
 #[test]
 fn everything_1230h() {
-    test_with_extra_checks(Path::new("1230h.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1230h.exe"), |ctx, analysis| {
         let step_order_hidden = analysis.step_order_hidden();
         assert_eq!(step_order_hidden[0], samase_scarf::StepOrderHiddenHook::Inlined {
             entry: VirtualAddress(0x005af466),
@@ -795,7 +800,7 @@ fn everything_1230h() {
 
 #[test]
 fn everything_1230i() {
-    test_with_extra_checks(Path::new("1230i.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1230i.exe"), |ctx, analysis| {
         let is_outside_game_screen = analysis.is_outside_game_screen();
         assert_eq!(is_outside_game_screen.unwrap().0, 0x0065E7D0);
 
@@ -810,12 +815,14 @@ fn everything_1230i() {
 
 #[test]
 fn everything_1230j() {
+    // TODO 64bit
     test_with_extra_checks(Path::new("1230j.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1231a() {
+    // TODO 64bit
     test_with_extra_checks(Path::new("1231a.exe"), |ctx, analysis| {
         let commands = analysis.process_lobby_commands();
         assert_eq!(commands.unwrap().0, 0x00703c50);
@@ -837,7 +844,7 @@ fn everything_1231a() {
 
 #[test]
 fn everything_1232a() {
-    test_with_extra_checks(Path::new("1232a.exe"), |_ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1232a.exe"), |_ctx, analysis| {
         let results = analysis.firegraft_addresses();
         assert_eq!(results.unit_status_funcs[0].0, 0x00E41128);
         let run_dialog = analysis.run_dialog();
@@ -849,13 +856,13 @@ fn everything_1232a() {
 
 #[test]
 fn everything_1232b() {
-    test_with_extra_checks(Path::new("1232b.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1232b.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1232c() {
-    test_with_extra_checks(Path::new("1232c.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1232c.exe"), |ctx, analysis| {
         assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32c(0x0e9a850));
         assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32c(0x0e9a854));
         assert_eq!(analysis.allocated_order_count().unwrap(), ctx.mem32c(0x0e9a868));
@@ -864,13 +871,13 @@ fn everything_1232c() {
 
 #[test]
 fn everything_1232d() {
-    test_with_extra_checks(Path::new("1232d.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1232d.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1232e() {
-    test_with_extra_checks(Path::new("1232e.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1232e.exe"), |ctx, analysis| {
         let init_map_from_path = analysis.init_map_from_path().unwrap();
         assert_eq!(init_map_from_path.0, 0x006F3030);
         let choose_snp = analysis.choose_snp().unwrap();
@@ -938,7 +945,7 @@ fn everything_1232e() {
 
 #[test]
 fn everything_1233a() {
-    test_with_extra_checks(Path::new("1233a.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1233a.exe"), |ctx, analysis| {
         let open_file = analysis.open_file().unwrap();
         assert_eq!(open_file.0, 0x00544720);
 
@@ -961,7 +968,7 @@ fn everything_1233a() {
 
 #[test]
 fn everything_1233b() {
-    test_with_extra_checks(Path::new("1233b.exe"), |_ctx ,analysis| {
+    test_with_extra_checks_32_64(Path::new("1233b.exe"), |_ctx ,analysis| {
         let spawn_dialog = analysis.spawn_dialog();
         assert_eq!(spawn_dialog.unwrap().0, 0x0097BB60);
 
@@ -979,7 +986,7 @@ fn everything_1233b() {
 
 #[test]
 fn everything_1233c() {
-    test_with_extra_checks(Path::new("1233c.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1233c.exe"), |ctx, analysis| {
         let limits = analysis.limits();
         assert_eq!(limits.set_limits.unwrap().0, 0x00600c60);
         // Sprite array resizing got inlined so it may be a bit weird
@@ -995,7 +1002,7 @@ fn everything_1233c() {
 
 #[test]
 fn everything_1233d() {
-    test_with_extra_checks(Path::new("1233d.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1233d.exe"), |ctx, analysis| {
         let sprite_x_position = analysis.sprite_x_position();
         let sprite_y_position = analysis.sprite_y_position();
         let (x, _, _) = sprite_x_position.unwrap();
@@ -1066,7 +1073,7 @@ fn everything_1233d() {
 
 #[test]
 fn everything_1233e() {
-    test_with_extra_checks(Path::new("1233e.exe"), |ctx ,analysis| {
+    test_with_extra_checks_32_64(Path::new("1233e.exe"), |ctx ,analysis| {
         let rng_seed = analysis.rng_seed();
         let rng_enable = analysis.rng_enable();
         assert_eq!(rng_seed.unwrap(), ctx.mem32c(0x10A11C0));
@@ -1079,7 +1086,7 @@ fn everything_1233e() {
 
 #[test]
 fn everything_1233f() {
-    test_with_extra_checks(Path::new("1233f.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1233f.exe"), |ctx, analysis| {
         let sprite_array = analysis.sprite_array().unwrap().0;
         assert_eq!(sprite_array, ctx.mem32c(0xeb6098));
         let init_sprites = analysis.init_sprites().unwrap();
@@ -1119,7 +1126,7 @@ fn everything_1233f() {
 
 #[test]
 fn everything_1233g() {
-    test_with_extra_checks(Path::new("1233g.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1233g.exe"), |ctx, analysis| {
         let serialize = analysis.serialize_sprites().unwrap();
         assert_eq!(serialize.0, 0x0057F540);
         let deserialize = analysis.deserialize_sprites().unwrap();
@@ -1135,12 +1142,13 @@ fn everything_1233g() {
 
 #[test]
 fn everything_1233h() {
-    test_with_extra_checks(Path::new("1233h.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1233h.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1233i() {
+    // Don't have 64bit exe for this
     test_with_extra_checks(Path::new("1233i.exe"), |ctx, analysis| {
         assert_eq!(analysis.tooltip_draw_func().unwrap(), ctx.mem32c(0xee926c));
         assert_eq!(analysis.current_tooltip_ctrl().unwrap(), ctx.mem32c(0xee9270));
@@ -1154,7 +1162,7 @@ fn everything_1233i() {
 
 #[test]
 fn everything_1234_ptr1() {
-    test_with_extra_checks(Path::new("1234_ptr1.exe"), |_ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1234_ptr1.exe"), |_ctx, analysis| {
         let run_dialog = analysis.run_dialog();
         assert_eq!(run_dialog.unwrap().0, 0x00979000);
         let results = analysis.firegraft_addresses();
@@ -1164,25 +1172,25 @@ fn everything_1234_ptr1() {
 
 #[test]
 fn everything_1234a() {
-    test_with_extra_checks(Path::new("1234a.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1234a.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1234b() {
-    test_with_extra_checks(Path::new("1234b.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1234b.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1234c() {
-    test_with_extra_checks(Path::new("1234c.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1234c.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1234d() {
-    test_with_extra_checks(Path::new("1234d.exe"), |_ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1234d.exe"), |_ctx, analysis| {
         assert_eq!(analysis.ai_attack_prepare().unwrap().0, 0x006583A0);
         assert_eq!(analysis.ai_step_region().unwrap().0, 0x0065A590);
         let join_game = analysis.join_game().unwrap();
@@ -1194,13 +1202,13 @@ fn everything_1234d() {
 
 #[test]
 fn everything_1235a() {
-    test_with_extra_checks(Path::new("1235a.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1235a.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1235b() {
-    test_with_extra_checks(Path::new("1235b.exe"), |_ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1235b.exe"), |_ctx, analysis| {
         let load_dat = analysis.load_dat().unwrap();
         assert_eq!(load_dat.0, 0x006CAD30);
     })
@@ -1208,7 +1216,7 @@ fn everything_1235b() {
 
 #[test]
 fn everything_1235c() {
-    test_with_extra_checks(Path::new("1235c.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1235c.exe"), |ctx, analysis| {
         let do_attack = analysis.do_attack().unwrap();
         assert_eq!(do_attack.0, 0x00593CB0);
         let do_attack_main = analysis.do_attack_main().unwrap();
@@ -1219,13 +1227,13 @@ fn everything_1235c() {
 
 #[test]
 fn everything_1235d() {
-    test_with_extra_checks(Path::new("1235d.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1235d.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1235e() {
-    test_with_extra_checks(Path::new("1235e.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1235e.exe"), |ctx, analysis| {
         assert_eq!(analysis.smem_alloc().unwrap().0, 0x0094d940);
         assert_eq!(analysis.smem_free().unwrap().0, 0x0094d980);
         assert_eq!(analysis.cmdicons_ddsgrp().unwrap(), ctx.constant(0x11b7960));
@@ -1238,13 +1246,13 @@ fn everything_1235e() {
 
 #[test]
 fn everything_1235f() {
-    test_with_extra_checks(Path::new("1235f.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1235f.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1235g() {
-    test_with_extra_checks(Path::new("1235g.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1235g.exe"), |ctx, analysis| {
         assert_eq!(analysis.check_unit_requirements().unwrap().0, 0x006627D0);
         assert_eq!(analysis.check_dat_requirements().unwrap().0, 0x00538f80);
         assert_eq!(analysis.dat_requirement_error().unwrap(), ctx.mem32c(0xffaad8));
@@ -1269,7 +1277,7 @@ fn everything_1235g() {
 
 #[test]
 fn everything_1235h() {
-    test_with_extra_checks(Path::new("1235h.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1235h.exe"), |ctx, analysis| {
         assert_eq!(analysis.snet_send_packets().unwrap().0, 0x007949f0);
         assert_eq!(analysis.snet_recv_packets().unwrap().0, 0x007976e0);
         assert_eq!(analysis.chk_init_players().unwrap(), ctx.constant(0x11d35d8));
@@ -1280,13 +1288,13 @@ fn everything_1235h() {
 
 #[test]
 fn everything_1236a() {
-    test_with_extra_checks(Path::new("1236a.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1236a.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1236b() {
-    test_with_extra_checks(Path::new("1236b.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1236b.exe"), |ctx, analysis| {
         assert_eq!(analysis.play_sound().unwrap().0, 0x007b03f0);
         assert_eq!(analysis.ai_prepare_moving_to().unwrap().0, 0x005d1d60);
         assert_eq!(
@@ -1302,6 +1310,7 @@ fn everything_1236b() {
 
 #[test]
 fn everything_1237a() {
+    // TODO 64bit
     test_with_extra_checks(Path::new("1237a.exe"), |ctx, analysis| {
         assert_eq!(analysis.step_replay_commands().unwrap().0, 0x00743750);
         assert_eq!(analysis.replay_data().unwrap(), ctx.mem32c(0x011CF5CC));
@@ -1315,13 +1324,13 @@ fn everything_1237a() {
 
 #[test]
 fn everything_1238a() {
-    test_with_extra_checks(Path::new("1238a.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1238a.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1238b() {
-    test_with_extra_checks(Path::new("1238b.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1238b.exe"), |ctx, analysis| {
         let fastfail = analysis.crt_fastfail();
         assert!(fastfail.iter().any(|x| x.0 == 0xcca86f));
         assert!(fastfail.iter().any(|x| x.0 == 0xcca974));
@@ -1344,7 +1353,7 @@ fn everything_1238b() {
 
 #[test]
 fn everything_1238c() {
-    test_with_extra_checks(Path::new("1238c.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1238c.exe"), |ctx, analysis| {
         assert_eq!(analysis.run_menus().unwrap().0, 0x006F3590);
         assert_eq!(analysis.set_briefing_music().unwrap().0, 0x006eceb0);
         assert_eq!(analysis.pre_mission_glue().unwrap().0, 0x006996d0);
@@ -1399,6 +1408,7 @@ fn everything_1238c() {
 
 #[test]
 fn everything_1238d() {
+    // TODO 64bit broken
     test_with_extra_checks(Path::new("1238d.exe"), |ctx, analysis| {
         assert_eq!(analysis.font_cache_render_ascii().unwrap().0, 0x009EFC10);
         assert_eq!(analysis.ttf_cache_character().unwrap().0, 0x009F04C0);
@@ -1424,6 +1434,7 @@ fn everything_1238d() {
 
 #[test]
 fn everything_1238e() {
+    // Notably i don't have 64bit exe for this atm
     test_with_extra_checks(Path::new("1238e.exe"), |ctx, analysis| {
         assert_eq!(analysis.first_free_order().unwrap(), ctx.mem32c(0x011b5ac0));
         assert_eq!(analysis.last_free_order().unwrap(), ctx.mem32c(0x011b5ac4));
@@ -1444,7 +1455,7 @@ fn everything_1238e() {
 
 #[test]
 fn everything_1238f() {
-    test_with_extra_checks(Path::new("1238f.exe"), |_ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1238f.exe"), |_ctx, analysis| {
         assert_eq!(analysis.map_entry_load_map().unwrap().0, 0x005fcfd0);
         assert_eq!(analysis.map_entry_load_save().unwrap().0, 0x005fcba0);
         assert_eq!(analysis.map_entry_load_replay().unwrap().0, 0x005fc2f0);
@@ -1454,12 +1465,21 @@ fn everything_1238f() {
 
 #[test]
 fn everything_1239a() {
-    test_with_extra_checks(Path::new("1239a.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1239a.exe"), |_ctx, _analysis| {
     });
 }
 
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
+}
+
+/// Callback is only for 32bit, should probs make another helper function
+/// that takes two callbacks if needed.
+fn test_with_extra_checks_32_64<F>(filename: &Path, f: F)
+where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, ExecutionStateX86<'e>>),
+{
+    test_with_extra_checks(filename, f);
+    test_with_extra_checks_64(filename, |_, _| {});
 }
 
 fn test_with_extra_checks<F>(filename: &Path, f: F)
@@ -1478,11 +1498,25 @@ where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, Executio
     test_nongeneric(filename, ctx, &binary, &mut analysis);
 }
 
-fn test_nongeneric<'e>(
+fn test_with_extra_checks_64<F>(filename: &Path, f: F)
+where F: for<'e> FnOnce(OperandCtx<'e>, &mut samase_scarf::Analysis<'e, ExecutionStateX86_64<'e>>),
+{
+    init_stdout_log();
+    assert!(samase_scarf::test_assertions());
+    let path = Path::new("tests/64").join(filename);
+    let binary = scarf::parse_x86_64(path.as_ref()).unwrap();
+    let ctx = &OperandContext::new();
+    let mut analysis = samase_scarf::Analysis::new(&binary, ctx);
+
+    f(ctx, &mut analysis);
+    test_nongeneric(filename, ctx, &binary, &mut analysis);
+}
+
+fn test_nongeneric<'e, E: ExecutionState<'e>>(
     filename: &Path,
     ctx: OperandCtx<'e>,
-    binary: &'e scarf::BinaryFile<VirtualAddress>,
-    analysis: &mut samase_scarf::Analysis<'e, ExecutionStateX86<'e>>,
+    binary: &'e scarf::BinaryFile<E::VirtualAddress>,
+    analysis: &mut samase_scarf::Analysis<'e, E>,
 ) {
     for addr in samase_scarf::AddressAnalysis::iter() {
         use samase_scarf::AddressAnalysis::*;
@@ -1561,36 +1595,45 @@ fn test_nongeneric<'e>(
     let new_codegen = minor_version > 21 || (minor_version == 21 && patch_version >= 2);
     let new_codegen2 = minor_version > 22 || (minor_version == 22 && patch_version >= 1);
     let new_codegen3 = minor_version > 22;
-    if minor_version < 21 {
-        assert_eq!(results.requirement_table_refs.units.len(), 13);
-        assert_eq!(results.requirement_table_refs.upgrades.len(), 4);
-        assert_eq!(results.requirement_table_refs.tech_use.len(), 4);
-        assert_eq!(results.requirement_table_refs.tech_research.len(), 4);
-        assert_eq!(results.requirement_table_refs.orders.len(), 4);
-    } else if new_codegen3 {
-        assert_eq!(results.requirement_table_refs.units.len(), 13);
-        assert_eq!(results.requirement_table_refs.upgrades.len(), 5);
-        assert_eq!(results.requirement_table_refs.tech_use.len(), 5);
-        assert_eq!(results.requirement_table_refs.tech_research.len(), 5);
-        assert_eq!(results.requirement_table_refs.orders.len(), 5);
-    } else if new_codegen2 {
-        // Assertions enabled
-        assert_eq!(results.requirement_table_refs.units.len(), 15);
-        assert_eq!(results.requirement_table_refs.upgrades.len(), 7);
-        assert_eq!(results.requirement_table_refs.tech_use.len(), 7);
-        assert_eq!(results.requirement_table_refs.tech_research.len(), 7);
-        assert_eq!(results.requirement_table_refs.orders.len(), 7);
-    } else {
-        // Different compiler codegen caused one less ref for equivalent code
-        if new_codegen {
+    if E::VirtualAddress::SIZE == 4 {
+        if minor_version < 21 {
             assert_eq!(results.requirement_table_refs.units.len(), 13);
+            assert_eq!(results.requirement_table_refs.upgrades.len(), 4);
+            assert_eq!(results.requirement_table_refs.tech_use.len(), 4);
+            assert_eq!(results.requirement_table_refs.tech_research.len(), 4);
+            assert_eq!(results.requirement_table_refs.orders.len(), 4);
+        } else if new_codegen3 {
+            assert_eq!(results.requirement_table_refs.units.len(), 13);
+            assert_eq!(results.requirement_table_refs.upgrades.len(), 5);
+            assert_eq!(results.requirement_table_refs.tech_use.len(), 5);
+            assert_eq!(results.requirement_table_refs.tech_research.len(), 5);
+            assert_eq!(results.requirement_table_refs.orders.len(), 5);
+        } else if new_codegen2 {
+            // Assertions enabled
+            assert_eq!(results.requirement_table_refs.units.len(), 15);
+            assert_eq!(results.requirement_table_refs.upgrades.len(), 7);
+            assert_eq!(results.requirement_table_refs.tech_use.len(), 7);
+            assert_eq!(results.requirement_table_refs.tech_research.len(), 7);
+            assert_eq!(results.requirement_table_refs.orders.len(), 7);
         } else {
-            assert_eq!(results.requirement_table_refs.units.len(), 14);
+            // Different compiler codegen caused one less ref for equivalent code
+            if new_codegen {
+                assert_eq!(results.requirement_table_refs.units.len(), 13);
+            } else {
+                assert_eq!(results.requirement_table_refs.units.len(), 14);
+            }
+            assert_eq!(results.requirement_table_refs.upgrades.len(), 5);
+            assert_eq!(results.requirement_table_refs.tech_use.len(), 5);
+            assert_eq!(results.requirement_table_refs.tech_research.len(), 5);
+            assert_eq!(results.requirement_table_refs.orders.len(), 5);
         }
-        assert_eq!(results.requirement_table_refs.upgrades.len(), 5);
-        assert_eq!(results.requirement_table_refs.tech_use.len(), 5);
-        assert_eq!(results.requirement_table_refs.tech_research.len(), 5);
-        assert_eq!(results.requirement_table_refs.orders.len(), 5);
+    } else {
+        // All 64bit exes are new_codegen3 versions
+        assert_eq!(results.requirement_table_refs.units.len(), 12);
+        assert_eq!(results.requirement_table_refs.upgrades.len(), 2);
+        assert_eq!(results.requirement_table_refs.tech_use.len(), 2);
+        assert_eq!(results.requirement_table_refs.tech_research.len(), 2);
+        assert_eq!(results.requirement_table_refs.orders.len(), 2);
     }
 
     let step_secondary_order = analysis.step_secondary_order();
@@ -1663,9 +1706,17 @@ fn test_nongeneric<'e>(
         (minor_version == 23 && patch_version == 5 && revision < b'h') ||
         filename_str == "1234_ptr1"
     {
-        assert_eq!(anim_struct_size, 0x4c);
+        if E::VirtualAddress::SIZE == 4 {
+            assert_eq!(anim_struct_size, 0x4c);
+        } else {
+            assert_eq!(anim_struct_size, 0x80);
+        }
     } else {
-        assert_eq!(anim_struct_size, 0x38);
+        if E::VirtualAddress::SIZE == 4 {
+            assert_eq!(anim_struct_size, 0x38);
+        } else {
+            assert_eq!(anim_struct_size, 0x60);
+        }
     }
 
     let old_sprite_pos = minor_version < 23 ||
@@ -1673,23 +1724,45 @@ fn test_nongeneric<'e>(
         filename_str == "1233a" ||
         filename_str == "1233b";
     if old_sprite_pos {
-        assert_eq!(x_off, 0x14);
-        assert_eq!(y_off, 0x16);
-        assert_eq!(x, ctx.custom(0));
-        assert_eq!(y, ctx.custom(0));
-        assert_eq!(x_size, scarf::MemAccessSize::Mem16);
-        assert_eq!(y_size, scarf::MemAccessSize::Mem16);
-        assert_eq!(sprite_size, 0x24);
+        if E::VirtualAddress::SIZE == 4 {
+            assert_eq!(x_off, 0x14);
+            assert_eq!(y_off, 0x16);
+            assert_eq!(x, ctx.custom(0));
+            assert_eq!(y, ctx.custom(0));
+            assert_eq!(x_size, scarf::MemAccessSize::Mem16);
+            assert_eq!(y_size, scarf::MemAccessSize::Mem16);
+            assert_eq!(sprite_size, 0x24);
+        } else {
+            assert_eq!(x_off, 0x1c);
+            assert_eq!(y_off, 0x1e);
+            assert_eq!(x, ctx.custom(0));
+            assert_eq!(y, ctx.custom(0));
+            assert_eq!(x_size, scarf::MemAccessSize::Mem16);
+            assert_eq!(y_size, scarf::MemAccessSize::Mem16);
+            assert_eq!(sprite_size, 0x38);
+        }
     } else {
-        assert_eq!(x_off, 0x14);
-        assert_eq!(y_off, 0x18);
-        assert_ne!(x, ctx.custom(0));
-        assert_ne!(y, ctx.custom(0));
-        assert_eq!(x_size, scarf::MemAccessSize::Mem32);
-        assert_eq!(y_size, scarf::MemAccessSize::Mem32);
-        // These seem to use same key always
-        assert_eq!(x, y);
-        assert_eq!(sprite_size, 0x28);
+        if E::VirtualAddress::SIZE == 4 {
+            assert_eq!(x_off, 0x14);
+            assert_eq!(y_off, 0x18);
+            assert_ne!(x, ctx.custom(0));
+            assert_ne!(y, ctx.custom(0));
+            assert_eq!(x_size, scarf::MemAccessSize::Mem32);
+            assert_eq!(y_size, scarf::MemAccessSize::Mem32);
+            // These seem to use same key always
+            assert_eq!(x, y);
+            assert_eq!(sprite_size, 0x28);
+        } else {
+            assert_eq!(x_off, 0x20);
+            assert_eq!(y_off, 0x28);
+            assert_ne!(x, ctx.custom(0));
+            assert_ne!(y, ctx.custom(0));
+            assert_eq!(x_size, scarf::MemAccessSize::Mem64);
+            assert_eq!(y_size, scarf::MemAccessSize::Mem64);
+            // These seem to use same key always
+            assert_eq!(x, y);
+            assert_eq!(sprite_size, 0x48);
+        }
     }
 
     // Currently 1238d, 1238e, but not 1238f nor 1239a
@@ -1770,7 +1843,11 @@ fn test_nongeneric<'e>(
     if minor_version < 23 || (minor_version == 23 && patch_version < 3) {
         let snp_definitions = snp_definitions.unwrap();
         check_global_struct(snp_definitions.snp_definitions, binary, "snp definitions");
-        assert_eq!(snp_definitions.entry_size, 0x90);
+        if E::VirtualAddress::SIZE == 4 {
+            assert_eq!(snp_definitions.entry_size, 0x90);
+        } else {
+            assert_eq!(snp_definitions.entry_size, 0x120);
+        }
     } else {
         assert!(snp_definitions.is_none());
     }
@@ -1822,7 +1899,7 @@ fn test_nongeneric<'e>(
         assert_eq!(limits.arrays.len(), 0);
     }
 
-    let offset = analysis.create_game_dialog_vtbl_on_multiplayer_create().unwrap();
+    let offset = analysis.create_game_dialog_vtbl_on_multiplayer_create().unwrap() as u32;
     // 1207a .. 1232e 0xa8
     // 1233a .. 1233f 0xac
     // 1233g .. 0xb0
@@ -1830,11 +1907,11 @@ fn test_nongeneric<'e>(
         (minor_version == 23 && patch_version > 3) ||
         (minor_version == 23 && patch_version == 3 && revision >= b'g')
     {
-        assert_eq!(offset, 0xb0);
+        assert_eq!(offset, 0x2c * E::VirtualAddress::SIZE);
     } else if minor_version == 23 && patch_version == 3 {
-        assert_eq!(offset, 0xac);
+        assert_eq!(offset, 0x2b * E::VirtualAddress::SIZE);
     } else {
-        assert_eq!(offset, 0xa8);
+        assert_eq!(offset, 0x2a * E::VirtualAddress::SIZE);
     }
 
     if has_prism {
@@ -1855,7 +1932,11 @@ fn test_nongeneric<'e>(
     if has_join_game {
         assert!(join_game.is_some());
         if is_major_2021_patch {
-            assert_eq!(join_param_variant_type_offset, Some(0x20));
+            if E::VirtualAddress::SIZE == 4 {
+                assert_eq!(join_param_variant_type_offset, Some(0x20));
+            } else {
+                assert_eq!(join_param_variant_type_offset, Some(0x28));
+            }
         } else {
             assert_eq!(join_param_variant_type_offset, Some(0));
         }
@@ -1956,7 +2037,12 @@ fn test_nongeneric<'e>(
         assert!(replay_gcfg.is_none());
     }
 
-    assert_eq!(analysis.crt_fastfail().len(), 0x5);
+    if E::VirtualAddress::SIZE == 4 {
+        assert_eq!(analysis.crt_fastfail().len(), 0x5);
+    } else {
+        // TODO
+        assert_eq!(analysis.crt_fastfail().len(), 0x0);
+    }
 
     // Exists from 1.22.4 forward
     let anti_troll = analysis.anti_troll();
@@ -1978,10 +2064,19 @@ fn test_nongeneric<'e>(
         assert!(step_game_loop.is_none());
     }
 
-    assert_eq!(analysis.bnet_message_vtable_type(), Some(4));
+    if E::VirtualAddress::SIZE == 4 {
+        assert_eq!(analysis.bnet_message_vtable_type(), Some(4));
+    } else {
+        // TODO
+        assert_eq!(analysis.bnet_message_vtable_type(), None);
+    }
 
     let dump_text = samase_scarf::dump::dump_all(analysis);
-    let compare_path = format!("tests/compare/{}-32.txt", filename_str);
+    let compare_path = if E::VirtualAddress::SIZE == 4 {
+        format!("tests/compare/{}-32.txt", filename_str)
+    } else {
+        format!("tests/compare/{}-64.txt", filename_str)
+    };
     let compare_path = Path::new(&compare_path);
     let compare = match std::fs::read(compare_path) {
         Ok(o) => o,
@@ -2112,8 +2207,14 @@ fn check_euds<Va: VirtualAddressTrait>(
     let data = std::fs::read(&format!("tests/euds/{}", compare_file)).unwrap();
     let data = String::from_utf8_lossy(&data);
     for line in data.lines().filter(|x| !x.trim().is_empty()) {
-        let (addr, size, flags, zero_scr) = parse_line(line)
+        let (addr, size, mut flags, zero_scr) = parse_line(line)
             .unwrap_or_else(|| panic!("Line {}", line));
+        if addr == 0x5193a0 && Va::SIZE == 8 {
+            // 64bit unit status ui funcs has flag 0 instead of 32bit 2f000000
+            // (Making it not supported??)
+            // Everything else is same.
+            flags = 0;
+        }
         let start_index = euds.binary_search_by(|x| match x.address < addr {
             true => std::cmp::Ordering::Less,
             false => std::cmp::Ordering::Greater,
