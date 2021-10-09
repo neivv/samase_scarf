@@ -121,10 +121,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FindStepIscript<'a, 'e, E> {
                 self.inline_limit = 16;
             }
             let old_esp = self.entry_esp;
-            self.entry_esp = ctx.sub_const(
-                ctrl.resolve(ctx.register(4)),
-                E::VirtualAddress::SIZE.into(),
-            );
+            self.entry_esp = ctrl.get_new_esp_for_call();
             ctrl.analyze_with_current_state(self, dest);
             self.entry_esp = old_esp;
             if is_depth0 {

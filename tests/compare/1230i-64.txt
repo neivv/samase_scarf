@@ -1,6 +1,6 @@
 -- Main --
 add_asset_change_callback: 14015eed0
-add_overlay_iscript: None
+add_overlay_iscript: 14017d5b0
 add_pylon_aura: 1401c7640
 ai_add_military_to_region: 14026e000
 ai_attack_prepare: 14026ec50
@@ -17,7 +17,7 @@ check_unit_requirements: 140275230
 choose_snp: 14036e8a0
 clamp_zoom: 140226100
 clear_build_queue: 140191690
-create_bullet: None
+create_bullet: 140171f70
 create_game_multiplayer: 14036d160
 create_lone_sprite: 140189d40
 create_unit: 1401ade90
@@ -70,7 +70,7 @@ open_anim_single_file: 1401487b0
 open_file: 14015e530
 order_init_arbiter: 1401c79a0
 play_smk: 140393180
-play_sound: None
+play_sound: 1403c3bb0
 player_gained_upgrade: 1401e77b0
 pre_mission_glue: 1402b6750
 prepare_draw_image: None
@@ -84,7 +84,7 @@ remove_from_client_selection: 1401b4490
 remove_from_selections: 1403ba5f0
 render_screen: 1405d7240
 reset_ui_event_handlers: 1402f6de0
-reveal_unit_area: None
+reveal_unit_area: 1401a71b0
 run_dialog: 1405eb8e0
 run_menus: 140325680
 sc_main: 140338ac0
@@ -101,35 +101,35 @@ snet_recv_packets: 1405a7f90
 snet_send_packets: 1405a4120
 spawn_dialog: None
 start_udp_server: 140426630
-step_active_unit_frame: None
+step_active_unit_frame: 1401e6530
 step_ai_script: 14025a3a0
 step_bnet_controller: 140405600
-step_bullet_frame: None
+step_bullet_frame: 140174100
 step_game_logic: 1402fa230
 step_game_loop: 1402f9f70
-step_hidden_unit_frame: None
-step_iscript: None
-step_iscript_switch: None
+step_hidden_unit_frame: 1401e6910
+step_iscript: 14017d950
+step_iscript_switch: 14017ece0
 step_network: 140377d60
 step_objects: 14030c020
 step_order: 1401e4c40
 step_replay_commands: 140377780
-step_unit_movement: None
+step_unit_movement: 1401bffe0
 ttf_cache_character: 1405df690
 ttf_malloc: 14093f774
 ttf_render_sdf: 1405e3b00
 ui_default_scroll_handler: 1402f6d40
-unit_apply_speed_upgrades: None
-unit_buffed_acceleration: None
-unit_buffed_flingy_speed: None
-unit_buffed_turn_speed: None
+unit_apply_speed_upgrades: 1401e6c30
+unit_buffed_acceleration: 1401b7320
+unit_buffed_flingy_speed: 1401b7400
+unit_buffed_turn_speed: 1401b7390
 unit_changing_player: 1401b4a40
-unit_update_speed: None
-unit_update_speed_iscript: None
+unit_update_speed: 1401e7560
+unit_update_speed_iscript: 1401c6450
 update_visibility_point: 14018a1e0
-active_iscript_bullet: None
-active_iscript_flingy: None
-active_iscript_unit: None
+active_iscript_bullet: Mem64[140c7c398]
+active_iscript_flingy: Mem64[140c7c390]
+active_iscript_unit: Mem64[140c7c388]
 ai_regions: 140cd6750
 ai_transport_reachability_cached_region: 140cdb5e0
 allocated_order_count: Mem32[140c91520]
@@ -141,33 +141,33 @@ campaigns: 140c097e0
 cheat_flags: Mem32[140e6d840]
 chk_init_players: 140eacee0
 client_selection: 140ebd800
-cmdbtns_ddsgrp: None
-cmdicons_ddsgrp: None
+cmdbtns_ddsgrp: 140ebcc10
+cmdicons_ddsgrp: 140ebcc60
 command_user: Mem32[140bfff30]
 continue_game_loop: Mem8[140e8144e]
 current_tooltip_ctrl: None
 cursor_marker: None
 dat_requirement_error: Mem32[140ce7228]
 dialog_return_code: Mem32[140eec9f8]
-draw_cursor_marker: None
+draw_cursor_marker: Mem8[140c929d1]
 fire_overlay_max: 140c7c3a0
-first_active_bullet: None
+first_active_bullet: Mem64[140c7a278]
 first_active_unit: Mem64[140c92b00]
 first_ai_script: Mem64[140cc9d00]
-first_dying_unit: None
+first_dying_unit: Mem64[140c92bb8]
 first_fow_sprite: Mem64[140c92a20]
-first_free_bullet: None
+first_free_bullet: Mem64[140c7a218]
 first_free_fow_sprite: Mem64[140c92a10]
 first_free_lone_sprite: Mem64[140c929f0]
 first_free_order: Mem64[140c914f0]
 first_free_sprite: Mem64[140c91530]
 first_guard_ai: 140ce71a0
 first_hidden_unit: Mem64[140c92b20]
-first_invisible_unit: None
+first_invisible_unit: Mem64[140c92fc0]
 first_lone_sprite: Mem64[140c92a00]
 first_player_unit: 140c92b30
 first_pylon: Mem64[140c92c18]
-first_revealer: None
+first_revealer: Mem64[140c92b28]
 fonts: 140eea118
 game: (Mem64[140bda3a0] ^ 85a49d207aca0593)
 game_data: 140eab390
@@ -181,11 +181,11 @@ is_paused: Mem32[140c9a690]
 is_placing_building: Mem32[140eaebbc]
 is_replay: Mem32[140eaec88]
 is_targeting: Mem8[140ebd99e]
-iscript_bin: None
-last_active_bullet: None
+iscript_bin: Mem64[140c7c7c0]
+last_active_bullet: Mem64[140c7a280]
 last_bullet_spawner: Mem64[140c7a288]
 last_fow_sprite: Mem64[140c92a28]
-last_free_bullet: None
+last_free_bullet: Mem64[140c7a220]
 last_free_fow_sprite: Mem64[140c92a18]
 last_free_lone_sprite: Mem64[140c929f8]
 last_free_order: Mem64[140c914f8]
@@ -244,12 +244,12 @@ sync_data: 140ead750
 tfontgam: 140eea160
 tooltip_draw_func: None
 unique_command_user: Mem32[140bfff34]
-unit_should_reveal_area: None
+unit_should_reveal_area: Mem32[140c92bf4]
 unit_strength: 140ccc3c0
 units: Mem64[140c92b90]
 vertex_buffer: 140c16968
-vision_update_counter: None
-vision_updated: None
+vision_update_counter: Mem32[140e81418]
+vision_updated: Mem8[140e81420]
 wirefram_ddsgrp: None
 zoom: Mem32[140bd8ba0]
 join_param_variant_type_offset: None
@@ -277,7 +277,7 @@ Aiscript hook: Some(
         return_address: VirtualAddress(14025c673),
     },
 )
-step_order_hidden: []
+step_order_hidden: [Inlined { entry: VirtualAddress(1401e695d), exit: VirtualAddress(1401e6a74), unit: rbx }]
 step_secondary_order: [Inlined { entry: VirtualAddress(1401e6791), exit: VirtualAddress(1401e6838), unit: rbx }]
 command_lengths: len 67, [-1, -1, -1, -1, -1, 1, 33, 33, 1, 26, 26, 26, 8, 3, 5, 2, 1, 1, 5, 3, 10, 11, -1, -1, 1, 1, 2, 1, 1, 1, 2, 3, 3, 2, 2, 3, 1, 2, 2, 1, 2, 3, 1, 2, 2, 2, 1, 5, 2, 1, 2, 1, 1, 3, 1, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 10, 2, 5, -1, 1, -1, 82, 5, -1, 2, 12, 13, 5, 50, 50, 50, 4]
 units.dat: 140bd4820 (entry size 24)
@@ -291,7 +291,7 @@ techdata.dat: 140bd46a0 (entry size 24)
 sfxdata.dat: None
 portdata.dat: 140bd4520 (entry size 24)
 mapdata.dat: 140c125b0 (entry size 48)
-step iscript hook: None
+step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress(14017da5c), 2) })
 sprite_x: Custom_0
 sprite_x_offset: Some(1c)
 sprite_x_size: Some(Mem16)

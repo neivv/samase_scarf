@@ -7,6 +7,7 @@ pub fn sprite_first_overlay<Va: VirtualAddress>(sprite_size: u32) -> Option<u32>
     match (sprite_size, Va::SIZE) {
         (0x24, 4) => Some(0x1c),
         (0x28, 4) => Some(0x20),
+        (0x38, 8) => Some(0x28),
         (0x48, 8) => Some(0x38),
         _ => None,
     }
@@ -337,14 +338,14 @@ pub fn graphic_layer_size<Va: VirtualAddress>() -> u64 {
 pub fn control_draw_funcs<Va: VirtualAddress>() -> &'static [u64] {
     match Va::SIZE == 4 {
         true => &[0x30, 0x48],
-        false => &[0x68],
+        false => &[0x44, 0x68],
     }
 }
 
 pub fn control_u16_value<Va: VirtualAddress>() -> &'static [u64] {
     match Va::SIZE == 4 {
         true => &[0x26, 0x3e],
-        false => &[0x56],
+        false => &[0x32, 0x56],
     }
 }
 
