@@ -56,6 +56,13 @@ pub fn dump<'e, E: ExecutionState<'e>>(
                 .unwrap_or_else(|| String::from("None")),
         );
     }
+    if check_filter(&filter, "bnet_message_vtable_type") {
+        out!(&mut out, "bnet_message_vtable_type: {:x?}", analysis.bnet_message_vtable_type());
+    }
+    if check_filter(&filter, "bnet_message_switch") {
+        let val = analysis.bnet_message_switch_op();
+        out!(&mut out, "bnet_message_switch: {}", format_op_operand(val));
+    }
 
     if filter.is_none() {
         let mut firegraft = (*analysis.firegraft_addresses()).clone();

@@ -172,6 +172,10 @@ impl<'e> CompleteSwitch<'e> {
         self.table.address().1
     }
 
+    pub fn as_operand(&self, ctx: OperandCtx<'e>) -> Operand<'e> {
+        ctx.add_const(ctx.memory(&self.table), self.base)
+    }
+
     pub fn index_operand(&self, ctx: OperandCtx<'e>) -> Option<Operand<'e>> {
         let (_, index) = extract_table_first_index(ctx, &self.table)?;
         let index = index.if_memory()

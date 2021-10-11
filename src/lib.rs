@@ -2485,6 +2485,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         Some(self.cache.bnet_message_vtable_type)
     }
 
+    pub fn bnet_message_switch_op(&mut self) -> Option<Operand<'e>> {
+        Some(self.cache.bnet_message_switch?.as_operand(self.shareable.ctx))
+    }
+
     pub fn create_game_multiplayer(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(
             AddressAnalysis::CreateGameMultiplayer,

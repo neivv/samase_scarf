@@ -253,6 +253,8 @@ vision_updated: Mem8[fd02f0]
 wirefram_ddsgrp: 100b510
 zoom: Mem32[da2e48]
 join_param_variant_type_offset: None
+bnet_message_vtable_type: Some(4)
+bnet_message_switch: Mem32[(Custom_4 * 4) + 74e328]
 Buttonsets: [VirtualAddress(00dac990)]
 Unit status: [VirtualAddress(00dad548)]
 Req tables:

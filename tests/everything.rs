@@ -2062,8 +2062,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     if E::VirtualAddress::SIZE == 4 {
         assert_eq!(analysis.bnet_message_vtable_type(), Some(4));
     } else {
-        // TODO
-        assert_eq!(analysis.bnet_message_vtable_type(), None);
+        assert_eq!(analysis.bnet_message_vtable_type(), Some(8));
     }
 
     let dump_text = samase_scarf::dump::dump_all(analysis);

@@ -3669,8 +3669,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
                         .is_some();
                     if ok {
                         self.state = StepBnetControllerState::FindEvents;
-                        ctrl.analyze_with_current_state(self, ctrl.address());
-                        ctrl.end_analysis();
+                        ctrl.clear_all_branches();
                     }
                 }
             }
@@ -3709,6 +3708,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
                             let exec_state = ctrl.exec_state();
                             if let Some(switch) = CompleteSwitch::new(to, ctx, exec_state) {
                                 if let Some(idx) = switch.index_operand(ctx) {
+                                    let idx = Operand::and_masked(idx.unwrap_sext()).0;
                                     if let Some(vtable_offset) = idx.if_custom() {
                                         self.result.bnet_message_switch = Some(switch);
                                         self.result.message_vtable_type = vtable_offset as u16;
