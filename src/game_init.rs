@@ -935,6 +935,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             SinglePlayerStartState::FindingSkins => {
+                ctrl.aliasing_memory_fix(op);
                 if self.inline_limit != 0 {
                     if let Operation::Jump { .. } = *op {
                         self.inline_limit -= 1;

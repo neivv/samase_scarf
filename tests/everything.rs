@@ -1310,8 +1310,7 @@ fn everything_1236b() {
 
 #[test]
 fn everything_1237a() {
-    // TODO 64bit
-    test_with_extra_checks(Path::new("1237a.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1237a.exe"), |ctx, analysis| {
         assert_eq!(analysis.step_replay_commands().unwrap().0, 0x00743750);
         assert_eq!(analysis.replay_data().unwrap(), ctx.mem32c(0x011CF5CC));
         assert_eq!(analysis.ai_step_region().unwrap().0, 0x0064fc90);
