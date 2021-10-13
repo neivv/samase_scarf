@@ -7,7 +7,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType};
 
-use crate::{AnalysisCtx, ArgCache, EntryOf, bumpvec_with_capacity, FunctionFinder};
+use crate::{AnalysisCtx, ArgCache, ControlExt, EntryOf, bumpvec_with_capacity, FunctionFinder};
 
 pub struct Eud<'e> {
     pub address: u32,
@@ -227,13 +227,24 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
         result: EudTable<'e>,
         arg_cache: &'a ArgCache<'e, E>,
         first_call: bool,
+        inlining: bool,
     }
     impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'a, 'e, E> {
         type State = analysis::DefaultState;
         type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-            match op {
-                Operation::Call(..) => {
+            if self.inlining {
+                match op {
+                    Operation::Call(..) | Operation::Jump { .. } => {
+                        ctrl.end_analysis();
+                        self.inlining = false;
+                    }
+                    _ => (),
+                }
+                return;
+            }
+            match *op {
+                Operation::Call(dest) => {
                     let ctx = ctrl.ctx();
                     if self.first_call {
                         // The large_stack_alloc call on 64bit (Or maybe recent versions?)
@@ -297,7 +308,28 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
                             }
                         }
                     } else {
-                        self.check_eud_vec_push(ctrl);
+                        let was_push = self.check_eud_vec_push(ctrl);
+                        if !was_push {
+                            // Check vec.len_bytes() call that wasn't inlined;
+                            // [ecx + 4] should be constant greater than 0x200
+                            let this_vec_len_place = ctx.mem_any(
+                                E::WORD_SIZE,
+                                ctx.register(1),
+                                E::VirtualAddress::SIZE.into(),
+                            );
+                            if let Some(c) = ctrl.resolve(this_vec_len_place).if_constant() {
+                                if c > 0x200 {
+                                    if let Some(dest) = ctrl.resolve_va(dest) {
+                                        self.inlining = true;
+                                        ctrl.inline(self, dest);
+                                        if self.inlining {
+                                            ctrl.skip_operation();
+                                            self.inlining = false;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 _ => (),
@@ -305,7 +337,7 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
         }
     }
     impl<'a, 'e, E: ExecutionState<'e>> Analyzer<'a, 'e, E> {
-        fn check_eud_vec_push(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        fn check_eud_vec_push(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) -> bool {
             // Check for eud_vec_push(&vec, &eud)
             // Eud is 0x10 / 0x18 bytes
             let ctx = ctrl.ctx();
@@ -334,13 +366,13 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
             }
             // Sanity check address/size/flags
             if arg1_mem[0].if_constant().filter(|&x| x >= 0x40_0000).is_none() {
-                return;
+                return false;
             }
             if arg1_mem[1].if_constant().filter(|&x| x < 0x1000_0000).is_none() {
-                return;
+                return false;
             }
             if arg1_mem[3].if_constant().is_none() {
-                return;
+                return false;
             }
 
             let vec = ctrl.resolve(ctx.register(1));
@@ -363,6 +395,9 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
                     &DestOperand::Memory(vec_len_addr),
                     ctx.constant(len.wrapping_add(1)),
                 );
+                true
+            } else {
+                false
             }
         }
     }
@@ -376,6 +411,7 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
         },
         arg_cache,
         first_call: true,
+        inlining: false,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, addr);
     analysis.analyze(&mut analyzer);

@@ -1408,8 +1408,7 @@ fn everything_1238c() {
 
 #[test]
 fn everything_1238d() {
-    // TODO 64bit broken
-    test_with_extra_checks(Path::new("1238d.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1238d.exe"), |ctx, analysis| {
         assert_eq!(analysis.font_cache_render_ascii().unwrap().0, 0x009EFC10);
         assert_eq!(analysis.ttf_cache_character().unwrap().0, 0x009F04C0);
         assert_eq!(analysis.ttf_render_sdf().unwrap().0, 0x009F4A20);

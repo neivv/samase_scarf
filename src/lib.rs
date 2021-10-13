@@ -5804,6 +5804,10 @@ fn complex_x86_64_entry_check(bytes: &[u8; 48]) -> Option<bool> {
     //      (Alt for the lea)
     //   sub rsp, C
     //      where C aligns the stack to 16 (function entry is in 8-misalign)
+    //   For large alloc:
+    //      mov eax, C (Still aligning stack correctly)
+    //      call X
+    //      sub rsp, rax
 
     let mut register_state = [
         Any, Any, Any, Caller,
@@ -5903,12 +5907,21 @@ fn complex_x86_64_entry_check(bytes: &[u8; 48]) -> Option<bool> {
         next = slice_to_arr_ref(&bytes[3..])?;
     }
 
+    // sub rsp, const
     let bytes = next;
     let misalign = if push_count & 1 == 0 { 8 } else { 0 };
     if bytes[0] == 0x48 &&
         matches!(bytes[1], 0x81 | 0x83) &&
         bytes[2] == 0xec &&
         bytes[3] & 0xf == misalign
+    {
+        return Some(true);
+    }
+    // mov eax, const; call X; sub rsp, rax
+    if bytes[0] == 0xb8 &&
+        bytes[1] & 0xf == misalign &&
+        bytes[5] == 0xe8 &&
+        &bytes[0xa..][..3] == &[0x48, 0x2b, 0xe0]
     {
         return Some(true);
     }
@@ -5949,6 +5962,13 @@ fn test_complex_x86_64_entry() {
         0x41, 0x54, // push r12,
         0x48, 0x8d, 0x6c, 0x24, 0xb1, // lea rbp, [rsp - 4f]
         0x48, 0x81, 0xec, 0xc8, 0x00, 0x00, 0x00, // sub rsp, c8
+    ]));
+    assert!(do_test(&[
+        0x40, 0x55, // push rbp
+        0x48, 0x8d, 0xac, 0x24, 0x50, 0xd7, 0xff, 0xff, // lea rbp, [rsp - 28]
+        0xb8, 0xb0, 0x29, 0x00, 0x00, // mov eax, 29b0
+        0xe8, 0x00, 0xff, 0xff, 0xff, // call x
+        0x48, 0x2b, 0xe0, // sub rsp, rax
     ]));
 }
 
