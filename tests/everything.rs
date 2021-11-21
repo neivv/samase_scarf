@@ -1556,7 +1556,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 NetworkReady | LastBulletSpawner | DatRequirementError | CursorMarker |
                 SyncActive | IscriptBin | StormCommandUser | FirstFreeOrder | LastFreeOrder |
                 AllocatedOrderCount | ContinueGameLoop | StepGameFrames | ReplaySeekFrame |
-                NextGameStepTick | FirstPylon | PylonRefresh | PylonAurasVisible =>
+                NextGameStepTick | FirstPylon | PylonRefresh | PylonAurasVisible |
+                LocalGameResult =>
             {
                 check_global_opt(result, binary, op.name());
             }

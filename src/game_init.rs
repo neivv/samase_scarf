@@ -114,6 +114,11 @@ pub(crate) struct SelectMapEntryAnalysis<Va: VirtualAddress> {
     pub create_game_dialog_vtbl_on_multiplayer_create: u16,
 }
 
+pub(crate) struct SinglePlayerMapEnd<'e, Va: VirtualAddress> {
+    pub single_player_map_end: Option<Va>,
+    pub local_game_result: Option<Operand<'e>>,
+}
+
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
     fn default() -> Self {
         SinglePlayerStart {
@@ -3975,5 +3980,193 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, '
                     None
                 }
             })
+    }
+}
+
+pub(crate) fn single_player_map_end<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    is_multiplayer: Operand<'e>,
+    run_dialog: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> SinglePlayerMapEnd<'e, E::VirtualAddress> {
+    let mut result = SinglePlayerMapEnd {
+        single_player_map_end: None,
+        local_game_result: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let funcs = functions.functions();
+    let mut str_refs = functions.string_refs(actx, b"rez\\gluscore");
+    if str_refs.is_empty() {
+        str_refs = functions.string_refs(actx, b"gluscore.ui");
+    }
+    let arg_cache = &actx.arg_cache;
+    for str_ref in &str_refs {
+        crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+            let mut analyzer = FindSpMapEnd::<E> {
+                run_dialog,
+                is_multiplayer,
+                arg_cache,
+                result: &mut result,
+                state: FindSpMapEndState::Init,
+                call_limit: 0,
+                inline_depth: 0,
+                inline_limit: 0,
+            };
+
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            if result.single_player_map_end.is_some() {
+                EntryOf::Ok(())
+            } else {
+                EntryOf::Retry
+            }
+        });
+        if result.single_player_map_end.is_some() {
+            break;
+        }
+    }
+    result
+}
+
+struct FindSpMapEnd<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut SinglePlayerMapEnd<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    is_multiplayer: Operand<'e>,
+    run_dialog: E::VirtualAddress,
+    state: FindSpMapEndState,
+    call_limit: u8,
+    inline_depth: u8,
+    inline_limit: u8,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum FindSpMapEndState {
+    /// Run until run_dialog(gluScore)
+    Init,
+    /// Run until is_multiplayer == 0 check, take only that branch.
+    /// May inline to depth 1, which will contain both is_multiplayer check
+    /// and single_player_map_end call then.
+    RunDialogSeen,
+    /// Search for single_player_map_end(local_game_result == 1)
+    IsMultiplayerSeen,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSpMapEnd<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            FindSpMapEndState::Init => {
+                if let Operation::Call(dest) = *op {
+                    if ctrl.resolve_va(dest) == Some(self.run_dialog) {
+                        ctrl.clear_unchecked_branches();
+                        self.state = FindSpMapEndState::RunDialogSeen;
+                        ctrl.do_call_with_result(ctx.constant(0xffff_fffd));
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref dest), _, None) = *op {
+                    // Skip moves to globals, some versions write initial value to
+                    // local_game_result here.
+                    if is_global(dest.address().0) {
+                        ctrl.skip_operation();
+                    }
+                }
+            }
+            FindSpMapEndState::RunDialogSeen => {
+                if self.inline_limit != 0 {
+                    match *op {
+                        Operation::Jump { .. } | Operation::Call(..) => {
+                            self.inline_limit -= 1;
+                            if self.inline_limit == 0 {
+                                ctrl.end_analysis();
+                                return;
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let eq_neq_zero = if_arithmetic_eq_neq(condition)
+                        .filter(|x| x.1 == ctx.const_0());
+                    let result = eq_neq_zero
+                        .filter(|x| x.0 == self.is_multiplayer)
+                        .map(|x| x.2);
+                    let to = match ctrl.resolve_va(to) {
+                        Some(s) => s,
+                        None => return,
+                    };
+                    if let Some(jump_if_zero) = result {
+                        ctrl.clear_unchecked_branches();
+                        ctrl.end_branch();
+                        let zero_addr = match jump_if_zero {
+                            true => to,
+                            false => ctrl.current_instruction_end(),
+                        };
+                        ctrl.add_branch_with_current_state(zero_addr);
+                        self.state = FindSpMapEndState::IsMultiplayerSeen;
+                        self.call_limit = 5;
+                    } else {
+                        // The codegen here may do `al == 0` check and
+                        // from there on assume that al is 0.
+                        if let Some((val, _, is_eq)) = eq_neq_zero {
+                            let eax = ctrl.resolve(ctx.register(0));
+                            let eax_update = if val == eax {
+                                Some(ctx.const_0())
+                            } else if ctx.and_const(eax, 0xff) == val {
+                                Some(ctx.and_const(eax, !0xff))
+                            } else {
+                                None
+                            };
+                            if let Some(eax_update) = eax_update {
+                                let end = ctrl.current_instruction_end();
+                                let (zero_addr, nonzero_addr) = match is_eq {
+                                    true => (to, end),
+                                    false => (end, to),
+                                };
+                                ctrl.end_branch();
+                                ctrl.add_branch_with_current_state(nonzero_addr);
+                                ctrl.move_resolved(&DestOperand::Register64(0), eax_update);
+                                ctrl.add_branch_with_current_state(zero_addr);
+                            }
+                        }
+                    }
+                } else if let Operation::Call(dest) = *op {
+                    if self.inline_depth == 0 {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.inline_depth = 1;
+                            self.inline_limit = 10;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = 0;
+                            if self.state != FindSpMapEndState::RunDialogSeen {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            FindSpMapEndState::IsMultiplayerSeen => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let result = arg1.if_arithmetic_eq()
+                            .filter(|x| x.1 == ctx.const_1() && is_global(x.0))
+                            .map(|x| x.0);
+                        if let Some(result) = result {
+                            self.result.single_player_map_end = Some(dest);
+                            self.result.local_game_result = Some(result);
+                            ctrl.end_analysis();
+                        }
+                    }
+                    if self.call_limit == 0 {
+                        ctrl.end_analysis();
+                    } else {
+                        self.call_limit -= 1;
+                    }
+                }
+            }
+        }
     }
 }

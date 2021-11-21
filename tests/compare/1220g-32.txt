@@ -95,6 +95,7 @@ set_briefing_music: 00683e80
 set_music: 00709cb0
 set_unit_player: 00573080
 show_mission_glue: 00613740
+single_player_map_end: 00720db0
 single_player_start: 006c0300
 snet_initialize_provider: 00899170
 snet_recv_packets: 0089adb0
@@ -193,6 +194,7 @@ last_free_sprite: Mem32[e025ec]
 last_lone_sprite: Mem32[e03244]
 loaded_save: Mem32[da90a4]
 lobby_state: Mem8[ff7301]
+local_game_result: Mem32[fd140c]
 local_player_id: Mem32[da87a0]
 local_player_name: ff7440
 local_storm_player_id: Mem32[da87a8]

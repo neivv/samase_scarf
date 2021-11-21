@@ -317,6 +317,7 @@ results! {
         GetMouseX => "get_mouse_x",
         GetMouseY => "get_mouse_y",
         AddPylonAura => "add_pylon_aura",
+        SinglePlayerMapEnd => "single_player_map_end",
     }
 }
 
@@ -447,6 +448,7 @@ results! {
         FirstPylon => "first_pylon",
         PylonAurasVisible => "pylon_auras_visible",
         PylonRefresh => "pylon_refresh",
+        LocalGameResult => "local_game_result",
     }
 }
 
@@ -886,6 +888,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             GetMouseX => self.get_mouse_x(),
             GetMouseY => self.get_mouse_y(),
             AddPylonAura => self.add_pylon_aura(),
+            SinglePlayerMapEnd => self.single_player_map_end(),
         }
     }
 
@@ -1017,6 +1020,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             FirstPylon => self.first_pylon(),
             PylonAurasVisible => self.pylon_auras_visible(),
             PylonRefresh => self.pylon_refresh(),
+            LocalGameResult => self.local_game_result(),
         }
     }
 
@@ -2551,6 +2555,17 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn add_pylon_aura(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(AddressAnalysis::AddPylonAura, AnalysisCache::cache_pylon_aura)
+    }
+
+    pub fn single_player_map_end(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::SinglePlayerMapEnd,
+            AnalysisCache::cache_sp_map_end,
+        )
+    }
+
+    pub fn local_game_result(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::LocalGameResult, AnalysisCache::cache_sp_map_end)
     }
 
     /// Mainly for tests/dump
@@ -4544,6 +4559,22 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             Some((
                 [result.add_pylon_aura],
                 [result.first_pylon, result.pylon_auras_visible, result.pylon_refresh],
+            ))
+        })
+    }
+
+    fn cache_sp_map_end(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[SinglePlayerMapEnd], &[LocalGameResult], |s| {
+            let is_multiplayer = s.is_multiplayer(actx)?;
+            let run_dialog = s.run_dialog(actx)?;
+            let funcs = s.function_finder();
+            let result =
+                game_init::single_player_map_end(actx, is_multiplayer, run_dialog, &funcs);
+            Some((
+                [result.single_player_map_end],
+                [result.local_game_result],
             ))
         })
     }

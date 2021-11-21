@@ -95,6 +95,7 @@ set_briefing_music: 00664a40
 set_music: 006fa190
 set_unit_player: 0057eb60
 show_mission_glue: 006185f0
+single_player_map_end: 00712c80
 single_player_start: 006a5db0
 snet_initialize_provider: 0088d700
 snet_recv_packets: 0088f350
@@ -193,6 +194,7 @@ last_free_sprite: Mem32[e0420c]
 last_lone_sprite: Mem32[e04e64]
 loaded_save: Mem32[dab0a4]
 lobby_state: Mem8[ff8f41]
+local_game_result: Mem32[fd304c]
 local_player_id: Mem32[daa7a0]
 local_player_name: ff9080
 local_storm_player_id: Mem32[daa7a8]

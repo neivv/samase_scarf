@@ -95,6 +95,7 @@ set_briefing_music: 00673a10
 set_music: 006f2a10
 set_unit_player: 00573c00
 show_mission_glue: 00610c40
+single_player_map_end: 0070af80
 single_player_start: 006aa840
 snet_initialize_provider: 00858a90
 snet_recv_packets: 0085a5d0
@@ -193,6 +194,7 @@ last_free_sprite: Mem32[ccc404]
 last_lone_sprite: Mem32[ccd05c]
 loaded_save: Mem32[c76de4]
 lobby_state: Mem8[eb3f51]
+local_game_result: Mem32[e8e014]
 local_player_id: Mem32[c764f8]
 local_player_name: eb4058
 local_storm_player_id: Mem32[c76500]
