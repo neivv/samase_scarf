@@ -1557,7 +1557,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 SyncActive | IscriptBin | StormCommandUser | FirstFreeOrder | LastFreeOrder |
                 AllocatedOrderCount | ContinueGameLoop | StepGameFrames | ReplaySeekFrame |
                 NextGameStepTick | FirstPylon | PylonRefresh | PylonAurasVisible |
-                LocalGameResult =>
+                LocalGameResult | IsCustomSinglePlayer | CurrentCampaignMission =>
             {
                 check_global_opt(result, binary, op.name());
             }

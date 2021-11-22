@@ -93,6 +93,7 @@ send_command: 006d9360
 serialize_sprites: 00559b60
 set_briefing_music: 0069c190
 set_music: 00714ec0
+set_scmain_state: 006af710
 set_unit_player: 00590a40
 show_mission_glue: 00654e70
 single_player_map_end: 0072b880
@@ -127,6 +128,7 @@ unit_buffed_turn_speed: 00590700
 unit_changing_player: 0058e550
 unit_update_speed: 005b7a20
 unit_update_speed_iscript: 0059a380
+unlock_mission: 0072bff0
 update_visibility_point: 00567e80
 active_iscript_bullet: Mem32[dd1670]
 active_iscript_flingy: Mem32[dd166c]
@@ -146,6 +148,7 @@ cmdbtns_ddsgrp: feb290
 cmdicons_ddsgrp: feb2bc
 command_user: Mem32[d71448]
 continue_game_loop: Mem8[fb1476]
+current_campaign_mission: Mem32[ff1f7c]
 current_tooltip_ctrl: Mem32[ddf468]
 cursor_marker: Mem32[ddf0c4]
 dat_requirement_error: Mem32[e19918]
@@ -177,6 +180,7 @@ graphic_layers: 100f278
 image_grps: dd1aa0
 image_overlays: dd6588
 images_loaded: Mem8[fb6516]
+is_custom_single_player: Mem32[ff1f80]
 is_multiplayer: Mem8[fd9464]
 is_paused: Mem32[de5d08]
 is_placing_building: Mem32[fde25c]

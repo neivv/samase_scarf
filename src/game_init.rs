@@ -119,6 +119,13 @@ pub(crate) struct SinglePlayerMapEnd<'e, Va: VirtualAddress> {
     pub local_game_result: Option<Operand<'e>>,
 }
 
+pub(crate) struct SinglePlayerMapEndAnalysis<'e, Va: VirtualAddress> {
+    pub set_scmain_state: Option<Va>,
+    pub unlock_mission: Option<Va>,
+    pub is_custom_single_player: Option<Operand<'e>>,
+    pub current_campaign_mission: Option<Operand<'e>>,
+}
+
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
     fn default() -> Self {
         SinglePlayerStart {
@@ -4069,6 +4076,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSpMapEnd<'a, 
                 } else if let Operation::Move(DestOperand::Memory(ref dest), _, None) = *op {
                     // Skip moves to globals, some versions write initial value to
                     // local_game_result here.
+                    let dest = ctrl.resolve_mem(dest);
                     if is_global(dest.address().0) {
                         ctrl.skip_operation();
                     }
@@ -4164,6 +4172,104 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSpMapEnd<'a, 
                         ctrl.end_analysis();
                     } else {
                         self.call_limit -= 1;
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn single_player_map_end_analysis<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    sp_map_end: E::VirtualAddress,
+) -> SinglePlayerMapEndAnalysis<'e, E::VirtualAddress> {
+    let mut result = SinglePlayerMapEndAnalysis {
+        set_scmain_state: None,
+        unlock_mission: None,
+        is_custom_single_player: None,
+        current_campaign_mission: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let arg_cache = &actx.arg_cache;
+    let mut analyzer = AnalyzeSpMapEnd::<E> {
+        arg_cache,
+        result: &mut result,
+        state: SpMapEndState::SetScmainState,
+        last_global_store: None,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, sp_map_end);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzeSpMapEnd<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut SinglePlayerMapEndAnalysis<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: SpMapEndState,
+    last_global_store: Option<(MemAccess<'e>, Operand<'e>)>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum SpMapEndState {
+    /// Find call for set_scmain_state(4)
+    SetScmainState,
+    /// Next comparision against 0 should be is_custom_single_player
+    IsCustomSinglePlayer,
+    /// Find call for unlock_mission(mission)
+    /// where the mission should have just been stored to current_campaign_mission as well
+    UnlockMission,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeSpMapEnd<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            SpMapEndState::SetScmainState => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        if arg1.if_constant() == Some(4) {
+                            self.result.set_scmain_state = Some(dest);
+                            ctrl.clear_unchecked_branches();
+                            self.state = SpMapEndState::IsCustomSinglePlayer;
+                        }
+                    }
+                }
+            }
+            SpMapEndState::IsCustomSinglePlayer => {
+                if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let result = if_arithmetic_eq_neq(condition)
+                        .filter(|x| x.1 == ctx.const_0() && is_global(x.0))
+                        .map(|x| x.0);
+                    if let Some(val) = result {
+                        self.result.is_custom_single_player = Some(val);
+                        self.state = SpMapEndState::UnlockMission;
+                    }
+                }
+            }
+            SpMapEndState::UnlockMission => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if let Some((addr, val)) = self.last_global_store.take() {
+                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            if arg1 == val {
+                                self.result.current_campaign_mission = Some(ctx.memory(&addr));
+                                self.result.unlock_mission = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref dest), val, None) = *op {
+                    if dest.size == E::WORD_SIZE {
+                        let dest = ctrl.resolve_mem(dest);
+                        if is_global(dest.address().0) {
+                            self.last_global_store = Some((dest, ctrl.resolve(val)));
+                        }
                     }
                 }
             }

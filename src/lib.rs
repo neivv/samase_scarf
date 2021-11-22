@@ -318,6 +318,8 @@ results! {
         GetMouseY => "get_mouse_y",
         AddPylonAura => "add_pylon_aura",
         SinglePlayerMapEnd => "single_player_map_end",
+        SetScmainState => "set_scmain_state",
+        UnlockMission => "unlock_mission",
     }
 }
 
@@ -449,6 +451,8 @@ results! {
         PylonAurasVisible => "pylon_auras_visible",
         PylonRefresh => "pylon_refresh",
         LocalGameResult => "local_game_result",
+        IsCustomSinglePlayer => "is_custom_single_player",
+        CurrentCampaignMission => "current_campaign_mission",
     }
 }
 
@@ -889,6 +893,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             GetMouseY => self.get_mouse_y(),
             AddPylonAura => self.add_pylon_aura(),
             SinglePlayerMapEnd => self.single_player_map_end(),
+            SetScmainState => self.set_scmain_state(),
+            UnlockMission => self.unlock_mission(),
         }
     }
 
@@ -1021,6 +1027,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             PylonAurasVisible => self.pylon_auras_visible(),
             PylonRefresh => self.pylon_refresh(),
             LocalGameResult => self.local_game_result(),
+            IsCustomSinglePlayer => self.is_custom_single_player(),
+            CurrentCampaignMission => self.current_campaign_mission(),
         }
     }
 
@@ -2566,6 +2574,34 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn local_game_result(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(OperandAnalysis::LocalGameResult, AnalysisCache::cache_sp_map_end)
+    }
+
+    pub fn set_scmain_state(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::SetScmainState,
+            AnalysisCache::cache_sp_map_end_analysis,
+        )
+    }
+
+    pub fn unlock_mission(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UnlockMission,
+            AnalysisCache::cache_sp_map_end_analysis,
+        )
+    }
+
+    pub fn is_custom_single_player(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::IsCustomSinglePlayer,
+            AnalysisCache::cache_sp_map_end_analysis,
+        )
+    }
+
+    pub fn current_campaign_mission(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::CurrentCampaignMission,
+            AnalysisCache::cache_sp_map_end_analysis,
+        )
     }
 
     /// Mainly for tests/dump
@@ -4578,6 +4614,27 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             ))
         })
     }
+
+    fn single_player_map_end(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::SinglePlayerMapEnd, |s| s.cache_sp_map_end(actx))
+    }
+
+    fn cache_sp_map_end_analysis(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[SetScmainState, UnlockMission],
+            &[IsCustomSinglePlayer, CurrentCampaignMission],
+            |s|
+        {
+            let sp_map_end = s.single_player_map_end(actx)?;
+            let result = game_init::single_player_map_end_analysis(actx, sp_map_end);
+            Some((
+                [result.set_scmain_state, result.unlock_mission],
+                [result.is_custom_single_player, result.current_campaign_mission],
+            ))
+        })
+    }
 }
 
 #[cfg(feature = "x86")]
@@ -5686,6 +5743,9 @@ impl<'e> AnalysisX86<'e> {
         self.0.replay_gcfg()
     }
 
+    pub fn unlock_mission(&mut self) -> Option<VirtualAddress> {
+        self.0.unlock_mission()
+    }
 }
 
 pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
