@@ -284,6 +284,8 @@ results! {
         StepHiddenUnitFrame => "step_hidden_unit_frame",
         StepBulletFrame => "step_bullet_frame",
         RevealUnitArea => "reveal_unit_area",
+        UpdateUnitVisibility => "update_unit_visibility",
+        UpdateCloakState => "update_cloak_state",
         StepUnitMovement => "step_unit_movement",
         InitMapFromPath => "init_map_from_path",
         MapInitChkCallbacks => "map_init_chk_callbacks",
@@ -859,6 +861,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             StepHiddenUnitFrame => self.step_hidden_unit_frame(),
             StepBulletFrame => self.step_bullet_frame(),
             RevealUnitArea => self.reveal_unit_area(),
+            UpdateUnitVisibility => self.update_unit_visibility(),
+            UpdateCloakState => self.update_cloak_state(),
             StepUnitMovement => self.step_unit_movement(),
             InitMapFromPath => self.init_map_from_path(),
             MapInitChkCallbacks => self.map_init_chk_callbacks(),
@@ -2351,6 +2355,20 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     pub fn active_iscript_bullet(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(
             OperandAnalysis::ActiveIscriptBullet,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn update_unit_visibility(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UpdateUnitVisibility,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn update_cloak_state(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UpdateCloakState,
             AnalysisCache::cache_step_objects,
         )
     }
@@ -4450,6 +4468,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         use OperandAnalysis::*;
         self.cache_many(&[
             StepActiveUnitFrame, StepHiddenUnitFrame, StepBulletFrame, RevealUnitArea,
+            UpdateUnitVisibility, UpdateCloakState,
         ], &[
             VisionUpdateCounter, VisionUpdated, FirstDyingUnit, FirstRevealer, FirstInvisibleUnit,
             ActiveIscriptFlingy, ActiveIscriptBullet,
@@ -4471,7 +4490,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             );
             Some(([
                 result.step_active_frame, result.step_hidden_frame, result.step_bullet_frame,
-                result.reveal_area,
+                result.reveal_area, result.update_unit_visibility, result.update_cloak_state,
             ], [
                 result.vision_update_counter, result.vision_updated, result.first_dying_unit,
                 result.first_revealer, result.first_invisible_unit, result.active_iscript_flingy,
@@ -5745,6 +5764,14 @@ impl<'e> AnalysisX86<'e> {
 
     pub fn unlock_mission(&mut self) -> Option<VirtualAddress> {
         self.0.unlock_mission()
+    }
+
+    pub fn single_player_map_end(&mut self) -> Option<VirtualAddress> {
+        self.0.single_player_map_end()
+    }
+
+    pub fn current_campaign_mission(&mut self) -> Option<Operand<'e>> {
+        self.0.current_campaign_mission()
     }
 }
 

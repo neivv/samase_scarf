@@ -45,6 +45,8 @@ pub(crate) struct StepObjectsAnalysis<'e, Va: VirtualAddress> {
     pub first_invisible_unit: Option<Operand<'e>>,
     pub active_iscript_flingy: Option<Operand<'e>>,
     pub active_iscript_bullet: Option<Operand<'e>>,
+    pub update_unit_visibility: Option<Va>,
+    pub update_cloak_state: Option<Va>,
 }
 
 pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
@@ -921,13 +923,17 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         first_invisible_unit: None,
         active_iscript_flingy: None,
         active_iscript_bullet: None,
+        update_unit_visibility: None,
+        update_cloak_state: None,
     };
 
     let ctx = actx.ctx;
     let binary = actx.binary;
+    let arg_cache = &actx.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, step_objects);
     let mut analyzer = StepObjectsAnalyzer::<E> {
         result: &mut result,
+        arg_cache,
         inline_depth: 0,
         inline_limit: 0,
         needs_inline_verify: false,
@@ -943,6 +949,7 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         invisible_unit_inline_depth: 0,
         invisible_unit_checked_fns: bumpvec_with_capacity(0x10, &actx.bump),
         first_call_of_func: false,
+        cloak_state_checked: false,
     };
     loop {
         analysis.analyze(&mut analyzer);
@@ -959,6 +966,7 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
 
 struct StepObjectsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut StepObjectsAnalysis<'e, E::VirtualAddress>,
+    arg_cache: &'acx ArgCache<'e, E>,
     inline_depth: u8,
     inline_limit: u8,
     needs_inline_verify: bool,
@@ -977,6 +985,7 @@ struct StepObjectsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     invisible_unit_inline_depth: u8,
     invisible_unit_checked_fns: BumpVec<'acx, E::VirtualAddress>,
     first_call_of_func: bool,
+    cloak_state_checked: bool,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -997,6 +1006,11 @@ enum StepObjectsAnalysisState {
     // Same as first_dying_unit, write something new to active_iscript_unit.
     // Calls reveal_area(this = first_revealer)
     FirstRevealer,
+    // Next call with this = first_active_unit
+    UpdateVisibilityArea,
+    // Next call with this = first_active_unit, a1 = 0
+    // Preceded by check for cloak state (flags & 0x300)
+    UpdateCloakState,
     // Same as StepActiveUnitFrame for first_hidden_unit
     StepHiddenUnitFrame,
     // Inline one level deeper.
@@ -1211,10 +1225,62 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         {
                             self.result.first_revealer = Some(this);
                             self.result.reveal_area = Some(dest);
-                            self.state = StepObjectsAnalysisState::StepHiddenUnitFrame;
+                            self.state = StepObjectsAnalysisState::UpdateVisibilityArea;
                             return;
                         }
                         self.simulate_func(ctrl, dest);
+                    }
+                }
+            }
+            StepObjectsAnalysisState::UpdateVisibilityArea => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ctx.register(1));
+                        if this == self.first_active_unit {
+                            ctrl.clear_unchecked_branches();
+                            self.result.update_unit_visibility = Some(dest);
+                            self.state = StepObjectsAnalysisState::UpdateCloakState;
+                            return;
+                        }
+                        self.simulate_func(ctrl, dest);
+                    }
+                }
+            }
+            StepObjectsAnalysisState::UpdateCloakState => {
+                if let Operation::Jump { condition, ..} = *op {
+                    if !self.cloak_state_checked {
+                        let condition = ctrl.resolve(condition);
+                        let ok = if_arithmetic_eq_neq(condition)
+                            .filter(|x| x.1 == ctx.const_0())
+                            .and_then(|x| {
+                                x.0.if_arithmetic_and_const(0x3)?
+                                    .if_mem8_offset(
+                                        struct_layouts::unit_flags::<E::VirtualAddress>() + 1,
+                                    )
+                            })
+                            .filter(|&x| x == self.first_active_unit)
+                            .is_some();
+                        if ok {
+                            self.cloak_state_checked = true;
+                            ctrl.clear_unchecked_branches();
+                        }
+                    }
+                } else if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if Some(dest) != self.result.update_unit_visibility {
+                            if self.cloak_state_checked {
+                                let this = ctrl.resolve(ctx.register(1));
+                                if this == self.first_active_unit {
+                                    let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                                    if arg1 == ctx.const_0() {
+                                        self.result.update_cloak_state = Some(dest);
+                                        self.state = StepObjectsAnalysisState::StepHiddenUnitFrame;
+                                        return;
+                                    }
+                                }
+                            }
+                            self.simulate_func(ctrl, dest);
+                        }
                     }
                 }
             }
