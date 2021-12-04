@@ -3973,7 +3973,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, '
 
     fn extract_index_from_call(&self, op: &MemAccess<'e>) -> Option<MemAccess<'e>> {
         let (base, _) = op.address();
-        let mut ops = collect_arith_add_terms(base, self.bump)?;
+        let mut ops = collect_arith_add_terms(base, self.bump);
         let op = ops.remove_get(|x, is_sub| {
             !is_sub && x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into()).is_some()
         })?;

@@ -7,24 +7,13 @@ use crate::bumpvec_with_capacity;
 pub fn collect_arith_add_terms<'e, 'acx>(
     operand: Operand<'e>,
     bump: &'acx Bump,
-) -> Option<AddTerms<'acx, 'e>> {
+) -> AddTerms<'acx, 'e> {
     let mut terms = AddTerms {
         terms: bumpvec_with_capacity(8, bump),
         constant: 0,
     };
-    match *operand.ty() {
-        OperandType::Arithmetic(ref arith) if arith.ty == ArithOpType::Add => {
-            terms.collect(arith.left, false);
-            terms.collect(arith.right, false);
-            Some(terms)
-        }
-        OperandType::Arithmetic(ref arith) if arith.ty == ArithOpType::Sub => {
-            terms.collect(arith.left, false);
-            terms.collect(arith.right, true);
-            Some(terms)
-        }
-        _ => None,
-    }
+    terms.collect(operand, false);
+    terms
 }
 
 pub struct AddTerms<'acx, 'e> {

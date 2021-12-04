@@ -462,20 +462,11 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         let bump = &self.game_ctx.analysis.bump;
         let (base, offset) = mem.address();
         let offset = offset as u32;
-        let index = match crate::add_terms::collect_arith_add_terms(base, bump) {
-            Some(mut terms) => {
-                if !terms.remove_one(|x, _neg| x == game) {
-                    return;
-                }
-                terms.join(ctx)
-            }
-            None => {
-                if base != game {
-                    return;
-                }
-                ctx.const_0()
-            }
-        };
+        let mut terms = crate::add_terms::collect_arith_add_terms(base, bump);
+        if !terms.remove_one(|x, _neg| x == game) {
+            return;
+        }
+        let index = terms.join(ctx);
         let index_zero = index == ctx.const_0();
         match offset {
             // Unit availability

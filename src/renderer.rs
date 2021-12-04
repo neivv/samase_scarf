@@ -182,10 +182,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FindPrismShaders<'a, 'e, E> {
             None => return,
         };
         let (mem_base, mem_offset) = mem.address();
-        let mut terms = match collect_arith_add_terms(mem_base, self.bump) {
-            Some(s) => s,
-            None => return,
-        };
+        let mut terms = collect_arith_add_terms(mem_base, self.bump);
         let ctx = ctrl.ctx();
         let ok = terms.remove_one(|term, neg| {
             !neg && term.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())

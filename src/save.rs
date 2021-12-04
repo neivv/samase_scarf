@@ -153,31 +153,30 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 let ctx = ctrl.ctx();
                 let dest_mem = ctrl.resolve_mem(mem);
                 if dest_mem == self.last_y_hline {
-                    if let Some(mut terms) = collect_arith_add_terms(value, self.bump) {
-                        let ok = terms.remove_one(|op, _neg| {
-                            op.if_arithmetic_mul_const(self.sprite_size as u64)
-                                .filter(|&x| {
-                                    // addr == self.last_y_hline or undefined; convert in place
-                                    // in older patches,
-                                    // [esp - x + game.map_height_tiles] in newer.
-                                    x.is_undefined() ||
-                                        x.if_mem32()
-                                            .filter(|&mem| {
-                                                self.is_stack_temp_hlines(ctx, mem) ||
-                                                    mem == &self.last_y_hline
-                                            })
-                                            .is_some()
-                                })
-                                .is_some()
-                        });
-                        if ok {
-                            if self.had_file_call {
-                                self.result = EntryOf::Ok(SpriteSerializationFunc::Deserialize);
-                            } else {
-                                self.result = EntryOf::Ok(SpriteSerializationFunc::Serialize);
-                            }
-                            ctrl.end_analysis();
+                    let mut terms = collect_arith_add_terms(value, self.bump);
+                    let ok = terms.remove_one(|op, _neg| {
+                        op.if_arithmetic_mul_const(self.sprite_size as u64)
+                            .filter(|&x| {
+                                // addr == self.last_y_hline or undefined; convert in place
+                                // in older patches,
+                                // [esp - x + game.map_height_tiles] in newer.
+                                x.is_undefined() ||
+                                    x.if_mem32()
+                                        .filter(|&mem| {
+                                            self.is_stack_temp_hlines(ctx, mem) ||
+                                                mem == &self.last_y_hline
+                                        })
+                                        .is_some()
+                            })
+                            .is_some()
+                    });
+                    if ok {
+                        if self.had_file_call {
+                            self.result = EntryOf::Ok(SpriteSerializationFunc::Deserialize);
+                        } else {
+                            self.result = EntryOf::Ok(SpriteSerializationFunc::Serialize);
                         }
+                        ctrl.end_analysis();
                     }
                 } else if !self.had_file_call && self.is_stack_temp_hlines(ctx, &dest_mem) {
                     if value.iter().any(|x| x.if_memory() == Some(&self.last_y_hline)) {
@@ -193,17 +192,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
 impl<'a, 'e, E: ExecutionState<'e>> SpriteSerializationAnalysis<'a, 'e, E>
 {
     fn is_stack_temp_hlines(&self, ctx: OperandCtx<'e>, mem: &MemAccess<'e>) -> bool {
-        collect_arith_add_terms(mem.address().0, self.bump)
-            .as_mut()
-            .map(|terms| {
-                let ok = terms.remove_one(|op, _neg| op == ctx.register(4));
-                if !ok {
-                    return false;
-                }
-                terms.remove_one(|op, _neg| {
-                    op.if_arithmetic_mul_const(4) == Some(self.map_height_tiles)
-                })
-            })
-            .unwrap_or(false)
+        let mut terms = collect_arith_add_terms(mem.address().0, self.bump);
+        let ok = terms.remove_one(|op, _neg| op == ctx.register(4));
+        if !ok {
+            return false;
+        }
+        terms.remove_one(|op, _neg| {
+            op.if_arithmetic_mul_const(4) == Some(self.map_height_tiles)
+        })
     }
 }
