@@ -181,9 +181,20 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
                 }
                 if let Some(to) = ctrl.resolve_va(to) {
                     let resolved = ctrl.resolve(condition);
-                    let ctx = ctrl.ctx();
                     let state = ctrl.exec_state();
-                    let jumps = is_aiscript_switch_jump(ctx, resolved, state);
+                    let jumps = resolved.if_arithmetic_gt()
+                        .and_then(|(l, r)| {
+                            let (other, jumps) = if r.if_constant() == Some(0x70) {
+                                (l, true)
+                            } else if l.if_constant() == Some(0x71) {
+                                (r, false)
+                            } else {
+                                return None;
+                            };
+                            other.if_mem8()?;
+                            let unresolved = state.unresolve(other)?;
+                            Some((jumps, unresolved))
+                        });
                     if let Some((jumps_to_default, opcode)) = jumps {
                         self.op_default_jump = Some(OpDefaultJump {
                             address: ctrl.address(),
@@ -243,47 +254,6 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
             }
         }
     }
-}
-
-/// Check if condition is `Mem8[x] > 0x70` or reverse of it.
-/// Return Some(true) if the jump is when x > 0x70,
-/// and Some(false) if jump is when x <= 0x70.
-///
-/// The second value is opcode operand (unresolved)
-fn is_aiscript_switch_jump<'e, E: ExecutionState<'e>>(
-    ctx: OperandCtx<'e>,
-    condition: Operand<'e>,
-    state: &mut E,
-) -> Option<(bool, Operand<'e>)> {
-    // The chances of there being another jump with different constresults when Mem8[x]
-    // is replaced by 0x70 and 0x71 is low, so use that instead of trying to match all
-    // gt/lt/ge/le variations
-    let simplified_70 = ctx.transform(condition, 16, |x| match x.if_mem8().is_some() {
-        true => Some(ctx.constant(0x70)),
-        false => None,
-    });
-    let const_70 = match simplified_70.if_constant() {
-        Some(x) => x,
-        _ => return None,
-    };
-    let simplified_71 = ctx.transform(condition, 16, |x| match x.if_mem8().is_some() {
-        true => Some(ctx.constant(0x71)),
-        false => None,
-    });
-    let const_71 = match simplified_71.if_constant() {
-        Some(x) => x,
-        _ => return None,
-    };
-    let gt_jump = match (const_70, const_71) {
-        (0, x) if x != 0 => true,
-        (x, 0) if x != 0 => false,
-        _ => return None,
-    };
-    condition.iter().find(|x| {
-        x.if_mem8().is_some()
-    }).and_then(|opcode_mem| {
-        state.unresolve(opcode_mem)
-    }).map(|x| (gt_jump, x))
 }
 
 fn aiscript_find_switch_loop_and_end<'e, E: ExecutionState<'e>>(
