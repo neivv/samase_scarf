@@ -322,6 +322,8 @@ results! {
         SinglePlayerMapEnd => "single_player_map_end",
         SetScmainState => "set_scmain_state",
         UnlockMission => "unlock_mission",
+        CreateFowSprite => "create_fow_sprite",
+        DuplicateSprite => "duplicate_sprite",
     }
 }
 
@@ -455,6 +457,11 @@ results! {
         LocalGameResult => "local_game_result",
         IsCustomSinglePlayer => "is_custom_single_player",
         CurrentCampaignMission => "current_campaign_mission",
+        LocalVisions => "local_visions",
+        FirstFreeSelectionCircle => "first_free_selection_circle",
+        LastFreeSelectionCircle => "last_free_selection_circle",
+        UnitSkinMap => "unit_skin_map",
+        SpriteSkinMap => "sprite_skin_map",
     }
 }
 
@@ -899,6 +906,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             SinglePlayerMapEnd => self.single_player_map_end(),
             SetScmainState => self.set_scmain_state(),
             UnlockMission => self.unlock_mission(),
+            CreateFowSprite => self.create_fow_sprite(),
+            DuplicateSprite => self.duplicate_sprite(),
         }
     }
 
@@ -1033,6 +1042,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             LocalGameResult => self.local_game_result(),
             IsCustomSinglePlayer => self.is_custom_single_player(),
             CurrentCampaignMission => self.current_campaign_mission(),
+            LocalVisions => self.local_visions(),
+            FirstFreeSelectionCircle => self.first_free_selection_circle(),
+            LastFreeSelectionCircle => self.last_free_selection_circle(),
+            UnitSkinMap => self.unit_skin_map(),
+            SpriteSkinMap => self.sprite_skin_map(),
         }
     }
 
@@ -2622,6 +2636,55 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         )
     }
 
+    pub fn local_visions(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::LocalVisions,
+            AnalysisCache::cache_update_unit_visibility,
+        )
+    }
+
+    pub fn first_free_selection_circle(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FirstFreeSelectionCircle,
+            AnalysisCache::cache_update_unit_visibility,
+        )
+    }
+
+    pub fn last_free_selection_circle(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::LastFreeSelectionCircle,
+            AnalysisCache::cache_update_unit_visibility,
+        )
+    }
+
+    pub fn unit_skin_map(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::UnitSkinMap,
+            AnalysisCache::cache_update_unit_visibility,
+        )
+    }
+
+    pub fn sprite_skin_map(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::SpriteSkinMap,
+            AnalysisCache::cache_update_unit_visibility,
+        )
+    }
+
+    pub fn create_fow_sprite(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::CreateFowSprite,
+            AnalysisCache::cache_update_unit_visibility,
+        )
+    }
+
+    pub fn duplicate_sprite(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::DuplicateSprite,
+            AnalysisCache::cache_update_unit_visibility,
+        )
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -3729,6 +3792,10 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.cache_many_op(OperandAnalysis::FirstFowSprite, |s| s.cache_fow_sprites(actx))
     }
 
+    fn first_free_fow_sprite(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::FirstFreeFowSprite, |s| s.cache_fow_sprites(actx))
+    }
+
     fn spawn_dialog(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::SpawnDialog, |s| {
             dialog::spawn_dialog(actx, &s.function_finder())
@@ -4511,6 +4578,13 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::RevealUnitArea, |s| s.cache_step_objects(actx))
     }
 
+    fn update_unit_visibility(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::UpdateUnitVisibility,
+            |s| s.cache_step_objects(actx),
+        )
+    }
+
     fn cache_step_active_unit(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
@@ -4651,6 +4725,34 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             Some((
                 [result.set_scmain_state, result.unlock_mission],
                 [result.is_custom_single_player, result.current_campaign_mission],
+            ))
+        })
+    }
+
+    fn cache_update_unit_visibility(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[CreateFowSprite, DuplicateSprite],
+            &[LocalVisions, FirstFreeSelectionCircle, LastFreeSelectionCircle, UnitSkinMap,
+            SpriteSkinMap],
+            |s|
+        {
+            let update_unit_visibility = s.update_unit_visibility(actx)?;
+            let units = s.units(actx)?;
+            let sprites = s.sprite_array(actx)?.0;
+            let first_free_fow = s.first_free_fow_sprite(actx)?;
+            let result = units::update_unit_visibility_analysis(
+                actx,
+                update_unit_visibility,
+                units,
+                sprites,
+                first_free_fow,
+            );
+            Some((
+                [result.create_fow_sprite, result.duplicate_sprite],
+                [result.local_visions, result.first_free_selection_circle,
+                result.last_free_selection_circle, result.unit_skin_map, result.sprite_skin_map],
             ))
         })
     }

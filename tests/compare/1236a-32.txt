@@ -18,6 +18,7 @@ choose_snp: 00736e40
 clamp_zoom: 0060b910
 clear_build_queue: 0058ab60
 create_bullet: 005695d0
+create_fow_sprite: 00583960
 create_game_multiplayer: 00736570
 create_lone_sprite: 00583a20
 create_unit: 005ae750
@@ -31,6 +32,7 @@ draw_graphic_layers: 0095fc90
 draw_image: 0057aa30
 draw_minimap_units: 0071b420
 draw_tooltip_layer: 00603000
+duplicate_sprite: 0057cae0
 finish_unit_post: 005aeea0
 finish_unit_pre: 005af190
 font_cache_render_ascii: 00961700
@@ -166,6 +168,7 @@ first_free_bullet: Mem32[fac570]
 first_free_fow_sprite: Mem32[fbb098]
 first_free_lone_sprite: Mem32[fbb088]
 first_free_order: Mem32[fba400]
+first_free_selection_circle: Mem32[faed54]
 first_free_sprite: Mem32[fba420]
 first_guard_ai: ff7510
 first_hidden_unit: Mem32[fbb210]
@@ -196,6 +199,7 @@ last_free_bullet: Mem32[fac574]
 last_free_fow_sprite: Mem32[fbb09c]
 last_free_lone_sprite: Mem32[fbb08c]
 last_free_order: Mem32[fba404]
+last_free_selection_circle: Mem32[fb0200]
 last_free_sprite: Mem32[fba424]
 last_lone_sprite: Mem32[fbb094]
 loaded_save: Mem32[f39ba4]
@@ -205,6 +209,7 @@ local_player_id: Mem32[f38ce4]
 local_player_name: 11b7570
 local_storm_player_id: Mem32[f38cec]
 local_unique_player_id: Mem32[f38ce8]
+local_visions: Mem32[11b7538]
 main_palette: fc0c38
 map_tile_flags: Mem32[fc1048]
 menu_screen_id: (Mem32[f3399c] ^ f22a61b8)
@@ -243,6 +248,7 @@ selections: 11c7878
 skins: f39c88
 sprite_hlines: fba740
 sprite_hlines_end: fbab40
+sprite_skin_map: f11e10
 sprites: Mem32[fba730]
 status_screen_mode: Mem8[11c93e6]
 step_game_frames: Mem32[f32d68]
@@ -253,6 +259,7 @@ tfontgam: 11e3778
 tooltip_draw_func: Mem32[fbb514]
 unique_command_user: Mem32[f38cdc]
 unit_should_reveal_area: Mem32[fbb288]
+unit_skin_map: f11dfc
 unit_strength: fe5418
 units: Mem32[fbb250]
 vertex_buffer: f4ab18

@@ -64,6 +64,14 @@ impl<'acx, 'e> AddTerms<'acx, 'e> {
         Some(self.terms.remove(remove_index).0)
     }
 
+    pub fn get_if_single(self) -> Option<Operand<'e>> {
+        if self.terms.len() == 1 {
+            Some(self.terms[0].0)
+        } else {
+            None
+        }
+    }
+
     pub fn join(&self, ctx: OperandCtx<'e>) -> Operand<'e> {
         let mut tree = match self.terms.get(0) {
             Some(&(op, negate)) => if negate {

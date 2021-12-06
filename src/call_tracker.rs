@@ -2,6 +2,7 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
+use scarf::operand::OperandHashByAddress;
 use scarf::{BinaryFile, Operand, OperandCtx, Operation};
 
 use crate::{AnalysisCtx, ControlExt, bumpvec_with_capacity};
@@ -11,9 +12,10 @@ use crate::hash_map::HashMap;
 /// and allows converting the Custom(x) to inlined return value of the function.
 /// (Assumes no arguments to functions)
 pub struct CallTracker<'acx, 'e, E: ExecutionState<'e>> {
-    func_to_id: HashMap<E::VirtualAddress, Operand<'e>>,
-    /// (func address, func return once analyzed)
-    id_to_func: BumpVec<'acx, (E::VirtualAddress, Option<Option<Operand<'e>>>)>,
+    func_to_id: HashMap<(E::VirtualAddress, Option<OperandHashByAddress<'e>>), Operand<'e>>,
+    /// (func address, constraint, func return once analyzed)
+    id_to_func:
+        BumpVec<'acx, (E::VirtualAddress, Option<Operand<'e>>, Option<Option<Operand<'e>>>)>,
     first_custom: u32,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: OperandCtx<'e>,
@@ -44,11 +46,11 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         address: E::VirtualAddress,
     ) {
         let ctx = ctrl.ctx();
-        let entry = self.func_to_id.entry(address);
+        let entry = self.func_to_id.entry((address, None));
         let id_to_func = &mut self.id_to_func;
         let new_id = id_to_func.len() as u32 + self.first_custom;
         let &mut custom = entry.or_insert_with(|| {
-            id_to_func.push((address, None));
+            id_to_func.push((address, None, None));
             ctx.custom(new_id)
         });
         ctrl.do_call_with_result(custom);
@@ -65,14 +67,43 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         address: E::VirtualAddress,
     ) {
         let ctx = ctrl.ctx();
-        let entry = self.func_to_id.entry(address);
+        let entry = self.func_to_id.entry((address, None));
         let id_to_func = &mut self.id_to_func;
         let new_id = id_to_func.len() as u32 + self.first_custom;
         let &mut custom = entry.or_insert_with(|| {
-            id_to_func.push((address, None));
+            id_to_func.push((address, None, None));
             ctx.custom(new_id)
         });
         let val = ctrl.resolve(self.resolve_calls(custom));
+        ctrl.do_call_with_result(val)
+    }
+
+    /// Like add_call_resolve, but allows declaring constraint (for arguments)
+    /// that is used for determining if jump should always be taken/not.
+    pub fn add_call_resolve_with_constraint<A: scarf::Analyzer<'e>>(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, A>,
+        address: E::VirtualAddress,
+        constraint: Operand<'e>,
+    ) {
+        let ctx = ctrl.ctx();
+        let entry = self.func_to_id.entry((address, Some(constraint.hash_by_address())));
+        let id_to_func = &mut self.id_to_func;
+        let new_id = id_to_func.len() as u32 + self.first_custom;
+        let &mut custom = entry.or_insert_with(|| {
+            id_to_func.push((address, Some(constraint), None));
+            ctx.custom(new_id)
+        });
+        let exec_state = ctrl.exec_state();
+        exec_state.move_to(
+            &scarf::DestOperand::Register64(4),
+            ctx.sub_const(ctx.register(4), E::VirtualAddress::SIZE.into()),
+        );
+        let val = exec_state.resolve(self.resolve_calls(custom));
+        exec_state.move_to(
+            &scarf::DestOperand::Register64(4),
+            ctx.add_const(ctx.register(4), E::VirtualAddress::SIZE.into()),
+        );
         ctrl.do_call_with_result(val)
     }
 
@@ -81,17 +112,17 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
     ///
     /// That is, if the function returns anything depending on arguments, to resolve it
     /// in context of the parent function, you'll need to have kept state at point of the
-    /// call and resolve on that.
+    /// call and resolve on that (After fixing stack to consider offset from call instruction).
     pub fn resolve_calls(&mut self, val: Operand<'e>) -> Operand<'e> {
         self.ctx.transform(val, 8, |op| {
             if let Some(idx) = op.if_custom() {
                 let ctx = self.ctx;
                 let binary = self.binary;
-                if let Some((addr, result)) = idx.checked_sub(self.first_custom)
+                if let Some((addr, constraint, result)) = idx.checked_sub(self.first_custom)
                     .and_then(|x| self.id_to_func.get_mut(x as usize))
                 {
                     *result.get_or_insert_with(|| {
-                        analyze_func_return::<E>(*addr, ctx, binary)
+                        analyze_func_return_c::<E>(*addr, ctx, binary, *constraint)
                     })
                 } else {
                     None
@@ -101,6 +132,11 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
             }
         })
     }
+
+    pub fn custom_id_to_func(&self, val: u32) -> Option<E::VirtualAddress> {
+        let index = val.checked_sub(self.first_custom)?;
+        Some(self.id_to_func.get(index as usize)?.0)
+    }
 }
 
 pub(crate) fn analyze_func_return<'e, E: ExecutionState<'e>>(
@@ -108,10 +144,20 @@ pub(crate) fn analyze_func_return<'e, E: ExecutionState<'e>>(
     ctx: OperandCtx<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
 ) -> Option<Operand<'e>> {
+    analyze_func_return_c::<E>(func, ctx, binary, None)
+}
+
+fn analyze_func_return_c<'e, E: ExecutionState<'e>>(
+    func: E::VirtualAddress,
+    ctx: OperandCtx<'e>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    constraint: Option<Operand<'e>>,
+) -> Option<Operand<'e>> {
     struct Analyzer<'e, E: ExecutionState<'e>> {
         result: Option<Operand<'e>>,
         phantom: std::marker::PhantomData<(*const E, &'e ())>,
         prev_ins_address: E::VirtualAddress,
+        constraint: Option<Operand<'e>>,
     }
 
     impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
@@ -149,6 +195,17 @@ pub(crate) fn analyze_func_return<'e, E: ExecutionState<'e>>(
                     }
                 }
             }
+            if let Operation::Jump { condition, .. } = *op {
+                if let Some(constraint) = self.constraint {
+                    let ctx = ctrl.ctx();
+                    if condition != ctx.const_1() {
+                        let state = ctrl.exec_state();
+                        state.add_resolved_constraint(
+                            scarf::exec_state::Constraint::new(constraint)
+                        );
+                    }
+                }
+            }
             self.prev_ins_address = ctrl.address();
         }
 
@@ -160,6 +217,7 @@ pub(crate) fn analyze_func_return<'e, E: ExecutionState<'e>>(
         result: None,
         phantom: Default::default(),
         prev_ins_address: E::VirtualAddress::from_u64(0),
+        constraint,
     };
 
     let mut analysis = FuncAnalysis::new(binary, ctx, func);

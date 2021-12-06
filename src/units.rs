@@ -1,3 +1,4 @@
+use bumpalo::Bump;
 use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
@@ -8,6 +9,8 @@ use crate::{
     AnalysisCtx, ControlExt, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
     entry_of_until, bumpvec_with_capacity, FunctionFinder, if_arithmetic_eq_neq, is_global,
 };
+use crate::add_terms::collect_arith_add_terms;
+use crate::call_tracker::CallTracker;
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
 
@@ -65,6 +68,16 @@ pub(crate) struct PylonAura<'e, Va: VirtualAddress> {
     pub pylon_auras_visible: Option<Operand<'e>>,
     pub pylon_refresh: Option<Operand<'e>>,
     pub add_pylon_aura: Option<Va>,
+}
+
+pub(crate) struct UpdateUnitVisibility<'e, Va: VirtualAddress> {
+    pub local_visions: Option<Operand<'e>>,
+    pub first_free_selection_circle: Option<Operand<'e>>,
+    pub last_free_selection_circle: Option<Operand<'e>>,
+    pub unit_skin_map: Option<Operand<'e>>,
+    pub sprite_skin_map: Option<Operand<'e>>,
+    pub create_fow_sprite: Option<Va>,
+    pub duplicate_sprite: Option<Va>,
 }
 
 pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
@@ -2030,4 +2043,437 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PylonInitAnalyzer
             }
         }
     }
+}
+
+pub(crate) fn update_unit_visibility_analysis<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    update_unit_visibility: E::VirtualAddress,
+    unit_array: Operand<'e>,
+    sprite_array: Operand<'e>,
+    first_free_fow_sprite: Operand<'e>,
+) -> UpdateUnitVisibility<'e, E::VirtualAddress> {
+    let mut result = UpdateUnitVisibility {
+        local_visions: None,
+        first_free_selection_circle: None,
+        last_free_selection_circle: None,
+        unit_skin_map: None,
+        sprite_skin_map: None,
+        create_fow_sprite: None,
+        duplicate_sprite: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, update_unit_visibility);
+    let mut analyzer = UpdateUnitVisibilityAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        bump: &actx.bump,
+        state: UnitVisibilityState::LocalVisions,
+        inline_depth: 0,
+        selection_circle_image: ctx.const_0(),
+        duplicated_sprite: ctx.const_0(),
+        call_tracker: CallTracker::with_capacity(actx, 0, 32),
+        unit_array,
+        sprite_array,
+        first_free_fow_sprite,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct UpdateUnitVisibilityAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut UpdateUnitVisibility<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    bump: &'acx Bump,
+    state: UnitVisibilityState,
+    inline_depth: u8,
+    selection_circle_image: Operand<'e>,
+    duplicated_sprite: Operand<'e>,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    unit_array: Operand<'e>,
+    sprite_array: Operand<'e>,
+    first_free_fow_sprite: Operand<'e>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum UnitVisibilityState {
+    // Search for this.sprite.visibility_mask & global
+    // Inline to unit_set_sprite_visibility_mask(this.subunit, this.sprite.visibility_mask)
+    // and sprite_set_visibility_mask(this.subunit.sprite, this.sprite.visibility_mask)
+    LocalVisions,
+    // Find comparision of image.image_id <= 0x23a
+    // Inline to sprite_remove_selection_circle(this.sprite)
+    SelectionCircleImage,
+    SelectionCircles,
+    // Inline to create_fow_sprite(unit_uid, this.unit_id, this.sprite)
+    // Find store to first_fow_sprite.sprite
+    FindDuplicatedSprite,
+    UnitSkinMap,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    UpdateUnitVisibilityAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            UnitVisibilityState::LocalVisions => {
+                if let Operation::Call(dest) = *op {
+                    if self.inline_depth < 2 {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let arg1 = ctx.and_const(
+                                ctrl.resolve(self.arg_cache.on_thiscall_call(0)),
+                                0xff,
+                            );
+                            if is_this_sprite_vismask::<E::VirtualAddress>(ctx, arg1) {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.state != UnitVisibilityState::LocalVisions {
+                                    if self.inline_depth != 0 {
+                                        ctrl.end_analysis();
+                                    } else {
+                                        ctrl.clear_unchecked_branches();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Operation::Move(_, value, None) = *op {
+                    if let Some((l, r)) = value.if_arithmetic_and() {
+                        let l = ctrl.resolve(l);
+                        let r = ctrl.resolve(r);
+                        let other = Some((l, r))
+                            .and_if_either_other(|x| {
+                                is_this_sprite_vismask::<E::VirtualAddress>(ctx, x)
+                            });
+                        if let Some(other) = other {
+                            if is_global(other) && other.if_constant().is_none() {
+                                self.result.local_visions = Some(other);
+                                self.state = UnitVisibilityState::SelectionCircleImage;
+                                if self.inline_depth != 0 {
+                                    ctrl.end_analysis();
+                                } else {
+                                    ctrl.clear_unchecked_branches();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            UnitVisibilityState::SelectionCircleImage => {
+                if let Operation::Call(dest) = *op {
+                    if self.inline_depth < 1 {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let this = ctrl.resolve(ctx.register(1));
+                            let ok = struct_layouts::if_unit_sprite::<E::VirtualAddress>(this)
+                                .filter(|&x| x == ctx.register(1))
+                                .is_some();
+                            if ok {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    // Check for image_id < 0x23b as alone or combined with image_id >= 0x231
+                    let image = condition.if_arithmetic_gt()
+                        .and_then(|x| {
+                            let lhs = x.0.if_constant()?;
+                            if lhs == 0x23b {
+                                Some(x.1)
+                            } else if lhs == 0xa {
+                                x.1.if_arithmetic_sub_const(0x231)
+                            } else {
+                                None
+                            }
+                        })
+                        .and_then(|x| {
+                            x.if_mem16_offset(struct_layouts::image_id::<E::VirtualAddress>())
+                        });
+                    if let Some(image) = image {
+                        if let Some(to) = ctrl.resolve_va(to) {
+                            self.selection_circle_image = image;
+                            self.state = UnitVisibilityState::SelectionCircles;
+                            ctrl.clear_unchecked_branches();
+                            ctrl.end_branch();
+                            ctrl.add_branch_with_current_state(to);
+                        }
+                    }
+                }
+            }
+            UnitVisibilityState::SelectionCircles => {
+                if let Operation::Call(dest) = *op {
+                    if self.inline_depth < 3 {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let this = ctrl.resolve(ctx.register(1));
+                            if this == self.selection_circle_image {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.state != UnitVisibilityState::SelectionCircles {
+                                    if self.inline_depth != 0 {
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    let value = ctrl.resolve(value);
+                    let dest = ctrl.resolve_mem(mem);
+                    let (dest_base, dest_off) = dest.address();
+                    if value == self.selection_circle_image && is_global(dest_base) {
+                        if dest_off == E::VirtualAddress::SIZE.into() {
+                            // Move image = [free_head].next
+                            let result = dest_base;
+                            if let Some(head) = self.result.first_free_selection_circle {
+                                if head == result {
+                                    // Ok, guessed correctly from head/tail move below
+                                } else {
+                                    if Some(result) == self.result.last_free_selection_circle {
+                                        // Guessed wrong, swap
+                                        std::mem::swap(
+                                            &mut self.result.first_free_selection_circle,
+                                            &mut self.result.last_free_selection_circle,
+                                        );
+                                    }
+                                }
+                            } else {
+                                self.result.first_free_selection_circle = Some(result);
+                            }
+                            if self.result.last_free_selection_circle.is_some() {
+                                self.state = UnitVisibilityState::FindDuplicatedSprite;
+                                if self.inline_depth != 0 {
+                                    ctrl.end_analysis();
+                                }
+                                return;
+                            }
+                        } else {
+                            let ok =
+                                ctrl.if_mem_word_offset(dest_base, E::VirtualAddress::SIZE.into())
+                                .is_none();
+                            if ok {
+                                // May be a move to free list head or tail, assume tail
+                                // unless it has been used already
+                                let op = ctrl.mem_word(dest_base, dest_off);
+                                if let Some(tail) = self.result.last_free_selection_circle {
+                                    if tail != op {
+                                        self.result.first_free_selection_circle = Some(op);
+                                    }
+                                } else {
+                                    self.result.last_free_selection_circle = Some(op);
+                                    if self.result.first_free_selection_circle.is_some() {
+                                        self.state = UnitVisibilityState::FindDuplicatedSprite;
+                                        if self.inline_depth != 0 {
+                                            ctrl.end_analysis();
+                                        }
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            UnitVisibilityState::FindDuplicatedSprite => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.inline_depth < 1 {
+                            // Check inline to create_fow_sprite
+                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                            let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                            let ok =
+                                self.is_uid(arg1, self.unit_array)
+                                    .filter(|&x| x == ctx.register(1))
+                                    .is_some() &&
+                                ctx.and_const(arg2, 0xffff)
+                                    .if_mem16_offset(
+                                        struct_layouts::unit_id::<E::VirtualAddress>()
+                                    )
+                                    .filter(|&x| x == ctx.register(1))
+                                    .is_some() &&
+                                struct_layouts::if_unit_sprite::<E::VirtualAddress>(arg3)
+                                    .filter(|&x| x == ctx.register(1))
+                                    .is_some();
+                            if ok {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.state != UnitVisibilityState::FindDuplicatedSprite {
+                                    self.result.create_fow_sprite = Some(dest);
+                                    ctrl.end_analysis();
+                                }
+                                return;
+                            }
+                        }
+                        if E::VirtualAddress::SIZE == 4 {
+                            let esp = ctrl.resolve(ctx.register(4));
+                            self.call_tracker.add_call_resolve(ctrl, dest);
+                            // Assume no stack offset
+                            ctrl.move_resolved(&DestOperand::Register64(4), esp);
+                        } else {
+                            self.call_tracker.add_call_resolve(ctrl, dest);
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    // Check for first_free_fow_sprite.sprite = duplicated
+                    let mem = ctrl.resolve_mem(mem);
+                    let (base, offset) = mem.address();
+                    if base == self.first_free_fow_sprite &&
+                        offset == struct_layouts::unit_sprite::<E::VirtualAddress>()
+                    {
+                        let value = ctrl.resolve(value);
+                        if value.if_constant().is_none() {
+                            if let Some(custom) = value.if_custom() {
+                                // Value was returned from a complex call,
+                                // it should be duplicate_sprite_call then
+                                self.result.duplicate_sprite =
+                                    self.call_tracker.custom_id_to_func(custom);
+                            }
+                            self.state = UnitVisibilityState::UnitSkinMap;
+                            self.duplicated_sprite = value;
+                        }
+                    }
+                }
+            }
+            UnitVisibilityState::UnitSkinMap => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let this = ctrl.resolve(ctx.register(1));
+                        let tc_arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        if is_global(this) {
+                            if self.result.unit_skin_map.is_none() {
+                                if self.is_uid(tc_arg1, self.unit_array) ==
+                                    Some(ctx.register(1))
+                                {
+                                    self.result.unit_skin_map = Some(this);
+                                }
+                            } else {
+                                if self.is_uid(tc_arg1, self.sprite_array) ==
+                                    Some(self.duplicated_sprite)
+                                {
+                                    self.result.sprite_skin_map = Some(this);
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                        // Assume nonzero if arg1 is this or this->sprite,
+                        // for unit_uid() and sprite_uid()
+                        let assume_arg1_nonzero = arg1 == ctx.register(1) ||
+                            arg1 == self.duplicated_sprite;
+                        let constraint = if assume_arg1_nonzero {
+                            ctx.neq_const(self.arg_cache.on_entry(0), 0)
+                        } else {
+                            ctx.const_1()
+                        };
+                        if E::VirtualAddress::SIZE == 4 {
+                            let esp = ctrl.resolve(ctx.register(4));
+                            self.call_tracker.add_call_resolve_with_constraint(
+                                ctrl,
+                                dest,
+                                constraint,
+                            );
+                            // Assume no stack offset
+                            ctrl.move_resolved(&DestOperand::Register64(4), esp);
+                        } else {
+                            self.call_tracker.add_call_resolve_with_constraint(
+                                ctrl,
+                                dest,
+                                constraint,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> UpdateUnitVisibilityAnalyzer<'a, 'acx, 'e, E> {
+    fn is_uid(&self, op: Operand<'e>, array: Operand<'e>) -> Option<Operand<'e>> {
+        // Accept (((this - units_array) & opt_mask) / constant) + 1
+        // And ((((this - units_array) & opt_mask) * constant) >> constant) + 1
+        Operand::and_masked(op).0
+            .if_arithmetic_add_const(1)
+            .and_then(|x| if_division_by_constant(x, self.bump))
+            .and_then(|x| {
+                let (l, r) = Operand::and_masked(x).0.if_arithmetic_sub()?;
+                if r != array {
+                    None
+                } else {
+                    Some(l)
+                }
+            })
+    }
+}
+
+fn if_division_by_constant<'e, 'acx>(op: Operand<'e>, bump: &'acx Bump) -> Option<Operand<'e>> {
+    use scarf::ArithOpType;
+
+    // Not complete, but catches most constant division forms that
+    // get generated
+    // (Also some of it may break if scarf gets signed multiplication fixed)
+    op.if_arithmetic(ArithOpType::Div)
+        .filter(|x| x.1.if_constant().is_some())
+        .map(|x| x.0)
+        .or_else(|| {
+            let (shifted, c) = op.if_arithmetic(ArithOpType::Rsh)?;
+            c.if_constant()?;
+            let (inner, c) = shifted.if_arithmetic(ArithOpType::Mul)
+                .or_else(|| shifted.if_arithmetic(ArithOpType::MulHigh))?;
+            c.if_constant()?;
+            Some(inner)
+        })
+        .or_else(|| {
+            let mut terms = collect_arith_add_terms(op, bump);
+            terms.remove_get(|x, _| {
+                Some(x).and_then(|x| {
+                    let (_, r) = x.if_arithmetic(ArithOpType::Rsh)?;
+                    r.if_constant().filter(|&c| c == 0x3f || c == 0x1f)
+                }).is_some()
+            })?;
+            let rest = terms.get_if_single()?;
+            let (shifted, c) = rest.if_arithmetic(ArithOpType::Rsh)?;
+            c.if_constant()?;
+            let mut terms = collect_arith_add_terms(shifted, bump);
+            let mut result = None;
+            terms.remove_get(|x, neg| {
+                !neg && Some(()).and_then(|()| {
+                    let (inner, c) = x.if_arithmetic(ArithOpType::Mul)
+                        .or_else(|| x.if_arithmetic(ArithOpType::MulHigh))?;
+                    c.if_constant()?;
+                    result = Some(inner);
+                    Some(())
+                }).is_some()
+            });
+            result
+        })
+}
+
+fn is_this_sprite_vismask<'e, Va: VirtualAddress>(ctx: OperandCtx<'e>, op: Operand<'e>) -> bool {
+    Some(()).and_then(|()| {
+        let sprite = op.if_mem8_offset(struct_layouts::sprite_visibility_mask::<Va>())?;
+        let (unit, offset) = sprite
+            .if_memory()
+            .filter(|x| match Va::SIZE {
+                4 => x.size == MemAccessSize::Mem32,
+                _ => x.size == MemAccessSize::Mem64,
+            })?
+            .address();
+        if offset != struct_layouts::unit_sprite::<Va>() {
+            return None;
+        }
+        if unit != ctx.register(1) {
+            None
+        } else {
+            Some(())
+        }
+    }).is_some()
 }

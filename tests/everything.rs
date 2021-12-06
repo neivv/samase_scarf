@@ -1563,7 +1563,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 SyncActive | IscriptBin | StormCommandUser | FirstFreeOrder | LastFreeOrder |
                 AllocatedOrderCount | ContinueGameLoop | StepGameFrames | ReplaySeekFrame |
                 NextGameStepTick | FirstPylon | PylonRefresh | PylonAurasVisible |
-                LocalGameResult | IsCustomSinglePlayer | CurrentCampaignMission =>
+                LocalGameResult | IsCustomSinglePlayer | CurrentCampaignMission | LocalVisions |
+                FirstFreeSelectionCircle | LastFreeSelectionCircle =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1574,7 +1575,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 NetPlayers | NetPlayerToGame | NetPlayerToUnique | GameData | Skins |
                 PlayerSkins | ClientSelection | BaseAnimSet | ImageGrps | ImageOverlays |
                 FireOverlayMax | NetPlayerFlags | PlayerTurns | PlayerTurnsSize | CmdIconsDdsGrp |
-                CmdBtnsDdsGrp | SyncData | PaletteSet | MainPalette | TfontGam =>
+                CmdBtnsDdsGrp | SyncData | PaletteSet | MainPalette | TfontGam |
+                UnitSkinMap | SpriteSkinMap =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }
