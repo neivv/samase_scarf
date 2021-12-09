@@ -5915,8 +5915,6 @@ fn first_definite_entry<Va: VirtualAddressTrait>(
         binary: &BinaryFile<Va>,
         entry: Va,
     ) -> bool {
-        use std::convert::TryInto;
-
         if entry.as_u64() & 0xf != 0 {
             return false;
         }
@@ -5984,7 +5982,6 @@ fn first_definite_entry<Va: VirtualAddressTrait>(
 
 #[inline]
 fn slice_to_arr_ref<const SIZE: usize>(slice: &[u8]) -> Option<&[u8; SIZE]> {
-    use std::convert::TryInto;
     slice.get(..SIZE)?.try_into().ok()
 }
 
@@ -6677,7 +6674,6 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     }
 
     fn struct_offset(self) -> (Operand<'e>, u32) {
-        use std::convert::TryFrom;
         self.if_arithmetic_add()
             .and_then(|x| {
                 let off = u32::try_from(x.1.if_constant()?).ok()?;
