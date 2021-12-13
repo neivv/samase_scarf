@@ -51,7 +51,6 @@ fern = "0.6"
 
 [features]
 test_assertions = []
-x86 = []
 binaries = ['fern', 'anyhow', 'winapi', 'scopeguard', 'rayon']
 binaries_32 = ['binaries']
 binaries_64 = ['binaries']
