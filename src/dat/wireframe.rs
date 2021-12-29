@@ -8,6 +8,7 @@ use crate::{
     entry_of_until, EntryOf, OptionExt, OperandExt, bumpvec_with_capacity,
 };
 use crate::hash_map::{HashMap, HashSet};
+use crate::unresolve::unresolve;
 use super::{DatPatchContext, DatPatch, GrpTexturePatch, reloc_address_of_instruction};
 
 pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
@@ -295,14 +296,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     })
                     .filter(|&(_, x)| x.if_arithmetic_mul_const(0x10).is_some());
                 if let Some((base, index)) = texture_index {
-                    let base = match super::unresolve(ctx, ctrl.exec_state(), base) {
+                    let base = match unresolve(ctx, ctrl.exec_state(), base) {
                         Some(s) => s,
                         None => {
                             dat_warn!(self.dat_ctx, "Can't unresolve ddsgrp texture op {}", base);
                             return;
                         }
                     };
-                    let index = match super::unresolve(ctx, ctrl.exec_state(), index) {
+                    let index = match unresolve(ctx, ctrl.exec_state(), index) {
                         Some(s) => s,
                         None => {
                             dat_warn!(

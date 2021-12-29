@@ -1137,7 +1137,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
     ) -> Option<Operand<'e>> {
         let ctx = ctrl.ctx();
         let exec_state = ctrl.exec_state();
-        super::unresolve(ctx, exec_state, op)
+        crate::unresolve::unresolve(ctx, exec_state, op)
     }
 
     fn convert_to_two_step_hooks_where_needed(&mut self) {

@@ -188,9 +188,11 @@ fn everything_1211b() {
         let step_order = analysis.step_order();
         assert_eq!(step_order.unwrap().0, 0x005DBC10);
         let hidden = analysis.step_order_hidden();
-        assert_eq!(
-            hidden[0],
-            samase_scarf::StepOrderHiddenHook::Separate(VirtualAddress(0x005DC610))
+        assert!(
+            matches!(
+                hidden[0],
+                samase_scarf::StepOrderHiddenHook::Separate(VirtualAddress(0x005DC610))
+            )
         );
 
         let units_dat = analysis.dat(DatType::Units).unwrap();
@@ -198,9 +200,11 @@ fn everything_1211b() {
         let orders_dat = analysis.dat(DatType::Orders).unwrap();
         assert_eq!(orders_dat.address, ctx.constant(0x00D58168));
         let secondary_order = analysis.step_secondary_order();
-        assert_eq!(
-            secondary_order[0],
-            samase_scarf::SecondaryOrderHook::Separate(VirtualAddress(0x005dbb00))
+        assert!(
+            matches!(
+                secondary_order[0],
+                samase_scarf::SecondaryOrderHook::Separate(VirtualAddress(0x005dbb00))
+            )
         );
         assert_eq!(analysis.smem_alloc().unwrap().0, 0x00920d50);
         assert_eq!(analysis.smem_free().unwrap().0, 0x00920D90);
@@ -257,11 +261,15 @@ fn everything_1213() {
         let step_order = analysis.step_order();
         assert_eq!(step_order.unwrap().0, 0x0058E330);
         let secondary_order = analysis.step_secondary_order();
-        assert_eq!(secondary_order[0], samase_scarf::SecondaryOrderHook::Inlined {
-            entry: VirtualAddress(0x0058f7c5),
-            exit: VirtualAddress(0x0058f86e),
-            unit: ctx.register(6),
-        });
+        if let samase_scarf::SecondaryOrderHook::Inlined { entry, exit, unit, .. } =
+            secondary_order[0]
+        {
+            assert_eq!(entry.0, 0x0058f7c5);
+            assert_eq!(exit.0, 0x0058f86e);
+            assert_eq!(unit, ctx.register(6));
+        } else {
+            panic!("Hook was not inline hook");
+        }
 
         assert_eq!(analysis.smem_alloc().unwrap().0, 0x0083ee80);
         assert_eq!(analysis.smem_free().unwrap().0, 0x0083eec0);
@@ -278,11 +286,15 @@ fn everything_1213() {
 fn everything_1213b() {
     test_with_extra_checks(Path::new("1213b.exe"), |ctx, analysis| {
         let secondary_order = analysis.step_secondary_order();
-        assert_eq!(secondary_order[0], samase_scarf::SecondaryOrderHook::Inlined {
-            entry: VirtualAddress(0x005999e5),
-            exit: VirtualAddress(0x00599a8e),
-            unit: ctx.register(6),
-        });
+        if let samase_scarf::SecondaryOrderHook::Inlined { entry, exit, unit, .. } =
+            secondary_order[0]
+        {
+            assert_eq!(entry.0, 0x005999e5);
+            assert_eq!(exit.0, 0x00599a8e);
+            assert_eq!(unit, ctx.register(6));
+        } else {
+            panic!("Hook was not inline hook");
+        }
         assert_eq!(analysis.process_commands().unwrap().0, 0x00696d80);
 
         let init_game = analysis.init_game();
@@ -710,11 +722,15 @@ fn everything_1224c() {
 fn everything_1230a() {
     test_with_extra_checks_32_64(Path::new("1230a.exe"), |ctx, analysis| {
         let secondary_order = analysis.step_secondary_order();
-        assert_eq!(secondary_order[0], samase_scarf::SecondaryOrderHook::Inlined {
-            entry: VirtualAddress(0x005b6c80),
-            exit: VirtualAddress(0x005b6d07),
-            unit: ctx.register(6),
-        });
+        if let samase_scarf::SecondaryOrderHook::Inlined { entry, exit, unit, .. } =
+            secondary_order[0]
+        {
+            assert_eq!(entry.0, 0x005b6c80);
+            assert_eq!(exit.0, 0x005b6d07);
+            assert_eq!(unit, ctx.register(6));
+        } else {
+            panic!("Hook was not inline hook");
+        }
         let first_active_unit = analysis.first_active_unit();
         let first_hidden_unit = analysis.first_hidden_unit();
         assert_eq!(first_active_unit.unwrap(), ctx.mem32c(0xddf144));
@@ -762,11 +778,15 @@ fn everything_1230f() {
         let add_overlay_iscript = analysis.add_overlay_iscript();
         assert_eq!(add_overlay_iscript.unwrap().0, 0x00559350);
         let secondary_order = analysis.step_secondary_order();
-        assert_eq!(secondary_order[0], samase_scarf::SecondaryOrderHook::Inlined {
-            entry: VirtualAddress(0x005b66c0),
-            exit: VirtualAddress(0x005b6747),
-            unit: ctx.register(6),
-        });
+        if let samase_scarf::SecondaryOrderHook::Inlined { entry, exit, unit, .. } =
+            secondary_order[0]
+        {
+            assert_eq!(entry.0, 0x005b66c0);
+            assert_eq!(exit.0, 0x005b6747);
+            assert_eq!(unit, ctx.register(6));
+        } else {
+            panic!("Hook was not inline hook");
+        }
     })
 }
 
@@ -790,11 +810,15 @@ fn everything_1230g() {
 fn everything_1230h() {
     test_with_extra_checks_32_64(Path::new("1230h.exe"), |ctx, analysis| {
         let step_order_hidden = analysis.step_order_hidden();
-        assert_eq!(step_order_hidden[0], samase_scarf::StepOrderHiddenHook::Inlined {
-            entry: VirtualAddress(0x005af466),
-            exit: VirtualAddress(0x005af555),
-            unit: ctx.register(6),
-        });
+        if let samase_scarf::StepOrderHiddenHook::Inlined { entry, exit, unit, .. } =
+            step_order_hidden[0]
+        {
+            assert_eq!(entry.0, 0x005af466);
+            assert_eq!(exit.0, 0x005af555);
+            assert_eq!(unit, ctx.register(6));
+        } else {
+            panic!("Hook was not inline hook");
+        }
     })
 }
 
@@ -1646,14 +1670,42 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     let step_secondary_order = analysis.step_secondary_order();
     assert_eq!(step_secondary_order.len(), 1);
     match step_secondary_order[0] {
-        samase_scarf::SecondaryOrderHook::Inlined{ .. } => assert!(new_codegen),
+        samase_scarf::SecondaryOrderHook::Inlined{ ref state, unit, .. } => {
+            assert!(new_codegen);
+            if E::VirtualAddress::SIZE == 4 {
+                assert_eq!(state.registers, 0);
+                assert_eq!(state.clobber_registers, 0x7);
+            } else {
+                // Harmless false positive from rdx/r8/r9 that didn't get overwritten
+                // before first function call, but consistent in every build
+                assert_eq!(state.registers, 0x304);
+                assert_eq!(state.clobber_registers, 0xf07);
+            }
+            assert_eq!(state.stack_size, 0);
+            assert_eq!(state.kept_registers.count_ones(), 1);
+            assert_eq!(state.esp_offsets.iter().count(), 0);
+            assert!(matches!(unit.if_register(), Some(..)), "{}", unit);
+        }
         samase_scarf::SecondaryOrderHook::Separate(..) => assert!(!new_codegen),
     }
 
     let step_order_hidden = analysis.step_order_hidden();
     assert_eq!(step_order_hidden.len(), 1);
     match step_order_hidden[0] {
-        samase_scarf::StepOrderHiddenHook::Inlined{ .. } => assert!(new_codegen),
+        samase_scarf::StepOrderHiddenHook::Inlined{ ref state, unit, .. } => {
+            assert!(new_codegen);
+            if E::VirtualAddress::SIZE == 4 {
+                assert_eq!(state.registers, 0);
+            } else {
+                // Harmless false positive from r8 that didn't get overwritten
+                // before first function call, but consistent in every build
+                assert_eq!(state.registers, 0x200);
+            }
+            assert_eq!(state.stack_size, 0);
+            assert_eq!(state.kept_registers.count_ones(), 1);
+            assert_eq!(state.esp_offsets.iter().count(), 0);
+            assert!(matches!(unit.if_register(), Some(..)), "{}", unit);
+        }
         samase_scarf::StepOrderHiddenHook::Separate(..) => assert!(!new_codegen),
     }
 

@@ -9,26 +9,29 @@ use crate::{
     AnalysisCtx, entry_of_until, single_result_assign, EntryOf, ArgCache,
     bumpvec_with_capacity, FunctionFinder, ControlExt, is_global, if_arithmetic_eq_neq,
 };
+use crate::inline_hook::{EspOffsetRegs, InlineHookState, inline_hook_state};
 use crate::struct_layouts;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum StepOrderHiddenHook<'e, Va: VirtualAddress> {
     Inlined {
         entry: Va,
         exit: Va,
         // Unresolved at entry
         unit: Operand<'e>,
+        state: InlineHookState,
     },
     Separate(Va),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum SecondaryOrderHook<'e, Va: VirtualAddress> {
     Inlined {
         entry: Va,
         exit: Va,
         // Unresolved at entry
         unit: Operand<'e>,
+        state: InlineHookState,
     },
     Separate(Va),
 }
@@ -108,9 +111,9 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
         ctx: OperandCtx<'e>,
         start: F::VirtualAddress,
         unit: Operand<'e>,
-    ) -> Option<(F::VirtualAddress, Operand<'e>)> {
+    ) -> Option<(F::VirtualAddress, Operand<'e>, EspOffsetRegs)> {
         struct Analyzer<'e, G: ExecutionState<'e>> {
-            result: Option<(G::VirtualAddress, Operand<'e>)>,
+            result: Option<(G::VirtualAddress, Operand<'e>, EspOffsetRegs)>,
             unit: Operand<'e>,
         }
         impl<'g, G: ExecutionState<'g>> scarf::Analyzer<'g> for Analyzer<'g, G> {
@@ -122,16 +125,14 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
                     Operation::Move(_, val, _) => {
                         let val = ctrl.resolve(val);
                         if let Some(result) = self.check(val, ctrl) {
-                            self.result = Some((ctrl.address(), result));
-                            ctrl.end_analysis();
+                            self.result = Some((ctrl.address(), result.0, result.1));
                         }
                     }
                     Operation::SetFlags(ref arith) => {
                         let op = ctx.eq(arith.left, arith.right);
                         let val = ctrl.resolve(op);
                         if let Some(result) = self.check(val, ctrl) {
-                            self.result = Some((ctrl.address(), result));
-                            ctrl.end_analysis();
+                            self.result = Some((ctrl.address(), result.0, result.1));
                         }
                     }
                     _ => (),
@@ -139,16 +140,30 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
             }
         }
         impl<'e, G: ExecutionState<'e>> Analyzer<'e, G> {
+            /// Ends analysis if this is a secondary order read, even if the value
+            /// could not be unresolved.
             fn check(
                 &mut self,
                 val: Operand<'e>,
                 ctrl: &mut Control<'e, '_, '_, Self>,
-            ) -> Option<Operand<'e>> {
+            ) -> Option<(Operand<'e>, EspOffsetRegs)> {
+                if self.is_secondary_order_read(val) {
+                    ctrl.end_analysis();
+                    let ctx = ctrl.ctx();
+                    let exec_state = ctrl.exec_state();
+                    let regs = EspOffsetRegs::from_entry_state(exec_state, ctx)?;
+                    let unres = crate::unresolve::unresolve(ctx, exec_state, self.unit)?;
+                    Some((unres, regs))
+                } else {
+                    None
+                }
+            }
+
+            fn is_secondary_order_read(&mut self, val: Operand<'e>) -> bool {
                 let result = val
-                    .if_mem8_offset(struct_layouts::unit_secondary_order::<G::VirtualAddress>())
-                    .filter(|&x| x == self.unit);
-                if let Some(unit) = result.and_then(|x| ctrl.unresolve(x)) {
-                    return Some(unit);
+                    .if_mem8_offset(struct_layouts::unit_secondary_order::<G::VirtualAddress>());
+                if result == Some(self.unit) {
+                    return true;
                 }
                 let result = if_arithmetic_eq_neq(val)
                     .filter(|x| x.1.if_constant() == Some(0x95))
@@ -156,12 +171,8 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
                         x.0.if_mem8_offset(
                             struct_layouts::unit_secondary_order::<G::VirtualAddress>()
                         )
-                    })
-                    .filter(|&x| x == self.unit);
-                if let Some(unit) = result.and_then(|x| ctrl.unresolve(x)) {
-                    return Some(unit);
-                }
-                None
+                    });
+                result == Some(self.unit)
             }
         }
 
@@ -183,14 +194,19 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
         Some(SecondaryOrderHook::Separate(addr))
     } else {
         let resolved = resolve_at_addr::<E>(binary, ctx, addr, unit, jump_addr)?;
-        let (entry, unit_at_hook) =
+        let (entry, unit_at_hook, esp_offsets) =
             find_secondary_order_access::<E>(binary, ctx, addr, resolved)?;
         let end = cfg.immediate_postdominator(node.index)?;
+        let mut state = inline_hook_state::<E>(binary, ctx, entry, end.address, esp_offsets)?;
+        if let Some(reg) = unit_at_hook.if_register() {
+            state.remove_entry_register(reg);
+        }
 
         Some(SecondaryOrderHook::Inlined {
             entry,
             exit: end.address,
             unit: unit_at_hook,
+            state,
         })
     }
 }
@@ -312,7 +328,7 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
     /// `addr` being the function that step_order_hidden has been inlined to.
     struct Analyzer<'e, F: ExecutionState<'e>> {
         // Jump addr, unit unresolved
-        result: Option<(F::VirtualAddress, Operand<'e>)>,
+        result: Option<(F::VirtualAddress, Operand<'e>, EspOffsetRegs)>,
     }
 
     impl<'f, F: ExecutionState<'f>> scarf::Analyzer<'f> for Analyzer<'f, F> {
@@ -328,8 +344,14 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
                     if let Some(unit) =
                         find_unit_for_step_hidden_order_cmp::<F::VirtualAddress>(condition)
                     {
-                        if let Some(unresolved) = ctrl.unresolve(unit) {
-                            self.result = Some((ctrl.address(), unresolved));
+                        let ctx = ctrl.ctx();
+                        let exec_state = ctrl.exec_state();
+                        let unres = crate::unresolve::unresolve(ctx, exec_state, unit);
+                        if let Some(unres) = unres {
+                            let regs = EspOffsetRegs::from_entry_state(exec_state, ctx);
+                            if let Some(esp_offsets) = regs {
+                                self.result = Some((ctrl.address(), unres, esp_offsets));
+                            }
                         }
                     }
                 }
@@ -347,7 +369,7 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
     analysis.analyze(&mut analyzer);
     let mut cfg = analysis.finish();
 
-    let (jump_addr, unit_at_hook) = analyzer.result?;
+    let (jump_addr, unit_at_hook, esp_offsets) = analyzer.result?;
     cfg.calculate_node_indices();
     let node = cfg.nodes()
         .find(|n| n.address < jump_addr && n.node.end_address >= jump_addr)?;
@@ -356,11 +378,17 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
         Some(StepOrderHiddenHook::Separate(addr))
     } else {
         let end = cfg.immediate_postdominator(node.index)?;
+        let entry = skip_past_calls::<E>(addr, ctx, binary);
+        let mut state = inline_hook_state::<E>(binary, ctx, entry, end.address, esp_offsets)?;
+        if let Some(reg) = unit_at_hook.if_register() {
+            state.remove_entry_register(reg);
+        }
 
         Some(StepOrderHiddenHook::Inlined {
-            entry: skip_past_calls::<E>(addr, ctx, binary),
+            entry,
             exit: end.address,
             unit: unit_at_hook,
+            state,
         })
     }
 }
