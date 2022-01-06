@@ -51,6 +51,7 @@ init_net_player: 006ee280
 init_real_time_lighting: 00558f90
 init_skins: 00619990
 init_sprites: 0055e640
+init_status_screen: 0072c110
 init_storm_networking: 006e2220
 init_units: 0058b730
 is_outside_game_screen: 00660930
@@ -105,6 +106,7 @@ snet_recv_packets: 00890a80
 snet_send_packets: 0088d940
 spawn_dialog: 008c8460
 start_udp_server: 00773110
+status_screen_event_handler: 0072be90
 step_active_unit_frame: 005b64c0
 step_ai_script: 00611af0
 step_bnet_controller: 00758900
@@ -182,6 +184,8 @@ game: (Mem32[d499e8] ^ eed286fe)
 game_data: fd7a78
 global_event_handlers: fadb98
 graphic_layers: 100c128
+grpwire_ddsgrp: fe81a4
+grpwire_grp: Mem32[fe819c]
 image_grps: dce908
 image_overlays: dd33f0
 images_loaded: Mem8[fb33aa]
@@ -250,6 +254,7 @@ sprite_hlines: ddb5c0
 sprite_hlines_end: ddb9c0
 sprite_skin_map: d47cb4
 sprites: Mem32[ddb5b0]
+status_screen: Mem32[fe81a0]
 status_screen_mode: Mem8[fe81f2]
 step_game_frames: Mem32[d68424]
 storm_command_user: Mem32[d6e450]
@@ -257,6 +262,8 @@ sync_active: Mem32[fd7ea0]
 sync_data: fd9ce8
 tfontgam: 100c228
 tooltip_draw_func: Mem32[ddc2c4]
+tranwire_ddsgrp: fe81b0
+tranwire_grp: Mem32[fe8198]
 unique_command_user: Mem32[d6e44c]
 unit_should_reveal_area: Mem32[ddc024]
 unit_skin_map: d47ca0
@@ -336,13 +343,6 @@ set_status_screen_tooltip: None
 SMemAlloc: Some(VirtualAddress(008807e0))
 SMemFree: Some(VirtualAddress(00880810))
 allocator: None
-grpwire_grp: Mem32[fe819c]
-grpwire_ddsgrp: fe81a4
-tranwire_grp: Mem32[fe8198]
-tranwire_ddsgrp: fe81b0
-status_screen: Mem32[fe81a0]
-status_screen_event_handler: Some(VirtualAddress(0072be90))
-init_status_screen: Some(VirtualAddress(0072c110))
 trigger_conditions: Some(VirtualAddress(00d49788))
 trigger_actions: Some(VirtualAddress(00d49698))
 trigger_all_units_cache: e19cc8

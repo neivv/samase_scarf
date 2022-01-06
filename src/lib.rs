@@ -86,7 +86,6 @@ pub use crate::renderer::{PrismShaders};
 pub use crate::step_order::{SecondaryOrderHook, StepOrderHiddenHook};
 pub use crate::units::{OrderIssuing};
 
-use crate::dialog::{MultiWireframes};
 use crate::map::{RunTriggers, TriggerUnitCountCaches};
 use crate::switch::{CompleteSwitch};
 use crate::vtables::Vtables;
@@ -324,6 +323,8 @@ results! {
         UnlockMission => "unlock_mission",
         CreateFowSprite => "create_fow_sprite",
         DuplicateSprite => "duplicate_sprite",
+        InitStatusScreen => "init_status_screen",
+        StatusScreenEventHandler => "status_screen_event_handler",
     }
 }
 
@@ -462,6 +463,11 @@ results! {
         LastFreeSelectionCircle => "last_free_selection_circle",
         UnitSkinMap => "unit_skin_map",
         SpriteSkinMap => "sprite_skin_map",
+        GrpWireGrp => "grpwire_grp",
+        GrpWireDdsGrp => "grpwire_ddsgrp",
+        TranWireGrp => "tranwire_grp",
+        TranWireDdsGrp => "tranwire_ddsgrp",
+        StatusScreen => "status_screen",
     }
 }
 
@@ -502,7 +508,6 @@ struct AnalysisCache<'e, E: ExecutionStateTrait<'e>> {
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
     dat_patches: Cached<Option<Rc<DatPatches<'e, E::VirtualAddress>>>>,
-    multi_wireframes: Cached<MultiWireframes<'e, E::VirtualAddress>>,
     run_triggers: Cached<RunTriggers<E::VirtualAddress>>,
     trigger_unit_count_caches: Cached<TriggerUnitCountCaches<'e>>,
     replay_minimap_unexplored_fog_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
@@ -730,7 +735,6 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
                 limits: Default::default(),
                 prism_shaders: Default::default(),
                 dat_patches: Default::default(),
-                multi_wireframes: Default::default(),
                 run_triggers: Default::default(),
                 trigger_unit_count_caches: Default::default(),
                 replay_minimap_unexplored_fog_patch: Default::default(),
@@ -908,6 +912,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             UnlockMission => self.unlock_mission(),
             CreateFowSprite => self.create_fow_sprite(),
             DuplicateSprite => self.duplicate_sprite(),
+            InitStatusScreen => self.init_status_screen(),
+            StatusScreenEventHandler => self.status_screen_event_handler(),
         }
     }
 
@@ -1047,6 +1053,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             LastFreeSelectionCircle => self.last_free_selection_circle(),
             UnitSkinMap => self.unit_skin_map(),
             SpriteSkinMap => self.sprite_skin_map(),
+            GrpWireGrp => self.grpwire_grp(),
+            GrpWireDdsGrp => self.grpwire_ddsgrp(),
+            TranWireGrp => self.tranwire_grp(),
+            TranWireDdsGrp => self.tranwire_ddsgrp(),
+            StatusScreen => self.status_screen(),
         }
     }
 
@@ -1941,27 +1952,42 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn grpwire_grp(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.grpwire_grp(s))
+        self.analyze_many_op(
+            OperandAnalysis::GrpWireGrp,
+            AnalysisCache::cache_multi_wireframes,
+        )
     }
 
     pub fn grpwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.grpwire_ddsgrp(s))
+        self.analyze_many_op(
+            OperandAnalysis::GrpWireDdsGrp,
+            AnalysisCache::cache_multi_wireframes,
+        )
     }
 
     pub fn tranwire_grp(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.tranwire_grp(s))
+        self.analyze_many_op(
+            OperandAnalysis::TranWireGrp,
+            AnalysisCache::cache_multi_wireframes,
+        )
     }
 
     pub fn tranwire_ddsgrp(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.tranwire_ddsgrp(s))
+        self.analyze_many_op(
+            OperandAnalysis::TranWireDdsGrp,
+            AnalysisCache::cache_multi_wireframes,
+        )
     }
 
     pub fn status_screen(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.status_screen(s))
+        self.analyze_many_op(OperandAnalysis::StatusScreen, AnalysisCache::cache_multi_wireframes)
     }
 
     pub fn status_screen_event_handler(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.status_screen_event_handler(s))
+        self.analyze_many_addr(
+            AddressAnalysis::StatusScreenEventHandler,
+            AnalysisCache::cache_multi_wireframes,
+        )
     }
 
     /// Note: Struct that contains { grp, sd_ddsgrp, hd_ddsgrp }
@@ -4116,46 +4142,54 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     /// Smaller size wireframes, that is multiselection and transport
     /// (Fits multiple in status screen)
     /// Also relevant mostly for SD, HD always uses wirefram.ddsgrp for the drawing.
-    fn multi_wireframes(
+    fn cache_multi_wireframes(
         &mut self,
         actx: &AnalysisCtx<'e, E>,
-    ) -> MultiWireframes<'e, E::VirtualAddress> {
-        if let Some(cached) = self.multi_wireframes.cached() {
-            return cached;
-        }
-        let result = Some(()).and_then(|()| {
-            let spawn_dialog = self.spawn_dialog(actx)?;
-            Some(dialog::multi_wireframes(actx, spawn_dialog, &self.function_finder()))
-        }).unwrap_or_else(|| MultiWireframes::default());
-        self.multi_wireframes.cache(&result);
-        result
+    ) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[InitStatusScreen, StatusScreenEventHandler],
+            &[GrpWireGrp, GrpWireDdsGrp, TranWireGrp, TranWireDdsGrp, StatusScreen],
+            |s| {
+                let spawn_dialog = s.spawn_dialog(actx)?;
+                let result = dialog::multi_wireframes(actx, spawn_dialog, &s.function_finder());
+                Some((
+                    [result.init_status_screen, result.status_screen_event_handler],
+                    [result.grpwire_grp, result.grpwire_ddsgrp, result.tranwire_grp,
+                    result.tranwire_ddsgrp, result.status_screen]
+                ))
+            })
     }
 
     fn grpwire_grp(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.multi_wireframes(actx).grpwire_grp
+        self.cache_many_op(OperandAnalysis::GrpWireGrp, |s| s.cache_multi_wireframes(actx))
     }
 
     fn grpwire_ddsgrp(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.multi_wireframes(actx).grpwire_ddsgrp
+        self.cache_many_op(OperandAnalysis::GrpWireDdsGrp, |s| s.cache_multi_wireframes(actx))
     }
 
     fn tranwire_grp(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.multi_wireframes(actx).tranwire_grp
+        self.cache_many_op(OperandAnalysis::TranWireGrp, |s| s.cache_multi_wireframes(actx))
     }
 
     fn tranwire_ddsgrp(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.multi_wireframes(actx).tranwire_ddsgrp
+        self.cache_many_op(OperandAnalysis::TranWireDdsGrp, |s| s.cache_multi_wireframes(actx))
     }
 
     fn status_screen(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.multi_wireframes(actx).status_screen
+        self.cache_many_op(OperandAnalysis::StatusScreen, |s| s.cache_multi_wireframes(actx))
     }
 
     fn status_screen_event_handler(
         &mut self,
         actx: &AnalysisCtx<'e, E>,
     ) -> Option<E::VirtualAddress> {
-        self.multi_wireframes(actx).status_screen_event_handler
+        self.cache_many_addr(
+            AddressAnalysis::StatusScreenEventHandler,
+            |s| s.cache_multi_wireframes(actx),
+        )
     }
 
     fn wirefram_ddsgrp(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
@@ -4165,7 +4199,10 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
     }
 
     fn init_status_screen(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.multi_wireframes(actx).init_status_screen
+        self.cache_many_addr(
+            AddressAnalysis::InitStatusScreen,
+            |s| s.cache_multi_wireframes(actx),
+        )
     }
 
     fn run_triggers(&mut self, actx: &AnalysisCtx<'e, E>) -> RunTriggers<E::VirtualAddress> {

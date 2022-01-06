@@ -1588,7 +1588,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 AllocatedOrderCount | ContinueGameLoop | StepGameFrames | ReplaySeekFrame |
                 NextGameStepTick | FirstPylon | PylonRefresh | PylonAurasVisible |
                 LocalGameResult | IsCustomSinglePlayer | CurrentCampaignMission | LocalVisions |
-                FirstFreeSelectionCircle | LastFreeSelectionCircle =>
+                FirstFreeSelectionCircle | LastFreeSelectionCircle | GrpWireGrp | TranWireGrp |
+                StatusScreen =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1600,7 +1601,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 PlayerSkins | ClientSelection | BaseAnimSet | ImageGrps | ImageOverlays |
                 FireOverlayMax | NetPlayerFlags | PlayerTurns | PlayerTurnsSize | CmdIconsDdsGrp |
                 CmdBtnsDdsGrp | SyncData | PaletteSet | MainPalette | TfontGam |
-                UnitSkinMap | SpriteSkinMap =>
+                UnitSkinMap | SpriteSkinMap | GrpWireDdsGrp | TranWireDdsGrp =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }
@@ -2043,14 +2044,6 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(x_func.is_none());
         assert!(y_func.is_none());
     }
-
-    check_global(analysis.grpwire_grp().unwrap(), binary, "grpwire_grp");
-    check_global(analysis.tranwire_grp().unwrap(), binary, "tranwire_grp");
-    check_global_struct(analysis.grpwire_ddsgrp().unwrap(), binary, "grpwire_ddsgrp");
-    check_global_struct(analysis.tranwire_ddsgrp().unwrap(), binary, "tranwire_ddsgrp");
-    check_global(analysis.status_screen().unwrap(), binary, "status_screen");
-    assert!(analysis.status_screen_event_handler().is_some());
-    assert!(analysis.init_status_screen().is_some());
 
     assert!(analysis.trigger_conditions().is_some());
     assert!(analysis.trigger_actions().is_some());

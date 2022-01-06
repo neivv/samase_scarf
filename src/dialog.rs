@@ -1150,8 +1150,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
             }
             Operation::Call(dest) => {
                 let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     if dest == self.spawn_dialog {
                         let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
                         // spawn_dialog(dialog, 0, event_handler)
@@ -1171,15 +1170,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
                 }
                 if let Some(ty) = self.is_multi_grp_path(arg1) {
                     let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                    if arg2.if_constant() == Some(0) {
+                    if arg2 == ctx.const_0() {
                         self.check_return_store = Some(ty);
                         ctrl.skip_operation();
                         let custom = ctx.custom(0);
-                        let exec_state = ctrl.exec_state();
-                        exec_state.move_to(
-                            &DestOperand::Register64(0),
-                            custom,
-                        );
+                        ctrl.move_resolved(&DestOperand::Register64(0), custom);
                     } else {
                         match ty {
                             MultiGrpType::Group => self.result.grpwire_ddsgrp = Some(arg2),
@@ -1190,13 +1185,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
                     // Make other call results Custom(1), and prevent writing them to
                     // memory (Prevent writing load_dialog result to status_screen global)
                     ctrl.skip_operation();
-                    let ctx = ctrl.ctx();
                     let custom = ctx.custom(1);
-                    let exec_state = ctrl.exec_state();
-                    exec_state.move_to(
-                        &DestOperand::Register64(0),
-                        custom,
-                    );
+                    ctrl.move_resolved(&DestOperand::Register64(0), custom);
                 }
             }
             _ => (),
@@ -1212,9 +1202,10 @@ impl<'a, 'e, E: ExecutionState<'e>> MultiWireframeAnalyzer<'a, 'e, E> {
             (b"unit\\wirefram\\tranwire", MultiGrpType::Transport),
         ];
 
+        let bytes = self.binary.slice_from_address_to_end(address).ok()?;
         CANDIDATES.iter()
             .filter_map(|&(path, ty)| {
-                let bytes = self.binary.slice_from_address(address, path.len() as u32).ok()?;
+                let bytes = bytes.get(..path.len())?;
                 Some(ty).filter(|_| bytes.eq_ignore_ascii_case(path))
             })
             .next()

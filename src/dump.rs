@@ -203,17 +203,6 @@ pub fn dump<'e, E: ExecutionState<'e>>(
         out!(&mut out, "SMemFree: {:?}", analysis.smem_free());
         out!(&mut out, "allocator: {}", format_op_operand(analysis.allocator()));
 
-        out!(&mut out, "grpwire_grp: {}", format_op_operand(analysis.grpwire_grp()));
-        out!(&mut out, "grpwire_ddsgrp: {}", format_op_operand(analysis.grpwire_ddsgrp()));
-        out!(&mut out, "tranwire_grp: {}", format_op_operand(analysis.tranwire_grp()));
-        out!(&mut out, "tranwire_ddsgrp: {}", format_op_operand(analysis.tranwire_ddsgrp()));
-        out!(&mut out, "status_screen: {}", format_op_operand(analysis.status_screen()));
-        out!(
-            &mut out, "status_screen_event_handler: {:?}",
-            analysis.status_screen_event_handler(),
-        );
-        out!(&mut out, "init_status_screen: {:?}", analysis.init_status_screen());
-
         out!(&mut out, "trigger_conditions: {:?}", analysis.trigger_conditions());
         out!(&mut out, "trigger_actions: {:?}", analysis.trigger_actions());
         out!(
