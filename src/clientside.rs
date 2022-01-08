@@ -9,6 +9,7 @@ use crate::{
     AnalysisCtx, ArgCache, EntryOf, EntryOfResult, entry_of_until, unwrap_sext,
     single_result_assign, OptionExt, if_arithmetic_eq_neq, FunctionFinder,
 };
+use crate::analysis_state::{AnalysisState, StateEnum, MiscClientSideAnalyzerState};
 use crate::hash_map::HashMap;
 use crate::struct_layouts;
 use crate::vtables::Vtables;
@@ -488,6 +489,7 @@ pub(crate) fn misc_clientside<'e, E: ExecutionState<'e>>(
         .map(|x| x.address);
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = &analysis.bump;
     let vtable_fn_result_op = ctx.custom(0);
     for vtable in vtables {
         let init_func = match binary.read_address(vtable + 0x3 * E::VirtualAddress::SIZE) {
@@ -495,6 +497,7 @@ pub(crate) fn misc_clientside<'e, E: ExecutionState<'e>>(
             Err(_) => continue,
         };
         let state = MiscClientSideAnalyzerState::Begin;
+        let state = AnalysisState::new(bump, StateEnum::MiscClientSide(state));
         let mut analyzer = MiscClientSideAnalyzer {
             result: &mut result,
             done: false,
@@ -504,6 +507,7 @@ pub(crate) fn misc_clientside<'e, E: ExecutionState<'e>>(
             scmain_state,
             branch_start_states: Default::default(),
             binary,
+            phantom: Default::default(),
         };
         let exec = E::initial_state(ctx, binary);
         let mut analysis = FuncAnalysis::custom_state(binary, ctx, init_func, exec, state);
@@ -523,55 +527,7 @@ pub(crate) fn misc_clientside<'e, E: ExecutionState<'e>>(
     result
 }
 
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-enum MiscClientSideAnalyzerState {
-    // Checking for this.vtable_fn() == 0
-    Begin,
-    // Checking for multiplayer == 0
-    OnVtableFnZeroBranch,
-    // Checking for is_paused if not found yet, once it is checking
-    // for scmain_state == 3
-    MultiplayerZeroBranch,
-    // Checking for is_placing_building == 0
-    ScMainStateThreeBranch,
-    // Checking for is_targeting == 0
-    IsPlacingBuildingFound,
-    End,
-}
-
-impl analysis::AnalysisState for MiscClientSideAnalyzerState {
-    fn merge(&mut self, newer: Self) {
-        use MiscClientSideAnalyzerState::*;
-        let (low, high) = match *self < newer {
-            true => (*self, newer),
-            false => (newer, *self),
-        };
-        match (low, high) {
-            (a, b) if a == b => (),
-            // When leaving the `this.vtable_fn() == 0` branch and
-            // merging with `Begin`, merge to `End` (Nothing important to be found
-            // after that)
-            (Begin, _) => *self = End,
-            // scmain_state == 3 branch is after `Multiplayer == 0` branch (searching pause game)
-            // and its else branch join, so they merge to MultiplayerZeroBranch to
-            // keep analysis
-            (OnVtableFnZeroBranch, MultiplayerZeroBranch) => *self = high,
-            // Otherwise merge to `End`
-            (OnVtableFnZeroBranch, _) => *self = End,
-            // However, rest of the checks are all inside scmain_state == 3, so
-            // MultiplayerZeroBranch joining with higher state means end
-            (MultiplayerZeroBranch, _) => *self = End,
-            // is_placing_building == 0 also joins with else branch before is_targeting == 0
-            // check.
-            (ScMainStateThreeBranch, IsPlacingBuildingFound) => *self = high,
-            (ScMainStateThreeBranch, _) => *self = End,
-            (IsPlacingBuildingFound, _) => *self = End,
-            (End, _) => *self = End,
-        }
-    }
-}
-
-struct MiscClientSideAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct MiscClientSideAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut MiscClientSide<'e>,
     done: bool,
     inline_depth: u8,
@@ -580,10 +536,13 @@ struct MiscClientSideAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     scmain_state: Operand<'e>,
     branch_start_states: HashMap<Rva, MiscClientSideAnalyzerState>,
     binary: &'a BinaryFile<E::VirtualAddress>,
+    phantom: std::marker::PhantomData<&'acx ()>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MiscClientSideAnalyzer<'a, 'e, E> {
-    type State = MiscClientSideAnalyzerState;
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    MiscClientSideAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
 
     fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
@@ -592,13 +551,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MiscClientSideAnalyz
             if state == MiscClientSideAnalyzerState::MultiplayerZeroBranch {
                 self.inline_depth = 0;
             }
-            *ctrl.user_state() = state;
+            ctrl.user_state().set(state);
         }
     }
 
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         use MiscClientSideAnalyzerState as State;
-        match *ctrl.user_state() {
+        match ctrl.user_state().get::<State>() {
             State::End => {
                 ctrl.end_branch();
             }
@@ -612,7 +571,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MiscClientSideAnalyz
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'acx, 'e, E> {
     fn state_begin(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         use MiscClientSideAnalyzerState as State;
         // Check for the this.vtable_fn() call and
@@ -800,13 +759,14 @@ impl<'a, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'e, E> {
                             Some(op)
                         });
                     if let Some(op) = cond_ok {
-                        if *ctrl.user_state() == State::ScMainStateThreeBranch {
+                        let state = ctrl.user_state().get::<State>();
+                        if *state == State::ScMainStateThreeBranch {
                             self.result.is_placing_building = Some(op.clone());
-                            *ctrl.user_state() = State::IsPlacingBuildingFound;
+                            *state = State::IsPlacingBuildingFound;
                         } else {
                             self.result.is_targeting = Some(op.clone());
                             self.done = true;
-                            *ctrl.user_state() = State::End;
+                            *state = State::End;
                             ctrl.end_analysis();
                         }
                     }

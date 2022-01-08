@@ -6,6 +6,7 @@ use crate::{
     AnalysisCtx, ArgCache, ControlExt, EntryOf, entry_of_until, if_arithmetic_eq_neq, OperandExt,
     OptionExt, Patch, bumpvec_with_capacity, FunctionFinder,
 };
+use crate::analysis_state::{AnalysisState, StateEnum, ReplayVisionsState};
 use crate::struct_layouts;
 
 pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
@@ -205,6 +206,7 @@ pub(crate) fn replay_visions<'e, E: ExecutionState<'e>>(
 ) -> ReplayVisions<'e> {
     let ctx = actx.ctx;
     let binary = actx.binary;
+    let bump = &actx.bump;
     let mut exec = E::initial_state(ctx, binary);
     if let Some(mem) = is_replay.if_memory() {
         exec.move_to(&DestOperand::Memory(*mem), ctx.constant(1));
@@ -212,6 +214,7 @@ pub(crate) fn replay_visions<'e, E: ExecutionState<'e>>(
     let state = ReplayVisionsState {
         visibility_mask_comparision: 0,
     };
+    let state = AnalysisState::new(bump, StateEnum::ReplayVisions(state));
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, draw_minimap_units, exec, state);
     let mut result = ReplayVisions {
         replay_visions: None,
@@ -229,28 +232,18 @@ pub(crate) fn replay_visions<'e, E: ExecutionState<'e>>(
     result
 }
 
-#[derive(Copy, Clone)]
-struct ReplayVisionsState {
-    visibility_mask_comparision: u8,
-}
-
-impl analysis::AnalysisState for ReplayVisionsState {
-    fn merge(&mut self, newer: Self) {
-        self.visibility_mask_comparision = newer.visibility_mask_comparision
-            .min(self.visibility_mask_comparision);
-    }
-}
-
-struct ReplayVisionsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct ReplayVisionsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut ReplayVisions<'e>,
     arg_cache: &'a ArgCache<'e, E>,
     inlining_draw_active_units: bool,
     inlining_small_fn: u8,
-    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+    phantom: std::marker::PhantomData<(*const E, &'acx &'e ())>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayVisionsAnalyzer<'a, 'e, E> {
-    type State = ReplayVisionsState;
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    ReplayVisionsAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         fn is_unit_flags_access<Va: VirtualAddress>(val: Operand<'_>) -> bool {
@@ -384,15 +377,15 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayVisionsAnalyze
                                 })
                             })
                     });
+                let user_state = ctrl.user_state().get::<ReplayVisionsState>();
                 if let Some((first_player_unit, replay_visions)) = result {
                     self.result.first_player_unit = Some(first_player_unit);
                     self.result.replay_visions = Some(replay_visions);
-                    ctrl.user_state().visibility_mask_comparision = 2;
+                    user_state.visibility_mask_comparision = 2;
                     return;
                 }
                 // Assume that u32 global cmp vs 0 vision mask that is
                 // replay_show_entire_map check
-                let user_state = ctrl.user_state();
                 if user_state.visibility_mask_comparision != 0 {
                     user_state.visibility_mask_comparision -= 1;
                     let result = if_arithmetic_eq_neq(condition)

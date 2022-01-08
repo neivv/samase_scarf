@@ -2,10 +2,11 @@ use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashMap;
 
 use scarf::{MemAccess, Operand, Operation, DestOperand};
-use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
+use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::{AnalysisCtx, ArgCache, ControlExt, OptionExt, bumpvec_with_capacity};
+use crate::analysis_state::{AnalysisState, StateEnum, FindCreateBulletState};
 use crate::switch;
 use crate::struct_layouts;
 
@@ -18,26 +19,19 @@ pub struct BulletCreation<'e, Va: VirtualAddress> {
     pub active_iscript_unit: Option<Operand<'e>>,
 }
 
-struct FindCreateBullet<'a, 'e, E: ExecutionState<'e>> {
+struct FindCreateBullet<'a, 'acx, 'e, E: ExecutionState<'e>> {
     is_inlining: bool,
     result: Option<E::VirtualAddress>,
     active_iscript_unit: Option<Operand<'e>>,
     arg_cache: &'a ArgCache<'e, E>,
     calls_seen: u32,
+    phantom: std::marker::PhantomData<&'acx ()>,
 }
 
-#[derive(Copy, Clone)]
-struct FindCreateBulletState {
-    calls_seen: u32,
-}
-impl AnalysisState for FindCreateBulletState {
-    fn merge(&mut self, newer: FindCreateBulletState) {
-        self.calls_seen = self.calls_seen.max(newer.calls_seen);
-    }
-}
-
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a, 'e, E> {
-    type State = FindCreateBulletState;
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    FindCreateBullet<'a, 'acx, 'e, E>
+{
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let ctx = ctrl.ctx();
@@ -50,7 +44,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a,
                             self.is_inlining = true;
                             let ecx = ctrl.resolve(ctx.register(1));
                             self.active_iscript_unit = Some(ecx);
-                            ctrl.user_state().calls_seen = 0;
+                            ctrl.user_state().get::<FindCreateBulletState>().calls_seen = 0;
                             self.calls_seen = 0;
                             ctrl.analyze_with_current_state(self, dest);
                             if self.result.is_some() && self.calls_seen == 2 {
@@ -87,11 +81,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'a,
                     }
                     self.result = Some(dest);
                     self.active_iscript_unit = Some(unit);
-                    let new_calls_seen = ctrl.user_state().calls_seen + 1;
+                    let state = ctrl.user_state().get::<FindCreateBulletState>();
+                    let new_calls_seen = state.calls_seen + 1;
                     if new_calls_seen > self.calls_seen {
                         self.calls_seen = new_calls_seen;
                     }
-                    ctrl.user_state().calls_seen = new_calls_seen;
+                    state.calls_seen = new_calls_seen;
                 }
             }
             Operation::Jump { condition, to } => {
@@ -284,6 +279,7 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
         active_iscript_unit: None,
         calls_seen: 0,
         arg_cache: &analysis.arg_cache,
+        phantom: Default::default(),
     };
     let exec_state = E::initial_state(ctx, binary);
     let mut analysis = FuncAnalysis::custom_state(
@@ -291,9 +287,12 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
         ctx,
         useweapon,
         exec_state,
-        FindCreateBulletState {
-            calls_seen: 0,
-        },
+        AnalysisState::new(
+            bump,
+            StateEnum::CreateBullet(FindCreateBulletState {
+                calls_seen: 0,
+            }),
+        ),
     );
     analysis.analyze(&mut analyzer);
     result.create_bullet = analyzer.result;

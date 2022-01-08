@@ -3,7 +3,7 @@ use fxhash::FxHashMap;
 
 use std::convert::{TryInto, TryFrom};
 
-use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
+use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, MemAccessSize};
 use scarf::{BinaryFile, DestOperand, Operation, Operand, OperandCtx};
@@ -12,6 +12,9 @@ use crate::{
     AnalysisCtx, ArgCache, ControlExt, EntryOf, OperandExt, OptionExt, single_result_assign,
     StringRefs, FunctionFinder, bumpvec_with_capacity, if_arithmetic_eq_neq, is_global,
     is_stack_address,
+};
+use crate::analysis_state::{
+    AnalysisState, StateEnum, TooltipState, FindTooltipCtrlState, GluCmpgnState,
 };
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
@@ -388,6 +391,7 @@ pub(crate) fn tooltip_related<'e, E: ExecutionState<'e>>(
 
     let ctx = analysis.ctx;
     let binary = analysis.binary;
+    let bump = &analysis.bump;
     let funcs = functions.functions();
     let mut str_refs = functions.string_refs(analysis, b"rez\\stat_f10");
     if str_refs.is_empty() {
@@ -397,12 +401,14 @@ pub(crate) fn tooltip_related<'e, E: ExecutionState<'e>>(
         crate::entry_of_until(binary, funcs, str_ref.use_address, |entry| {
             let arg_cache = &analysis.arg_cache;
             let exec_state = E::initial_state(ctx, binary);
+            let state =
+                AnalysisState::new(bump, StateEnum::Tooltip(TooltipState::FindEventHandler));
             let mut analysis = FuncAnalysis::custom_state(
                 binary,
                 ctx,
                 entry,
                 exec_state,
-                TooltipState::FindEventHandler,
+                state,
             );
             let mut analyzer = TooltipAnalyzer {
                 result: &mut result,
@@ -410,6 +416,7 @@ pub(crate) fn tooltip_related<'e, E: ExecutionState<'e>>(
                 entry_of: EntryOf::Retry,
                 spawn_dialog,
                 inline_depth: 0,
+                phantom: Default::default(),
             };
             analysis.analyze(&mut analyzer);
             analyzer.entry_of
@@ -421,52 +428,8 @@ pub(crate) fn tooltip_related<'e, E: ExecutionState<'e>>(
     result
 }
 
-#[derive(Clone)]
-enum TooltipState<'e, E: ExecutionState<'e>> {
-    FindEventHandler,
-    FindTooltipCtrl(FindTooltipCtrlState<'e, E>),
-    FindLayoutText,
-}
-
-// set_tooltip function writes the following variables:
-//   current_tooltip_ctrl = ctrl (undef for this analysis)
-//   tooltip_draw_func = func
-//   graphic_layers[1].enable = 1
-//   graphic_layers[1].func = func
-//   (And some zeroes and width/height to layer 1 as well)
-#[derive(Clone, Eq)]
-struct FindTooltipCtrlState<'e, E: ExecutionState<'e>> {
-    tooltip_ctrl: Option<Operand<'e>>,
-    one: Option<Operand<'e>>,
-    func1: Option<(Operand<'e>, E::VirtualAddress)>,
-    func2: Option<(Operand<'e>, E::VirtualAddress)>,
-}
-
-// Derive doesn't work for these due to E
-impl<'e, E: ExecutionState<'e>> Copy for TooltipState<'e, E> { }
-impl<'e, E: ExecutionState<'e>> Copy for FindTooltipCtrlState<'e, E> { }
-
-impl<'e, E: ExecutionState<'e>> PartialEq for FindTooltipCtrlState<'e, E> {
-    fn eq(&self, other: &Self) -> bool {
-        match self {
-            FindTooltipCtrlState {
-                tooltip_ctrl,
-                one,
-                func1,
-                func2,
-            } => {
-                *tooltip_ctrl == other.tooltip_ctrl &&
-                    *one == other.one &&
-                    *func1 == other.func1 &&
-                    *func2 == other.func2
-            }
-        }
-    }
-}
-
-
-impl<'e, E: ExecutionState<'e>> FindTooltipCtrlState<'e, E> {
-    fn check_ready(
+impl<'e> FindTooltipCtrlState<'e> {
+    fn check_ready<E: ExecutionState<'e>>(
         &self,
         ctx: OperandCtx<'e>,
         result: &mut TooltipRelated<'e, E::VirtualAddress>,
@@ -501,48 +464,32 @@ impl<'e, E: ExecutionState<'e>> FindTooltipCtrlState<'e, E> {
             return;
         };
         result.tooltip_draw_func = Some(E::operand_mem_word(ctx, other.0, 0));
-        result.draw_f10_menu_tooltip = Some(other.1);
+        result.draw_f10_menu_tooltip = Some(E::VirtualAddress::from_u64(other.1));
         result.graphic_layers = Some(ctx.sub_const(
             one,
             struct_layouts::graphic_layer_size::<E::VirtualAddress>(),
         ));
         result.current_tooltip_ctrl = Some(tooltip_ctrl);
-        result.draw_tooltip_layer = Some(draw_tooltip_layer);
+        result.draw_tooltip_layer = Some(E::VirtualAddress::from_u64(draw_tooltip_layer));
     }
 }
 
-struct TooltipAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct TooltipAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut TooltipRelated<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     entry_of: EntryOf<()>,
     spawn_dialog: E::VirtualAddress,
     inline_depth: u8,
+    phantom: std::marker::PhantomData<&'acx ()>,
 }
 
-impl<'e, E: ExecutionState<'e>> AnalysisState for TooltipState<'e, E> {
-    fn merge(&mut self, newer: Self) {
-        use self::TooltipState::*;
-        match (self, newer) {
-            (&mut FindTooltipCtrl(ref mut a), FindTooltipCtrl(ref b)) => {
-                if a != b {
-                    *a = FindTooltipCtrlState {
-                        tooltip_ctrl: None,
-                        one: None,
-                        func1: None,
-                        func2: None,
-                    }
-                }
-            }
-            (_, _) => (),
-        }
-    }
-}
-
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TooltipAnalyzer<'a, 'e, E> {
-    type State = TooltipState<'e, E>;
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    TooltipAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        match *ctrl.user_state() {
+        match ctrl.user_state().get::<TooltipState>() {
             TooltipState::FindEventHandler => self.state1(ctrl, op),
             TooltipState::FindTooltipCtrl(..) => self.state2(ctrl, op),
             TooltipState::FindLayoutText => self.state3(ctrl, op),
@@ -550,19 +497,21 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TooltipAnalyzer<'a, 
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'e, E> {
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'acx, 'e, E> {
     fn state1(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
                 let dest = ctrl.resolve(dest);
                 if dest.if_constant() == Some(self.spawn_dialog.as_u64()) {
                     if let Some(addr) = ctrl.resolve_va(self.arg_cache.on_call(2)) {
-                        *ctrl.user_state() = TooltipState::FindTooltipCtrl(FindTooltipCtrlState {
-                            tooltip_ctrl: None,
-                            one: None,
-                            func1: None,
-                            func2: None,
-                        });
+                        ctrl.user_state().set(
+                            TooltipState::FindTooltipCtrl(FindTooltipCtrlState {
+                                tooltip_ctrl: None,
+                                one: None,
+                                func1: None,
+                                func2: None,
+                            })
+                        );
                         // Set event type to 0x3, causing it to reach set_tooltip
                         // Event ptr is arg2
                         let ctx = ctrl.ctx();
@@ -622,7 +571,9 @@ impl<'a, 'e, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'e, E> {
                 }
                 let value = ctrl.resolve(value);
                 let ctx = ctrl.ctx();
-                if let TooltipState::FindTooltipCtrl(ref mut state) = ctrl.user_state() {
+                if let TooltipState::FindTooltipCtrl(ref mut state) =
+                    ctrl.user_state().get::<TooltipState>()
+                {
                     if value.is_undefined() {
                         if mem.size == E::WORD_SIZE {
                             state.tooltip_ctrl = Some(ctx.memory(&mem));
@@ -634,21 +585,20 @@ impl<'a, 'e, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'e, E> {
                             }
                             if mem.size == E::WORD_SIZE {
                                 if c > 0x1000 {
-                                    let dest = E::VirtualAddress::from_u64(c);
                                     if state.func1.is_none() {
-                                        state.func1 = Some((mem.address_op(ctx), dest));
+                                        state.func1 = Some((mem.address_op(ctx), c));
                                     } else if state.func2.is_none() {
-                                        state.func2 = Some((mem.address_op(ctx), dest));
+                                        state.func2 = Some((mem.address_op(ctx), c));
                                     }
                                 }
                             }
                         }
                     };
-                    state.check_ready(ctx, &mut self.result);
+                    state.check_ready::<E>(ctx, &mut self.result);
                 }
                 if let Some(addr) = self.result.draw_f10_menu_tooltip {
                     self.inline_depth = 0;
-                    *ctrl.user_state() = TooltipState::FindLayoutText;
+                    ctrl.user_state().set(TooltipState::FindLayoutText);
                     ctrl.analyze_with_current_state(self, addr);
                     ctrl.end_analysis();
                 }
@@ -1896,37 +1846,30 @@ pub(crate) fn analyze_glucmpgn_events<'e, E: ExecutionState<'e>>(
     };
     let ctx = actx.ctx;
     let binary = actx.binary;
+    let bump = &actx.bump;
     let exec = E::initial_state(ctx, binary);
     let state = GluCmpgnState {
         dialog_return_stored: false,
     };
+    let state = AnalysisState::new(bump, StateEnum::GluCmpgn(state));
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, event_handler, exec, state);
     let mut analyzer = GluCmpgnAnalyzer::<E> {
         result: &mut result,
         arg_cache: &actx.arg_cache,
         ext_event_branch: 0,
         inlining: false,
+        phantom: Default::default(),
     };
     analysis.analyze(&mut analyzer);
     result
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-struct GluCmpgnState {
-    dialog_return_stored: bool,
-}
-
-impl AnalysisState for GluCmpgnState {
-    fn merge(&mut self, newer: Self) {
-        self.dialog_return_stored |= newer.dialog_return_stored;
-    }
-}
-
-struct GluCmpgnAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct GluCmpgnAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut GluCmpgnEvents<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     ext_event_branch: u8,
     inlining: bool,
+    phantom: std::marker::PhantomData<&'acx ()>,
 }
 
 fn resolve_memory<Va: VirtualAddress>(binary: &BinaryFile<Va>, op: Operand<'_>) -> Option<u64> {
@@ -1952,9 +1895,10 @@ fn resolve_memory<Va: VirtualAddress>(binary: &BinaryFile<Va>, op: Operand<'_>) 
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GluCmpgnAnalyzer<'a, 'e, E>
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    GluCmpgnAnalyzer<'a, 'acx, 'e, E>
 {
-    type State = GluCmpgnState;
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let ctx = ctrl.ctx();
@@ -2035,7 +1979,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GluCmpgnAnalyzer<'a,
                         }
                     }
                     if self.ext_event_branch == 2 {
-                        let state = ctrl.user_state();
+                        let state = ctrl.user_state().get::<GluCmpgnState>();
                         if state.dialog_return_stored {
                             state.dialog_return_stored = false;
                             if self.result.swish_out.is_none() {
@@ -2065,7 +2009,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GluCmpgnAnalyzer<'a,
                     if val.if_constant() == Some(8) {
                         let ctx = ctrl.ctx();
                         self.result.dialog_return_code = Some(ctx.memory(mem));
-                        ctrl.user_state().dialog_return_stored = true;
+                        ctrl.user_state().get::<GluCmpgnState>().dialog_return_stored = true;
                     }
                 }
             }

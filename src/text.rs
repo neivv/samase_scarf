@@ -8,6 +8,9 @@ use crate::{
     AnalysisCtx, ArgCache, entry_of_until, EntryOf, OptionExt, OperandExt, single_result_assign,
     bumpvec_with_capacity, FunctionFinder, ControlExt,
 };
+use crate::analysis_state::{
+    AnalysisState, StateEnum, FindCacheRenderAsciiState, IsCacheRenderAsciiState,
+};
 use crate::struct_layouts;
 
 #[derive(Clone)]
@@ -195,6 +198,7 @@ pub(crate) fn font_render<'e, E: ExecutionState<'e>>(
             let state = FindCacheRenderAsciiState {
                 shadow_offset_seen: false,
             };
+            let state = AnalysisState::new(bump, StateEnum::FontCacheRenderAscii(state));
             let mut analysis = FuncAnalysis::custom_state(binary, ctx, entry, exec, state);
             analysis.analyze(&mut analyzer);
             analyzer.entry_of
@@ -217,32 +221,23 @@ struct FindCacheRenderAscii<'a, 'acx, 'e, E: ExecutionState<'e>> {
     bump: &'acx bumpalo::Bump,
 }
 
-#[derive(Copy, Clone)]
-struct FindCacheRenderAsciiState {
-    shadow_offset_seen: bool,
-}
-
-impl analysis::AnalysisState for FindCacheRenderAsciiState {
-    fn merge(&mut self, newer: Self) {
-        self.shadow_offset_seen |= newer.shadow_offset_seen;
-    }
-}
-
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
     FindCacheRenderAscii<'a, 'acx, 'e, E>
 {
-    type State = FindCacheRenderAsciiState;
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if ctrl.address() <= self.use_address &&
             ctrl.current_instruction_end() > self.use_address
         {
             self.entry_of = EntryOf::Stop;
-            ctrl.user_state().shadow_offset_seen = true;
+            ctrl.user_state().set(FindCacheRenderAsciiState {
+                shadow_offset_seen: true,
+            });
         }
         match *op {
             Operation::Call(dest) => {
-                if ctrl.user_state().shadow_offset_seen {
+                if ctrl.user_state().get::<FindCacheRenderAsciiState>().shadow_offset_seen {
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
                         let dest = E::VirtualAddress::from_u64(dest);
                         let ctx = ctrl.ctx();
@@ -275,6 +270,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             let state = IsCacheRenderAsciiState {
                                 last_ok_call: None,
                             };
+                            let state = AnalysisState::new(
+                                self.bump,
+                                StateEnum::IsFontCacheRenderAscii(state),
+                            );
                             let mut analysis =
                                 FuncAnalysis::custom_state(binary, ctx, dest, exec, state);
                             analysis.analyze(&mut analyzer);
@@ -299,28 +298,17 @@ struct IsCacheRenderAscii<'a, 'acx, 'e, E: ExecutionState<'e>> {
     binary: &'e BinaryFile<E::VirtualAddress>,
 }
 
-#[derive(Clone)]
-struct IsCacheRenderAsciiState<Va: VirtualAddress> {
-    last_ok_call: Option<Va>,
-}
-
-impl<Va: VirtualAddress> analysis::AnalysisState for IsCacheRenderAsciiState<Va> {
-    fn merge(&mut self, newer: Self) {
-        if self.last_ok_call != newer.last_ok_call {
-            self.last_ok_call = None;
-        }
-    }
-}
-
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
     IsCacheRenderAscii<'a, 'acx, 'e, E>
 {
-    type State = IsCacheRenderAsciiState<E::VirtualAddress>;
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Jump { condition, .. } => {
-                if let Some(call) = ctrl.user_state().last_ok_call {
+                let state = ctrl.user_state().get::<IsCacheRenderAsciiState>();
+                if let Some(call) = state.last_ok_call {
+                    let call = E::VirtualAddress::from_u64(call);
                     let condition = ctrl.resolve(condition);
                     // Check for while (character < 0x7f) (signed)
                     let is_loop = condition.if_arithmetic_gt()
@@ -347,14 +335,18 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
                     if self.ok_calls.iter().any(|&x| x == dest) {
-                        ctrl.user_state().last_ok_call = Some(dest);
+                        ctrl.user_state().set(IsCacheRenderAsciiState {
+                            last_ok_call: Some(dest.as_u64()),
+                        });
                     } else {
                         let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                         let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
                         let ctx = ctrl.ctx();
                         if arg1 == ctx.const_0() && arg2.if_constant() == Some(0x20) {
                             self.ok_calls.push(dest);
-                            ctrl.user_state().last_ok_call = Some(dest);
+                            ctrl.user_state().set(IsCacheRenderAsciiState {
+                                last_ok_call: Some(dest.as_u64()),
+                            });
                         }
                     }
                 }

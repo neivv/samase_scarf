@@ -28,7 +28,7 @@ overflow-checks = true
 [dependencies]
 arrayvec = "0.7"
 array-init = "2.0"
-bumpalo = { version = "3.4", features = ["collections"] }
+bumpalo = { version = "3.4", features = ["boxed", "collections"] }
 byteorder = "1.1.0"
 fxhash = "0.2.1"
 lde = { git = "https://github.com/CasualX/lde", rev = "6d8e287075eae41d0c6bae4c2f3a54268e0f8b4a" }

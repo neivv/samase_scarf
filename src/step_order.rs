@@ -1,7 +1,7 @@
 use bumpalo::collections::Vec as BumpVec;
 
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
-use scarf::analysis::{self, FuncAnalysis, AnalysisState,Cfg, Control};
+use scarf::analysis::{self, FuncAnalysis, Cfg, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::OperandCtx;
 
@@ -9,6 +9,7 @@ use crate::{
     AnalysisCtx, entry_of_until, single_result_assign, EntryOf, ArgCache,
     bumpvec_with_capacity, FunctionFinder, ControlExt, is_global, if_arithmetic_eq_neq,
 };
+use crate::analysis_state::{AnalysisState, StateEnum, StepOrderState};
 use crate::inline_hook::{EspOffsetRegs, InlineHookState, inline_hook_state};
 use crate::struct_layouts;
 
@@ -225,24 +226,14 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
 ) -> Option<E::VirtualAddress> {
     // Just take the last call when [ecx+4d] has been set to correct order.
     // Also guess long jumps as tail calls
-    struct Analyzer<'f, F: ExecutionState<'f>> {
+    struct Analyzer<'acx, 'f, F: ExecutionState<'f>> {
         result: Option<F::VirtualAddress>,
         start: F::VirtualAddress,
+        phantom: std::marker::PhantomData<&'acx ()>,
     }
-    #[derive(Eq, Copy, Clone, PartialEq)]
-    enum State {
-        HasSwitchJumped,
-        NotSwitchJumped,
-    }
-    impl AnalysisState for State {
-        fn merge(&mut self, newer: Self) {
-            if newer == State::NotSwitchJumped {
-                *self = newer;
-            }
-        }
-    }
-    impl<'e, F: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, F> {
-        type State = State;
+
+    impl<'acx, 'e: 'acx, F: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'acx, 'e, F> {
+        type State = AnalysisState<'acx, 'e>;
         type Exec = F;
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             match *op {
@@ -251,7 +242,8 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
                     let condition = ctrl.resolve(condition);
                     if condition == ctx.const_1() {
                         if let Some(dest) = ctrl.resolve(to).if_constant() {
-                            if *ctrl.user_state() == State::HasSwitchJumped {
+                            let state = *ctrl.user_state().get::<StepOrderState>();
+                            if state == StepOrderState::HasSwitchJumped {
                                 let seems_tail_call = (dest < self.start.as_u64()) ||
                                     (
                                         dest > ctrl.address().as_u64() + 0x400 &&
@@ -271,21 +263,23 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
                                 // Assume "switch jump" if the condition is always true,
                                 // as the small 4-case switch at start isn't necessarily
                                 // a switch table but just chained comparisions.
-                                *ctrl.user_state() = State::HasSwitchJumped;
+                                ctrl.user_state().set(StepOrderState::HasSwitchJumped);
                                 return;
                             }
                         }
                     }
-                    if to.if_constant().is_none() {
-                        *ctrl.user_state() = State::HasSwitchJumped;
+                    let state = if to.if_constant().is_none() {
+                        StepOrderState::HasSwitchJumped
                     } else {
-                        *ctrl.user_state() = State::NotSwitchJumped;
-                    }
+                        StepOrderState::NotSwitchJumped
+                    };
+                    ctrl.user_state().set(state);
                 }
                 Operation::Call(dest) => {
-                    if *ctrl.user_state() == State::HasSwitchJumped {
-                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                            self.result = Some(VirtualAddress::from_u64(dest));
+                    let state = *ctrl.user_state().get::<StepOrderState>();
+                    if state == StepOrderState::HasSwitchJumped {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.result = Some(dest);
                         }
                     }
                     ctrl.skip_call_preserve_esp();
@@ -298,9 +292,11 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
     let mut analyzer = Analyzer {
         result: None,
         start: step_order,
+        phantom: Default::default(),
     };
     let ctx = analysis.ctx;
     let binary = analysis.binary;
+    let bump = &analysis.bump;
     let mut state = E::initial_state(ctx, binary);
     let dest = DestOperand::from_oper(
         ctx.mem8(
@@ -309,12 +305,14 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
         )
     );
     state.move_to(&dest, ctx.constant(order as u64));
+    let user_state =
+        AnalysisState::new(bump, StateEnum::StepOrder(StepOrderState::NotSwitchJumped));
     let mut analysis = FuncAnalysis::custom_state(
         binary,
         ctx,
         step_order,
         state,
-        State::NotSwitchJumped,
+        user_state,
     );
     analysis.analyze(&mut analyzer);
     analyzer.result

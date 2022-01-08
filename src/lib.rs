@@ -17,6 +17,7 @@ macro_rules! test_assert_eq {
 
 mod add_terms;
 mod ai;
+mod analysis_state;
 mod bullets;
 mod call_tracker;
 mod campaign;
@@ -62,7 +63,7 @@ use std::rc::Rc;
 
 use bumpalo::collections::Vec as BumpVec;
 use bumpalo::Bump;
-use byteorder::{ReadBytesExt, LE};
+use byteorder::{ByteOrder, LittleEndian};
 
 use scarf::{BinaryFile, Operand, Rva};
 use scarf::analysis::{self, Control, FuncCallPair, RelocValues};
@@ -2816,17 +2817,16 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             let mut extra_funcs = Vec::with_capacity(64);
             for &func in &functions {
                 let relative = func.as_u64().wrapping_sub(text.virtual_address.as_u64()) as usize;
-                if let Some(&byte) = text.data.get(relative) {
-                    if byte == 0xe9 {
-                        if let Some(offset) = (&text.data[relative + 1..]).read_u32::<LE>().ok() {
-                            let dest = func.as_u64()
-                                .wrapping_add(5)
-                                .wrapping_add(offset as i32 as i64 as u64);
-                            let dest = E::VirtualAddress::from_u64(dest);
-                            if dest >= text.virtual_address && dest <= text_end {
-                                if let Err(index) = functions.binary_search(&dest) {
-                                    extra_funcs.push((dest, index));
-                                }
+                if let Some(bytes) = text.data.get(relative..).and_then(|x| x.get(..5)) {
+                    if bytes[0] == 0xe9 {
+                        let offset = LittleEndian::read_u32(&bytes[1..]);
+                        let dest = func.as_u64()
+                            .wrapping_add(5)
+                            .wrapping_add(offset as i32 as i64 as u64);
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        if dest >= text.virtual_address && dest <= text_end {
+                            if let Err(index) = functions.binary_search(&dest) {
+                                extra_funcs.push((dest, index));
                             }
                         }
                     }
@@ -5285,8 +5285,9 @@ impl<'a, 'e, E: ExecutionStateTrait<'e>> FunctionFinder<'a, 'e, E> {
 }
 
 fn read_u32_at<Va: VirtualAddressTrait>(section: &BinarySection<Va>, offset: Rva) -> Option<u32> {
-    section.data.get(offset.0 as usize..offset.0 as usize + 4)
-        .and_then(|mut x| x.read_u32::<LE>().ok())
+    section.data.get(offset.0 as usize..)
+        .and_then(|x| x.get(..4))
+        .map(|x| LittleEndian::read_u32(x))
 }
 
 /// Returns any matching strings as Rvas.

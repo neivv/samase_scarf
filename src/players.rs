@@ -1,14 +1,15 @@
 use bumpalo::collections::Vec as BumpVec;
 
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
-use scarf::analysis::{self, AnalysisState, Control, FuncAnalysis};
+use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{MemAccessSize};
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
+use crate::analysis_state::{AnalysisState, StateEnum, LocalPlayerState};
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
-use crate::{AnalysisCtx, ArgCache, OptionExt, bumpvec_with_capacity};
+use crate::{AnalysisCtx, ArgCache, ControlExt, OptionExt, bumpvec_with_capacity};
 
 pub struct NetPlayers<'e, Va: VirtualAddress> {
     // Array, struct size
@@ -20,25 +21,10 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     rclick: E::VirtualAddress,
 ) -> Option<Operand<'e>> {
-    #[derive(Copy, Clone)]
-    enum State {
-        Start,
-        PlayerFieldAccessSeen,
-    }
-
-    impl AnalysisState for State {
-        fn merge(&mut self, newer: State) {
-            if let State::PlayerFieldAccessSeen = newer {
-                *self = newer;
-            }
-        }
-    }
-
-    struct Analyzer<'e, E: ExecutionState<'e>> {
+    struct Analyzer<'acx, 'e, E: ExecutionState<'e>> {
         result: Option<Operand<'e>>,
         in_child_func: bool,
-        child_func_state: Option<State>,
-        phantom: std::marker::PhantomData<(*const E, &'e ())>,
+        phantom: std::marker::PhantomData<(*const E, &'e (), &'acx ())>,
     }
 
     // Search for [primary_selection].player access followed by
@@ -47,13 +33,15 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
     // [local_player_id] == player comparision can't be relied to have actual
     // field memaccess for `player`, it can be undefined or 0xff as well.
     // Hopefully local_player_id doesn't become ever encrypted..
-    impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
-        type State = State;
+    impl<'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'acx, 'e, E> {
+        type State = AnalysisState<'acx, 'e>;
         type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             match *op {
                 Operation::Jump { condition, .. } => {
-                    if let State::PlayerFieldAccessSeen = ctrl.user_state() {
+                    if let LocalPlayerState::PlayerFieldAccessSeen =
+                        ctrl.user_state().get::<LocalPlayerState>()
+                    {
                         let condition = ctrl.resolve(condition);
                         let local_player_id = crate::if_arithmetic_eq_neq(condition)
                             .and_then(|(l, r, _)| {
@@ -87,20 +75,16 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
                 }
                 Operation::Call(dest) => {
                     if !self.in_child_func {
-                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
                             self.in_child_func = true;
-                            let dest = E::VirtualAddress::from_u64(dest);
                             ctrl.analyze_with_current_state(self, dest);
-                            if let Some(state) = self.child_func_state.take() {
-                                *ctrl.user_state() = state;
-                            }
                             self.in_child_func = false;
                         }
                     }
                 }
                 Operation::Move(_, val, None) => {
-                    match ctrl.user_state() {
-                        State::Start => {
+                    match *ctrl.user_state().get::<LocalPlayerState>() {
+                        LocalPlayerState::Start => {
                             let val = ctrl.resolve(val);
                             let has_player_field_access = val.iter_no_mem_addr()
                                 .any(|x| {
@@ -111,10 +95,10 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
                                         .is_some()
                                 });
                             if has_player_field_access {
-                                *ctrl.user_state() = State::PlayerFieldAccessSeen;
+                                ctrl.user_state().set(LocalPlayerState::PlayerFieldAccessSeen);
                             }
                         }
-                        State::PlayerFieldAccessSeen => (),
+                        LocalPlayerState::PlayerFieldAccessSeen => (),
                     }
                 }
                 _ => (),
@@ -124,21 +108,22 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
 
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = &analysis.bump;
 
     let mut analyzer = Analyzer {
         result: None,
         in_child_func: false,
-        child_func_state: None,
         phantom: Default::default(),
     };
 
+    let state = AnalysisState::new(bump, StateEnum::LocalPlayerId(LocalPlayerState::Start));
     let exec_state = E::initial_state(ctx, binary);
     let mut analysis = FuncAnalysis::custom_state(
         binary,
         ctx,
         rclick,
         exec_state,
-        State::Start,
+        state,
     );
     analysis.analyze(&mut analyzer);
     analyzer.result

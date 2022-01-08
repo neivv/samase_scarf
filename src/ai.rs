@@ -1,4 +1,5 @@
 use arrayvec::ArrayVec;
+use bumpalo::Bump;
 use bumpalo::collections::Vec as BumpVec;
 use scarf::{
     DestOperand, Operand, Operation, MemAccessSize, OperandCtx, BinaryFile, Rva,
@@ -12,6 +13,7 @@ use crate::{
     ArgCache, OptionExt, OperandExt, single_result_assign, AnalysisCtx,
     entry_of_until, EntryOf, ControlExt, FunctionFinder, if_arithmetic_eq_neq,
 };
+use crate::analysis_state::{self, AnalysisState, AiTownState, GiveAiState, TrainMilitaryState};
 use crate::hash_map::HashSet;
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
@@ -502,6 +504,7 @@ pub(crate) fn player_ai_towns<'e, E: ExecutionState<'e>>(
 ) -> Option<Operand<'e>> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = &analysis.bump;
 
     let start_town = crate::switch::simple_switch_branch(binary, aiscript_switch_table, 0x3)?;
 
@@ -509,6 +512,7 @@ pub(crate) fn player_ai_towns<'e, E: ExecutionState<'e>>(
         jump_count: 0,
     };
     let exec_state = E::initial_state(ctx, binary);
+    let state = AnalysisState::new(bump, analysis_state::StateEnum::AiTown(state));
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, start_town, exec_state, state);
     let mut analyzer = AiTownAnalyzer {
         result: None,
@@ -519,25 +523,16 @@ pub(crate) fn player_ai_towns<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-#[derive(Clone, Copy)]
-struct AiTownState {
-    jump_count: u32,
-}
-
-impl analysis::AnalysisState for AiTownState {
-    fn merge(&mut self, new: AiTownState) {
-        self.jump_count = self.jump_count.max(new.jump_count);
-    }
-}
-
-struct AiTownAnalyzer<'e, E: ExecutionState<'e>> {
+struct AiTownAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     result: Option<Operand<'e>>,
     inlining: bool,
-    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+    phantom: std::marker::PhantomData<(*const E, &'e (), &'acx ())>,
 }
 
-impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiTownAnalyzer<'e, E> {
-    type State = AiTownState;
+impl<'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    AiTownAnalyzer<'acx, 'e, E>
+{
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let mut jump_check = false;
@@ -546,10 +541,12 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiTownAnalyzer<'e, E>
                 if !self.inlining {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         self.inlining = true;
-                        let old_jump_count = ctrl.user_state().jump_count;
-                        ctrl.user_state().jump_count = 0;
+                        let state = ctrl.user_state().get::<AiTownState>();
+                        let old_jump_count = state.jump_count;
+                        state.jump_count = 0;
                         ctrl.analyze_with_current_state(self, dest);
-                        ctrl.user_state().jump_count = old_jump_count;
+                        let state = ctrl.user_state().get::<AiTownState>();
+                        state.jump_count = old_jump_count;
                         self.inlining = false;
                         if self.result.is_some() {
                             ctrl.end_analysis();
@@ -575,7 +572,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiTownAnalyzer<'e, E>
             _ => (),
         }
         if jump_check {
-            let state = ctrl.user_state();
+            let state = ctrl.user_state().get::<AiTownState>();
             state.jump_count += 1;
             if self.inlining && state.jump_count > 5 {
                 ctrl.end_analysis();
@@ -586,7 +583,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiTownAnalyzer<'e, E>
     }
 }
 
-impl<'e, E: ExecutionState<'e>> AiTownAnalyzer<'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> AiTownAnalyzer<'acx, 'e, E> {
     fn ai_towns_check(
         &self,
         val: Operand<'e>,
@@ -1028,6 +1025,7 @@ pub(crate) fn give_ai<'e, E: ExecutionState<'e>>(
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = &analysis.bump;
 
     let action_create_unit = binary.read_address(actions + E::VirtualAddress::SIZE * 0x2c).ok()?;
     let units_dat_group_flags = binary.read_address(units_dat.0 + 0x2c * units_dat.1).ok()?;
@@ -1036,6 +1034,7 @@ pub(crate) fn give_ai<'e, E: ExecutionState<'e>>(
     let arg_cache = &analysis.arg_cache;
     let exec_state = E::initial_state(ctx, binary);
     let state = GiveAiState::SearchingSwitchJump;
+    let state = AnalysisState::new(bump, analysis_state::StateEnum::GiveAi(state));
     let mut analysis =
         FuncAnalysis::custom_state(binary, ctx, action_create_unit, exec_state, state);
     let mut analyzer = GiveAiAnalyzer {
@@ -1045,54 +1044,30 @@ pub(crate) fn give_ai<'e, E: ExecutionState<'e>>(
         units_dat_group_flags,
         units_dat_ai_flags,
         stop_on_first_branch: false,
+        bump,
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-struct GiveAiAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct GiveAiAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
     units_dat_group_flags: E::VirtualAddress,
     units_dat_ai_flags: E::VirtualAddress,
     stop_on_first_branch: bool,
+    bump: &'acx Bump,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
-enum GiveAiState {
-    // At inline depth 0 or 1, there's a switch jump checking trigegr.current_player.
-    // Follow default case.
-    SearchingSwitchJump,
-    // Search for call to map_create_unit
-    SearchingMapCreateUnit,
-    // Wait for check against units_dat_group_flags[id]
-    SearchingRaceCheck,
-    // Search for GiveAi
-    RaceCheckSeen,
-    Stop,
-}
-
-impl analysis::AnalysisState for GiveAiState {
-    fn merge(&mut self, new: GiveAiState) {
-        if *self != new {
-            if matches!(*self, GiveAiState::SearchingRaceCheck | GiveAiState::RaceCheckSeen) &&
-                matches!(new, GiveAiState::SearchingRaceCheck | GiveAiState::RaceCheckSeen)
-            {
-                *self = GiveAiState::RaceCheckSeen;
-            } else {
-                *self = GiveAiState::Stop;
-            }
-        }
-    }
-}
-
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GiveAiAnalyzer<'a, 'e, E> {
-    type State = GiveAiState;
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    GiveAiAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let ctx = ctrl.ctx();
-        match *ctrl.user_state() {
+        match *ctrl.user_state().get::<GiveAiState>() {
             GiveAiState::SearchingSwitchJump => {
                 match *op {
                     Operation::Jump { condition, to } => {
@@ -1105,14 +1080,18 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GiveAiAnalyzer<'a
                             .filter(|&x| x == self.arg_cache.on_entry(0))
                             .is_some();
                         if is_switch_default_case {
-                            if let Some(to) = ctrl.resolve(to).if_constant() {
-                                let to = E::VirtualAddress::from_u64(to);
+                            if let Some(to) = ctrl.resolve_va(to) {
+                                let state = GiveAiState::SearchingMapCreateUnit;
+                                let state = AnalysisState::new(
+                                    self.bump,
+                                    analysis_state::StateEnum::GiveAi(state)
+                                );
                                 let mut analysis = FuncAnalysis::custom_state(
                                     ctrl.binary(),
                                     ctx,
                                     to,
                                     ctrl.exec_state().clone(),
-                                    GiveAiState::SearchingMapCreateUnit,
+                                    state,
                                 );
                                 analysis.analyze(self);
                                 if self.result.is_some() {
@@ -1170,7 +1149,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GiveAiAnalyzer<'a
                                 .is_some();
                             if ok {
                                 self.inline_depth = 0;
-                                *ctrl.user_state() = GiveAiState::SearchingRaceCheck;
+                                ctrl.user_state().set(GiveAiState::SearchingRaceCheck);
                                 ctrl.analyze_with_current_state(self, dest);
                                 ctrl.end_analysis();
                             }
@@ -1201,7 +1180,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GiveAiAnalyzer<'a
                             .is_some();
                         if ok {
                             self.stop_on_first_branch = false;
-                            *ctrl.user_state() = GiveAiState::RaceCheckSeen;
+                            ctrl.user_state().set(GiveAiState::RaceCheckSeen);
                         }
                         if self.stop_on_first_branch {
                             ctrl.end_analysis();
@@ -1484,44 +1463,39 @@ pub(crate) fn train_military<'e, E: ExecutionState<'e>>(
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = &analysis.bump;
 
     // ai_spend_money calls ai_train_military after checking game_second >= 10
     let exec_state = E::initial_state(ctx, binary);
     let state = TrainMilitaryState {
         seconds_checked: false,
     };
+    let state = AnalysisState::new(bump, analysis_state::StateEnum::TrainMilitary(state));
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, spend_money, exec_state, state);
     let mut analyzer = TrainMilitaryAnalyzer::<E> {
         result: None,
         game,
+        phantom: Default::default(),
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-struct TrainMilitaryAnalyzer<'e, E: ExecutionState<'e>> {
+struct TrainMilitaryAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
     game: Operand<'e>,
+    phantom: std::marker::PhantomData<&'acx ()>,
 }
 
-#[derive(Copy, Clone)]
-struct TrainMilitaryState {
-    seconds_checked: bool,
-}
-
-impl analysis::AnalysisState for TrainMilitaryState {
-    fn merge(&mut self, new: Self) {
-        self.seconds_checked = new.seconds_checked && self.seconds_checked;
-    }
-}
-
-impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TrainMilitaryAnalyzer<'e, E> {
-    type State = TrainMilitaryState;
+impl<'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    TrainMilitaryAnalyzer<'acx, 'e, E>
+{
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Jump { condition, .. } => {
-                if ctrl.user_state().seconds_checked {
+                if ctrl.user_state().get::<TrainMilitaryState>().seconds_checked {
                     ctrl.end_analysis();
                 }
                 let condition = ctrl.resolve(condition);
@@ -1533,15 +1507,17 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TrainMilitaryAnalyzer<'e
                     // Skip the jump (TODO: Should ideally also be able to handle
                     // the case where we only want to follow the jump)
                     ctrl.skip_operation();
-                    ctrl.user_state().seconds_checked = true;
+                    ctrl.user_state().get::<TrainMilitaryState>().seconds_checked = true;
                 }
             }
-            Operation::Call(dest) if ctrl.user_state().seconds_checked => {
-                let result = ctrl.resolve_va(dest);
-                if single_result_assign(result, &mut self.result) {
-                    ctrl.end_analysis();
-                } else {
-                    ctrl.end_branch();
+            Operation::Call(dest) => {
+                if ctrl.user_state().get::<TrainMilitaryState>().seconds_checked {
+                    let result = ctrl.resolve_va(dest);
+                    if single_result_assign(result, &mut self.result) {
+                        ctrl.end_analysis();
+                    } else {
+                        ctrl.end_branch();
+                    }
                 }
             }
             _ => (),

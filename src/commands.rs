@@ -10,6 +10,7 @@ use crate::{
     entry_of_until, single_result_assign, find_bytes, read_u32_at, if_arithmetic_eq_neq,
     bumpvec_with_capacity, OperandExt, FunctionFinder, is_global,
 };
+use crate::analysis_state::{AnalysisState, StateEnum, IsReplayState, StepNetworkState};
 use crate::switch::CompleteSwitch;
 use crate::struct_layouts;
 
@@ -525,6 +526,7 @@ pub(crate) fn is_replay<'e, E: ExecutionState<'e>>(
     let state = IsReplayState {
         possible_result: None,
     };
+    let state = AnalysisState::new(bump, StateEnum::IsReplay(state));
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, command, exec_state, state);
     let mut analyzer = IsReplayAnalyzer::<E> {
         checked_calls: bumpvec_with_capacity(8, bump),
@@ -541,21 +543,10 @@ struct IsReplayAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     inline_depth: u8,
 }
 
-#[derive(Default, Copy, Clone, Debug)]
-struct IsReplayState<'e> {
-    possible_result: Option<Operand<'e>>,
-}
-
-impl<'e> analysis::AnalysisState for IsReplayState<'e> {
-    fn merge(&mut self, newer: Self) {
-        if self.possible_result != newer.possible_result {
-            self.possible_result = None;
-        }
-    }
-}
-
-impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyzer<'acx, 'e, E> {
-    type State = IsReplayState<'e>;
+impl<'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    IsReplayAnalyzer<'acx, 'e, E>
+{
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
@@ -575,12 +566,12 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyze
                 }
             }
             Operation::Move(_, val, _) => {
-                if ctrl.user_state().possible_result.is_some() {
+                let possible_result = ctrl.user_state().get::<IsReplayState>().possible_result;
+                if possible_result.is_some() {
                     let val = ctrl.resolve(val);
                     let is_ok = val.if_mem32_offset(1).is_some();
                     if is_ok {
-                        let new = ctrl.user_state().possible_result;
-                        if single_result_assign(new, &mut self.result) {
+                        if single_result_assign(possible_result, &mut self.result) {
                             ctrl.end_analysis();
                         }
                     }
@@ -601,7 +592,9 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsReplayAnalyze
                     .map(|x| x.0)
                     .filter(|&x| is_global(x));
 
-                ctrl.user_state().possible_result = other;
+                ctrl.user_state().set(IsReplayState {
+                    possible_result: other,
+                });
             }
             _ => (),
         }
@@ -624,12 +617,14 @@ pub(crate) fn analyze_step_network<'e, E: ExecutionState<'e>>(
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = &analysis.bump;
     let arg_cache = &analysis.arg_cache;
 
     let exec_state = E::initial_state(ctx, binary);
     let state = StepNetworkState {
         after_receive_storm_turns: false,
     };
+    let state = AnalysisState::new(bump, StateEnum::StepNetwork(state));
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, step_network, exec_state, state);
     let mut analyzer = AnalyzeStepNetwork::<E> {
         result: &mut result,
@@ -638,37 +633,30 @@ pub(crate) fn analyze_step_network<'e, E: ExecutionState<'e>>(
         process_command_inline_depth: 0,
         inline_limit: 0,
         storm_command_user_candidate: None,
+        phantom: Default::default(),
     };
     analysis.analyze(&mut analyzer);
     result
 }
 
-struct AnalyzeStepNetwork<'a, 'e, E: ExecutionState<'e>> {
+struct AnalyzeStepNetwork<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut StepNetwork<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     inlining: bool,
     process_command_inline_depth: u8,
     inline_limit: u8,
     storm_command_user_candidate: Option<Operand<'e>>,
+    phantom: std::marker::PhantomData<&'acx ()>,
 }
 
-#[derive(Default, Clone, Debug)]
-struct StepNetworkState {
-    after_receive_storm_turns: bool,
-}
-
-impl analysis::AnalysisState for StepNetworkState {
-    fn merge(&mut self, newer: Self) {
-        self.after_receive_storm_turns |= newer.after_receive_storm_turns;
-    }
-}
-
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwork<'a, 'e, E> {
-    type State = StepNetworkState;
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    AnalyzeStepNetwork<'a, 'acx, 'e, E>
+{
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if self.result.network_ready.is_none() {
-            if ctrl.user_state().after_receive_storm_turns {
+            if ctrl.user_state().get::<StepNetworkState>().after_receive_storm_turns {
                 if let Operation::Move(ref dest, val, None) = *op {
                     if let DestOperand::Memory(mem) = dest {
                         let ctx = ctrl.ctx();
@@ -677,7 +665,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwor
                         }
                     }
                 } else if let Operation::Call(_) = op {
-                    ctrl.user_state().after_receive_storm_turns = false;
+                    ctrl.user_state().set(StepNetworkState {
+                        after_receive_storm_turns: false,
+                    });
                 }
             } else {
                 if let Operation::Call(dest) = *op {
@@ -704,7 +694,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepNetwor
                                 self.result.player_turns = Some(arg3);
                                 self.result.player_turns_size = Some(arg4);
                                 self.result.net_player_flags = Some(arg5);
-                                ctrl.user_state().after_receive_storm_turns = true;
+                                ctrl.user_state().set(StepNetworkState {
+                                    after_receive_storm_turns: true,
+                                });
                                 return;
                             }
                         }

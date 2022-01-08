@@ -1,5 +1,6 @@
 use std::convert::TryFrom;
 
+use bumpalo::Bump;
 use bumpalo::collections::Vec as BumpVec;
 
 use scarf::{BinaryFile, Operand, OperandCtx, Operation, DestOperand, OperandType, MemAccessSize};
@@ -8,6 +9,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType};
 
 use crate::{AnalysisCtx, ArgCache, ControlExt, EntryOf, bumpvec_with_capacity, FunctionFinder};
+use crate::analysis_state::{AnalysisState, StateEnum, EudState};
 
 pub struct Eud<'e> {
     pub address: u32,
@@ -87,7 +89,7 @@ pub(crate) fn eud_table<'e, E: ExecutionState<'e>>(
 
     find_const_refs_in_code(binary, 0x7a99, &mut const_refs);
     for &cref in &const_refs {
-        let func = match find_init_eud_table_from_parent::<E>(ctx, binary, &funcs, cref) {
+        let func = match find_init_eud_table_from_parent::<E>(ctx, bump, binary, &funcs, cref) {
             Some(s) => s,
             None => continue,
         };
@@ -114,43 +116,35 @@ pub(crate) fn eud_table<'e, E: ExecutionState<'e>>(
 }
 
 // See comment at call site
-fn find_init_eud_table_from_parent<'e, E: ExecutionState<'e>>(
+fn find_init_eud_table_from_parent<'acx, 'e, E: ExecutionState<'e>>(
     ctx: OperandCtx<'e>,
+    bump: &'acx Bump,
     binary: &'e BinaryFile<E::VirtualAddress>,
     funcs: &[E::VirtualAddress],
     addr: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
-    struct Analyzer<'e, E: ExecutionState<'e>> {
+    struct Analyzer<'acx, 'e, E: ExecutionState<'e>> {
         result: EntryOf<E::VirtualAddress>,
+        phantom: std::marker::PhantomData<&'acx ()>,
     }
 
-    #[derive(Clone)]
-    struct State<Va: VirtualAddress> {
-        in_wanted_branch: bool,
-        wanted_branch_start: Va,
-    }
-    impl<Va: VirtualAddress> scarf::analysis::AnalysisState for State<Va> {
-        fn merge(&mut self, newer: Self) {
-            self.in_wanted_branch |= newer.in_wanted_branch;
-            if self.wanted_branch_start.as_u64() != 0 {
-                self.wanted_branch_start = newer.wanted_branch_start;
-            }
-        }
-    }
-
-    impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
-        type State = State<E::VirtualAddress>;
+    impl<'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'acx, 'e, E> {
+        type State = AnalysisState<'acx, 'e>;
         type Exec = E;
         fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
             let address = ctrl.address();
-            let state = ctrl.user_state();
-            if state.wanted_branch_start == address {
+            let state = ctrl.user_state().get::<EudState>();
+            if state.wanted_branch_start == address.as_u64() as u32 {
                 state.in_wanted_branch = true;
             }
         }
+
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             // True if from jump, false if not jump
-            fn branch_from_condition<'e>(cond: Operand<'e>) -> Option<bool> {
+            fn branch_from_condition<'e>(
+                ctx: OperandCtx<'e>,
+                cond: Operand<'e>,
+            ) -> Option<bool> {
                 match cond.ty() {
                     OperandType::Arithmetic(arith) if arith.ty == ArithOpType::GreaterThan => {
                         if arith.left.if_constant() == Some(0x7a99) {
@@ -160,14 +154,11 @@ fn find_init_eud_table_from_parent<'e, E: ExecutionState<'e>>(
                         }
                     }
                     OperandType::Arithmetic(arith) if arith.ty == ArithOpType::Equal => {
-                        let const_eq =
-                            Operand::either(arith.left, arith.right, |x| x.if_constant());
-                        if let Some((c, other)) = const_eq {
-                            if c == 0 {
-                                return branch_from_condition(other).map(|x| !x);
-                            }
+                        if arith.right == ctx.const_0() {
+                            branch_from_condition(ctx, arith.left).map(|x| !x)
+                        } else {
+                            None
                         }
-                        None
                     }
                     _ => None,
                 }
@@ -175,18 +166,20 @@ fn find_init_eud_table_from_parent<'e, E: ExecutionState<'e>>(
             match *op {
                 Operation::Jump { condition, to } => {
                     let condition = ctrl.resolve(condition);
-                    if let Some(jump) = branch_from_condition(condition) {
+                    let ctx = ctrl.ctx();
+                    if let Some(jump) = branch_from_condition(ctx, condition) {
                         let branch = match jump {
                             true => VirtualAddress::from_u64(
                                 ctrl.resolve(to).if_constant().unwrap_or(0)
                             ),
                             false => ctrl.current_instruction_end(),
                         };
-                        ctrl.user_state().wanted_branch_start = branch;
+                        ctrl.user_state().get::<EudState>().wanted_branch_start =
+                            branch.as_u64() as u32;
                     }
                 }
                 Operation::Call(to) => {
-                    if ctrl.user_state().in_wanted_branch {
+                    if ctrl.user_state().get::<EudState>().in_wanted_branch {
                         if let Some(to) = ctrl.resolve(to).if_constant() {
                             self.result = EntryOf::Ok(VirtualAddress::from_u64(to));
                             ctrl.end_analysis();
@@ -201,12 +194,14 @@ fn find_init_eud_table_from_parent<'e, E: ExecutionState<'e>>(
     crate::entry_of_until(binary, funcs, addr, |entry| {
         let mut analyzer = Analyzer {
             result: EntryOf::Retry,
+            phantom: Default::default(),
         };
         let exec_state = E::initial_state(ctx, binary);
-        let state = State {
+        let state = EudState {
             in_wanted_branch: false,
-            wanted_branch_start: E::VirtualAddress::from_u64(0),
+            wanted_branch_start: 0,
         };
+        let state = AnalysisState::new(bump, StateEnum::Eud(state));
         let mut analysis = FuncAnalysis::custom_state(
             binary,
             ctx,

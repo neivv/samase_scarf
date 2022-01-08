@@ -14,6 +14,10 @@ use crate::{
     if_arithmetic_eq_neq, single_result_assign, bumpvec_with_capacity, FunctionFinder,
     ControlExt, is_stack_address, is_global
 };
+use crate::analysis_state::{
+    AnalysisState, StateEnum, ScMainAnalyzerState, IsInitMapFromPathState, FindChooseSnpState,
+    SinglePlayerStartState, MapEntryState, LoadImagesAnalysisState,
+};
 use crate::add_terms::collect_arith_add_terms;
 use crate::call_tracker::CallTracker;
 use crate::switch::CompleteSwitch;
@@ -266,14 +270,17 @@ pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
     if let Some(sc_main) = result.sc_main {
         let mut analyzer = ScMainAnalyzer {
             result: &mut result,
+            phantom: Default::default(),
         };
+        let state = StateEnum::ScMain(ScMainAnalyzerState::SearchingEntryHook);
+        let state = AnalysisState::new(bump, state);
         let exec_state = E::initial_state(ctx, binary);
         let mut analysis = FuncAnalysis::custom_state(
             binary,
             ctx,
             sc_main,
             exec_state,
-            ScMainAnalyzerState::SearchingEntryHook,
+            state,
         );
         analysis.analyze(&mut analyzer);
     }
@@ -322,34 +329,22 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsScMain<'a, 'e, 
     }
 }
 
-struct ScMainAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct ScMainAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut GameInit<'e, E::VirtualAddress>,
+    phantom: std::marker::PhantomData<&'acx ()>,
 }
 
-#[allow(bad_style)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Ord, PartialOrd)]
-enum ScMainAnalyzerState {
-    SearchingEntryHook,
-    SearchingGameLoop,
-    SwitchJumped(u8),
-}
-
-impl analysis::AnalysisState for ScMainAnalyzerState {
-    fn merge(&mut self, newer: Self) {
-        if *self < newer {
-            *self = newer;
-        }
-    }
-}
-
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a, 'e, E> {
-    type State = ScMainAnalyzerState;
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    ScMainAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let ctx = ctrl.ctx();
+        let state = *ctrl.user_state().get::<ScMainAnalyzerState>();
         match *op {
             Operation::Jump { to, condition } => {
-                if let ScMainAnalyzerState::SwitchJumped(..) = *ctrl.user_state() {
+                if let ScMainAnalyzerState::SwitchJumped(..) = state {
                     // Expecting call immediately after switch jump
                     ctrl.end_analysis();
                     return;
@@ -360,7 +355,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
                     if to.if_constant().is_none() {
                         // Switch jump, follow cases 3 & 4 if searching for game loop,
                         // switch expression is also scmain_state then
-                        if *ctrl.user_state() == ScMainAnalyzerState::SearchingGameLoop {
+                        if state == ScMainAnalyzerState::SearchingGameLoop {
                             let switch = CompleteSwitch::new(to, ctx, ctrl.exec_state());
                             if let Some(switch) = switch {
                                 if let Some(index) = switch.index_operand(ctx) {
@@ -371,8 +366,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
                                     if let Some(addr) =
                                         switch.branch(binary, ctx, case_n as u32)
                                     {
-                                        *ctrl.user_state() =
-                                            ScMainAnalyzerState::SwitchJumped(case_n);
+                                        ctrl.user_state().set(
+                                            ScMainAnalyzerState::SwitchJumped(case_n)
+                                        );
                                         ctrl.analyze_with_current_state(self, addr);
                                     }
                                 }
@@ -381,7 +377,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
                         }
                     }
                 } else {
-                    if *ctrl.user_state() == ScMainAnalyzerState::SearchingEntryHook {
+                    if state == ScMainAnalyzerState::SearchingEntryHook {
                         // BW does if options & 0x800 != 0 { play_smk(..); }
                         // at the hook point
                         let ok = crate::if_arithmetic_eq_neq(condition)
@@ -393,13 +389,13 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
                             .is_some();
                         if ok {
                             self.result.mainmenu_entry_hook = Some(ctrl.address());
-                            *ctrl.user_state() = ScMainAnalyzerState::SearchingGameLoop;
+                            ctrl.user_state().set(ScMainAnalyzerState::SearchingGameLoop);
                         }
                     }
                 }
             }
             Operation::Call(to) => {
-                if let ScMainAnalyzerState::SwitchJumped(case) = *ctrl.user_state() {
+                if let ScMainAnalyzerState::SwitchJumped(case) = state {
                     let to = ctrl.resolve(to);
                     if let Some(dest) = to.if_constant() {
                         if case == 3 {
@@ -413,7 +409,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ScMainAnalyzer<'a
             }
             Operation::Move(DestOperand::Memory(ref mem), val, _) => {
                 // Skip any moves of constant 4 to memory as it is likely scmain_state write
-                if *ctrl.user_state() == ScMainAnalyzerState::SearchingEntryHook {
+                if state == ScMainAnalyzerState::SearchingEntryHook {
                     if ctrl.resolve(val).if_constant() == Some(4) {
                         let dest = ctrl.resolve_mem(mem);
                         if !is_stack_address(dest.address().0) {
@@ -509,9 +505,12 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
                 jump_count: 0,
                 is_after_arg3_check: false,
             };
+            let state =
+                AnalysisState::new(bump, StateEnum::InitMapFromPath(state));
             let mut analyzer = IsInitMapFromPath {
                 result: EntryOf::Retry,
                 arg_cache,
+                phantom: Default::default(),
             };
             let exec = E::initial_state(ctx, binary);
             let mut analysis = FuncAnalysis::custom_state(binary, ctx, entry, exec, state);
@@ -531,26 +530,16 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct IsInitMapFromPath<'a, 'e, E: ExecutionState<'e>> {
+struct IsInitMapFromPath<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: EntryOf<()>,
     arg_cache: &'a ArgCache<'e, E>,
+    phantom: std::marker::PhantomData<&'acx ()>,
 }
 
-#[derive(Default, Copy, Clone, Debug)]
-struct IsInitMapFromPathState {
-    jump_count: u8,
-    is_after_arg3_check: bool,
-}
-
-impl analysis::AnalysisState for IsInitMapFromPathState {
-    fn merge(&mut self, newer: Self) {
-        self.jump_count = newer.jump_count.min(self.jump_count);
-        self.is_after_arg3_check = self.is_after_arg3_check & newer.is_after_arg3_check;
-    }
-}
-
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsInitMapFromPath<'a, 'e, E> {
-    type State = IsInitMapFromPathState;
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    IsInitMapFromPath<'a, 'acx, 'e, E>
+{
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         // init_map_from_path does
@@ -560,7 +549,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsInitMapFromPath
         // as its first operation (Unless assertions enabled)
         match *op {
             Operation::Move(ref to, val, None) => {
-                if ctrl.user_state().is_after_arg3_check {
+                let state = ctrl.user_state().get::<IsInitMapFromPathState>();
+                if state.is_after_arg3_check {
                     let val = ctrl.resolve(val);
                     if val.if_constant() == Some(0) {
                         if let DestOperand::Memory(mem) = to {
@@ -574,10 +564,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsInitMapFromPath
                 }
             }
             Operation::Jump { condition, .. } => {
-                if ctrl.user_state().jump_count > 5 {
+                let state = ctrl.user_state().get::<IsInitMapFromPathState>();
+                if state.jump_count > 6 {
                     ctrl.end_branch();
+                    return;
                 }
-                ctrl.user_state().jump_count += 1;
+                state.jump_count += 1;
                 let cond = ctrl.resolve(condition);
                 let mut arg3_check = false;
                 if let Some((l, r, _)) = crate::if_arithmetic_eq_neq(cond) {
@@ -587,7 +579,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsInitMapFromPath
                         }
                     }
                 }
-                ctrl.user_state().is_after_arg3_check = arg3_check;
+                let state = ctrl.user_state().get::<IsInitMapFromPathState>();
+                state.is_after_arg3_check = arg3_check;
             }
             _ => (),
         }
@@ -616,6 +609,7 @@ pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
         .map(|x| x.address);
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = &analysis.bump;
     let funcs = functions.functions();
     let arg_cache = &analysis.arg_cache;
     let mut result = None;
@@ -627,10 +621,12 @@ pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
         let state = FindChooseSnpState {
             provider_id_offset: None,
         };
+        let state = AnalysisState::new(bump, StateEnum::FindChooseSnp(state));
         let mut analyzer = FindChooseSnp {
             result: None,
             arg_cache,
             inlining: false,
+            phantom: Default::default(),
         };
         let mut exec = E::initial_state(ctx, binary);
         exec.move_to(
@@ -700,35 +696,25 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRealChooseSnp
     }
 }
 
-struct FindChooseSnp<'a, 'e, E: ExecutionState<'e>> {
+struct FindChooseSnp<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     inlining: bool,
+    phantom: std::marker::PhantomData<&'acx ()>,
 }
 
-#[derive(Default, Copy, Clone, Debug)]
-struct FindChooseSnpState<'e> {
-    provider_id_offset: Option<Operand<'e>>,
-}
-
-impl<'e> analysis::AnalysisState for FindChooseSnpState<'e> {
-    fn merge(&mut self, newer: Self) {
-        if self.provider_id_offset != newer.provider_id_offset {
-            self.provider_id_offset = None;
-        }
-    }
-}
-
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindChooseSnp<'a, 'e, E> {
-    type State = FindChooseSnpState<'e>;
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    FindChooseSnp<'a, 'acx, 'e, E>
+{
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         const ID_BNAU: u32 = 0x424E4155;
         match *op {
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
-                    if let Some(off) = ctrl.user_state().provider_id_offset.clone() {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let state = ctrl.user_state().get::<FindChooseSnpState>();
+                    if let Some(off) = state.provider_id_offset.clone() {
                         let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                         if arg1 == off {
                             self.result = Some(dest);
@@ -751,7 +737,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindChooseSnp<'a,
                 let provider_id = crate::if_arithmetic_eq_neq(cond)
                     .map(|x| (x.0, x.1))
                     .and_either_other(|x| x.if_constant().filter(|&c| c == ID_BNAU as u64));
-                ctrl.user_state().provider_id_offset = provider_id;
+                let state = ctrl.user_state().get::<FindChooseSnpState>();
+                state.provider_id_offset = provider_id;
             }
             _ => (),
         }
@@ -768,6 +755,7 @@ pub(crate) fn single_player_start<'e, E: ExecutionState<'e>>(
     let callers = functions.find_callers(analysis, choose_snp);
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = &analysis.bump;
     let funcs = functions.functions();
     let arg_cache = &analysis.arg_cache;
     for caller in callers {
@@ -779,9 +767,11 @@ pub(crate) fn single_player_start<'e, E: ExecutionState<'e>>(
                 inlining: false,
                 inline_limit: 0,
                 first_call: true,
+                phantom: Default::default(),
             };
             let exec = E::initial_state(ctx, binary);
             let state = SinglePlayerStartState::SearchingStorm101;
+            let state = AnalysisState::new(bump, StateEnum::SpStart(state));
             let mut analysis = FuncAnalysis::custom_state(binary, ctx, entry, exec, state);
             analysis.analyze(&mut analyzer);
             if result.local_storm_player_id.is_some() {
@@ -798,45 +788,24 @@ pub(crate) fn single_player_start<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct SinglePlayerStartAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct SinglePlayerStartAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut SinglePlayerStart<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     local_player_id: &'a Operand<'e>,
     inlining: bool,
     inline_limit: u8,
     first_call: bool,
+    phantom: std::marker::PhantomData<&'acx ()>,
 }
 
-/// These are ordered from first step to last
-#[derive(Ord, Eq, PartialEq, PartialOrd, Debug, Copy, Clone)]
-enum SinglePlayerStartState {
-    // calls Storm#101(addr, "", "", 0, 0, 0, u8[x], "", &mut local_storm_player_id)
-    SearchingStorm101,
-    // Does
-    //  net_player_to_game(*)[local_storm_player_id] = local_player_id
-    //  net_player_to_unique(*)[local_storm_player_id] = local_unique_player_id(*)
-    //  memcpy(&mut game_data(*), arg1)
-    // finds ones marked(*), inlining is necessary.
-    AssigningPlayerMappings,
-    // Does memcpy(&mut player_skins[local_storm_player_id], &skins.active_skins)
-    FindingSkins,
-}
-
-impl analysis::AnalysisState for SinglePlayerStartState {
-    fn merge(&mut self, newer: Self) {
-        if *self < newer {
-            *self = newer;
-        }
-    }
-}
-
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    SinglePlayerStartAnalyzer<'a, 'e, E>
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    SinglePlayerStartAnalyzer<'a, 'acx, 'e, E>
 {
-    type State = SinglePlayerStartState;
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        match *ctrl.user_state() {
+        let state = *ctrl.user_state().get::<SinglePlayerStartState>();
+        match state {
             SinglePlayerStartState::SearchingStorm101 => {
                 if let Operation::Call(_) = op {
                     let was_first_call = self.first_call;
@@ -854,7 +823,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         .is_some();
                     if ok {
                         let arg10 = ctrl.resolve(self.arg_cache.on_call(9));
-                        *ctrl.user_state() = SinglePlayerStartState::AssigningPlayerMappings;
+                        ctrl.user_state().set(SinglePlayerStartState::AssigningPlayerMappings);
                         self.result.local_storm_player_id = Some(ctx.mem32(arg10, 0));
                     } else if was_first_call {
                         ctrl.check_stack_probe();
@@ -943,7 +912,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     self.result.net_player_to_game.is_some() &&
                     self.result.net_player_to_unique.is_some();
                 if all_found {
-                    *ctrl.user_state() = SinglePlayerStartState::FindingSkins;
+                    ctrl.user_state().set(SinglePlayerStartState::FindingSkins);
                 }
             }
             SinglePlayerStartState::FindingSkins => {
@@ -1787,22 +1756,6 @@ enum SelectMapEntryState {
     OnMultiplayerCreate,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-enum MapEntryState {
-    Unknown,
-    Map,
-    Save,
-    Replay,
-}
-
-impl analysis::AnalysisState for MapEntryState {
-    fn merge(&mut self, newer: Self) {
-        if *self != newer {
-            *self = MapEntryState::Unknown;
-        }
-    }
-}
-
 pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     select_map_entry: E::VirtualAddress,
@@ -1816,12 +1769,13 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
         map_entry_flags_offset: Option<u32>,
         ctx: OperandCtx<'e>,
         first_call: bool,
+        bump: &'acx Bump,
     }
 
     impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         Analyzer<'a, 'acx, 'e, E>
     {
-        type State = MapEntryState;
+        type State = AnalysisState<'acx, 'e>;
         type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             let ctx = ctrl.ctx();
@@ -1842,7 +1796,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                             }
                         }
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            let state = *ctrl.user_state();
+                            let state = *ctrl.user_state().get::<MapEntryState>();
                             if state != MapEntryState::Unknown {
                                 let arg1 = ctrl.resolve(arg_cache.on_call(0));
                                 if self.is_map_entry(arg1) {
@@ -1877,12 +1831,17 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                                                 ctx.constant(2),
                                             );
                                             let binary = ctrl.binary();
+                                            let user_state = MapEntryState::Unknown;
+                                            let user_state = AnalysisState::new(
+                                                self.bump,
+                                                StateEnum::SelectMapEntry(user_state),
+                                            );
                                             let mut analysis = FuncAnalysis::custom_state(
                                                 binary,
                                                 ctx,
                                                 address,
                                                 state,
-                                                MapEntryState::Unknown,
+                                                user_state,
                                             );
                                             analysis.analyze(self);
                                         }
@@ -1900,7 +1859,8 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                         }
                     }
                     Operation::Jump { condition, to } => {
-                        if *ctrl.user_state() != MapEntryState::Unknown {
+                        let state = *ctrl.user_state().get::<MapEntryState>();
+                        if state != MapEntryState::Unknown {
                             ctrl.end_branch();
                             return;
                         }
@@ -1944,7 +1904,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                             };
                             ctrl.end_branch();
                             ctrl.add_branch_with_current_state(unset_addr);
-                            *ctrl.user_state() = state;
+                            ctrl.user_state().set(state);
                             ctrl.add_branch_with_current_state(set_addr);
                         }
                     }
@@ -2055,6 +2015,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
     // For some older versions it also has been arg ecx
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = &analysis.bump;
     let mut result = SelectMapEntryAnalysis {
         mde_load_map: None,
         mde_load_replay: None,
@@ -2071,9 +2032,11 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
         load_map_entry_state: None,
         map_entry_flags_offset: None,
         ctx,
+        bump,
     };
     let exec = E::initial_state(ctx, binary);
     let state = MapEntryState::Unknown;
+    let state = AnalysisState::new(bump, StateEnum::SelectMapEntry(state));
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, select_map_entry, exec, state);
     analysis.analyze(&mut analyzer);
     result
@@ -2398,6 +2361,7 @@ pub(crate) fn analyze_load_images<'e, E: ExecutionState<'e>>(
     };
     let exec = E::initial_state(ctx, binary);
     let state = LoadImagesAnalysisState::BeforeLoadDat;
+    let state = AnalysisState::new(&actx.bump, StateEnum::LoadImages(state));
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, load_images, exec, state);
     analysis.analyze(&mut analyzer);
     analyzer.finish(ctx, binary);
@@ -2421,64 +2385,19 @@ struct LoadImagesAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     min_state: LoadImagesAnalysisState,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
-enum LoadImagesAnalysisState {
-    // Move forward until past load_dat call
-    BeforeLoadDat,
-    // Finds open_anim_single_file(this = &base_anim_set[1], 0, 1, 1)
-    // open_anim_multi_file(this = &base_anim_set[0], 0, 999, 1, 2, 1)
-    // Inline to 1 depth load_images_aux, stop inlining if first there call
-    // isn't func(_, "arr\\images.tbl", _, _, _)
-    // + Start keeping track of func return values, don't inline other than load_images_aux
-    FindOpenAnims,
-    // Expected to be first call after open_anim_multi_file, recognized from "/skins" const str
-    // access
-    FindInitSkins,
-    // add_asset_change_cb(&mut out_handle, func (0x14 bytes by value))
-    // func.x4 (arg3) is anim_asset_change_cb
-    FindAssetChangeCb,
-    // load_grps(image_grps, images_dat_grp, &mut out, 999)
-    // Single caller so some build may inline this??
-    // Currently not handling that.
-    FindImageGrps,
-    // load_lo_set(&image_overlays[0], images_dat_attack_overlay, &mut out, 999)
-    FindImageOverlays,
-    // Stop inlining if inline depth == 1 (since FindOpenAnims)
-    // Find move Mem8[x + undef] = x * 2
-    FindFireOverlayMax,
-}
-
-impl analysis::AnalysisState for LoadImagesAnalysisState {
-    fn merge(&mut self, newer: Self) {
-        // Merge most to smallest state possible,
-        // but there's code that skips past add_asset_change_cb so have an exception
-        // to merge that to a higher state.
-        if *self == LoadImagesAnalysisState::FindImageGrps &&
-            newer == LoadImagesAnalysisState::FindAssetChangeCb
-        {
-            // Nothing
-        } else if newer == LoadImagesAnalysisState::FindImageGrps &&
-            *self == LoadImagesAnalysisState::FindAssetChangeCb
-        {
-            *self = newer;
-        } else if *self > newer {
-            *self = newer;
-        }
-    }
-}
-
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     LoadImagesAnalyzer<'a, 'acx, 'e, E>
 {
-    type State = LoadImagesAnalysisState;
+    type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        match *ctrl.user_state() {
+        let state = *ctrl.user_state().get::<LoadImagesAnalysisState>();
+        match state {
             LoadImagesAnalysisState::BeforeLoadDat => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if dest == self.load_dat {
-                            *ctrl.user_state() = LoadImagesAnalysisState::FindOpenAnims;
+                            ctrl.user_state().set(LoadImagesAnalysisState::FindOpenAnims);
                             self.min_state = LoadImagesAnalysisState::FindOpenAnims;
                         }
                     }
@@ -2511,7 +2430,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                         let (new, ok) = self.check_open_anim_call(ctrl, dest);
                         if ok {
-                            *ctrl.user_state() = LoadImagesAnalysisState::FindInitSkins;
+                            ctrl.user_state().set(LoadImagesAnalysisState::FindInitSkins);
                             self.min_state = LoadImagesAnalysisState::FindInitSkins;
                             return;
                         }
@@ -2523,7 +2442,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             self.inline_limit = 0;
                             self.inline_depth = 0;
                             if self.result.open_anim_single_file.is_some() {
-                                *ctrl.user_state() = LoadImagesAnalysisState::FindFireOverlayMax;
+                                ctrl.user_state()
+                                    .set(LoadImagesAnalysisState::FindFireOverlayMax);
                                 self.min_state = LoadImagesAnalysisState::FindFireOverlayMax;
                             }
                         }
@@ -2558,7 +2478,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             self.checking_init_skins = false;
                             if self.result.init_skins.is_some() {
                                 self.result.init_skins = Some(dest);
-                                *ctrl.user_state() = LoadImagesAnalysisState::FindAssetChangeCb;
+                                ctrl.user_state().set(LoadImagesAnalysisState::FindAssetChangeCb);
                                 self.min_state = LoadImagesAnalysisState::FindAssetChangeCb;
                                 return;
                             }
@@ -2577,8 +2497,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 // load_grps(image_grps, images_dat_grp, &mut out, 999)
                 // load_lo_set(&image_overlays[0], images_dat_attack_overlay, &mut out, 999)
                 if let Operation::Call(_) = *op {
-                    let is_find_grps =
-                        *ctrl.user_state() == LoadImagesAnalysisState::FindImageGrps;
+                    let is_find_grps = state == LoadImagesAnalysisState::FindImageGrps;
                     let dat_arr = match is_find_grps {
                         true => self.images_dat_grp,
                         false => self.images_dat_attack_overlay,
@@ -2592,11 +2511,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if let Some(result) = result {
                         if is_find_grps {
                             self.result.image_grps = Some(result);
-                            *ctrl.user_state() = LoadImagesAnalysisState::FindImageOverlays;
+                            ctrl.user_state().set(LoadImagesAnalysisState::FindImageOverlays);
                             self.min_state = LoadImagesAnalysisState::FindImageOverlays;
                         } else {
                             self.result.image_overlays = Some(result);
-                            *ctrl.user_state() = LoadImagesAnalysisState::FindFireOverlayMax;
+                            ctrl.user_state().set(LoadImagesAnalysisState::FindFireOverlayMax);
                             self.min_state = LoadImagesAnalysisState::FindFireOverlayMax;
                             if self.inline_depth != 0 {
                                 // Go back to outer load_images
@@ -2655,7 +2574,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 
     fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
-        if *ctrl.user_state() < self.min_state {
+        if *ctrl.user_state().get::<LoadImagesAnalysisState>() < self.min_state {
             ctrl.end_branch();
         }
     }
@@ -2857,7 +2776,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                 if let Some(cb) = asset_change_cb {
                     self.result.add_asset_change_cb = Some(dest);
                     self.result.anim_asset_change_cb = Some(cb);
-                    *ctrl.user_state() = LoadImagesAnalysisState::FindImageGrps;
+                    ctrl.user_state().set(LoadImagesAnalysisState::FindImageGrps);
                     self.min_state = LoadImagesAnalysisState::FindImageGrps;
                     return;
                 }
