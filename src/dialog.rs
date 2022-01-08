@@ -225,14 +225,15 @@ pub(crate) fn find_dialog_global<'exec, E: ExecutionState<'exec>>(
     str_ref: &StringRefs<E::VirtualAddress>,
 ) -> EntryOf<E::VirtualAddress> {
     let ctx = analysis.ctx;
-    let return_marker = ctx.truncate(ctx.custom(0), E::VirtualAddress::SIZE as u8 * 8);
+    let return_marker = ctx.and_const(ctx.custom(0), E::WORD_SIZE.mask());
     let args = &analysis.arg_cache;
+    let string_address_constant = ctx.constant(str_ref.string_address.as_u64());
     let mut analysis = FuncAnalysis::new(analysis.binary, ctx, func);
     let mut analyzer = DialogGlobalAnalyzer {
         result: EntryOf::Retry,
-        after_call: false,
         path_string: None,
         str_ref,
+        string_address_constant,
         args,
         return_marker,
     };
@@ -242,9 +243,9 @@ pub(crate) fn find_dialog_global<'exec, E: ExecutionState<'exec>>(
 
 struct DialogGlobalAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: EntryOf<E::VirtualAddress>,
-    after_call: bool,
     path_string: Option<Operand<'e>>,
     str_ref: &'a StringRefs<E::VirtualAddress>,
+    string_address_constant: Operand<'e>,
     args: &'a ArgCache<'e, E>,
     return_marker: Operand<'e>,
 }
@@ -257,14 +258,6 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
             self.result = EntryOf::Stop;
         }
         let ctx = ctrl.ctx();
-        if self.after_call {
-            // Has to be done like this since just writing to eax before call would
-            // just get overwritten later
-            let eax = DestOperand::Register64(0);
-            let state = ctrl.exec_state();
-            state.move_to(&eax, self.return_marker);
-            self.after_call = false;
-        }
         if let Some(path_string) = self.path_string.take() {
             let dest = DestOperand::Register64(0);
             let dest2 = DestOperand::from_oper(ctrl.mem_word(path_string, 0));
@@ -272,35 +265,28 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
             // String creation function returns eax = arg1
             state.move_resolved(&dest, path_string);
             // Mem[string + 0] is character data
-            state.move_resolved(
-                &dest2,
-                ctx.constant(self.str_ref.string_address.as_u64()),
-            );
+            state.move_resolved(&dest2, self.string_address_constant);
         }
         match *op {
             Operation::Call(_dest) => {
-                let string_in_args = (0..4).any(|i| {
-                    ctrl.resolve(self.args.on_call(i)).if_constant() ==
-                        Some(self.str_ref.string_address.as_u64())
-                });
+                let mut args = [ctx.const_0(); 4];
+                for i in 0..args.len() {
+                    args[i] = ctrl.resolve(self.args.on_call(i as u8));
+                }
+                let string_in_args = args.iter().any(|&x| x == self.string_address_constant);
                 if string_in_args {
-                    let arg2 = ctrl.resolve(self.args.on_call(1));
-                    let arg4 = ctrl.resolve(self.args.on_call(3));
-                    let arg4_is_string_ptr = arg4.if_constant()
-                        .filter(|&c| c == self.str_ref.string_address.as_u64())
-                        .is_some();
-                    let arg2_is_string_ptr = arg2.if_constant()
-                        .filter(|&c| c == self.str_ref.string_address.as_u64())
-                        .is_some();
+                    let arg2 = args[1];
+                    let arg4 = args[3];
+                    let arg4_is_string_ptr = arg4 == self.string_address_constant;
+                    let arg2_is_string_ptr = arg2 == self.string_address_constant;
                     // Check for either creating a string (1.23.2+) or const char ptr
                     if arg2_is_string_ptr || arg4_is_string_ptr {
-                        let arg1 = ctrl.resolve(self.args.on_call(0));
-                        self.path_string = Some(arg1);
+                        self.path_string = Some(args[0]);
                     } else {
-                        self.after_call = true;
+                        ctrl.do_call_with_result(self.return_marker);
                     }
                 } else {
-                    let arg3 = ctrl.resolve(self.args.on_call(2));
+                    let arg3 = args[2];
                     let arg3_value = ctrl.read_memory(&ctx.mem_access(arg3, 0, E::WORD_SIZE));
                     let arg3_inner =
                         ctrl.read_memory(&ctx.mem_access(arg3_value, 0, E::WORD_SIZE));
