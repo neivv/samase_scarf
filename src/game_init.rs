@@ -1671,6 +1671,8 @@ pub(crate) fn init_game<'e, E: ExecutionState<'e>>(
 
     let callers = functions.find_callers(analysis, init_units);
     let functions = functions.functions();
+    // Find caller of init_units that compares a ptr against 0xffff_ffff constant
+    // thrice before init_units call. This handle will be loaded_save handle.
     for call in callers {
         let mut invalid_handle_cmps: BumpVec<'_, (E::VirtualAddress, _)> =
             bumpvec_with_capacity(8, bump);
@@ -1713,9 +1715,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 let cmp_invalid_handle = cond.iter_no_mem_addr()
                     .filter_map(|x| {
                         let (l, r) = x.if_arithmetic_eq()?;
-                        r.if_constant().filter(|&c| c as u32 == u32::max_value())?;
+                        r.if_constant().filter(|&c| c as u32 == u32::MAX)?;
                         Some(l)
                     })
+                    .filter(|&x| is_global(x))
                     .next();
                 if let Some(h) = cmp_invalid_handle {
                     let address = ctrl.address();
@@ -1734,8 +1737,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             Operation::Call(dest) => {
-                if let Some(c) = ctrl.resolve(dest).if_constant() {
-                    if c == self.init_units.as_u64() {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    if dest == self.init_units {
                         self.result = EntryOf::Stop;
                     }
                 }

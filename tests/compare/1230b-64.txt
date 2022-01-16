@@ -44,7 +44,7 @@ get_region: 140361850
 give_ai: 140256d30
 give_unit: 140261800
 glucmpgn_event_handler: 1402e0e10
-init_game: None
+init_game: 1402ce610
 init_game_network: 14032ddd0
 init_map_from_path: 140304470
 init_net_player: 14033efa0
@@ -206,7 +206,7 @@ last_free_order: Mem64[140c3bc58]
 last_free_selection_circle: Mem64[140c2aef0]
 last_free_sprite: Mem64[140c3bc98]
 last_lone_sprite: Mem64[140c3d168]
-loaded_save: None
+loaded_save: Mem64[140bac0e0]
 lobby_state: Mem8[140e53901]
 local_game_result: Mem32[140e2dd68]
 local_player_id: Mem32[140baaf4c]
@@ -267,7 +267,7 @@ tranwire_grp: Mem64[140e66b80]
 unique_command_user: Mem32[140baaf44]
 unit_should_reveal_area: Mem32[140c3d344]
 unit_skin_map: 140b828e0
-unit_strength: None
+unit_strength: 140c76320
 units: Mem64[140c3d2e0]
 vertex_buffer: 140bc1948
 vision_update_counter: Mem32[140e2b348]
@@ -1650,7 +1650,208 @@ Orders array patches:
 14037e4fc:2 = [3d, 2c, 00, 00, 00] (Free @ 14037e4b0)
 1403a5733:2 = [3d, 2c, 00, 00, 00] (Free @ 1403a56c5)
 --- Extended array patches ---
+00: VirtualAddress(14037877a):8 = ((rax * c) + (((rax + rcx) - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) / 2e))
+00: VirtualAddress(1403787a3):8 = ((rdx * c) + (rcx & ffffffff))
+00: VirtualAddress(1403788a8):8 = (r8 + (r9 * c))
+00: VirtualAddress(1403788b8):8 = (r8 + (r9 * c))
+01: VirtualAddress(1403085c2):7 = 0
+01: VirtualAddress(1403085d0):7 = c0
+01: VirtualAddress(1403085df):8 = 180
+01: VirtualAddress(1403085ed):6 = 1e0
+01: VirtualAddress(1403085fa):7 = 210
+01: VirtualAddress(140308613):8 = 228
+01: VirtualAddress(140308621):6 = 288
+01: VirtualAddress(14030862e):7 = 2b8
+01: VirtualAddress(14030863c):6 = 2d0
+01: VirtualAddress(140308653):7 = 1
+01: VirtualAddress(140308661):7 = c1
+01: VirtualAddress(140308670):8 = 181
+01: VirtualAddress(14030867e):6 = 1e1
+01: VirtualAddress(14030868b):7 = 211
+01: VirtualAddress(1403086a4):8 = 229
+01: VirtualAddress(1403086b2):6 = 289
+01: VirtualAddress(1403086bf):7 = 2b9
+01: VirtualAddress(1403086cd):6 = 2d1
+01: VirtualAddress(1403086e4):7 = 2
+01: VirtualAddress(1403086f2):7 = c2
+01: VirtualAddress(140308701):8 = 182
+01: VirtualAddress(14030870f):6 = 1e2
+01: VirtualAddress(14030871c):7 = 212
+01: VirtualAddress(140308735):8 = 22a
+01: VirtualAddress(140308743):6 = 28a
+01: VirtualAddress(140308750):7 = 2ba
+01: VirtualAddress(14030875e):6 = 2d2
+01: VirtualAddress(140308775):7 = 3
+01: VirtualAddress(140308783):7 = c3
+01: VirtualAddress(140308792):8 = 183
+01: VirtualAddress(1403087a0):6 = 1e3
+01: VirtualAddress(1403087ad):7 = 213
+01: VirtualAddress(1403087c6):8 = 22b
+01: VirtualAddress(1403087d4):6 = 28b
+01: VirtualAddress(1403087e1):7 = 2bb
+01: VirtualAddress(1403087ef):6 = 2d3
+01: VirtualAddress(140308806):7 = 4
+01: VirtualAddress(140308814):7 = c4
+01: VirtualAddress(140308823):8 = 184
+01: VirtualAddress(140308831):6 = 1e4
+01: VirtualAddress(14030883e):7 = 214
+01: VirtualAddress(140308857):8 = 22c
+01: VirtualAddress(140308865):6 = 28c
+01: VirtualAddress(140308872):7 = 2bc
+01: VirtualAddress(140308880):6 = 2d4
+01: VirtualAddress(140308897):7 = 5
+01: VirtualAddress(1403088a5):7 = c5
+01: VirtualAddress(1403088b4):8 = 185
+01: VirtualAddress(1403088c2):6 = 1e5
+01: VirtualAddress(1403088cf):7 = 215
+01: VirtualAddress(1403088e8):8 = 22d
+01: VirtualAddress(1403088f6):6 = 28d
+01: VirtualAddress(140308903):7 = 2bd
+01: VirtualAddress(140308911):6 = 2d5
+01: VirtualAddress(140308928):7 = 6
+01: VirtualAddress(140308936):7 = c6
+01: VirtualAddress(140308945):8 = 186
+01: VirtualAddress(140308953):6 = 1e6
+01: VirtualAddress(140308960):7 = 216
+01: VirtualAddress(140308979):8 = 22e
+01: VirtualAddress(140308987):6 = 28e
+01: VirtualAddress(140308994):7 = 2be
+01: VirtualAddress(1403089a2):6 = 2d6
+01: VirtualAddress(1403089b9):7 = 7
+01: VirtualAddress(1403089c7):7 = c7
+01: VirtualAddress(1403089d6):8 = 187
+01: VirtualAddress(1403089e4):6 = 1e7
+01: VirtualAddress(1403089f1):7 = 217
+01: VirtualAddress(140308a0a):8 = 22f
+01: VirtualAddress(140308a18):6 = 28f
+01: VirtualAddress(140308a25):7 = 2bf
+01: VirtualAddress(140308a33):6 = 2d7
+01: VirtualAddress(140308a4a):7 = 8
+01: VirtualAddress(140308a58):7 = c8
+01: VirtualAddress(140308a67):8 = 188
+01: VirtualAddress(140308a75):6 = 1e8
+01: VirtualAddress(140308a82):7 = 218
+01: VirtualAddress(140308a9b):8 = 230
+01: VirtualAddress(140308aa9):6 = 290
+01: VirtualAddress(140308ab6):7 = 2c0
+01: VirtualAddress(140308ac4):6 = 2d8
+01: VirtualAddress(140308ae3):7 = 9
+01: VirtualAddress(140308af1):7 = c9
+01: VirtualAddress(140308b00):8 = 189
+01: VirtualAddress(140308b0e):6 = 1e9
+01: VirtualAddress(140308b1b):7 = 219
+01: VirtualAddress(140308b34):8 = 231
+01: VirtualAddress(140308b42):6 = 291
+01: VirtualAddress(140308b4f):7 = 2c1
+01: VirtualAddress(140308b5d):6 = 2d9
+01: VirtualAddress(140308b74):7 = a
+01: VirtualAddress(140308b82):7 = ca
+01: VirtualAddress(140308b91):8 = 18a
+01: VirtualAddress(140308b9f):6 = 1ea
+01: VirtualAddress(140308bac):7 = 21a
+01: VirtualAddress(140308bc5):8 = 232
+01: VirtualAddress(140308bd3):6 = 292
+01: VirtualAddress(140308be0):7 = 2c2
+01: VirtualAddress(140308bee):6 = 2da
+01: VirtualAddress(140308c05):7 = b
+01: VirtualAddress(140308c13):7 = cb
+01: VirtualAddress(140308c22):8 = 18b
+01: VirtualAddress(140308c30):6 = 1eb
+01: VirtualAddress(140308c3d):7 = 21b
+01: VirtualAddress(140308c56):8 = 233
+01: VirtualAddress(140308c64):6 = 293
+01: VirtualAddress(140308c71):7 = 2c3
+01: VirtualAddress(140308c7f):6 = 2db
+01: VirtualAddress(1403787d8):8 = (r9 + (r10 * c))
+01: VirtualAddress(1403787e8):8 = (r9 + (r10 * c))
+01: VirtualAddress(1403788f8):8 = (r8 + (r9 * c))
+01: VirtualAddress(140378908):8 = (r8 + (r9 * c))
+02: VirtualAddress(1403786cc):8 = ((rax * c) + (((rax + rcx) - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) / 18))
+02: VirtualAddress(1403786f3):8 = ((rax * c) + ((rax + (rdx * 4)) / 14))
+02: VirtualAddress(140378868):8 = (r8 + (r9 * c))
+02: VirtualAddress(140378875):8 = (r8 + (r9 * c))
+03: VirtualAddress(140378688):8 = (r9 + (r10 * c))
+03: VirtualAddress(140378695):8 = (r9 + (r10 * c))
+03: VirtualAddress(140378828):8 = (r8 + (r9 * c))
+03: VirtualAddress(140378835):8 = (r8 + (r9 * c))
+04: VirtualAddress(1403773d1):7 = 0
+04: VirtualAddress(1403773df):7 = 2
+04: VirtualAddress(1403773ed):7 = 4
+04: VirtualAddress(1403773fb):7 = 6
+04: VirtualAddress(14037740a):8 = 8
+04: VirtualAddress(14038a70f):4 = ((((rdx - 102f0) % 8) * c) + ((rdx - 102f0) / 8))
+04: VirtualAddress(14038a716):3 = (((((r8 - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) - 102f0) % 8) * c) + (((r8 - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) - 102f0) / 8))
+04: VirtualAddress(14038a788):8 = (((rdx % 8) * c) + (rdx / 8))
+04: VirtualAddress(14038a80f):4 = ((((rdx - 102f0) % 8) * c) + ((rdx - 102f0) / 8))
+04: VirtualAddress(14038a816):3 = (((((r8 - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) - 102f0) % 8) * c) + (((r8 - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) - 102f0) / 8))
+05: VirtualAddress(14030858e):3 = 0
+05: VirtualAddress(140308591):4 = 19
+05: VirtualAddress(140308595):4 = 32
+05: VirtualAddress(140308599):4 = 4
+05: VirtualAddress(14030859d):4 = 1d
+05: VirtualAddress(1403085a1):4 = 36
+05: VirtualAddress(1403085a5):4 = 8
+05: VirtualAddress(1403085a9):4 = 21
+05: VirtualAddress(1403085ad):4 = 3a
+05: VirtualAddress(14037739f):7 = 0
+05: VirtualAddress(1403773ad):7 = 32
+05: VirtualAddress(1403773ba):6 = 1d
+05: VirtualAddress(14038a6d4):4 = (((((r9 - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) - 10140) % 6) * c) + (((r9 - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) - 10140) / 6))
+05: VirtualAddress(14038a6db):3 = (((((r9 - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) - 10140) % 6) * c) + (((r9 - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) - 10140) / 6))
+05: VirtualAddress(14038a758):5 = ((((r8 - 10140) % 6) * c) + ((r8 - 10140) / 6))
+05: VirtualAddress(14038a7d4):4 = (((((r9 - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) - 10140) % 6) * c) + (((r9 - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) - 10140) / 6))
+05: VirtualAddress(14038a7db):3 = (((((r9 - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) - 10140) % 6) * c) + (((r9 - (Mem64[140b853a0] ^ 6663849eb7d3a57f)) - 10140) / 6))
+06: VirtualAddress(140259096):8 = (rcx + (rbx * c))
+06: VirtualAddress(140306fbc):7 = ((((rax + r8) % e4) * c) + ((rax + r8) / e4))
+07: VirtualAddress(1401416d9):8 = ((r12 + (rax * c)) * 4)
+07: VirtualAddress(140233344):8 = ((((((rdx * 4) / 30) * c) + (((rdx * 4) % 30) / 4)) * 4) + 1d40)
+07: VirtualAddress(140259486):7 = ((r13 + (Mem16[(rsi * 2) + 140b847b0] * c)) * 4)
+07: VirtualAddress(1402951d2):7 = (((((rdx * 4) / 30) * c) + (((rdx * 4) % 30) / 4)) * 4)
+07: VirtualAddress(1402959db):8 = ((rsi + (rdx * c)) * 4)
+07: VirtualAddress(140295b6c):9 = (((((r12 * 4) / 30) * c) + (((r12 * 4) % 30) / 4)) * 4)
+07: VirtualAddress(140295b80):c = (((((r12 * 4) / 30) * c) + (((r12 * 4) % 30) / 4)) * 4)
+08: VirtualAddress(14014164d):7 = ((r12 + (rdi * c)) * 4)
+08: VirtualAddress(1401416e1):8 = ((r12 + (Mem16[(r14 + (rbx * 2))] * c)) * 4)
+08: VirtualAddress(140141987):7 = ((r12 + (r10 * c)) * 4)
+08: VirtualAddress(14023333c):8 = ((((((rdx * 4) / 30) * c) + (((rdx * 4) % 30) / 4)) * 4) + 1d40)
+08: VirtualAddress(1402593f7):8 = ((r13 + (rdi * c)) * 4)
+08: VirtualAddress(14025947f):7 = ((r13 + (Mem16[(rsi * 2) + 140b847b0] * c)) * 4)
+08: VirtualAddress(1402594c9):7 = ((r13 + (Mem16[(rsi * 2) + 140b847b0] * c)) * 4)
+08: VirtualAddress(140295202):7 = (((((rdx * 4) / 30) * c) + (((rdx * 4) % 30) / 4)) * 4)
+08: VirtualAddress(140295733):8 = ((rbx + (rbp * c)) * 4)
+08: VirtualAddress(140295934):9 = (((((r13 * 4) / 30) * c) + (((r13 * 4) % 30) / 4)) * 4)
+08: VirtualAddress(14029593f):c = (((((r13 * 4) / 30) * c) + (((r13 * 4) % 30) / 4)) * 4)
+09: VirtualAddress(1402642df):7 = (((((rdx * 4) / 30) * c) + (((rdx * 4) % 30) / 4)) * 4)
+09: VirtualAddress(140294ddd):7 = (((((rcx * 4) / 30) * c) + (((rcx * 4) % 30) / 4)) * 4)
+0a: VirtualAddress(14025fb60):7 = (((rdi * c) + (r10 & ffffffff)) * 4)
+0a: VirtualAddress(1402614ed):7 = (((rdi * c) + (r10 & ffffffff)) * 4)
+0a: VirtualAddress(1402620e8):6 = (((rdi * c) + (r10 & ffffffff)) * 4)
+0a: VirtualAddress(1402620f4):6 = (((rdi * c) + (r10 & ffffffff)) * 4)
+0a: VirtualAddress(140262107):a = (((rdi * c) + (r10 & ffffffff)) * 4)
+0a: VirtualAddress(140263dd2):7 = (((rbx * c) + (r10 & ffffffff)) * 4)
+0a: VirtualAddress(140294d09):7 = ((r15 + (rsi * c)) * 4)
+0b: VirtualAddress(14024b8ac):8 = (rbp * 4)
+0b: VirtualAddress(14024bc46):4 = ((rsi * 4) + ((((rdx * 4) - (rsi * 390)) / 4) * 8))
+0b: VirtualAddress(14024bc66):5 = (rsi * 4)
+0b: VirtualAddress(14024bd99):3 = (rax * 8)
+0b: VirtualAddress(14024bda9):3 = ((rax * 8) + 4)
+0b: VirtualAddress(14024bf97):7 = 0
+0b: VirtualAddress(14024bfa9):3 = 4
+0c: VirtualAddress(14022fba4):3 = (((rcx % 4e8) * c) + (rcx / 4e8))
+0c: VirtualAddress(140230929):4 = ((((r14 - 140c458f8) % 4e8) * c) + ((r14 - 140c458f8) / 4e8))
+0c: VirtualAddress(140230971):4 = ((((r14 - 140c458f8) % 4e8) * c) + ((r14 - 140c458f8) / 4e8))
+0d: VirtualAddress(140265436):7 = (rax * 4)
+0d: VirtualAddress(1402655e3):7 = (rdx * 4)
+0e: VirtualAddress(140263ae7):8 = (rcx * 4)
+0e: VirtualAddress(140263b77):8 = (rdx * 4)
+0e: VirtualAddress(140263bc4):8 = (rdx * 4)
+0e: VirtualAddress(140263bfb):8 = ((rax * 4) + 2a0)
+0e: VirtualAddress(1402652e6):7 = (rax * 4)
 --- Extended array arg patches ---
+1402640ea: [(0, 14), (1, 8)]
+14026410c: [(0, 13), (1, 7)]
+140264d3e: [(0, 14)]
+140264d52: [(0, 13)]
 --- Grp texture hooks ---
 Grp index hooks: ["14038f969", "140391d24", "14039ce6f"]
 --- Func replaces ---
