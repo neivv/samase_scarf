@@ -742,8 +742,7 @@ fn everything_1230a() {
 
 #[test]
 fn everything_1230b() {
-    // TODO 64bit
-    test_with_extra_checks(Path::new("1230b.exe"), |_ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1230b.exe"), |_ctx, analysis| {
         assert_eq!(analysis.unit_apply_speed_upgrades().unwrap().0, 0x005B7A10);
         assert_eq!(analysis.unit_update_speed().unwrap().0, 0x005B8190);
         assert_eq!(analysis.unit_update_speed_iscript().unwrap().0, 0x005a4b30);
@@ -755,8 +754,7 @@ fn everything_1230b() {
 
 #[test]
 fn everything_1230c() {
-    // TODO 64bit
-    test_with_extra_checks(Path::new("1230c.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1230c.exe"), |_ctx, _analysis| {
     })
 }
 
@@ -839,15 +837,13 @@ fn everything_1230i() {
 
 #[test]
 fn everything_1230j() {
-    // TODO 64bit
-    test_with_extra_checks(Path::new("1230j.exe"), |_ctx, _analysis| {
+    test_with_extra_checks_32_64(Path::new("1230j.exe"), |_ctx, _analysis| {
     })
 }
 
 #[test]
 fn everything_1231a() {
-    // TODO 64bit
-    test_with_extra_checks(Path::new("1231a.exe"), |ctx, analysis| {
+    test_with_extra_checks_32_64(Path::new("1231a.exe"), |ctx, analysis| {
         let commands = analysis.process_lobby_commands();
         assert_eq!(commands.unwrap().0, 0x00703c50);
         let first_active = analysis.first_fow_sprite();

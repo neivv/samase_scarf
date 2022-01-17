@@ -3025,7 +3025,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         let relocs = functions.globals_with_values();
         let buttonsets = firegraft::find_buttonsets(actx);
         let status_funcs = firegraft::find_unit_status_funcs(actx, &functions);
-        let reqs = firegraft::find_requirement_tables(actx, relocs);
+        let reqs = firegraft::find_requirement_tables(actx, &functions, relocs);
         let result = Rc::new(FiregraftAddresses {
             buttonsets,
             requirement_table_refs: reqs,

@@ -2,10 +2,10 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis, RelocValues};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{Operation};
+use scarf::{DestOperand, MemAccess, Operation, Operand, OperandType};
 
 use crate::{
-    AnalysisCtx, OperandExt, read_u32_at, find_bytes, FunctionFinder, entry_of_until,
+    AnalysisCtx, OperandExt, read_u32_at, find_bytes, FunctionFinder, entry_of_until, EntryOf,
     bumpvec_with_capacity,
 };
 use crate::struct_layouts;
@@ -185,6 +185,7 @@ static ORDER_REQ_TABLE_BEGIN: [u8; 0x30] = [
 
 fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
     relocs: &[RelocValues<E::VirtualAddress>],
     signature: &[u8],
 ) -> Vec<(E::VirtualAddress, u32)> {
@@ -209,20 +210,192 @@ fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
             index += 1;
         }
     }
+    filter_requirement_results(analysis, functions, &mut result);
     result
 }
 
+fn filter_requirement_results<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+    result: &mut Vec<(E::VirtualAddress, u32)>,
+) {
+    // Verify that the result address is actually instruction accessing memory.
+    // Could also have the table address be passed in here, but currently it is not
+    // since it isn't included in the result
+    result.sort_unstable_by_key(|x| x.0);
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let functions = functions.functions();
+    let binary_end = binary.sections().map(|x| x.virtual_address + x.virtual_size).max()
+        .unwrap_or(E::VirtualAddress::from_u64(0));
+    let binary_base = binary.base();
+    let code_section = binary.code_section();
+    let code_section_start = code_section.virtual_address;
+    let code_section_end = code_section_start + code_section.virtual_size;
+
+    let mut i = 0;
+    while i < result.len() {
+        if result[i].0 < code_section_start || result[i].0 > code_section_end {
+            // This filtering works only for code, not rdata etc refs
+            i += 1;
+            continue;
+        }
+        let mut result_pos = i;
+        entry_of_until(binary, functions, result[i].0, |entry| {
+            let mut analyzer = RequirementResultFilter::<E> {
+                entry_of: EntryOf::Retry,
+                result,
+                result_pos,
+                other_ok: 0,
+                binary_base,
+                binary_end,
+                false_result_seen: false,
+                last_result_addr: E::VirtualAddress::from_u64(0),
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            result_pos = analyzer.result_pos;
+            analyzer.entry_of
+        });
+        if result_pos == i {
+            // No results found, remove current
+            result.remove(i);
+        } else {
+            i = result_pos;
+        }
+    }
+}
+
+struct RequirementResultFilter<'a, 'e, E: ExecutionState<'e>> {
+    entry_of: EntryOf<()>,
+    result: &'a mut Vec<(E::VirtualAddress, u32)>,
+    result_pos: usize,
+    // Bitmask if other results after result_pos are found ok before result
+    other_ok: u32,
+    binary_base: E::VirtualAddress,
+    binary_end: E::VirtualAddress,
+    // These two are for handling multi-operation instructions (Such as push)
+    // Any operation that is before "main" operation and doesn't pass sets false_result_seen,
+    // main operation will clear it on success and set last_result_addr which makes all later
+    // instructions be skipped.
+    false_result_seen: bool,
+    last_result_addr: E::VirtualAddress,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    RequirementResultFilter<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let address = ctrl.address();
+        let end = ctrl.current_instruction_end();
+        let mut pos = self.result_pos;
+        while pos < self.result.len() {
+            let result_addr = self.result[pos].0;
+            if result_addr >= end {
+                if self.false_result_seen {
+                    // False positive result, assume no point in analyzing rest of this funcion
+                    ctrl.end_analysis();
+                }
+                break;
+            }
+            if result_addr >= address {
+                if address == self.last_result_addr {
+                    // Was already handled in previous operation
+                    return;
+                }
+                self.entry_of = EntryOf::Ok(());
+                let ok = match *op {
+                    Operation::Move(ref dest, value, None) => {
+                        if self.check(ctrl, value) {
+                            true
+                        } else if let DestOperand::Memory(ref dest) = *dest {
+                            self.check_memory(ctrl, dest)
+                        } else {
+                            false
+                        }
+                    }
+                    Operation::Jump { condition, .. } => {
+                        self.check(ctrl, condition)
+                    }
+                    Operation::SetFlags(ref arith) => {
+                        self.check(ctrl, arith.left) ||
+                            self.check(ctrl, arith.right)
+                    }
+                    _ => false,
+                };
+                if ok {
+                    if pos == self.result_pos {
+                        self.result_pos += 1;
+                        while self.other_ok & 1 != 0 {
+                            self.result_pos += 1;
+                            self.other_ok >>= 1;
+                        }
+                    } else {
+                        if let Some(bit) = 1u32.checked_shl((pos - self.result_pos) as u32) {
+                            self.other_ok |= bit;
+                        }
+                    }
+                    self.false_result_seen = false;
+                    self.last_result_addr = address;
+                } else {
+                    self.false_result_seen = true;
+                }
+                break;
+            }
+            pos += 1;
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> RequirementResultFilter<'a, 'e, E> {
+    fn check(&self, ctrl: &mut Control<'e, '_, '_, Self>, unresolved: Operand<'e>) -> bool {
+        let resolved = ctrl.resolve(unresolved);
+        self.check_resolved(resolved)
+    }
+
+    fn check_memory(
+        &self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        unresolved: &MemAccess<'e>,
+    ) -> bool {
+        let resolved = ctrl.resolve_mem(unresolved);
+        let (_, offset) = resolved.address();
+        let address = E::VirtualAddress::from_u64(offset);
+        address > self.binary_base && address < self.binary_end
+    }
+
+    fn check_resolved(&self, resolved: Operand<'e>) -> bool {
+        if let Some(c) = resolved.if_constant() {
+            let address = E::VirtualAddress::from_u64(c);
+            return address > self.binary_base && address < self.binary_end;
+        }
+        if let Some(mem) = resolved.if_memory() {
+            let (_, offset) = mem.address();
+            let address = E::VirtualAddress::from_u64(offset);
+            return address > self.binary_base && address < self.binary_end;
+        }
+        if let OperandType::Arithmetic(a) = resolved.ty() {
+            return self.check_resolved(a.left) || self.check_resolved(a.right);
+        }
+        false
+    }
+}
+
 pub(crate) fn find_requirement_tables<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'e, E>,
+    actx: &AnalysisCtx<'e, E>,
+    funcs: &FunctionFinder<'_, 'e, E>,
     relocs: &[RelocValues<E::VirtualAddress>],
 ) -> RequirementTables<E::VirtualAddress> {
     RequirementTables {
-        units: find_requirement_table_refs(analysis, relocs, &UNIT_REQ_TABLE_BEGIN[..]),
-        upgrades: find_requirement_table_refs(analysis, relocs, &UPGRADE_REQ_TABLE_BEGIN[..]),
-        tech_use: find_requirement_table_refs(analysis, relocs, &TECH_USE_REQ_TABLE_BEGIN[..]),
+        units: find_requirement_table_refs(actx, funcs, relocs, &UNIT_REQ_TABLE_BEGIN[..]),
+        upgrades: find_requirement_table_refs(actx, funcs, relocs, &UPGRADE_REQ_TABLE_BEGIN[..]),
+        tech_use: find_requirement_table_refs(actx, funcs, relocs, &TECH_USE_REQ_TABLE_BEGIN[..]),
         tech_research:
-            find_requirement_table_refs(analysis, relocs, &TECH_RESEARCH_REQ_TABLE_BEGIN[..]),
-        orders: find_requirement_table_refs(analysis, relocs, &ORDER_REQ_TABLE_BEGIN[..]),
+            find_requirement_table_refs(actx, funcs, relocs, &TECH_RESEARCH_REQ_TABLE_BEGIN[..]),
+        orders: find_requirement_table_refs(actx, funcs, relocs, &ORDER_REQ_TABLE_BEGIN[..]),
     }
 }
 
