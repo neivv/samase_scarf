@@ -129,21 +129,18 @@ fn dump<'e, E: ExecutionState<'e>>(
             }
         }
     }
-    if args.dump_vtables {
-        return dump_vtables(binary, &mut analysis);
-    }
-    if args.dump_euds {
-        return samase_scarf::dump::dump_euds(&mut analysis);
-    }
-    if args.dump_dat_patches {
-        return samase_scarf::dump::dump_dat_patches(&mut analysis);
-    }
-
-    let arg2 = std::env::args_os().nth(2);
-    let arg2 = arg2.as_ref();
-    let filter = arg2.and_then(|x| x.to_str());
-
-    let mut out = samase_scarf::dump::dump(&mut analysis, filter);
+    let mut out = if args.dump_vtables {
+        dump_vtables(binary, &mut analysis)
+    } else if args.dump_euds {
+        samase_scarf::dump::dump_euds(&mut analysis)
+    } else if args.dump_dat_patches {
+        samase_scarf::dump::dump_dat_patches(&mut analysis)
+    } else {
+        let arg2 = std::env::args_os().nth(2);
+        let arg2 = arg2.as_ref();
+        let filter = arg2.and_then(|x| x.to_str());
+        samase_scarf::dump::dump(&mut analysis, filter)
+    };
 
     out.push_str("\n");
     let counts = ctx.interned_counts();
