@@ -192,6 +192,7 @@ results! {
         StepObjects => "step_objects",
         SendCommand => "send_command",
         PrintText => "print_text",
+        AddToReplayData => "add_to_replay_data",
         StepOrder => "step_order",
         PrepareDrawImage => "prepare_draw_image",
         DrawImage => "draw_image",
@@ -781,6 +782,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             StepObjects => self.step_objects(),
             SendCommand => self.send_command(),
             PrintText => self.print_text(),
+            AddToReplayData => self.add_to_replay_data(),
             StepOrder => self.step_order(),
             PrepareDrawImage => self.prepare_draw_image(),
             DrawImage => self.draw_image(),
@@ -1209,7 +1211,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn print_text(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.print_text(s))
+        self.analyze_many_addr(AddressAnalysis::PrintText, AnalysisCache::cache_print_text)
+    }
+
+    pub fn add_to_replay_data(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::AddToReplayData, AnalysisCache::cache_print_text)
     }
 
     pub fn init_map_from_path(&mut self) -> Option<E::VirtualAddress> {
@@ -3245,10 +3251,13 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn print_text(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.cache_single_address(AddressAnalysis::PrintText, |s| {
+    fn cache_print_text(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[PrintText, AddToReplayData], &[], |s| {
+            let process_commands = s.process_commands(actx)?;
             let switch = s.process_commands_switch(actx)?;
-            commands::print_text(actx, &switch)
+            let result = commands::print_text(actx, process_commands, &switch);
+            Some(([result.print_text, result.add_to_replay_data], []))
         })
     }
 

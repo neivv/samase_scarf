@@ -32,42 +32,63 @@ pub struct StepNetwork<'e, Va: VirtualAddressTrait> {
     pub storm_command_user: Option<Operand<'e>>,
 }
 
+pub(crate) struct PrintText<Va: VirtualAddressTrait> {
+    pub print_text: Option<Va>,
+    pub add_to_replay_data: Option<Va>,
+}
+
 pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
+    process_commands: E::VirtualAddress,
     process_commands_switch: &CompleteSwitch<'e>,
-) -> Option<E::VirtualAddress> {
-    struct Analyzer<'e, E: ExecutionState<'e>> {
+) -> PrintText<E::VirtualAddress> {
+    struct Analyzer<'a, 'e, E: ExecutionState<'e>> {
         arg1: Operand<'e>,
         arg2: Operand<'e>,
         ctx: OperandCtx<'e>,
-        result: Option<E::VirtualAddress>,
+        result: &'a mut PrintText<E::VirtualAddress>,
+        branch: E::VirtualAddress,
+        before_switch: bool,
     }
 
-    impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
+    impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'a, 'e, E> {
         type State = analysis::DefaultState;
         type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             match *op {
                 Operation::Call(dest) => {
-                    let dest = ctrl.resolve(dest);
-                    if let Some(dest) = dest.if_constant() {
+                    if self.before_switch {
+                        return;
+                    }
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         let arg1 = ctrl.resolve(self.arg1);
                         let arg2 = ctrl.resolve(self.arg2);
-                        if let Some(mem) = arg2.if_mem8() {
-                            let offset_1 =
-                                mem.with_offset_size(1, MemAccessSize::Mem8).address_op(self.ctx);
-                            if offset_1 == arg1 {
-                                let dest = E::VirtualAddress::from_u64(dest);
-                                if single_result_assign(Some(dest), &mut self.result) {
-                                    ctrl.end_analysis();
+                        if self.result.print_text.is_none() {
+                            if let Some(mem) = arg2.if_mem8() {
+                                let offset_1 = mem.with_offset_size(1, MemAccessSize::Mem8)
+                                    .address_op(self.ctx);
+                                if offset_1 == arg1 {
+                                    self.result.print_text = Some(dest);
                                 }
+                            }
+                        } else {
+                            if arg2.if_constant() == Some(0x52) {
+                                self.result.add_to_replay_data = Some(dest);
+                                ctrl.end_analysis();
                             }
                         }
                     }
                 }
                 Operation::Jump { to, .. } => {
-                    if to.if_memory().is_some() {
-                        ctrl.end_branch();
+                    if to.if_constant().is_none() {
+                        if self.before_switch {
+                            self.before_switch = false;
+                            ctrl.clear_all_branches();
+                            ctrl.end_branch();
+                            ctrl.add_branch_with_current_state(self.branch);
+                        } else {
+                            ctrl.end_branch();
+                        }
                     }
                 }
                 _ => (),
@@ -79,17 +100,34 @@ pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
 
     // print_text is called for packet 0x5c as print_text(data + 2, data[1])
-    let branch = process_commands_switch.branch(binary, ctx, 0x5c)?;
+    // And followed by add_to_replay_data(data, 0x52)
+    let mut result = PrintText {
+        print_text: None,
+        add_to_replay_data: None,
+    };
+    let branch = match process_commands_switch.branch(binary, ctx, 0x5c) {
+        Some(s) => s,
+        None => return result,
+    };
 
     let mut analyzer = Analyzer::<E> {
+        before_switch: true,
         arg1: analysis.arg_cache.on_call(0),
         arg2: analysis.arg_cache.on_call(1),
         ctx,
-        result: None,
+        branch,
+        result: &mut result,
     };
-    let mut analysis = FuncAnalysis::new(binary, ctx, branch);
+    let mut exec_state = E::initial_state(ctx, binary);
+    // Set arg3 to 1 so the replay-specific switch will be skipped
+    exec_state.move_resolved(
+        &DestOperand::from_oper(analysis.arg_cache.on_entry(2)),
+        ctx.const_1(),
+    );
+    let mut analysis =
+        FuncAnalysis::custom_state(binary, ctx, process_commands, exec_state, Default::default());
     analysis.analyze(&mut analyzer);
-    analyzer.result
+    result
 }
 
 pub(crate) fn command_lengths<'e, E: ExecutionState<'e>>(
