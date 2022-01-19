@@ -39,12 +39,7 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
         })
         .next()?;
     let functions = cache.function_finder();
-    let game_refs = functions.find_functions_using_global(analysis, game_address);
-    let mut unchecked_refs =
-        HashSet::with_capacity_and_hasher(game_refs.len(), Default::default());
-    for global in game_refs {
-        unchecked_refs.insert(global.use_address);
-    }
+    let unchecked_refs = find_game_refs(analysis, &functions, game_address);
     let checked_functions =
         HashSet::with_capacity_and_hasher(unchecked_refs.len(), Default::default());
     let mut game_ctx = GameContext {
@@ -100,6 +95,41 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
     game_ctx.checked_functions.clear();
     game_ctx.other_global_analysis(required_stable_addresses);
     Some(())
+}
+
+fn find_game_refs<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+    game_address: E::VirtualAddress,
+) -> HashSet<E::VirtualAddress> {
+    let game_refs = functions.find_functions_using_global(actx, game_address);
+    let mut unchecked_refs =
+        HashSet::with_capacity_and_hasher(game_refs.len(), Default::default());
+    let text = actx.binary_sections.text;
+    for global in game_refs {
+        if E::VirtualAddress::SIZE == 4 {
+            // For some reason there are dead code branches with
+            // movzx x, word/byte [game_address], assume that those can be removed
+            // to avoid having to go through fake functions when trying to find them
+            // with entry_of_until.
+            let ok = Some(()).and_then(|()| {
+                let end = global.use_address.as_u64()
+                    .checked_sub(text.virtual_address.as_u64())? as usize;
+                let start = end.checked_sub(3)?;
+                let bytes = text.data.get(start..end)?;
+                if bytes[0] == 0x0f && matches!(bytes[1], 0xb6 | 0xb7) && bytes[2] & 7 == 5 {
+                    None
+                } else {
+                    Some(())
+                }
+            }).is_some();
+            if !ok {
+                continue;
+            }
+        }
+        unchecked_refs.insert(global.use_address);
+    }
+    unchecked_refs
 }
 
 pub struct GameContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
