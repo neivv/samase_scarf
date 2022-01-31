@@ -429,6 +429,7 @@ results! {
         PlayerTurns => "player_turns",
         PlayerTurnsSize => "player_turns_size",
         NetworkReady => "network_ready",
+        NetUserLatency => "net_user_latency",
         LastBulletSpawner => "last_bullet_spawner",
         CmdIconsDdsGrp => "cmdicons_ddsgrp",
         CmdBtnsDdsGrp => "cmdbtns_ddsgrp",
@@ -1020,6 +1021,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             PlayerTurns => self.player_turns(),
             PlayerTurnsSize => self.player_turns_size(),
             NetworkReady => self.network_ready(),
+            NetUserLatency => self.net_user_latency(),
             LastBulletSpawner => self.last_bullet_spawner(),
             CmdIconsDdsGrp => self.cmdicons_ddsgrp(),
             CmdBtnsDdsGrp => self.cmdbtns_ddsgrp(),
@@ -1378,6 +1380,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn network_ready(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(OperandAnalysis::NetworkReady, AnalysisCache::cache_step_network)
+    }
+
+    pub fn net_user_latency(&mut self) -> Option<Operand<'e>> {
+        self.enter(|x, s| x.net_user_latency(s))
     }
 
     pub fn storm_command_user(&mut self) -> Option<Operand<'e>> {
@@ -3434,6 +3440,12 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             Some(([result.receive_storm_turns, result.process_commands,
                 result.process_lobby_commands], [result.net_player_flags, result.player_turns,
                 result.player_turns_size, result.network_ready, result.storm_command_user]))
+        })
+    }
+
+    fn net_user_latency(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_single_operand(OperandAnalysis::NetUserLatency, |s| {
+            network::net_user_latency(actx, &s.function_finder())
         })
     }
 

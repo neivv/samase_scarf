@@ -2,7 +2,7 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{MemAccessSize, Operand, OperandCtx, Operation, BinarySection, BinaryFile};
+use scarf::{MemAccessSize, Operand, OperandCtx, Operation, BinarySection, BinaryFile, DestOperand};
 
 use crate::{
     AnalysisCtx, ArgCache, single_result_assign, find_bytes, FunctionFinder, EntryOf, OptionExt,
@@ -385,6 +385,89 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStartUdpServer<'e, 
                 if all_ok {
                     self.result = EntryOf::Ok(());
                     ctrl.end_analysis();
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn net_user_latency<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> Option<Operand<'e>> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let str_refs = functions.string_refs(actx, b"bnet_latency_low");
+    let mut result = None;
+    let funcs = functions.functions();
+
+    for string in str_refs {
+        let val = entry_of_until(binary, funcs, string.use_address, |entry| {
+            let mut analyzer = IsNetUserLatency::<E> {
+                result: EntryOf::Retry,
+                checking_func: false,
+                latency_operand: None,
+                phantom: Default::default(),
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.result
+        }).into_option_with_entry().map(|x| x.1);
+
+        if single_result_assign(val, &mut result) {
+          break;
+        }
+    }
+    result
+}
+
+struct IsNetUserLatency<'e, E: ExecutionState<'e>> {
+    result: EntryOf<Operand<'e>>,
+    checking_func: bool,
+    latency_operand: Option<Operand<'e>>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsNetUserLatency<'e, E> {
+    type Exec = E;
+    type State = analysis::DefaultState;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if !self.checking_func {
+            match *op {
+                Operation::Call(dest) => {
+                    let dest = ctrl.resolve(dest);
+                    if let Some(dest) = dest.if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        self.checking_func = true;
+                        ctrl.analyze_with_current_state(self, dest);
+                        if self.latency_operand.is_some() {
+                            self.result = EntryOf::Ok(self.latency_operand.unwrap());
+                            ctrl.end_analysis();
+                        }
+                    }
+                },
+                _ => (),
+            }
+        } else {
+            // Looking for a function that is just a `mov eax|rax, ds:<offset>; ret`
+            match *op {
+                Operation::Move(ref dest, val, None) => {
+                    if val.if_memory().is_some() {
+                        let resolved = ctrl.resolve(val);
+                        match *dest {
+                            DestOperand::Register32(0) | DestOperand::Register64(0) => {
+                                self.latency_operand = Some(resolved);
+                            },
+                            _ => ctrl.end_analysis(),
+                        }
+                    }
+                },
+                Operation::Return(0) => {
+                    ctrl.end_analysis()
+                },
+                _ => {
+                    self.latency_operand = None;
+                    ctrl.end_analysis()
                 }
             }
         }
