@@ -2,12 +2,13 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{MemAccessSize, Operand, OperandCtx, Operation, BinarySection, BinaryFile, DestOperand};
+use scarf::{MemAccessSize, Operand, OperandCtx, Operation, BinarySection, BinaryFile};
 
 use crate::{
     AnalysisCtx, ArgCache, single_result_assign, find_bytes, FunctionFinder, EntryOf, OptionExt,
     OperandExt, entry_of_until, if_arithmetic_eq_neq,
 };
+use crate::add_terms::collect_arith_add_terms;
 use crate::vtables::Vtables;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -403,12 +404,14 @@ pub(crate) fn net_user_latency<'e, E: ExecutionState<'e>>(
 
     for string in str_refs {
         let val = entry_of_until(binary, funcs, string.use_address, |entry| {
+
             let mut analyzer = IsNetUserLatency::<E> {
                 result: EntryOf::Retry,
-                checking_func: false,
-                latency_operand: None,
+                inlining: false,
+                bump: &actx.bump,
                 phantom: Default::default(),
             };
+
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             analysis.analyze(&mut analyzer);
             analyzer.result
@@ -421,54 +424,62 @@ pub(crate) fn net_user_latency<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct IsNetUserLatency<'e, E: ExecutionState<'e>> {
+struct IsNetUserLatency<'a, 'e, E: ExecutionState<'e>> {
     result: EntryOf<Operand<'e>>,
-    checking_func: bool,
-    latency_operand: Option<Operand<'e>>,
+    inlining: bool,
+    bump: &'a bumpalo::Bump,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
-impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsNetUserLatency<'e, E> {
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsNetUserLatency<'a, 'e, E> {
     type Exec = E;
     type State = analysis::DefaultState;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        if !self.checking_func {
+        if !self.inlining {
             match *op {
                 Operation::Call(dest) => {
                     let dest = ctrl.resolve(dest);
                     if let Some(dest) = dest.if_constant() {
                         let dest = E::VirtualAddress::from_u64(dest);
-                        self.checking_func = true;
-                        ctrl.analyze_with_current_state(self, dest);
-                        if self.latency_operand.is_some() {
-                            self.result = EntryOf::Ok(self.latency_operand.unwrap());
-                            ctrl.end_analysis();
-                        }
+                        self.inlining = true;
+                        ctrl.inline(self, dest);
+                        ctrl.skip_operation();
+                        self.inlining = false;
+
+
                     }
+                },
+                Operation::Move(_, val, _) => {
+                    if let Some(mem) = ctrl.if_mem_word(val) {
+                        let (mem_base, _) = mem.address();
+                        // Looking for e.g. mov eax, [string_table + net_user_latency*4]
+                        let mut terms = collect_arith_add_terms(mem_base, self.bump);
+                        let term = terms.remove_get(|x, is_sub| {
+                            !is_sub &&
+                                x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into()).is_some()
+                        });
+                        if let Some(term) = term {
+                            let result =
+                                term.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
+                                    .and_then(|x| Some(ctrl.resolve(x)));
+
+                            if let Some(result) = result {
+                                self.result = EntryOf::Ok(result);
+                                ctrl.end_analysis();
+                            }
+                    }
+                }
                 },
                 _ => (),
             }
         } else {
-            // Looking for a function that is just a `mov eax|rax, ds:<offset>; ret`
+            // We're only looking for a very small function, so if we find go anywhere else, end
+            // analysis
             match *op {
-                Operation::Move(ref dest, val, None) => {
-                    if val.if_memory().is_some() {
-                        let resolved = ctrl.resolve(val);
-                        match *dest {
-                            DestOperand::Register32(0) | DestOperand::Register64(0) => {
-                                self.latency_operand = Some(resolved);
-                            },
-                            _ => ctrl.end_analysis(),
-                        }
-                    }
-                },
-                Operation::Return(0) => {
-                    ctrl.end_analysis()
-                },
-                _ => {
-                    self.latency_operand = None;
+                Operation::Call(_) | Operation::Jump { .. } => {
                     ctrl.end_analysis()
                 }
+                _ => {}
             }
         }
     }
