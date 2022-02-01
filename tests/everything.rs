@@ -1559,7 +1559,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         match op {
             // special handling
             Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg |
-                AntiTroll | MouseX | MouseY => {
+                AntiTroll | MouseX | MouseY | NetUserLatency => {
                 continue;
             }
             Game | Players | MenuScreenId | BnetController => {
@@ -2105,6 +2105,15 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(step_game_loop.is_some());
     } else {
         assert!(step_game_loop.is_none());
+    }
+
+    // Strings don't exist before 1.22.0
+    let net_user_latency = analysis.net_user_latency();
+    if minor_version >= 22
+    {
+        check_global_opt(net_user_latency, binary, "net_user_latency");
+    } else {
+        assert!(net_user_latency.is_none());
     }
 
     if E::VirtualAddress::SIZE == 4 {
