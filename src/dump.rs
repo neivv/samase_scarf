@@ -131,7 +131,8 @@ pub fn dump<'e, E: ExecutionState<'e>>(
         let euds = analysis.eud_table();
         out!(&mut out, "{} euds", euds.euds.len());
 
-        let renderer_vtables = analysis.renderer_vtables();
+        let mut renderer_vtables = (*analysis.renderer_vtables()).clone();
+        renderer_vtables.sort_unstable();
         out!(&mut out, "renderer_vtables: {:?}", renderer_vtables);
 
         let skins_size = analysis.skins_size().unwrap_or(0);
