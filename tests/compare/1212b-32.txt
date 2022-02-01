@@ -224,6 +224,7 @@ net_player_flags: ebd18c
 net_player_to_game: ebd2b0
 net_player_to_unique: ebd280
 net_players: ebfaa8
+net_user_latency: None
 network_ready: Mem8[ebd181]
 next_game_step_tick: Mem32[e93ba0]
 original_chk_player_types: ebd130
@@ -322,7 +323,7 @@ sprite_y: Custom_0
 sprite_y_offset: Some(16)
 sprite_y_size: Some(Mem16)
 0 euds
-renderer_vtables: [VirtualAddress(00b89fa8), VirtualAddress(00b89f3c), VirtualAddress(00b89ed0)]
+renderer_vtables: [VirtualAddress(00b89ed0), VirtualAddress(00b89f3c), VirtualAddress(00b89fa8)]
 skins_size: 15e
 snp_definitions: c84368, 90 bytes
 sprite_struct_size: Some("0x24")

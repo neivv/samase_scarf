@@ -1585,7 +1585,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 NextGameStepTick | FirstPylon | PylonRefresh | PylonAurasVisible |
                 LocalGameResult | IsCustomSinglePlayer | CurrentCampaignMission | LocalVisions |
                 FirstFreeSelectionCircle | LastFreeSelectionCircle | GrpWireGrp | TranWireGrp |
-                StatusScreen =>
+                StatusScreen | NetUserLatency =>
             {
                 check_global_opt(result, binary, op.name());
             }

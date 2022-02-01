@@ -461,7 +461,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsNetUserLatency<
                         if let Some(term) = term {
                             let result =
                                 term.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
-                                    .and_then(|x| Some(ctrl.resolve(x)));
+                                    .and_then(|x| Some(ctrl.resolve(x).unwrap_sext()));
 
                             if let Some(result) = result {
                                 self.result = EntryOf::Ok(result);
