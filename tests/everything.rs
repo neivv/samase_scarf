@@ -1547,7 +1547,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         match addr {
             // special handling
             JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins | StepGameLoop |
-                GetMouseX | GetMouseY => continue,
+                GetMouseX | GetMouseY | NetFormatTurnRate => continue,
             _ => (),
         }
         let result = analysis.address_analysis(addr);
@@ -2108,11 +2108,14 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     }
 
     // Strings don't exist before 1.22.0
+    let net_format_turn_rate = analysis.net_format_turn_rate();
     let net_user_latency = analysis.net_user_latency();
     if minor_version >= 22
     {
+        assert!(net_format_turn_rate.is_some());
         check_global_opt(net_user_latency, binary, "net_user_latency");
     } else {
+        assert!(net_format_turn_rate.is_none());
         assert!(net_user_latency.is_none());
     }
 
