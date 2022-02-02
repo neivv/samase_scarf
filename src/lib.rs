@@ -327,6 +327,7 @@ results! {
         DuplicateSprite => "duplicate_sprite",
         InitStatusScreen => "init_status_screen",
         StatusScreenEventHandler => "status_screen_event_handler",
+        NetFormatTurnRate => "net_format_turn_rate",
     }
 }
 
@@ -918,6 +919,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             DuplicateSprite => self.duplicate_sprite(),
             InitStatusScreen => self.init_status_screen(),
             StatusScreenEventHandler => self.status_screen_event_handler(),
+            NetFormatTurnRate => self.net_format_turn_rate(),
         }
     }
 
@@ -1384,6 +1386,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn net_user_latency(&mut self) -> Option<Operand<'e>> {
         self.enter(|x, s| x.net_user_latency(s))
+    }
+
+    pub fn net_format_turn_rate(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(|x, s| x.net_format_turn_rate(s))
     }
 
     pub fn storm_command_user(&mut self) -> Option<Operand<'e>> {
@@ -3443,10 +3449,22 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn net_user_latency(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.cache_single_operand(OperandAnalysis::NetUserLatency, |s| {
-            network::net_user_latency(actx, &s.function_finder())
+    fn cache_net_format_turn_rate(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[NetFormatTurnRate], &[NetUserLatency], |s| {
+            let result = network::anaylze_net_format_turn_rate(actx, &s.function_finder());
+            Some(([result.net_format_turn_rate], [result.net_user_latency]))
         })
+    }
+
+    fn net_user_latency(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::NetUserLatency, |s| s.cache_net_format_turn_rate(actx))
+    }
+
+    fn net_format_turn_rate(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::NetFormatTurnRate,
+                             |s| s.cache_net_format_turn_rate(actx))
     }
 
     fn process_commands(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {

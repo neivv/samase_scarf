@@ -4,10 +4,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{MemAccessSize, Operand, OperandCtx, Operation, BinarySection, BinaryFile};
 
-use crate::{
-    AnalysisCtx, ArgCache, single_result_assign, find_bytes, FunctionFinder, EntryOf, OptionExt,
-    OperandExt, entry_of_until, if_arithmetic_eq_neq,
-};
+use crate::{AnalysisCtx, ArgCache, single_result_assign, find_bytes, FunctionFinder, EntryOf, OptionExt, OperandExt, entry_of_until, if_arithmetic_eq_neq, VirtualAddressTrait};
 use crate::add_terms::collect_arith_add_terms;
 use crate::vtables::Vtables;
 
@@ -392,10 +389,16 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStartUdpServer<'e, 
     }
 }
 
-pub(crate) fn net_user_latency<'e, E: ExecutionState<'e>>(
+#[derive(Clone, Debug)]
+pub struct NetFormatTurnRate<'e, Va: VirtualAddressTrait> {
+    pub net_format_turn_rate: Option<Va>,
+    pub net_user_latency: Option<Operand<'e>>,
+}
+
+pub(crate) fn anaylze_net_format_turn_rate<'e, E: ExecutionState<'e>>(
     actx: &AnalysisCtx<'e, E>,
     functions: &FunctionFinder<'_, 'e, E>,
-) -> Option<Operand<'e>> {
+) -> NetFormatTurnRate<'e, E::VirtualAddress> {
     let binary = actx.binary;
     let ctx = actx.ctx;
     let str_refs = functions.string_refs(actx, b"bnet_latency_low");
@@ -415,13 +418,20 @@ pub(crate) fn net_user_latency<'e, E: ExecutionState<'e>>(
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             analysis.analyze(&mut analyzer);
             analyzer.result
-        }).into_option_with_entry().map(|x| x.1);
+        }).into_option_with_entry();
 
         if single_result_assign(val, &mut result) {
           break;
         }
     }
-    result
+
+    result.map_or(NetFormatTurnRate {
+        net_format_turn_rate: None,
+        net_user_latency: None,
+    }, |r| NetFormatTurnRate {
+        net_format_turn_rate: Some(r.0),
+        net_user_latency: Some(r.1)
+    })
 }
 
 struct IsNetUserLatency<'a, 'e, E: ExecutionState<'e>> {
