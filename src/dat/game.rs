@@ -491,6 +491,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         let game = self.game_ctx.game;
         let bump = &self.game_ctx.analysis.bump;
         let (base, offset) = mem.address();
+        if offset < 0x18c || offset > 0x1034f {
+            return;
+        }
         let offset = offset as u32;
         let mut terms = crate::add_terms::collect_arith_add_terms(base, bump);
         if !terms.remove_one(|x, _neg| x == game) {
