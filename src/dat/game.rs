@@ -9,6 +9,7 @@ use crate::{
     AnalysisCache, AnalysisCtx, EntryOf, entry_of_until, OperandExt, OptionExt, FunctionFinder,
     ControlExt,
 };
+use crate::detect_tail_call::DetectTailCall;
 use crate::hash_map::{HashSet, HashMap};
 use super::{
     DatPatches, DatPatch, ExtArrayPatch, RequiredStableAddressesMap, RequiredStableAddresses,
@@ -172,6 +173,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
                         patch_indices: BumpVec::new_in(bump),
                         func_start: entry,
                         greatest_address: entry,
+                        detect_tail_call: DetectTailCall::new(entry),
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
@@ -229,6 +231,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
                         patch_indices: BumpVec::new_in(bump),
                         func_start: entry,
                         greatest_address: entry,
+                        detect_tail_call: DetectTailCall::new(entry),
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
@@ -260,6 +263,7 @@ pub struct GameAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     patch_indices: BumpVec<'acx, usize>,
     func_start: E::VirtualAddress,
     greatest_address: E::VirtualAddress,
+    detect_tail_call: DetectTailCall<'e, E>,
 }
 
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
@@ -268,6 +272,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.detect_tail_call.operation(ctrl, op) {
+            if self.other_globals {
+                self.check_array_call(ctrl, true);
+            }
+            ctrl.end_branch();
+            return;
+        }
         let address = ctrl.address();
         if address == self.switch_table {
             // Executed to switch table cases, stop
@@ -354,52 +365,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             Operation::Call(_) => {
                 if self.other_globals {
-                    // Check for a memcpy/memset of trigger unit caches
-                    let arg_cache = &self.game_ctx.analysis.arg_cache;
-                    let arg1 = ctrl.resolve(arg_cache.on_call(0));
-                    let ext_array_id = if arg1 == self.game_ctx.trigger_all_units {
-                        Some(0x0du8)
-                    } else if arg1 == self.game_ctx.trigger_completed_units {
-                        Some(0x0e)
-                    } else {
-                        None
-                    };
-                    if let Some(id) = ext_array_id {
-                        // Hacky way to reuse the patched addr array
-                        let dummy = self.game_ctx.game;
-                        if self.game_ctx.patched_addresses.insert(address, (!0, dummy)).is_some()
-                        {
-                            return;
-                        }
-                        // Arg2 may be pointer to a game table (if memcpy)
-                        let arg2 = ctrl.resolve(arg_cache.on_call(1));
-                        let ext_array2 = arg2.if_arithmetic_add()
-                            .filter(|x| x.0 == self.game_ctx.game)
-                            .and_then(|x| x.1.if_constant())
-                            .and_then(|c| match c {
-                                0x3234 => Some(0x07u8),
-                                0x5cf4 => Some(0x08),
-                                _ => None,
-                            });
-                        let args = [
-                            id.wrapping_add(1),
-                            ext_array2.map(|x| x.wrapping_add(1)).unwrap_or(0),
-                            0,
-                            0,
-                        ];
-                        let patches = &mut self.game_ctx.result.patches;
-                        patches.push(DatPatch::ExtendedArrayArg(address, args));
-                        if let Err(e) = self.required_stable_addresses.try_add_for_patch(
-                            self.binary,
-                            address,
-                            ctrl.current_instruction_end(),
-                        ) {
-                            dat_warn!(
-                                self, "Can't add stable address for patch @ {:?}, conflict {:?}",
-                                address, e,
-                            );
-                        }
-                    }
+                    self.check_array_call(ctrl, false);
                 }
             }
             Operation::SetFlags(ref arith) => {
@@ -437,6 +403,67 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                 }
             }
             imm_addr = imm_addr - 1;
+        }
+    }
+
+    /// For other_arrays analysis, check memcpy/memset with argument being
+    /// one of the trigger unit cache arrays
+    fn check_array_call(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, is_tail_call: bool) {
+        let arg_cache = &self.game_ctx.analysis.arg_cache;
+        let arg1_loc = if !is_tail_call {
+            arg_cache.on_call(0)
+        } else {
+            arg_cache.on_entry(0)
+        };
+        let arg1 = ctrl.resolve(arg1_loc);
+        let ext_array_id = if arg1 == self.game_ctx.trigger_all_units {
+            Some(0x0du8)
+        } else if arg1 == self.game_ctx.trigger_completed_units {
+            Some(0x0e)
+        } else {
+            None
+        };
+        if let Some(id) = ext_array_id {
+            // Hacky way to reuse the patched addr array
+            let dummy = self.game_ctx.game;
+            let address = ctrl.address();
+            if self.game_ctx.patched_addresses.insert(address, (!0, dummy)).is_some()
+            {
+                return;
+            }
+            // Arg2 may be pointer to a game table (if memcpy)
+            let arg2_loc = if !is_tail_call {
+                arg_cache.on_call(1)
+            } else {
+                arg_cache.on_entry(1)
+            };
+            let arg2 = ctrl.resolve(arg2_loc);
+            let ext_array2 = arg2.if_arithmetic_add()
+                .filter(|x| x.0 == self.game_ctx.game)
+                .and_then(|x| x.1.if_constant())
+                .and_then(|c| match c {
+                    0x3234 => Some(0x07u8),
+                    0x5cf4 => Some(0x08),
+                    _ => None,
+                });
+            let args = [
+                id.wrapping_add(1),
+                ext_array2.map(|x| x.wrapping_add(1)).unwrap_or(0),
+                0,
+                0,
+            ];
+            let patches = &mut self.game_ctx.result.patches;
+            patches.push(DatPatch::ExtendedArrayArg(address, args));
+            if let Err(e) = self.required_stable_addresses.try_add_for_patch(
+                self.binary,
+                address,
+                ctrl.current_instruction_end(),
+            ) {
+                dat_warn!(
+                    self, "Can't add stable address for patch @ {:?}, conflict {:?}",
+                    address, e,
+                );
+            }
         }
     }
 

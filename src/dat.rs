@@ -47,9 +47,10 @@ use scarf::{
 
 use crate::{
     ArgCache, AnalysisCtx, EntryOf, StringRefs, DatType, entry_of_until, single_result_assign,
-    if_callable_const, OperandExt, bumpvec_with_capacity, AnalysisCache,
+    if_callable_const, OperandExt, bumpvec_with_capacity, AnalysisCache, ControlExt,
     FunctionFinder, OptionExt,
 };
+use crate::detect_tail_call::DetectTailCall;
 use crate::hash_map::{HashMap, HashSet};
 use crate::range_list::RangeList;
 use crate::struct_layouts;
@@ -937,6 +938,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         let functions = self.cache.functions();
         let binary = self.binary;
         while let Some(child_func) = self.func_arg_widen_queue.pop() {
+            // TODO: This does not find tail calls.
             let callers = self.cache.function_finder().find_callers(self.analysis, child_func);
             for &address in &callers {
                 if self.found_func_arg_widen_refs.contains(&address) {
@@ -1139,6 +1141,7 @@ struct DatFuncAnalysisState<'acx, 'e, E: ExecutionState<'e>> {
     /// that would need to be hooked.
     /// So buffer 2step hooks and do them last.
     pending_hooks: BumpVec<'acx, (E::VirtualAddress, u32, u8, u8)>,
+    detect_tail_call: DetectTailCall<'e, E>,
 }
 
 impl<'acx, 'e, E: ExecutionState<'e>> DatFuncAnalysisState<'acx, 'e, E> {
@@ -1186,6 +1189,31 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.state.detect_tail_call.operation(ctrl, op) {
+            if let Operation::Jump { to, .. } = *op {
+                if let Some(to) = ctrl.resolve_va(to) {
+                    if self.mode == DatFuncAnalysisMode::FuncArg {
+                        self.check_call_for_func_arg_widen(ctrl, to, true);
+                    }
+                    // Hackfix to prevent analysis regression:
+                    // There is one simple function where it tail calls a function immediately
+                    // following itself, and that function is needed for analysis.
+                    // function finder does not consider the tail called function be
+                    // a separate function since it is only tail called, but it finds the
+                    // function immediately before and things work out since it tail calls
+                    // the other.
+                    // Proper fix would fix function finder find functions that are only tail
+                    // called, instead of relying placement of functions making things work out.
+                    let address = ctrl.address();
+                    if self.current_branch == self.entry && to > address && to < address + 0x20 {
+                        return;
+                    }
+                }
+            }
+            ctrl.end_branch();
+            return;
+        }
+
         self.state.stack_size_tracker.operation(ctrl, op);
         let ctx = ctrl.ctx();
         if self.is_update_status_screen_tooltip {
@@ -1314,22 +1342,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     if self.mode == DatFuncAnalysisMode::FuncArg {
-                        if let Some(&args) = self.dat_ctx.func_arg_widen_requests.get(&dest) {
-                            for (i, dat) in args.iter()
-                                .cloned()
-                                .enumerate()
-                                .filter_map(|x| Some((x.0, x.1?)))
-                            {
-                                let arg_cache = &self.dat_ctx.analysis.arg_cache;
-                                let arg_loc = arg_cache.on_call(i as u8);
-                                let value = ctrl.resolve(arg_loc);
-                                self.dat_ctx.found_func_arg_widen_refs.insert(ctrl.address());
-                                self.check_func_argument(ctrl, arg_loc, value, dat);
-                            }
-                        }
+                        self.check_call_for_func_arg_widen(ctrl, dest, false);
                     }
                     if let Some(custom) = self.custom_value_for_call(dest) {
                         ctrl.skip_operation();
@@ -1343,8 +1358,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             Operation::Jump { condition, to } => {
                 let condition = ctrl.resolve(condition);
-                if let Some(to) = ctrl.resolve(to).if_constant() {
-                    let to = E::VirtualAddress::from_u64(to);
+                if let Some(to) = ctrl.resolve_va(to) {
                     let binary = self.binary;
                     if let Err(e) = self.required_stable_addresses.add_jump_dest(binary, to) {
                         dat_warn!(
@@ -1426,6 +1440,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                     binary,
                     bump,
                 ),
+                detect_tail_call: DetectTailCall::new(entry),
                 pending_hooks: bumpvec_with_capacity(8, bump),
             }),
         }
@@ -1484,6 +1499,33 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         end: E::VirtualAddress,
     ) -> Result<(), (E::VirtualAddress, E::VirtualAddress)> {
         self.required_stable_addresses.try_add_for_patch(self.binary, start, end)
+    }
+
+    /// For DatFuncAnalysisMode::FuncArg.
+    /// Widen any arguments that need widening to 32bit when calling function `dest`.
+    fn check_call_for_func_arg_widen(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        dest: E::VirtualAddress,
+        is_tail_call: bool,
+    ) {
+        if let Some(&args) = self.dat_ctx.func_arg_widen_requests.get(&dest) {
+            for (i, dat) in args.iter()
+                .cloned()
+                .enumerate()
+                .filter_map(|x| Some((x.0, x.1?)))
+            {
+                let arg_cache = &self.dat_ctx.analysis.arg_cache;
+                let arg_loc = if !is_tail_call {
+                    arg_cache.on_call(i as u8)
+                } else {
+                    arg_cache.on_entry(i as u8)
+                };
+                let value = ctrl.resolve(arg_loc);
+                self.dat_ctx.found_func_arg_widen_refs.insert(ctrl.address());
+                self.check_func_argument(ctrl, arg_loc, value, dat);
+            }
+        }
     }
 
     fn custom_value_for_call(&mut self, dest: E::VirtualAddress) -> Option<Operand<'e>> {

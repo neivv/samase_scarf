@@ -24,6 +24,7 @@ mod campaign;
 mod clientside;
 mod commands;
 mod crt;
+mod detect_tail_call;
 mod dialog;
 mod eud;
 mod file;
