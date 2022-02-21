@@ -48,7 +48,7 @@ use scarf::{
 use crate::{
     ArgCache, AnalysisCtx, EntryOf, StringRefs, DatType, entry_of_until, single_result_assign,
     if_callable_const, OperandExt, bumpvec_with_capacity, AnalysisCache,
-    FunctionFinder,
+    FunctionFinder, OptionExt,
 };
 use crate::hash_map::{HashMap, HashSet};
 use crate::range_list::RangeList;
@@ -82,6 +82,8 @@ static ORDER_ARRAY_WIDTHS: &[u8] = &[
     2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     2, 2, 1,
 ];
+
+const RDTSC_CUSTOM: u32 = 0x2000_0000;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DatTablePtr<'e> {
@@ -399,6 +401,7 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     /// Maybe dumb to special case this
     update_status_screen_tooltip: E::VirtualAddress,
     required_stable_addresses: RequiredStableAddressesMap<'acx, E::VirtualAddress>,
+    rdtsc_custom: Operand<'e>,
 }
 
 pub(crate) struct RequiredStableAddressesMap<'acx, Va: VirtualAddress> {
@@ -555,6 +558,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         let text = analysis.binary_sections.text;
         let step_iscript = cache.step_iscript(analysis)?;
         let bump = &analysis.bump;
+        let ctx = analysis.ctx;
         Some(DatPatchContext {
             array_lookup: HashMap::with_capacity_and_hasher(128, Default::default()),
             operand_to_u8_op: HashMap::with_capacity_and_hasher(2048, Default::default()),
@@ -592,6 +596,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             array_address_patches: HashMap::with_capacity_and_hasher(256, Default::default()),
             update_status_screen_tooltip: E::VirtualAddress::from_u64(0),
             required_stable_addresses: RequiredStableAddressesMap::with_capacity(1024, bump),
+            rdtsc_custom: ctx.and_const(ctx.custom(RDTSC_CUSTOM), 0xffff_ffff),
         })
     }
 
@@ -1226,6 +1231,19 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         }
         match *op {
             Operation::Move(ref dest, val, None) => {
+                if val.is_undefined() {
+                    let address = ctrl.address();
+                    let binary = ctrl.binary();
+                    // Special case rdtsc to move Custom() that will be checked
+                    // later on in jumps.
+                    if let Ok(slice) = binary.slice_from_address(address, 2) {
+                        if slice == &[0x0f, 0x31] {
+                            ctrl.move_resolved(dest, self.dat_ctx.rdtsc_custom);
+                            ctrl.skip_operation();
+                            return;
+                        }
+                    }
+                }
                 if self.mode == DatFuncAnalysisMode::ArrayIndex {
                     self.check_array_ref(ctrl, val);
                     if let DestOperand::Memory(mem) = dest {
@@ -1324,6 +1342,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             Operation::Jump { condition, to } => {
+                let condition = ctrl.resolve(condition);
                 if let Some(to) = ctrl.resolve(to).if_constant() {
                     let to = E::VirtualAddress::from_u64(to);
                     let binary = self.binary;
@@ -1331,6 +1350,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         dat_warn!(
                             self, "Overlapping stable addresses {:?} for jump to {:?}", e, to,
                         );
+                    }
+                    if self.check_rdtsc_jump(ctrl, condition, to) {
+                        return;
                     }
                 }
                 // A bit hacky fix to register switch table locations to prevent certain
@@ -1350,7 +1372,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
                 if self.mode == DatFuncAnalysisMode::ArrayIndex {
-                    let condition = ctrl.resolve(condition);
                     self.check_array_limit_jump(ctrl, condition);
                 }
             }
@@ -1566,6 +1587,55 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
         }
         None
+    }
+
+    /// If this is jump on `rdtsc mod C`, assume it to be unconditional, patch it to
+    /// be unconditional and skip the non-jump branch.
+    fn check_rdtsc_jump(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        condition: Operand<'e>,
+        to: E::VirtualAddress,
+    ) -> bool {
+        let is_rdtsc_jump = condition.if_arithmetic_gt()
+            .and_either_other(Operand::if_constant)
+            .and_then(|x| {
+                if let Some((l, r)) = x.if_arithmetic_and() {
+                    // Modulo compiled to `x & c`
+                    r.if_constant().filter(|&c| c.wrapping_add(1) & c == 0)?;
+                    if l.if_custom() == Some(RDTSC_CUSTOM) {
+                        Some(())
+                    } else {
+                        None
+                    }
+                } else if let Some((l, r)) = x.if_arithmetic(ArithOpType::Modulo) {
+                    r.if_constant()?;
+                    if l == self.dat_ctx.rdtsc_custom || l.if_custom() == Some(RDTSC_CUSTOM) {
+                        Some(())
+                    } else {
+                        None
+                    }
+                } else if let Some((l, r)) = x.if_arithmetic_sub() {
+                    // `rdtsc - (rdtsc / x * x)` where division is replaced with multiplication
+                    r.if_arithmetic_mul()
+                        .or_else(|| r.if_arithmetic_lsh())
+                        .and_then(|x| x.1.if_constant())?;
+                    l.if_arithmetic_or()
+                        .and_if_either_other(|x| x == self.dat_ctx.rdtsc_custom)?;
+                    Some(())
+                } else {
+                    None
+                }
+            })
+            .is_some();
+        if is_rdtsc_jump {
+            self.make_jump_unconditional(ctrl.address());
+            ctrl.end_branch();
+            ctrl.add_branch_with_current_state(to);
+            true
+        } else {
+            false
+        }
     }
 
     /// Patches x > array_limit jumps to not jump / only check for equivalency
