@@ -11,6 +11,7 @@ use crate::{
 };
 use crate::detect_tail_call::DetectTailCall;
 use crate::hash_map::{HashSet, HashMap};
+use crate::struct_layouts;
 use super::{
     DatPatches, DatPatch, ExtArrayPatch, RequiredStableAddressesMap, RequiredStableAddresses,
     FunctionHookContext,
@@ -43,6 +44,7 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
     let unchecked_refs = find_game_refs(analysis, &functions, game_address);
     let checked_functions =
         HashSet::with_capacity_and_hasher(unchecked_refs.len(), Default::default());
+    let ai_build_limit_offset = struct_layouts::player_ai_build_limits::<E::VirtualAddress>();
     let mut game_ctx = GameContext {
         analysis,
         functions: &functions,
@@ -53,7 +55,7 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
         game_address,
         patched_addresses: HashMap::with_capacity_and_hasher(128, Default::default()),
         unit_strength,
-        ai_build_limit: ctx.add_const(player_ai, 0x3f0),
+        ai_build_limit: ctx.add_const(player_ai, ai_build_limit_offset),
         trigger_all_units,
         trigger_completed_units,
     };
@@ -65,7 +67,7 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
             (start, start + 0xe4 * 4 * 2)
         }),
         player_ai.if_constant().map(|x| {
-            let start = E::VirtualAddress::from_u64(x) + 0x3f0;
+            let start = E::VirtualAddress::from_u64(x) + ai_build_limit_offset as u32;
             (start, start + 0xe4)
         }),
         trigger_all_units.if_constant().map(|x| {
@@ -1116,17 +1118,18 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         //      (The base is already player_ai + 0x3f0)
         // => unit_id = index % 4e8
         //      player = index / 4e8
+        let player_ai_size = struct_layouts::player_ai_size::<E::VirtualAddress>();
         let (unit_id, player) = Some(index)
             .and_then(|x| x.if_arithmetic_add())
-            .and_either(|x| x.if_arithmetic_mul_const(0x4e8))
+            .and_either(|x| x.if_arithmetic_mul_const(player_ai_size))
             .map(|(player, id)| (id, player))
             .or_else(|| {
                 index.if_arithmetic_mul_const(0xe4 * 4)
                     .map(|x| (ctx.const_0(), x))
             })
             .unwrap_or_else(|| {
-                let unit_id = ctx.modulo(index, ctx.constant(0x4e8));
-                let player = ctx.div(index, ctx.constant(0x4e8));
+                let unit_id = ctx.modulo(index, ctx.constant(player_ai_size));
+                let player = ctx.div(index, ctx.constant(player_ai_size));
                 (unit_id, player)
             });
         let (unit_id, player) =
@@ -1140,7 +1143,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                             index_unres,
                             unit_id,
                         ),
-                        ctx.constant(0x4e8),
+                        ctx.constant(player_ai_size),
                     );
                     (unit_id, player)
                 } else {
@@ -1152,7 +1155,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                 if let Some(index_unres) = self.unresolve(ctrl, index) {
                     let unit_id = ctx.sub(
                         index_unres,
-                        ctx.mul_const(player, 0x4e8),
+                        ctx.mul_const(player, player_ai_size),
                     );
                     (unit_id, player)
                 } else {

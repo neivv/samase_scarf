@@ -244,6 +244,27 @@ pub fn ai_script_flags<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn player_ai_size<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x4e8,
+        false => 0x6e8,
+    }
+}
+
+pub fn player_ai_flags<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x218,
+        false => 0x410,
+    }
+}
+
+pub fn player_ai_build_limits<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x3f0,
+        false => 0x5e8,
+    }
+}
+
 pub fn button_set_size<Va: VirtualAddress>() -> u32 {
     match Va::SIZE == 4 {
         true => 0xc,

@@ -231,7 +231,7 @@ next_game_step_tick: Mem32[141085458]
 original_chk_player_types: 1410adff0
 palette_set: 1410e2be0
 pathing: Mem64[1410b4ff0]
-player_ai: 140e9d2e8
+player_ai: 140e9d0f0
 player_ai_towns: 140eca540
 player_skins: 1410ae1a0
 player_turns: 1410afcd0
@@ -1835,9 +1835,9 @@ Orders array patches:
 0b: VirtualAddress(140280f39):3 = ((rax * 8) + 4)
 0b: VirtualAddress(140281127):7 = 0
 0b: VirtualAddress(140281139):3 = 4
-0c: VirtualAddress(14025fcd4):3 = (((rcx % 4e8) * c) + (rcx / 4e8))
-0c: VirtualAddress(140260a59):4 = ((((r14 - 140e9d6d8) % 4e8) * c) + ((r14 - 140e9d6d8) / 4e8))
-0c: VirtualAddress(140260aa1):4 = ((((r14 - 140e9d6d8) % 4e8) * c) + ((r14 - 140e9d6d8) / 4e8))
+0c: VirtualAddress(14025fcd4):3 = (((r8 & ffffffff) * c) + ((rcx - (r8 & ffffffff)) / 6e8))
+0c: VirtualAddress(140260a59):4 = (rdi + (rbx * c))
+0c: VirtualAddress(140260aa1):4 = (rdi + (rbx * c))
 0d: VirtualAddress(14029ae46):7 = (rax * 4)
 0d: VirtualAddress(14029affd):3 = ((rcx + (rax * 4)) - 140eee500)
 0e: VirtualAddress(1402994c7):3 = ((rdx + (rax * 4)) - 140eeba40)

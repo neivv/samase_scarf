@@ -669,7 +669,12 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlayerAiAnalyzer<'e, 
                         .and_either_other(|x| x.if_memory().filter(|&mem| mem == &dest))
                         .and_then(|y| y.if_constant())
                         .filter(|&c| c == 0x10)
-                        .map(|_| ctx.mem_sub_const_op(&dest, 0x218));
+                        .map(|_| {
+                            ctx.mem_sub_const_op(
+                                &dest,
+                                struct_layouts::player_ai_flags::<E::VirtualAddress>(),
+                            )
+                        });
                     if single_result_assign(result, &mut self.result) {
                         ctrl.end_analysis();
                     }
