@@ -218,7 +218,7 @@ local_unique_player_id: Mem32[d948e8]
 local_visions: Mem32[fe348c]
 main_palette: def018
 map_tile_flags: Mem32[deeff4]
-menu_screen_id: (((((Mem32[dccd3e] >> 4) ^ (Mem8[dccd3e] << 1c)) ^ Mem32[fbd35c]) ^ b3544b12) & ffffffff)
+menu_screen_id: ((((Mem32[dccd3e] >> 4) ^ ((Mem8[dccd3e] << 1c) & f0000000)) ^ Mem32[fbd35c]) ^ b3544b12)
 mouse_x: Mem16[d94894]
 mouse_y: Mem16[d94898]
 net_player_flags: fe3494
