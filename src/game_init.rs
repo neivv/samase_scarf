@@ -130,6 +130,17 @@ pub(crate) struct SinglePlayerMapEndAnalysis<'e, Va: VirtualAddress> {
     pub current_campaign_mission: Option<Operand<'e>>,
 }
 
+pub(crate) struct InitMapFromPathAnalysis<'e, Va: VirtualAddress> {
+    pub read_whole_mpq_file: Option<Va>,
+    pub read_whole_mpq_file2: Option<Va>,
+    pub open_map_mpq: Option<Va>,
+    pub sfile_close_archive: Option<Va>,
+    pub load_replay_scenario_chk: Option<Va>,
+    pub replay_scenario_chk: Option<Operand<'e>>,
+    pub replay_scenario_chk_size: Option<Operand<'e>>,
+    pub map_mpq: Option<Operand<'e>>,
+}
+
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
     fn default() -> Self {
         SinglePlayerStart {
@@ -4194,6 +4205,389 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeSpMapEnd<'
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+pub(crate) fn init_map_from_path_analysis<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    init_map_from_path: E::VirtualAddress,
+    is_replay: Operand<'e>,
+    game: Operand<'e>,
+) -> InitMapFromPathAnalysis<'e, E::VirtualAddress> {
+    let mut result = InitMapFromPathAnalysis {
+        read_whole_mpq_file: None,
+        read_whole_mpq_file2: None,
+        open_map_mpq: None,
+        sfile_close_archive: None,
+        load_replay_scenario_chk: None,
+        replay_scenario_chk: None,
+        replay_scenario_chk_size: None,
+        map_mpq: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let arg_cache = &actx.arg_cache;
+    let mut analyzer = AnalyzeInitMapFromPath::<E> {
+        arg_cache,
+        result: &mut result,
+        is_replay,
+        game,
+        ctx,
+        state: InitMapFromPathState::ReplayCheck,
+        non_replay_branch: E::VirtualAddress::from_u64(0),
+        non_replay_state: None,
+        map_mpq_candidate: None,
+        sfile_close_archive_candidate: E::VirtualAddress::from_u64(0),
+        inlining_open_map_unk: false,
+        inlining_read_map_file: false,
+        inlining_open_global_map_mpq: false,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, init_map_from_path);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzeInitMapFromPath<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut InitMapFromPathAnalysis<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    is_replay: Operand<'e>,
+    game: Operand<'e>,
+    ctx: OperandCtx<'e>,
+    state: InitMapFromPathState,
+    non_replay_branch: E::VirtualAddress,
+    non_replay_state: Option<E>,
+    map_mpq_candidate: Option<Operand<'e>>,
+    sfile_close_archive_candidate: E::VirtualAddress,
+    inlining_open_map_unk: bool,
+    inlining_read_map_file: bool,
+    inlining_open_global_map_mpq: bool,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum InitMapFromPathState {
+    /// Find is_replay check
+    ReplayCheck,
+    /// On is_replay branch:
+    /// load_replay_scenario_chk(replay_scenario_chk, replay_scenario_chk_size, 1, arg2)
+    LoadReplayScenarioChk,
+    /// On non-replay branch:
+    /// Inline once if call is open_map_unk(arg1, arg2)
+    /// Inline another time if calling open_global_map_mpq(_, _, _, is_campaign)
+    /// (Which contains SfileCloseArchive and OpenMapMpq)
+    /// Find sfile_close_archive(map_mpq), which is followed by map_mpq = 0
+    SfileCloseArchive,
+    /// open_map_mpq(arg1, _, _, is_campaign, _, _, &map_mpq)
+    OpenMapMpq,
+    /// Inline once if arg2 != constant to read_map_file,
+    /// assume game.campaign_mission == 0 on jumps,
+    /// find read_whole_mpq_file(map_mpq, _, _, _, 0, 0, 0)
+    ReadWholeMpqFile,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeInitMapFromPath<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = self.ctx;
+        let arg_cache = self.arg_cache;
+        match self.state {
+            InitMapFromPathState::ReplayCheck => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let result = if_arithmetic_eq_neq(condition)
+                        .filter(|x| x.1 == ctx.const_0() && x.0 == self.is_replay)
+                        .map(|x| x.2);
+                    if let Some(jump_if_not_replay) = result {
+                        let jump_dest = match ctrl.resolve_va(to) {
+                            Some(s) => s,
+                            None => return,
+                        };
+                        let no_jump_dest = ctrl.current_instruction_end();
+                        self.non_replay_state = Some(ctrl.exec_state().clone());
+                        let (other_branch, replay_branch) = match jump_if_not_replay {
+                            true => (jump_dest, no_jump_dest),
+                            false => (no_jump_dest, jump_dest),
+                        };
+                        self.non_replay_branch = other_branch;
+                        ctrl.clear_all_branches();
+                        ctrl.end_branch();
+                        ctrl.add_branch_with_current_state(replay_branch);
+                        self.state = InitMapFromPathState::LoadReplayScenarioChk;
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), _, _) = *op {
+                    // Skip writes to game.campaign_mission since it'll be checked later
+                    let mem = ctrl.resolve_mem(mem);
+                    let (base, offset) = mem.address();
+                    if offset == 0x154 && base == self.game {
+                        ctrl.skip_operation();
+                    }
+                }
+            }
+            InitMapFromPathState::LoadReplayScenarioChk => {
+                if let Operation::Call(dest) = *op {
+                    let ok = ctrl.resolve(arg_cache.on_call(2)) == ctx.const_1() &&
+                        ctrl.resolve(arg_cache.on_call(3)) == arg_cache.on_entry(1);
+                    if ok {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                            let arg2 = ctrl.resolve(arg_cache.on_call(1));
+                            self.result.load_replay_scenario_chk = Some(dest);
+                            self.result.replay_scenario_chk = Some(arg1);
+                            self.result.replay_scenario_chk_size = Some(arg2);
+                            self.state = InitMapFromPathState::SfileCloseArchive;
+                            ctrl.clear_all_branches();
+                            ctrl.end_branch();
+                            if let Some(state) = self.non_replay_state.take() {
+                                *ctrl.exec_state() = state;
+                                ctrl.add_branch_with_current_state(self.non_replay_branch);
+                            }
+                        }
+                    }
+                }
+            }
+            InitMapFromPathState::SfileCloseArchive => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                        if !self.inlining_open_map_unk {
+                            let inline = arg1 == arg_cache.on_entry(0) &&
+                                ctrl.resolve(arg_cache.on_call(1)) == arg_cache.on_entry(1);
+                            if inline {
+                                self.inlining_open_map_unk = true;
+                                ctrl.analyze_with_current_state(self, dest);
+                                if self.result.sfile_close_archive.is_some() {
+                                    ctrl.end_analysis();
+                                    return;
+                                }
+                                self.inlining_open_map_unk = false;
+                            }
+                        }
+                        if !self.inlining_open_global_map_mpq {
+                            let arg3 = ctx.and_const(
+                                ctrl.resolve(arg_cache.on_call(2)),
+                                0xff,
+                            );
+                            let arg3_campaign_mission =
+                                self.check_campaign_mission_cmp(arg3).is_some();
+                            if arg3_campaign_mission {
+                                self.inlining_open_global_map_mpq = true;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inlining_open_global_map_mpq = false;
+                                if self.state != InitMapFromPathState::SfileCloseArchive {
+                                    ctrl.clear_unchecked_branches();
+                                }
+                            }
+                        }
+                        if is_global(arg1) {
+                            self.map_mpq_candidate = Some(arg1);
+                            self.sfile_close_archive_candidate = dest;
+                        } else {
+                            self.map_mpq_candidate = None;
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if let Some(cand) = self.map_mpq_candidate {
+                        if ctrl.resolve(value) == ctx.const_0() {
+                            if let Some(cand_mem) = cand.if_memory() {
+                                let mem = ctrl.resolve_mem(mem);
+                                if *cand_mem == mem {
+                                    self.result.map_mpq = Some(cand);
+                                    self.result.sfile_close_archive =
+                                        Some(self.sfile_close_archive_candidate);
+                                    self.state = InitMapFromPathState::OpenMapMpq;
+                                    ctrl.clear_unchecked_branches();
+                                    // Keep map_mpq as unknown, not-zero
+                                    ctrl.skip_operation();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            InitMapFromPathState::OpenMapMpq => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg3 = ctx.and_const(
+                            ctrl.resolve(arg_cache.on_call(2)),
+                            0xff,
+                        );
+                        let arg3_campaign_mission =
+                            self.check_campaign_mission_cmp(arg3).is_some();
+                        let ok = ctrl.resolve(arg_cache.on_call(0)) == arg_cache.on_entry(0) &&
+                            arg3_campaign_mission &&
+                            self.check_map_mpq_addr(ctrl.resolve(arg_cache.on_call(6)));
+                        if ok {
+                            self.result.open_map_mpq = Some(dest);
+                            self.state = InitMapFromPathState::ReadWholeMpqFile;
+                            if self.inlining_open_global_map_mpq {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            InitMapFromPathState::ReadWholeMpqFile => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ok = Some(ctrl.resolve(arg_cache.on_call(0))) ==
+                                self.result.map_mpq &&
+                            (4..7).all(|i| {
+                                ctx.and_const(
+                                    ctrl.resolve(arg_cache.on_call(i)),
+                                    0xffff_ffff,
+                                ) == ctx.const_0()
+                            });
+                        if ok {
+                            self.check_read_whole_mpq_file(ctrl, dest);
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        if !self.inlining_read_map_file {
+                            let arg2 = ctrl.resolve(arg_cache.on_call(1));
+                            if arg2.if_constant().is_none() {
+                                self.inlining_read_map_file = true;
+                                ctrl.analyze_with_current_state(self, dest);
+                                if self.result.read_whole_mpq_file.is_some() ||
+                                    self.result.read_whole_mpq_file2.is_some()
+                                {
+                                    ctrl.end_analysis();
+                                    return;
+                                }
+                                self.inlining_read_map_file = false;
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some(jump_if_not_campaign) =
+                        self.check_campaign_mission_cmp(condition)
+                    {
+                        let not_campaign_addr = match jump_if_not_campaign {
+                            true => match ctrl.resolve_va(to) {
+                                Some(s) => s,
+                                None => return,
+                            },
+                            false => ctrl.current_instruction_end(),
+                        };
+                        ctrl.end_branch();
+                        ctrl.add_branch_with_current_state(not_campaign_addr);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> AnalyzeInitMapFromPath<'a, 'e, E> {
+    fn check_campaign_mission_cmp(&mut self, op: Operand<'e>) -> Option<bool> {
+       if_arithmetic_eq_neq(op)
+            .filter(|x| x.1 == self.ctx.const_0())
+            .filter(|x| x.0.if_mem16_offset(0x154) == Some(self.game))
+            .map(|x| x.2)
+    }
+
+    /// Only returns valid value once map_mpq is in result
+    fn check_map_mpq_addr(&mut self, op: Operand<'e>) -> bool {
+        if let Some(map_mpq) = self.result.map_mpq.and_then(|x| x.if_memory()) {
+            self.ctx.mem_access(op, 0, E::WORD_SIZE) == *map_mpq
+        } else {
+            false
+        }
+    }
+
+    /// Checks if func is read_whole_mpq_file (7 args) or read_whole_mpq_file2 (8 args)
+    /// If the function immediately calls another function with same arg 1-7 and 0 for arg8,
+    /// assume func to be 7 arg one and callee be 8 arg one.
+    ///
+    /// Otherwise:
+    ///     - On 32bit return stack pop is used to determine arg count
+    ///     - On 64bit the entire function would have to be scanned for arg8 access,
+    ///         but since the calling convention is nicer we just guess it is
+    ///         read_whole_mpq_file2 if arg 8 is 0
+    fn check_read_whole_mpq_file(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        func: E::VirtualAddress,
+    ) {
+        let ctx = self.ctx;
+        let binary = ctrl.binary();
+        let mut analyzer = CheckReadWholeMpqFile::<E> {
+            arg_cache: self.arg_cache,
+            func,
+            result: &mut self.result,
+            first_call: true,
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, func);
+        analysis.analyze(&mut analyzer);
+        if E::VirtualAddress::SIZE == 8 && self.result.read_whole_mpq_file.is_none() {
+            // Didn't get result where both of them are something; assume
+            // 8 args if value in arg8 place is currently 0.
+            let arg8 = ctx.and_const(ctrl.resolve(self.arg_cache.on_call(7)), 0xffff_ffff);
+            if arg8 == ctx.const_0() {
+                self.result.read_whole_mpq_file2 = Some(func);
+            } else {
+                self.result.read_whole_mpq_file = Some(func);
+            }
+        }
+    }
+}
+
+struct CheckReadWholeMpqFile<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut InitMapFromPathAnalysis<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    first_call: bool,
+    func: E::VirtualAddress,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheckReadWholeMpqFile<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if self.first_call {
+                self.first_call = false;
+                let ctx = ctrl.ctx();
+                if (0..7).all(|i| {
+                    let arg = ctrl.resolve(self.arg_cache.on_call(i));
+                    let entry_arg = self.arg_cache.on_entry(i);
+                    // u32 args are likely just moved as u32, so mask both sides when
+                    // checking if they're equal
+                    if i == 4 || i == 5 {
+                        ctx.and_const(arg, 0xffff_ffff) == ctx.and_const(entry_arg, 0xffff_ffff)
+                    } else {
+                        arg == entry_arg
+                    }
+                }) {
+                    let arg8 =
+                        ctx.and_const(ctrl.resolve(self.arg_cache.on_call(7)), 0xffff_ffff);
+                    if arg8 == ctx.const_0() {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.result.read_whole_mpq_file = Some(self.func);
+                            self.result.read_whole_mpq_file2 = Some(dest);
+                            ctrl.end_analysis();
+                            return;
+                        }
+                    }
+                }
+                if E::VirtualAddress::SIZE == 8 {
+                    // fn check_read_whole_mpq_file handles rest if this didn't result in
+                    // anything.
+                    ctrl.end_analysis();
+                    return;
+                }
+            }
+        }
+        if E::VirtualAddress::SIZE == 4 {
+            if let Operation::Return(stack_pop) = *op {
+                if stack_pop == 0x1c {
+                    self.result.read_whole_mpq_file = Some(self.func);
+                } else if stack_pop == 0x20 {
+                    self.result.read_whole_mpq_file2 = Some(self.func);
+                }
+                ctrl.end_analysis();
             }
         }
     }

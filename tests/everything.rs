@@ -1547,7 +1547,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         match addr {
             // special handling
             JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins | StepGameLoop |
-                GetMouseX | GetMouseY | NetFormatTurnRate => continue,
+                GetMouseX | GetMouseY | NetFormatTurnRate | ReadWholeMpqFile |
+                ReadWholeMpqFile2 => continue,
             _ => (),
         }
         let result = analysis.address_analysis(addr);
@@ -1585,7 +1586,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 NextGameStepTick | FirstPylon | PylonRefresh | PylonAurasVisible |
                 LocalGameResult | IsCustomSinglePlayer | CurrentCampaignMission | LocalVisions |
                 FirstFreeSelectionCircle | LastFreeSelectionCircle | GrpWireGrp | TranWireGrp |
-                StatusScreen =>
+                StatusScreen | MapMpq | ReplayScenarioChk | ReplayScenarioChkSize =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -2123,6 +2124,17 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert_eq!(analysis.bnet_message_vtable_type(), Some(4));
     } else {
         assert_eq!(analysis.bnet_message_vtable_type(), Some(8));
+    }
+
+    // Before 1.23.0 map file accessing seemed to go through same abstraction as game files
+    let read_whole_mpq_file = analysis.read_whole_mpq_file();
+    let read_whole_mpq_file2 = analysis.read_whole_mpq_file2();
+    if minor_version >= 23 {
+        assert!(read_whole_mpq_file.is_some());
+        assert!(read_whole_mpq_file2.is_some());
+    } else {
+        assert!(read_whole_mpq_file.is_none());
+        assert!(read_whole_mpq_file2.is_none());
     }
 
     let dump_text = samase_scarf::dump::dump_all(analysis);

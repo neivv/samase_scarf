@@ -61,6 +61,7 @@ layout_draw_text: 00976b00
 load_dat: 006ce800
 load_images: 00577300
 load_pcx: 006ceb00
+load_replay_scenario_chk: 007046d0
 load_snp_list: 00795ed0
 mainmenu_entry_hook: 006ffc22
 map_entry_load_map: 0060a230
@@ -73,6 +74,7 @@ net_format_turn_rate: 00728990
 open_anim_multi_file: 00537300
 open_anim_single_file: 00536d10
 open_file: 005497b0
+open_map_mpq: 0092aed0
 order_init_arbiter: 005c19c0
 play_smk: 0074c9f0
 play_sound: 00778680
@@ -84,6 +86,8 @@ print_text: 00705d60
 process_commands: 0072c2c0
 process_events: 006bd100
 process_lobby_commands: 0072bfb0
+read_whole_mpq_file: 00948d80
+read_whole_mpq_file2: 00948bf0
 receive_storm_turns: 00722390
 remove_from_client_selection: 005b0b60
 remove_from_selections: 00770330
@@ -100,6 +104,7 @@ set_briefing_music: 006e5ac0
 set_music: 00779130
 set_scmain_state: 006fcd60
 set_unit_player: 005b3850
+sfile_close_archive: 00947cf0
 show_mission_glue: 006999b0
 single_player_map_end: 0079fad0
 single_player_start: 007246b0
@@ -217,6 +222,7 @@ local_storm_player_id: Mem32[f51cec]
 local_unique_player_id: Mem32[f51ce8]
 local_visions: Mem32[11d0530]
 main_palette: fd9c30
+map_mpq: Mem32[11ad598]
 map_tile_flags: Mem32[fda040]
 menu_screen_id: (Mem32[f4c99c] ^ 67d8889c)
 mouse_x: None
@@ -243,6 +249,8 @@ pylon_refresh: Mem32[fd42a8]
 replay_bfix: f525d0
 replay_data: Mem32[11d35c4]
 replay_gcfg: 11d701c
+replay_scenario_chk: Mem32[11d5314]
+replay_scenario_chk_size: Mem32[11d5310]
 replay_seek_frame: Mem32[11d5324]
 replay_show_entire_map: Mem32[11d532c]
 replay_visions: Mem8[11d5328]

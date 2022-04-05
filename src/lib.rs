@@ -329,6 +329,15 @@ results! {
         InitStatusScreen => "init_status_screen",
         StatusScreenEventHandler => "status_screen_event_handler",
         NetFormatTurnRate => "net_format_turn_rate",
+        LoadReplayScenarioChk => "load_replay_scenario_chk",
+        SfileCloseArchive => "sfile_close_archive",
+        OpenMapMpq => "open_map_mpq",
+        // arg 1 void *mpq_handle, arg 2 char *filename, arg 3 u8 *out_ptr arg 4 u32 *out_size,
+        // arg 5 extra_out_size (0), arg 6 storm flags (0), arg 7 unk opt ptr? (0); stdcall
+        ReadWholeMpqFile => "read_whole_mpq_file",
+        // Takes 8th argument which is unused anyway but affects calling convention
+        // so have separate analysis result for it.
+        ReadWholeMpqFile2 => "read_whole_mpq_file2",
     }
 }
 
@@ -473,6 +482,9 @@ results! {
         TranWireGrp => "tranwire_grp",
         TranWireDdsGrp => "tranwire_ddsgrp",
         StatusScreen => "status_screen",
+        ReplayScenarioChk => "replay_scenario_chk",
+        ReplayScenarioChkSize => "replay_scenario_chk_size",
+        MapMpq => "map_mpq",
     }
 }
 
@@ -921,6 +933,11 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             InitStatusScreen => self.init_status_screen(),
             StatusScreenEventHandler => self.status_screen_event_handler(),
             NetFormatTurnRate => self.net_format_turn_rate(),
+            LoadReplayScenarioChk => self.load_replay_scenario_chk(),
+            SfileCloseArchive => self.sfile_close_archive(),
+            OpenMapMpq => self.open_map_mpq(),
+            ReadWholeMpqFile => self.read_whole_mpq_file(),
+            ReadWholeMpqFile2 => self.read_whole_mpq_file2(),
         }
     }
 
@@ -1066,6 +1083,9 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             TranWireGrp => self.tranwire_grp(),
             TranWireDdsGrp => self.tranwire_ddsgrp(),
             StatusScreen => self.status_screen(),
+            ReplayScenarioChk => self.replay_scenario_chk(),
+            ReplayScenarioChkSize => self.replay_scenario_chk_size(),
+            MapMpq => self.map_mpq(),
         }
     }
 
@@ -2731,6 +2751,59 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         )
     }
 
+    pub fn load_replay_scenario_chk(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::LoadReplayScenarioChk,
+            AnalysisCache::cache_init_map_from_path,
+        )
+    }
+
+    pub fn sfile_close_archive(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::SfileCloseArchive,
+            AnalysisCache::cache_init_map_from_path,
+        )
+    }
+
+    pub fn open_map_mpq(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::OpenMapMpq,
+            AnalysisCache::cache_init_map_from_path,
+        )
+    }
+
+    pub fn read_whole_mpq_file(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ReadWholeMpqFile,
+            AnalysisCache::cache_init_map_from_path,
+        )
+    }
+
+    pub fn read_whole_mpq_file2(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ReadWholeMpqFile2,
+            AnalysisCache::cache_init_map_from_path,
+        )
+    }
+
+    pub fn replay_scenario_chk(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ReplayScenarioChk,
+            AnalysisCache::cache_init_map_from_path,
+        )
+    }
+
+    pub fn replay_scenario_chk_size(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ReplayScenarioChkSize,
+            AnalysisCache::cache_init_map_from_path,
+        )
+    }
+
+    pub fn map_mpq(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::MapMpq, AnalysisCache::cache_init_map_from_path)
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -3280,6 +3353,10 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             let result = game_init::init_map_from_path(actx, &s.function_finder())?;
             Some(([Some(result.init_map_from_path), Some(result.map_init_chk_callbacks)], []))
         })
+    }
+
+    fn init_map_from_path(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::InitMapFromPath, |s| s.cache_init_map(actx))
     }
 
     fn map_init_chk_callbacks(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -4830,6 +4907,32 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
                 [result.create_fow_sprite, result.duplicate_sprite],
                 [result.local_visions, result.first_free_selection_circle,
                 result.last_free_selection_circle, result.unit_skin_map, result.sprite_skin_map],
+            ))
+        })
+    }
+
+    fn cache_init_map_from_path(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[LoadReplayScenarioChk, SfileCloseArchive, OpenMapMpq, ReadWholeMpqFile,
+                ReadWholeMpqFile2],
+            &[ReplayScenarioChk, ReplayScenarioChkSize, MapMpq],
+            |s|
+        {
+            let init_map_from_path = s.init_map_from_path(actx)?;
+            let is_replay = s.is_replay(actx)?;
+            let game = s.game(actx)?;
+            let result = game_init::init_map_from_path_analysis(
+                actx,
+                init_map_from_path,
+                is_replay,
+                game,
+            );
+            Some((
+                [result.load_replay_scenario_chk, result.sfile_close_archive,
+                    result.open_map_mpq, result.read_whole_mpq_file, result.read_whole_mpq_file2],
+                [result.replay_scenario_chk, result.replay_scenario_chk_size, result.map_mpq],
             ))
         })
     }
