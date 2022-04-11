@@ -1560,7 +1560,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         match op {
             // special handling
             Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg |
-                AntiTroll | MouseX | MouseY | NetUserLatency => {
+                AntiTroll | MouseX | MouseY | NetUserLatency | MapHistory => {
                 continue;
             }
             Game | Players | MenuScreenId | BnetController => {
@@ -2135,6 +2135,16 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     } else {
         assert!(read_whole_mpq_file.is_none());
         assert!(read_whole_mpq_file2.is_none());
+    }
+    // map_history was added in 1.23.3c (Or at least it wasn't used in map loading before that)
+    let map_history = analysis.map_history();
+    if minor_version > 23 ||
+        (minor_version == 23 && patch_version > 3) ||
+        (minor_version == 23 && patch_version == 3 && revision > b'b')
+    {
+        check_global_opt(map_history, binary, "map_history");
+    } else {
+        assert!(map_history.is_none());
     }
 
     let dump_text = samase_scarf::dump::dump_all(analysis);

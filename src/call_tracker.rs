@@ -46,6 +46,22 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         address: E::VirtualAddress,
     ) {
         let ctx = ctrl.ctx();
+        let custom = self.func_to_custom(ctx, address);
+        ctrl.do_call_with_result(custom);
+    }
+
+    pub fn add_call_preserve_esp<A: scarf::Analyzer<'e>>(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, A>,
+        address: E::VirtualAddress,
+    ) {
+        let ctx = ctrl.ctx();
+        let custom = self.func_to_custom(ctx, address);
+        ctrl.skip_call_preserve_esp();
+        ctrl.exec_state().set_register(0, custom);
+    }
+
+    fn func_to_custom(&mut self, ctx: OperandCtx<'e>, address: E::VirtualAddress) -> Operand<'e> {
         let entry = self.func_to_id.entry((address, None));
         let id_to_func = &mut self.id_to_func;
         let new_id = id_to_func.len() as u32 + self.first_custom;
@@ -53,7 +69,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
             id_to_func.push((address, None, None));
             ctx.custom(new_id)
         });
-        ctrl.do_call_with_result(custom);
+        custom
     }
 
     /// Registers and simulates a call to specific address, resolving immeditaly
@@ -67,13 +83,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         address: E::VirtualAddress,
     ) {
         let ctx = ctrl.ctx();
-        let entry = self.func_to_id.entry((address, None));
-        let id_to_func = &mut self.id_to_func;
-        let new_id = id_to_func.len() as u32 + self.first_custom;
-        let &mut custom = entry.or_insert_with(|| {
-            id_to_func.push((address, None, None));
-            ctx.custom(new_id)
-        });
+        let custom = self.func_to_custom(ctx, address);
         let val = ctrl.resolve(self.resolve_calls(custom));
         ctrl.do_call_with_result(val)
     }

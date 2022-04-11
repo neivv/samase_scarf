@@ -139,6 +139,7 @@ pub(crate) struct InitMapFromPathAnalysis<'e, Va: VirtualAddress> {
     pub replay_scenario_chk: Option<Operand<'e>>,
     pub replay_scenario_chk_size: Option<Operand<'e>>,
     pub map_mpq: Option<Operand<'e>>,
+    pub map_history: Option<Operand<'e>>,
 }
 
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
@@ -4225,6 +4226,7 @@ pub(crate) fn init_map_from_path_analysis<'e, E: ExecutionState<'e>>(
         replay_scenario_chk: None,
         replay_scenario_chk_size: None,
         map_mpq: None,
+        map_history: None,
     };
 
     let binary = actx.binary;
@@ -4244,13 +4246,17 @@ pub(crate) fn init_map_from_path_analysis<'e, E: ExecutionState<'e>>(
         inlining_open_map_unk: false,
         inlining_read_map_file: false,
         inlining_open_global_map_mpq: false,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+        inline_return: None,
+        current_branch: init_map_from_path,
+        cmp_zero_branches: bumpvec_with_capacity(32, &actx.bump),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, init_map_from_path);
     analysis.analyze(&mut analyzer);
     result
 }
 
-struct AnalyzeInitMapFromPath<'a, 'e, E: ExecutionState<'e>> {
+struct AnalyzeInitMapFromPath<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut InitMapFromPathAnalysis<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     is_replay: Operand<'e>,
@@ -4264,6 +4270,10 @@ struct AnalyzeInitMapFromPath<'a, 'e, E: ExecutionState<'e>> {
     inlining_open_map_unk: bool,
     inlining_read_map_file: bool,
     inlining_open_global_map_mpq: bool,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    inline_return: Option<Operand<'e>>,
+    current_branch: E::VirtualAddress,
+    cmp_zero_branches: BumpVec<'acx, (E::VirtualAddress, Operand<'e>)>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -4285,9 +4295,17 @@ enum InitMapFromPathState {
     /// assume game.campaign_mission == 0 on jumps,
     /// find read_whole_mpq_file(map_mpq, _, _, _, 0, 0, 0)
     ReadWholeMpqFile,
+    /// Write Custom(0) to arg 3 ptr of read_whole_mpq_file; have read_whole_mpq_file return 1.
+    /// Then check for
+    /// map_history_set_first_map_chk_hash(this = map_history, Custom(0), _)
+    /// Since map_history is likely a lazily mallocated pointer, have also handling for that.
+    /// But try to support non-pointer global if it ever is refactored to use that.
+    MapHistory,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeInitMapFromPath<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    AnalyzeInitMapFromPath<'a, 'acx, 'e, E>
+{
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -4442,19 +4460,23 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeInitMapFro
                             });
                         if ok {
                             self.check_read_whole_mpq_file(ctrl, dest);
-                            ctrl.end_analysis();
+                            self.state = InitMapFromPathState::MapHistory;
+                            let arg = ctrl.resolve(arg_cache.on_call(2));
+                            ctrl.move_resolved(
+                                &DestOperand::Memory(ctx.mem_access(arg, 0, E::WORD_SIZE)),
+                                ctx.custom(0),
+                            );
+                            ctrl.do_call_with_result(ctx.const_1());
                             return;
                         }
                         if !self.inlining_read_map_file {
                             let arg2 = ctrl.resolve(arg_cache.on_call(1));
                             if arg2.if_constant().is_none() {
                                 self.inlining_read_map_file = true;
-                                ctrl.analyze_with_current_state(self, dest);
-                                if self.result.read_whole_mpq_file.is_some() ||
-                                    self.result.read_whole_mpq_file2.is_some()
-                                {
-                                    ctrl.end_analysis();
-                                    return;
+                                ctrl.inline(self, dest);
+                                ctrl.skip_operation();
+                                if self.state != InitMapFromPathState::ReadWholeMpqFile {
+                                    ctrl.clear_unchecked_branches();
                                 }
                                 self.inlining_read_map_file = false;
                             }
@@ -4477,11 +4499,89 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeInitMapFro
                     }
                 }
             }
+            InitMapFromPathState::MapHistory => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let tc_arg1 = ctrl.resolve(arg_cache.on_thiscall_call(0));
+                        if tc_arg1.if_custom() == Some(0) {
+                            let tc_arg2 = ctrl.resolve(arg_cache.on_thiscall_call(1));
+                            // Arg2 should be map data length; so not global
+                            if !is_global(tc_arg2) {
+                                let this = ctrl.resolve(ctx.register(1));
+                                let this = if let Some(c) = this.if_custom() {
+                                    if let Some(func) = self.call_tracker.custom_id_to_func(c) {
+                                        self.map_history_from_get_fn(ctrl, func)
+                                    } else {
+                                        this
+                                    }
+                                } else {
+                                    this
+                                };
+                                if is_global(this) {
+                                    self.result.map_history = Some(this);
+                                    ctrl.end_analysis();
+                                    return;
+                                }
+                            }
+                        } else {
+                            let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                            let constant = arg1.if_constant()
+                                .or_else(|| {
+                                    // 64bit does `lea rcx, [rax + C]` in branch
+                                    // where rax was just known to be zero.
+                                    let zero_op = self.cmp_zero_branches
+                                        .iter()
+                                        .find(|x| x.0 == self.current_branch)
+                                        .map(|x| x.1)?;
+                                    ctx.substitute(arg1, zero_op, ctx.const_0(), 8)
+                                        .if_constant()
+                                });
+                            if let Some(c) = constant {
+                                if c > 8 && c < 0x100 {
+                                    // Assume malloc initilziation call that is on
+                                    // branch that can be skipped
+                                    ctrl.end_branch();
+                                    return;
+                                }
+                            }
+                        }
+                        self.call_tracker.add_call_preserve_esp(ctrl, dest);
+                    }
+                } else if let Operation::Return(..) = *op {
+                    let ret = ctrl.resolve(ctx.register(0));
+                    if let Some(old) = self.inline_return {
+                        if !old.is_undefined() && old != ret {
+                            self.inline_return = Some(ctx.new_undef());
+                        }
+                    } else {
+                        self.inline_return = Some(ret);
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((op, jump_if_zero)) = if_arithmetic_eq_neq(condition)
+                        .filter(|x| x.1 == ctx.const_0())
+                        .map(|x| (x.0, x.2))
+                    {
+                        let zero_addr = match jump_if_zero {
+                            true => match ctrl.resolve_va(to) {
+                                Some(s) => s,
+                                None => return,
+                            },
+                            false => ctrl.current_instruction_end(),
+                        };
+                        self.cmp_zero_branches.push((zero_addr, op));
+                    }
+                }
+            }
         }
+    }
+
+    fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        self.current_branch = ctrl.address();
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> AnalyzeInitMapFromPath<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> AnalyzeInitMapFromPath<'a, 'acx, 'e, E> {
     fn check_campaign_mission_cmp(&mut self, op: Operand<'e>) -> Option<bool> {
        if_arithmetic_eq_neq(op)
             .filter(|x| x.1 == self.ctx.const_0())
@@ -4532,6 +4632,19 @@ impl<'a, 'e, E: ExecutionState<'e>> AnalyzeInitMapFromPath<'a, 'e, E> {
                 self.result.read_whole_mpq_file = Some(func);
             }
         }
+    }
+
+    fn map_history_from_get_fn(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        func: E::VirtualAddress,
+    ) -> Operand<'e> {
+        let ctx = ctrl.ctx();
+        let binary = ctrl.binary();
+        self.inline_return = None;
+        let mut analysis = FuncAnalysis::new(binary, ctx, func);
+        analysis.analyze(self);
+        self.inline_return.unwrap_or_else(|| ctx.new_undef())
     }
 }
 

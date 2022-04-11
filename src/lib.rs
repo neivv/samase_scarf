@@ -485,6 +485,7 @@ results! {
         ReplayScenarioChk => "replay_scenario_chk",
         ReplayScenarioChkSize => "replay_scenario_chk_size",
         MapMpq => "map_mpq",
+        MapHistory => "map_history",
     }
 }
 
@@ -1086,6 +1087,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ReplayScenarioChk => self.replay_scenario_chk(),
             ReplayScenarioChkSize => self.replay_scenario_chk_size(),
             MapMpq => self.map_mpq(),
+            MapHistory => self.map_history(),
         }
     }
 
@@ -2802,6 +2804,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
 
     pub fn map_mpq(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(OperandAnalysis::MapMpq, AnalysisCache::cache_init_map_from_path)
+    }
+
+    pub fn map_history(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::MapHistory, AnalysisCache::cache_init_map_from_path)
     }
 
     /// Mainly for tests/dump
@@ -4917,7 +4923,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.cache_many(
             &[LoadReplayScenarioChk, SfileCloseArchive, OpenMapMpq, ReadWholeMpqFile,
                 ReadWholeMpqFile2],
-            &[ReplayScenarioChk, ReplayScenarioChkSize, MapMpq],
+            &[ReplayScenarioChk, ReplayScenarioChkSize, MapMpq, MapHistory],
             |s|
         {
             let init_map_from_path = s.init_map_from_path(actx)?;
@@ -4932,7 +4938,8 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
             Some((
                 [result.load_replay_scenario_chk, result.sfile_close_archive,
                     result.open_map_mpq, result.read_whole_mpq_file, result.read_whole_mpq_file2],
-                [result.replay_scenario_chk, result.replay_scenario_chk_size, result.map_mpq],
+                [result.replay_scenario_chk, result.replay_scenario_chk_size, result.map_mpq,
+                    result.map_history],
             ))
         })
     }
@@ -5834,17 +5841,11 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
         let ctx = self.ctx();
         let state = self.exec_state();
         for i in 0..3 {
-            state.move_resolved(
-                &scarf::DestOperand::Register64(i),
-                ctx.new_undef(),
-            );
+            state.set_register(i, ctx.new_undef());
         }
         if A::Exec::WORD_SIZE == MemAccessSize::Mem64 {
             for i in 8..10 {
-                state.move_resolved(
-                    &scarf::DestOperand::Register64(i),
-                    ctx.new_undef(),
-                );
+                state.set_register(i, ctx.new_undef());
             }
         }
     }
@@ -5853,21 +5854,16 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
         self.skip_operation();
         let ctx = self.ctx();
         let state = self.exec_state();
-        state.move_resolved(
-            &scarf::DestOperand::Register64(0),
-            result,
-        );
+        state.set_register(0, result);
         for i in 1..3 {
-            state.move_resolved(
-                &scarf::DestOperand::Register64(i),
-                ctx.new_undef(),
-            );
+            state.set_register(i, ctx.new_undef());
         }
         if A::Exec::WORD_SIZE == MemAccessSize::Mem32 {
-            state.move_resolved(
-                &scarf::DestOperand::Register64(4),
-                ctx.new_undef(),
-            );
+            state.set_register(4, ctx.new_undef());
+        } else {
+            for i in 8..10 {
+                state.set_register(i, ctx.new_undef());
+            }
         }
     }
 
