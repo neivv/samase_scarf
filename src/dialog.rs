@@ -6,7 +6,7 @@ use std::convert::{TryInto, TryFrom};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, MemAccessSize};
-use scarf::{BinaryFile, DestOperand, Operation, Operand, OperandCtx};
+use scarf::{BinaryFile, DestOperand, MemAccess, Operation, Operand, OperandCtx};
 
 use crate::{
     AnalysisCtx, ArgCache, ControlExt, EntryOf, OperandExt, OptionExt, single_result_assign,
@@ -16,6 +16,7 @@ use crate::{
 use crate::analysis_state::{
     AnalysisState, StateEnum, TooltipState, FindTooltipCtrlState, GluCmpgnState,
 };
+use crate::call_tracker::CallTracker;
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
 
@@ -56,8 +57,24 @@ pub struct MultiWireframes<'e, Va: VirtualAddress> {
 
 pub(crate) struct UiEventHandlers<'e, Va: VirtualAddress> {
     pub reset_ui_event_handlers: Option<Va>,
-    pub default_scroll_handler: Option<Va>,
     pub global_event_handlers: Option<Operand<'e>>,
+    pub targeting_lclick: Option<Va>,
+    pub targeting_rclick: Option<Va>,
+    pub building_placement_lclick: Option<Va>,
+    pub building_placement_rclick: Option<Va>,
+    pub game_screen_l_click: Option<Va>,
+    pub game_screen_lclick_callback: Option<Operand<'e>>,
+    pub game_screen_rclick_callback: Option<Operand<'e>>,
+    pub default_key_down_handler: Option<Va>,
+    pub default_key_up_handler: Option<Va>,
+    pub default_left_down_handler: Option<Va>,
+    pub default_left_double_handler: Option<Va>,
+    pub default_right_down_handler: Option<Va>,
+    pub default_middle_down_handler: Option<Va>,
+    pub default_middle_up_handler: Option<Va>,
+    pub default_periodic_handler: Option<Va>,
+    pub default_char_handler: Option<Va>,
+    pub default_scroll_handler: Option<Va>,
 }
 
 pub(crate) struct RunMenus<Va: VirtualAddress> {
@@ -1404,20 +1421,39 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindChildDrawFunc<'a
 }
 
 pub(crate) fn ui_event_handlers<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'e, E>,
+    actx: &AnalysisCtx<'e, E>,
     game_screen_rclick: E::VirtualAddress,
+    is_targeting: Operand<'e>,
+    is_placing_building: Operand<'e>,
     functions: &FunctionFinder<'_, 'e, E>,
 ) -> UiEventHandlers<'e, E::VirtualAddress> {
     let mut result = UiEventHandlers {
         reset_ui_event_handlers: None,
         default_scroll_handler: None,
         global_event_handlers: None,
+        targeting_lclick: None,
+        targeting_rclick: None,
+        building_placement_lclick: None,
+        building_placement_rclick: None,
+        game_screen_l_click: None,
+        game_screen_lclick_callback: None,
+        game_screen_rclick_callback: None,
+        default_key_down_handler: None,
+        default_key_up_handler: None,
+        default_left_down_handler: None,
+        default_left_double_handler: None,
+        default_right_down_handler: None,
+        default_middle_down_handler: None,
+        default_middle_up_handler: None,
+        default_periodic_handler: None,
+        default_char_handler: None,
     };
 
-    let ctx = analysis.ctx;
-    let binary = analysis.binary;
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let bump = &actx.bump;
     let funcs = functions.functions();
-    let global_refs = functions.find_functions_using_global(analysis, game_screen_rclick);
+    let global_refs = functions.find_functions_using_global(actx, game_screen_rclick);
     for func in &global_refs {
         let val = crate::entry_of_until(binary, &funcs, func.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -1425,11 +1461,19 @@ pub(crate) fn ui_event_handlers<'e, E: ExecutionState<'e>>(
                 entry_of: EntryOf::Retry,
                 use_address: func.use_address,
                 result: &mut result,
+                is_targeting,
+                is_placing_building,
+                game_screen_rclick,
                 stores: FxHashMap::with_capacity_and_hasher(0x20, Default::default()),
+                click_stores: array_init::array_init(|_| bumpvec_with_capacity(8, bump)),
+                next_click_store_path: None,
+                is_targeting_seen: false,
+                is_placing_building_seen: false,
+                click_index: usize::MAX,
                 ctx,
+                call_tracker: CallTracker::with_capacity(actx, 0, 0x20),
             };
             analysis.analyze(&mut analyzer);
-            analyzer.finish();
             analyzer.entry_of
         }).into_option_with_entry().map(|x| x.0);
         if let Some(addr) = val {
@@ -1441,57 +1485,134 @@ pub(crate) fn ui_event_handlers<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct ResetUiEventHandlersAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct ResetUiEventHandlersAnalyzer<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> {
     entry_of: EntryOf<()>,
     use_address: E::VirtualAddress,
     result: &'a mut UiEventHandlers<'e, E::VirtualAddress>,
+    is_targeting: Operand<'e>,
+    is_placing_building: Operand<'e>,
+    game_screen_rclick: E::VirtualAddress,
     // Base, offset -> value
     stores: FxHashMap<(scarf::operand::OperandHashByAddress<'e>, u64), E::VirtualAddress>,
+    click_stores: [BumpVec<'acx, (MemAccess<'e>, E::VirtualAddress)>; 3],
+    next_click_store_path: Option<(E, E::VirtualAddress)>,
+    is_targeting_seen: bool,
+    is_placing_building_seen: bool,
+    click_index: usize,
     ctx: OperandCtx<'e>,
+    call_tracker: CallTracker<'acx, 'e, E>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
-    ResetUiEventHandlersAnalyzer<'a, 'e, E>
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    ResetUiEventHandlersAnalyzer<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        if ctrl.address() <= self.use_address &&
-            ctrl.current_instruction_end() > self.use_address
-        {
-            self.entry_of = EntryOf::Stop;
-        }
-        match *op {
-            Operation::Move(DestOperand::Memory(mem), val, None)
-                if mem.size == E::WORD_SIZE =>
+        if self.result.global_event_handlers.is_none() {
+            if ctrl.address() <= self.use_address &&
+                ctrl.current_instruction_end() > self.use_address
             {
-                // Search for stores to
-                // global_event_handlers[0] = func1
-                // global_event_handlers[1] = (not set)
-                // global_event_handlers[2] = func2
-                // global_event_handlers[3] = 0
-                // ..
-                // global_event_handlers[0x11] = scroll_handler
-                // global_event_handlers[0x12] = scroll_handler
-                let val = ctrl.resolve(val);
-                if let Some(c) = val.if_constant() {
-                    let val = E::VirtualAddress::from_u64(c);
-                    let mem = ctrl.resolve_mem(&mem);
-                    let (base, offset) = mem.address();
-                    if !base.contains_undefined() {
-                        self.stores.insert((base.hash_by_address(), offset), val);
+                self.entry_of = EntryOf::Stop;
+            }
+            match *op {
+                Operation::Move(DestOperand::Memory(mem), val, None)
+                    if mem.size == E::WORD_SIZE =>
+                {
+                    // Search for stores to
+                    // global_event_handlers[0] = func1
+                    // global_event_handlers[1] = (not set)
+                    // global_event_handlers[2] = func2
+                    // global_event_handlers[3] = 0
+                    // ..
+                    // global_event_handlers[0x11] = scroll_handler
+                    // global_event_handlers[0x12] = scroll_handler
+                    let val = ctrl.resolve(val);
+                    if let Some(c) = val.if_constant() {
+                        let val = E::VirtualAddress::from_u64(c);
+                        let mem = ctrl.resolve_mem(&mem);
+                        let (base, offset) = mem.address();
+                        if is_global(base) {
+                            self.stores.insert((base.hash_by_address(), offset), val);
+                            if self.stores.len() >= 0xc {
+                                self.try_finish();
+                            }
+                        }
                     }
                 }
+                _ => (),
             }
-            _ => (),
+        } else {
+            match *op {
+                Operation::Call(dest) => {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.call_tracker.add_call_resolve(ctrl, dest);
+                    }
+                }
+                Operation::Jump { condition, to } => {
+                    if let Some(to) = ctrl.resolve_va(to) {
+                        let condition = ctrl.resolve(condition);
+                        let ctx = ctrl.ctx();
+                        if let Some((op, eq)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                            let no_jump = ctrl.current_instruction_end();
+                            let (nonzero, other) = match eq {
+                                true => (no_jump, to),
+                                false => (to, no_jump),
+                            };
+                            if op == self.is_targeting {
+                                self.is_targeting_seen = true;
+                                self.click_index = 0;
+                                let exec = ctrl.exec_state();
+                                self.next_click_store_path = Some((exec.clone(), other));
+                                ctrl.clear_all_branches();
+                                ctrl.continue_at_address(nonzero);
+                            } else if op == self.is_placing_building {
+                                self.is_placing_building_seen = true;
+                                self.click_index = 1;
+                                let exec = ctrl.exec_state();
+                                self.next_click_store_path = Some((exec.clone(), other));
+                                ctrl.clear_all_branches();
+                                ctrl.continue_at_address(nonzero);
+                            }
+                        }
+                    }
+                }
+                Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+                    let index = self.click_index;
+                    if index < 3 {
+                        if let Some(value) = ctrl.resolve_va(value) {
+                            let mem = ctrl.resolve_mem(mem);
+                            if is_global(mem.address().0) {
+                                self.click_stores[index].push((mem, value));
+                            }
+                        }
+                    }
+                }
+                Operation::Return(..) => {
+                    if let Some((exec, addr)) = self.next_click_store_path.take() {
+                        ctrl.clear_all_branches();
+                        ctrl.add_branch_with_state(addr, exec, Default::default());
+                        if self.is_placing_building_seen && self.is_targeting_seen {
+                            self.click_index = 2;
+                        }
+                    }
+                    if self.click_index == 2 {
+                        let ctx = ctrl.ctx();
+                        if self.try_finish_click_stores(ctx).is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+                _ => (),
+            }
         }
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> ResetUiEventHandlersAnalyzer<'a, 'e, E> {
-    fn finish(&mut self) {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> ResetUiEventHandlersAnalyzer<'a, 'acx, 'e, E> {
+    fn try_finish(&mut self) {
+        let mut result_addrs = [E::VirtualAddress::from_u64(0); 0x13];
         'outer: for (&(base, offset), _) in &self.stores {
-            let mut val_11 = E::VirtualAddress::from_u64(0);
             for i in 0..0x13 {
                 if matches!(i, 1 | 5 | 8 | 9 | 0xc | 0xe | 0x10) {
                     // These indices aren't set by this func
@@ -1509,19 +1630,65 @@ impl<'a, 'e, E: ExecutionState<'e>> ResetUiEventHandlersAnalyzer<'a, 'e, E> {
                 if i != 3 && val == E::VirtualAddress::from_u64(0) {
                     continue 'outer;
                 }
-                if i == 0x11 {
-                    val_11 = val;
-                }
-                if i == 0x12 && val_11 != val {
+                if i == 0x12 && result_addrs[0x11] != val {
                     continue 'outer;
                 }
+                result_addrs[i as usize] = val;
             }
             let addr = self.ctx.add_const(base.0, offset);
             self.result.global_event_handlers = Some(addr);
-            self.result.default_scroll_handler = Some(val_11);
+            self.result.default_key_down_handler = Some(result_addrs[0x0]);
+            self.result.default_key_up_handler = Some(result_addrs[0x2]);
+            self.result.default_left_down_handler = Some(result_addrs[0x4]);
+            self.result.default_left_double_handler = Some(result_addrs[0x6]);
+            self.result.default_right_down_handler = Some(result_addrs[0x7]);
+            self.result.default_middle_down_handler = Some(result_addrs[0xa]);
+            self.result.default_middle_up_handler = Some(result_addrs[0xb]);
+            self.result.default_periodic_handler = Some(result_addrs[0xd]);
+            self.result.default_char_handler = Some(result_addrs[0xf]);
+            self.result.default_scroll_handler = Some(result_addrs[0x11]);
             self.entry_of = EntryOf::Ok(());
             return;
         }
+    }
+
+    fn try_finish_click_stores(&mut self, ctx: OperandCtx<'e>) -> Option<()> {
+        let rclick_addr = self.click_stores[2]
+            .iter()
+            .find(|x| x.1 == self.game_screen_rclick)
+            .map(|x| x.0)?;
+        let targeting_rclick = self.click_stores[0].iter()
+            .find(|x| x.0 == rclick_addr)
+            .map(|x| x.1)?;
+        let building_placement_rclick = self.click_stores[1].iter()
+            .find(|x| x.0 == rclick_addr)
+            .map(|x| x.1)?;
+        let (
+            lclick_addr,
+            targeting_lclick,
+            building_placement_lclick,
+            game_screen_l_click,
+        ) = self.click_stores[2]
+            .iter()
+            .filter(|x| x.0 != rclick_addr)
+            .find_map(|&(lclick_addr, game_screen_l_click)| {
+                let targeting = self.click_stores[0].iter()
+                    .find(|x| x.0 == lclick_addr)
+                    .map(|x| x.1)?;
+                let building_placement = self.click_stores[1].iter()
+                    .find(|x| x.0 == lclick_addr)
+                    .map(|x| x.1)?;
+                Some((lclick_addr, targeting, building_placement, game_screen_l_click))
+            })?;
+        let result = &mut self.result;
+        result.game_screen_lclick_callback = Some(ctx.memory(&lclick_addr));
+        result.game_screen_rclick_callback = Some(ctx.memory(&rclick_addr));
+        result.targeting_lclick = Some(targeting_lclick);
+        result.targeting_rclick = Some(targeting_rclick);
+        result.building_placement_lclick = Some(building_placement_lclick);
+        result.building_placement_rclick = Some(building_placement_rclick);
+        result.game_screen_l_click = Some(game_screen_l_click);
+        Some(())
     }
 }
 

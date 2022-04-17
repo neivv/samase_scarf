@@ -1586,7 +1586,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 NextGameStepTick | FirstPylon | PylonRefresh | PylonAurasVisible |
                 LocalGameResult | IsCustomSinglePlayer | CurrentCampaignMission | LocalVisions |
                 FirstFreeSelectionCircle | LastFreeSelectionCircle | GrpWireGrp | TranWireGrp |
-                StatusScreen | MapMpq | ReplayScenarioChk | ReplayScenarioChkSize =>
+                StatusScreen | MapMpq | ReplayScenarioChk | ReplayScenarioChkSize |
+                GameScreenLClickCallback | GameScreenRClickCallback =>
             {
                 check_global_opt(result, binary, op.name());
             }

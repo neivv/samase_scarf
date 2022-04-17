@@ -12,6 +12,8 @@ ai_step_region: 00647f00
 ai_train_military: 00646640
 ai_update_attack_target: 00592ed0
 anim_asset_change_cb: 00570170
+building_placement_lclick: 00756a00
+building_placement_rclick: 006bafe0
 change_ai_region_state: 00642570
 check_dat_requirements: 0052ab10
 check_unit_requirements: 0064bcb0
@@ -38,6 +40,7 @@ finish_unit_post: 005a09f0
 finish_unit_pre: 005a0ce0
 font_cache_render_ascii: 0095c120
 game_loop: 00708ed0
+game_screen_lclick: 007a03d0
 game_screen_rclick: 00759a20
 get_mouse_x: 006aab90
 get_mouse_y: 006aaba0
@@ -128,9 +131,20 @@ step_objects: 006d7910
 step_order: 005d0500
 step_replay_commands: 0073eb00
 step_unit_movement: 005ad240
+targeting_lclick: 0060b280
+targeting_rclick: 006bb000
 ttf_cache_character: 009626a0
 ttf_malloc: 00c2ac6b
 ttf_render_sdf: 00966990
+ui_default_char_handler: 006bb010
+ui_default_key_down_handler: 006bb6b0
+ui_default_key_up_handler: 006bb6f0
+ui_default_left_double_handler: 006bb710
+ui_default_left_down_handler: 006bb710
+ui_default_middle_down_handler: 006bb730
+ui_default_middle_up_handler: 006bb850
+ui_default_periodic_handler: 006bbca0
+ui_default_right_down_handler: 006bbb70
 ui_default_scroll_handler: 006bb860
 unit_apply_speed_upgrades: 005d1ea0
 unit_buffed_acceleration: 005a70c0
@@ -189,6 +203,8 @@ first_revealer: Mem32[eb1480]
 fonts: 10e077c
 game: (Mem32[e17a60] ^ 2ef18556)
 game_data: 10ae3a0
+game_screen_lclick_callback: Mem32[1084b54]
+game_screen_rclick_callback: Mem32[1084b58]
 global_event_handlers: 1084458
 graphic_layers: 10e06b0
 grpwire_ddsgrp: 10beb3c

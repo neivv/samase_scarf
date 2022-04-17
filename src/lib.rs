@@ -242,7 +242,6 @@ results! {
         PrepareIssueOrder => "prepare_issue_order",
         DoNextQueuedOrder => "do_next_queued_order",
         ResetUiEventHandlers => "reset_ui_event_handlers",
-        UiDefaultScrollHandler => "ui_default_scroll_handler",
         ClampZoom => "clamp_zoom",
         DrawMinimapUnits => "draw_minimap_units",
         InitNetPlayer => "init_net_player",
@@ -253,7 +252,6 @@ results! {
         SinglePlayerStart => "single_player_start",
         InitUnits => "init_units",
         LoadDat => "load_dat",
-        GameScreenRClick => "game_screen_rclick",
         InitStormNetworking => "init_storm_networking",
         LoadSnpList => "load_snp_list",
         SetBriefingMusic => "set_briefing_music",
@@ -338,6 +336,23 @@ results! {
         // Takes 8th argument which is unused anyway but affects calling convention
         // so have separate analysis result for it.
         ReadWholeMpqFile2 => "read_whole_mpq_file2",
+        TargetingLClick => "targeting_lclick",
+        TargetingRClick => "targeting_rclick",
+        BuildingPlacementLClick => "building_placement_lclick",
+        BuildingPlacementRClick => "building_placement_rclick",
+        // These are active when not targeting / placing building
+        GameScreenLClick => "game_screen_lclick",
+        GameScreenRClick => "game_screen_rclick",
+        UiDefaultKeyDownHandler => "ui_default_key_down_handler",
+        UiDefaultKeyUpHandler => "ui_default_key_up_handler",
+        UiDefaultLeftDownHandler => "ui_default_left_down_handler",
+        UiDefaultLeftDoubleHandler => "ui_default_left_double_handler",
+        UiDefaultRightDownHandler => "ui_default_right_down_handler",
+        UiDefaultMiddleDownHandler => "ui_default_middle_down_handler",
+        UiDefaultMiddleUpHandler => "ui_default_middle_up_handler",
+        UiDefaultPeriodicHandler => "ui_default_periodic_handler",
+        UiDefaultCharHandler => "ui_default_char_handler",
+        UiDefaultScrollHandler => "ui_default_scroll_handler",
     }
 }
 
@@ -486,6 +501,8 @@ results! {
         ReplayScenarioChkSize => "replay_scenario_chk_size",
         MapMpq => "map_mpq",
         MapHistory => "map_history",
+        GameScreenLClickCallback => "game_screen_lclick_callback",
+        GameScreenRClickCallback => "game_screen_rclick_callback",
     }
 }
 
@@ -939,6 +956,20 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             OpenMapMpq => self.open_map_mpq(),
             ReadWholeMpqFile => self.read_whole_mpq_file(),
             ReadWholeMpqFile2 => self.read_whole_mpq_file2(),
+            TargetingLClick => self.targeting_lclick(),
+            TargetingRClick => self.targeting_rclick(),
+            BuildingPlacementLClick => self.building_placement_lclick(),
+            BuildingPlacementRClick => self.building_placement_rclick(),
+            GameScreenLClick => self.game_screen_l_click(),
+            UiDefaultKeyDownHandler => self.ui_default_key_down_handler(),
+            UiDefaultKeyUpHandler => self.ui_default_key_up_handler(),
+            UiDefaultLeftDownHandler => self.ui_default_left_down_handler(),
+            UiDefaultLeftDoubleHandler => self.ui_default_left_double_handler(),
+            UiDefaultRightDownHandler => self.ui_default_right_down_handler(),
+            UiDefaultMiddleDownHandler => self.ui_default_middle_down_handler(),
+            UiDefaultMiddleUpHandler => self.ui_default_middle_up_handler(),
+            UiDefaultPeriodicHandler => self.ui_default_periodic_handler(),
+            UiDefaultCharHandler => self.ui_default_char_handler(),
         }
     }
 
@@ -1088,6 +1119,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             ReplayScenarioChkSize => self.replay_scenario_chk_size(),
             MapMpq => self.map_mpq(),
             MapHistory => self.map_history(),
+            GameScreenLClickCallback => self.game_screen_lclick_callback(),
+            GameScreenRClickCallback => self.game_screen_rclick_callback(),
         }
     }
 
@@ -2810,6 +2843,118 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.analyze_many_op(OperandAnalysis::MapHistory, AnalysisCache::cache_init_map_from_path)
     }
 
+    pub fn game_screen_lclick_callback(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::GameScreenLClickCallback,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn game_screen_rclick_callback(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::GameScreenRClickCallback,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn targeting_lclick(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::TargetingLClick,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn targeting_rclick(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::TargetingRClick,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn building_placement_lclick(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::BuildingPlacementLClick,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn building_placement_rclick(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::BuildingPlacementRClick,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn game_screen_l_click(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::GameScreenLClick,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn ui_default_key_down_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UiDefaultKeyDownHandler,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn ui_default_key_up_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UiDefaultKeyUpHandler,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn ui_default_left_down_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UiDefaultLeftDownHandler,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn ui_default_left_double_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UiDefaultLeftDoubleHandler,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn ui_default_right_down_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UiDefaultRightDownHandler,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn ui_default_middle_down_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UiDefaultMiddleDownHandler,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn ui_default_middle_up_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UiDefaultMiddleUpHandler,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn ui_default_periodic_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UiDefaultPeriodicHandler,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn ui_default_char_handler(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UiDefaultCharHandler,
+            AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -3714,6 +3859,14 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    fn is_placing_building(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::IsPlacingBuilding, |s| s.cache_misc_clientside(actx))
+    }
+
+    fn is_targeting(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::IsTargeting, |s| s.cache_misc_clientside(actx))
+    }
+
     fn cache_init_units(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(&[InitUnits, LoadDat], &[], |s| {
@@ -4519,15 +4672,35 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
         self.cache_many(
-            &[ResetUiEventHandlers, UiDefaultScrollHandler],
-            &[GlobalEventHandlers],
+            &[ResetUiEventHandlers, UiDefaultScrollHandler, TargetingLClick, TargetingRClick,
+                BuildingPlacementLClick, BuildingPlacementRClick, GameScreenLClick,
+                UiDefaultKeyDownHandler, UiDefaultKeyUpHandler, UiDefaultLeftDownHandler,
+                UiDefaultLeftDoubleHandler, UiDefaultRightDownHandler,
+                UiDefaultMiddleDownHandler, UiDefaultMiddleUpHandler, UiDefaultPeriodicHandler,
+                UiDefaultCharHandler],
+            &[GlobalEventHandlers, GameScreenLClickCallback, GameScreenRClickCallback],
             |s| {
                 let game_screen_rclick = s.game_screen_rclick(actx)?;
-                let result =
-                    dialog::ui_event_handlers(actx, game_screen_rclick, &s.function_finder());
+                let is_targeting = s.is_targeting(actx)?;
+                let is_placing_building = s.is_placing_building(actx)?;
+                let result = dialog::ui_event_handlers(
+                    actx,
+                    game_screen_rclick,
+                    is_targeting,
+                    is_placing_building,
+                    &s.function_finder(),
+                );
                 Some((
-                    [result.reset_ui_event_handlers, result.default_scroll_handler],
-                    [result.global_event_handlers],
+                    [result.reset_ui_event_handlers, result.default_scroll_handler,
+                        result.targeting_lclick, result.targeting_rclick,
+                        result.building_placement_lclick, result.building_placement_rclick,
+                        result.game_screen_l_click, result.default_key_down_handler,
+                        result.default_key_up_handler, result.default_left_down_handler,
+                        result.default_left_double_handler, result.default_right_down_handler,
+                        result.default_middle_down_handler, result.default_middle_up_handler,
+                        result.default_periodic_handler, result.default_char_handler],
+                    [result.global_event_handlers, result.game_screen_lclick_callback,
+                        result.game_screen_rclick_callback],
                 ))
             });
     }
@@ -5661,6 +5834,8 @@ trait OperandExt<'e> {
         self,
         binary: &BinaryFile<Va>,
     ) -> Option<u64>;
+    /// bool true => eq, bool false => not eq
+    fn if_arithmetic_eq_neq_zero(self, ctx: OperandCtx<'e>) -> Option<(Operand<'e>, bool)>;
 }
 
 impl<'e> OperandExt<'e> for Operand<'e> {
@@ -5768,6 +5943,20 @@ impl<'e> OperandExt<'e> for Operand<'e> {
                 let addr = Va::from_u64(mem.if_constant_address()?);
                 Some(binary.read_u64(addr).ok()? & mem.size.mask())
             })
+    }
+
+    fn if_arithmetic_eq_neq_zero(self, ctx: OperandCtx<'e>) -> Option<(Operand<'e>, bool)> {
+        let (l, r) = self.if_arithmetic_eq()?;
+        let zero = ctx.const_0();
+        if r != zero {
+            return None;
+        }
+        if let Some((l, r)) = l.if_arithmetic_eq() {
+            if r == zero {
+                return Some((l, false));
+            }
+        }
+        Some((l, true))
     }
 }
 
