@@ -751,13 +751,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'acx, 'e, E
             Operation::Jump { condition, .. } => {
                 let cond = ctrl.resolve(condition);
                 if self.inline_depth == 0 {
+                    let ctx = ctrl.ctx();
+                    // Condition should always be x == 0,
+                    // check for that to avoid confusing with `x != 0` assertion jump
                     let cond_ok = if_arithmetic_eq_neq(cond)
-                        .and_then(|(l, r, _)| {
-                            let op = Some((l, r))
-                                .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                                .map(|x| Operand::and_masked(x).0)?;
-                            Some(op)
-                        });
+                        .filter(|x| x.1 == ctx.const_0() && x.2 == true)
+                        .map(|x| x.0);
                     if let Some(op) = cond_ok {
                         let state = ctrl.user_state().get::<State>();
                         if *state == State::ScMainStateThreeBranch {
