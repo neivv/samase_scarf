@@ -19,6 +19,7 @@ macro_rules! dat_warn {
     }
 }
 
+mod cmdbtns;
 mod game;
 mod units;
 mod stack_analysis;
@@ -346,6 +347,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     units::command_analysis(dat_ctx)?;
     wireframe::grp_index_patches(dat_ctx)?;
     triggers::trigger_analysis(dat_ctx)?;
+    cmdbtns::cmdbtn_analysis(dat_ctx)?;
     dat_ctx.finish_all_patches();
     Some(mem::replace(&mut dat_ctx.result, DatPatches::empty()))
 }
