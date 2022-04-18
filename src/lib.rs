@@ -353,6 +353,7 @@ results! {
         UiDefaultPeriodicHandler => "ui_default_periodic_handler",
         UiDefaultCharHandler => "ui_default_char_handler",
         UiDefaultScrollHandler => "ui_default_scroll_handler",
+        StartTargeting => "start_targeting",
     }
 }
 
@@ -503,6 +504,10 @@ results! {
         MapHistory => "map_history",
         GameScreenLClickCallback => "game_screen_lclick_callback",
         GameScreenRClickCallback => "game_screen_rclick_callback",
+        TargetedOrderUnit => "targeted_order_unit",
+        TargetedOrderGround => "targeted_order_fow",
+        TargetedOrderFow => "targeted_order_ground",
+        MinimapCursorType => "minimap_cursor_type",
     }
 }
 
@@ -970,6 +975,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             UiDefaultMiddleUpHandler => self.ui_default_middle_up_handler(),
             UiDefaultPeriodicHandler => self.ui_default_periodic_handler(),
             UiDefaultCharHandler => self.ui_default_char_handler(),
+            StartTargeting => self.start_targeting(),
         }
     }
 
@@ -1121,6 +1127,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             MapHistory => self.map_history(),
             GameScreenLClickCallback => self.game_screen_lclick_callback(),
             GameScreenRClickCallback => self.game_screen_rclick_callback(),
+            TargetedOrderUnit => self.targeted_order_unit(),
+            TargetedOrderGround => self.targeted_order_fow(),
+            TargetedOrderFow => self.targeted_order_ground(),
+            MinimapCursorType => self.minimap_cursor_type(),
         }
     }
 
@@ -2952,6 +2962,41 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.analyze_many_addr(
             AddressAnalysis::UiDefaultCharHandler,
             AnalysisCache::cache_ui_event_handlers,
+        )
+    }
+
+    pub fn start_targeting(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StartTargeting,
+            AnalysisCache::cache_start_targeting,
+        )
+    }
+
+    pub fn targeted_order_unit(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::TargetedOrderUnit,
+            AnalysisCache::cache_start_targeting,
+        )
+    }
+
+    pub fn targeted_order_ground(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::TargetedOrderGround,
+            AnalysisCache::cache_start_targeting,
+        )
+    }
+
+    pub fn targeted_order_fow(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::TargetedOrderFow,
+            AnalysisCache::cache_start_targeting,
+        )
+    }
+
+    pub fn minimap_cursor_type(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::MinimapCursorType,
+            AnalysisCache::cache_start_targeting,
         )
     }
 
@@ -5115,6 +5160,24 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
                     result.map_history],
             ))
         })
+    }
+
+    fn cache_start_targeting(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[StartTargeting],
+            &[TargetedOrderUnit, TargetedOrderGround, TargetedOrderFow, MinimapCursorType],
+            |s| {
+                let firegraft = s.firegraft_addresses(actx);
+                let buttonsets = *firegraft.buttonsets.get(0)?;
+                let result = clientside::start_targeting(actx, buttonsets);
+                Some((
+                    [result.start_targeting],
+                    [result.targeted_order_unit, result.targeted_order_ground,
+                        result.targeted_order_fow, result.minimap_cursor_type],
+                ))
+            });
     }
 }
 

@@ -1587,7 +1587,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 LocalGameResult | IsCustomSinglePlayer | CurrentCampaignMission | LocalVisions |
                 FirstFreeSelectionCircle | LastFreeSelectionCircle | GrpWireGrp | TranWireGrp |
                 StatusScreen | MapMpq | ReplayScenarioChk | ReplayScenarioChkSize |
-                GameScreenLClickCallback | GameScreenRClickCallback =>
+                GameScreenLClickCallback | GameScreenRClickCallback | TargetedOrderFow |
+                TargetedOrderGround | TargetedOrderUnit | MinimapCursorType =>
             {
                 check_global_opt(result, binary, op.name());
             }

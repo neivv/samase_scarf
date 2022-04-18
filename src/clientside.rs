@@ -6,8 +6,8 @@ use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation, Rva};
 use scarf::operand::{OperandCtx};
 
 use crate::{
-    AnalysisCtx, ArgCache, EntryOf, EntryOfResult, entry_of_until, unwrap_sext,
-    single_result_assign, OptionExt, if_arithmetic_eq_neq, FunctionFinder,
+    AnalysisCtx, ArgCache, EntryOf, EntryOfResult, entry_of_until, unwrap_sext, ControlExt,
+    single_result_assign, OptionExt, if_arithmetic_eq_neq, FunctionFinder, is_global,
 };
 use crate::analysis_state::{AnalysisState, StateEnum, MiscClientSideAnalyzerState};
 use crate::hash_map::HashMap;
@@ -38,6 +38,14 @@ pub struct MiscClientSide<'e> {
     pub is_paused: Option<Operand<'e>>,
     pub is_targeting: Option<Operand<'e>>,
     pub is_placing_building: Option<Operand<'e>>,
+}
+
+pub struct StartTargeting<'e, Va: VirtualAddress> {
+    pub start_targeting: Option<Va>,
+    pub targeted_order_unit: Option<Operand<'e>>,
+    pub targeted_order_ground: Option<Operand<'e>>,
+    pub targeted_order_fow: Option<Operand<'e>>,
+    pub minimap_cursor_type: Option<Operand<'e>>,
 }
 
 // Candidates are either a global ref with Some(global), or a call with None
@@ -775,6 +783,115 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'acx, 'e, E
                 }
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) fn start_targeting<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    button_sets: E::VirtualAddress,
+) -> StartTargeting<'e, E::VirtualAddress> {
+    let mut result = StartTargeting {
+        start_targeting: None,
+        targeted_order_unit: None,
+        targeted_order_ground: None,
+        targeted_order_fow: None,
+        minimap_cursor_type: None,
+    };
+
+    // Patrol button action (buttonsets[0][3].action) should just call
+    // start_targeting(0x98, 0x98, 0x98)
+    // start_targeting arg1 is unit target, arg 2 ground target, arg 3 fow target,
+    // they get stored to targeted_order_x globals.
+    // Additionally it writes 2 to minimap_cursor_type.
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let patrol_action =
+        match struct_layouts::button_set_index_to_action(binary, button_sets, 0, 3)
+    {
+        Some(s) => s,
+        None => return result,
+    };
+    let mut analyzer = StartTargetingAnalyzer {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        in_start_targeting: false,
+        results_found: 0,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, patrol_action);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+struct StartTargetingAnalyzer<'e, 'a, E: ExecutionState<'e>> {
+    result: &'a mut StartTargeting<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    in_start_targeting: bool,
+    results_found: u8,
+}
+
+impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for StartTargetingAnalyzer<'e, 'a, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if !self.in_start_targeting {
+            let ctx = ctrl.ctx();
+            let dest = if let Operation::Call(dest) = *op {
+                dest
+            } else if let Operation::Jump { to, condition } = *op {
+                // Tail call
+                let esp = ctx.register(4);
+                if condition == ctx.const_1() && ctrl.resolve(esp) == esp {
+                    to
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            };
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                let ok = (0..3).all(|i| {
+                    ctrl.resolve(ctx.and_const(self.arg_cache.on_call(i), 0xff))
+                        .if_constant() == Some(0x98)
+                });
+                if ok {
+                    self.result.start_targeting = Some(dest);
+                    self.in_start_targeting = true;
+                    let binary = ctrl.binary();
+                    let mut analysis = FuncAnalysis::new(binary, ctx, dest);
+                    analysis.analyze(self);
+                    ctrl.end_analysis();
+                }
+            }
+        } else {
+            if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                let mem = ctrl.resolve_mem(mem);
+                if is_global(mem.address().0) {
+                    let ctx = ctrl.ctx();
+                    let value = ctx.and_const(ctrl.resolve(value), 0xff);
+                    let result = &mut self.result;
+                    let result_out = if value.if_constant() == Some(2) {
+                        &mut result.minimap_cursor_type
+                    } else if value == ctx.and_const(self.arg_cache.on_entry(0), 0xff) {
+                        &mut result.targeted_order_unit
+                    } else if value == ctx.and_const(self.arg_cache.on_entry(1), 0xff) {
+                        &mut result.targeted_order_ground
+                    } else if value == ctx.and_const(self.arg_cache.on_entry(2), 0xff) {
+                        &mut result.targeted_order_fow
+                    } else {
+                        return;
+                    };
+                    if single_result_assign(Some(ctx.memory(&mem)), result_out) {
+                        if self.results_found >= 3 {
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        self.results_found += 1;
+                    }
+                }
+            }
         }
     }
 }

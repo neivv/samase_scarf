@@ -1,5 +1,5 @@
 use scarf::exec_state::VirtualAddress;
-use scarf::{Operand, MemAccessSize};
+use scarf::{BinaryFile, Operand, MemAccessSize};
 
 use crate::{OperandExt};
 
@@ -291,6 +291,20 @@ pub fn button_linked<Va: VirtualAddress>() -> u32 {
         true => 0x8,
         false => 0x10,
     }
+}
+
+pub fn button_set_index_to_action<Va: VirtualAddress>(
+    binary: &BinaryFile<Va>,
+    button_sets: Va,
+    set: u32,
+    button: u32,
+) -> Option<Va> {
+    let set = binary.read_address(
+        button_sets + button_set_size::<Va>().wrapping_mul(set).wrapping_add(Va::SIZE)
+    ).ok()?;
+    binary.read_address(
+        set + button_size::<Va>().wrapping_mul(button).wrapping_add(button_action_func::<Va>())
+    ).ok()
 }
 
 pub fn bullet_weapon_id<Va: VirtualAddress>() -> u64 {

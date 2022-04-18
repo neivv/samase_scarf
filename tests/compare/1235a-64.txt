@@ -115,6 +115,7 @@ snet_initialize_provider: 1403f23c0
 snet_recv_packets: 1403f4780
 snet_send_packets: 1403f0b10
 spawn_dialog: 140611a70
+start_targeting: 1403f6920
 start_udp_server: 14044c350
 status_screen_event_handler: 1403da610
 step_active_unit_frame: 1401e8b50
@@ -242,6 +243,7 @@ map_history: Mem64[140e46b88]
 map_mpq: Mem64[141005150]
 map_tile_flags: Mem64[140e16358]
 menu_screen_id: (((Mem32[140dda8e1] + 6ab987af) ^ Mem32[141002304]) & ffffffff)
+minimap_cursor_type: Mem16[140fff460]
 mouse_x: None
 mouse_y: None
 net_player_flags: 141028298
@@ -288,6 +290,9 @@ step_game_frames: Mem32[140d5f098]
 storm_command_user: Mem32[140d65be0]
 sync_active: Mem32[141029ec8]
 sync_data: 14102bd70
+targeted_order_fow: Mem8[14103c615]
+targeted_order_ground: Mem8[14103c614]
+targeted_order_unit: Mem8[14103c613]
 tfontgam: 141063820
 tooltip_draw_func: Mem64[140e10390]
 tranwire_ddsgrp: 14103b3e0
