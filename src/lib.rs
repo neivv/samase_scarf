@@ -354,6 +354,9 @@ results! {
         UiDefaultCharHandler => "ui_default_char_handler",
         UiDefaultScrollHandler => "ui_default_scroll_handler",
         StartTargeting => "start_targeting",
+        FindUnitForClick => "find_unit_for_click",
+        FindFowSpriteForClick => "find_fow_sprite_for_click",
+        HandleTargetedClick => "handle_targeted_click",
     }
 }
 
@@ -976,6 +979,9 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             UiDefaultPeriodicHandler => self.ui_default_periodic_handler(),
             UiDefaultCharHandler => self.ui_default_char_handler(),
             StartTargeting => self.start_targeting(),
+            FindUnitForClick => self.find_unit_for_click(),
+            FindFowSpriteForClick => self.find_fow_sprite_for_click(),
+            HandleTargetedClick => self.handle_targeted_click(),
         }
     }
 
@@ -3000,6 +3006,27 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         )
     }
 
+    pub fn find_unit_for_click(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::FindUnitForClick,
+            AnalysisCache::cache_targeting_lclick,
+        )
+    }
+
+    pub fn find_fow_sprite_for_click(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::FindFowSpriteForClick,
+            AnalysisCache::cache_targeting_lclick,
+        )
+    }
+
+    pub fn handle_targeted_click(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::HandleTargetedClick,
+            AnalysisCache::cache_targeting_lclick,
+        )
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -4757,6 +4784,13 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         )
     }
 
+    fn targeting_lclick(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::TargetingLClick,
+            |s| s.cache_ui_event_handlers(actx),
+        )
+    }
+
     fn clamp_zoom(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::ClampZoom, |s| {
             let scroll_handler = s.ui_default_scroll_handler(actx)?;
@@ -5176,6 +5210,22 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
                     [result.start_targeting],
                     [result.targeted_order_unit, result.targeted_order_ground,
                         result.targeted_order_fow, result.minimap_cursor_type],
+                ))
+            });
+    }
+
+    fn cache_targeting_lclick(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[FindUnitForClick, FindFowSpriteForClick, HandleTargetedClick],
+            &[],
+            |s| {
+                let lclick = s.targeting_lclick(actx)?;
+                let result = clientside::analyze_targeting_lclick(actx, lclick);
+                Some((
+                    [result.find_unit_for_click, result.find_fow_sprite_for_click,
+                        result.handle_targeted_click],
+                    [],
                 ))
             });
     }

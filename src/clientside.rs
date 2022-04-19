@@ -48,6 +48,12 @@ pub struct StartTargeting<'e, Va: VirtualAddress> {
     pub minimap_cursor_type: Option<Operand<'e>>,
 }
 
+pub(crate) struct TargetingLclick<Va: VirtualAddress> {
+    pub find_unit_for_click: Option<Va>,
+    pub find_fow_sprite_for_click: Option<Va>,
+    pub handle_targeted_click: Option<Va>,
+}
+
 // Candidates are either a global ref with Some(global), or a call with None
 fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
     analysis: &'acx AnalysisCtx<'e, E>,
@@ -889,6 +895,78 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for StartTargetingAnalyz
                             return;
                         }
                         self.results_found += 1;
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_targeting_lclick<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    lclick: E::VirtualAddress,
+) -> TargetingLclick<E::VirtualAddress> {
+    let mut result = TargetingLclick {
+        find_unit_for_click: None,
+        find_fow_sprite_for_click: None,
+        handle_targeted_click: None,
+    };
+
+    // There should be the following calls
+    // event_coords_to_game(&mut xy, arg1)
+    // unit = find_unit_for_click(xy[0], xy[1])
+    // fow = find_fow_sprite_for_click(xy[0], xy[1], unit)
+    // handle_targeted_click(xy[0], xy[1], unit, fow ? fow : e4)
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = TargetingLclickAnalyzer {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, lclick);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+struct TargetingLclickAnalyzer<'e, 'a, E: ExecutionState<'e>> {
+    result: &'a mut TargetingLclick<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for TargetingLclickAnalyzer<'e, 'a, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            let ctx = ctrl.ctx();
+            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+            let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+            if arg2 == self.arg_cache.on_entry(0) {
+                // event_coords_to_game, use Custom(0) for x and Custom(1) for y
+                let mem = ctx.mem_access(arg1, 0, MemAccessSize::Mem32);
+                ctrl.move_resolved(&DestOperand::Memory(mem), ctx.custom(0));
+                let mem = mem.with_offset_size(4, MemAccessSize::Mem32);
+                ctrl.move_resolved(&DestOperand::Memory(mem), ctx.custom(1));
+            } else if Operand::and_masked(arg2).0.if_custom() == Some(1) &&
+                Operand::and_masked(arg1).0.if_custom() == Some(0)
+            {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let result = &mut self.result;
+                    if result.find_unit_for_click.is_none() {
+                        result.find_unit_for_click = Some(dest);
+                        ctrl.do_call_with_result(ctx.custom(2));
+                    } else {
+                        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                        if arg3.if_custom() == Some(2) {
+                            if result.find_fow_sprite_for_click.is_none() {
+                                result.find_fow_sprite_for_click = Some(dest);
+                            } else {
+                                result.handle_targeted_click = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                        }
                     }
                 }
             }
