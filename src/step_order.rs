@@ -1,12 +1,12 @@
 use bumpalo::collections::Vec as BumpVec;
 
-use scarf::{BinaryFile, DestOperand, Operand, Operation};
+use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation};
 use scarf::analysis::{self, FuncAnalysis, Cfg, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::OperandCtx;
 
 use crate::{
-    AnalysisCtx, entry_of_until, single_result_assign, EntryOf, ArgCache,
+    AnalysisCtx, entry_of_until, single_result_assign, EntryOf, ArgCache, OperandExt,
     bumpvec_with_capacity, FunctionFinder, ControlExt, is_global, if_arithmetic_eq_neq,
 };
 use crate::analysis_state::{AnalysisState, StateEnum, StepOrderState};
@@ -42,6 +42,11 @@ pub struct DoAttack<'e, Va: VirtualAddress> {
     pub do_attack: Va,
     pub do_attack_main: Va,
     pub last_bullet_spawner: Operand<'e>,
+}
+
+pub(crate) struct StepOrder<Va: VirtualAddress> {
+    pub ai_focus_disabled: Option<Va>,
+    pub ai_focus_air: Option<Va>,
 }
 
 // Checks for comparing secondary_order to 0x95 (Hallucination)
@@ -847,5 +852,197 @@ impl<'a, 'e, E: ExecutionState<'e>> FindDoAttack<'a, 'e, E> {
             })
             .filter(|&c| c.if_constant() == Some(5))
             .is_some()
+    }
+}
+
+/// Analysis for non-order-specific functions of step_order
+/// (So ai focusing)
+pub(crate) fn step_order_analysis<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    step_order: E::VirtualAddress,
+) -> StepOrder<E::VirtualAddress> {
+    let mut result = StepOrder {
+        ai_focus_air: None,
+        ai_focus_disabled: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = AnalyzeStepOrder::<E> {
+        result: &mut result,
+        state: AnalyzeStepOrderState::FocusDisabled,
+        inline_depth: 0,
+        inline_depth_at_interceptor: 0,
+        inline_result: None,
+        entry_esp: ctx.register(4),
+        arg_cache: &actx.arg_cache,
+    };
+    let mut exec = E::initial_state(ctx, binary);
+    // Assign order = ff (Don't go to any order func)
+    // mael, lockdown, stasis timer = 0; flags = 0x8000 (Not disabled, dweb)
+    let writes: &[(u16, u16, MemAccessSize)] = &[
+        (struct_layouts::unit_order::<E::VirtualAddress>() as u16, 0xff, MemAccessSize::Mem8),
+        (struct_layouts::unit_lockdown_timer::<E::VirtualAddress>() as u16, 0, MemAccessSize::Mem8),
+        (struct_layouts::unit_stasis_timer::<E::VirtualAddress>() as u16, 0, MemAccessSize::Mem8),
+        (struct_layouts::unit_maelstrom_timer::<E::VirtualAddress>() as u16, 0, MemAccessSize::Mem8),
+        (struct_layouts::unit_acid_spore_count::<E::VirtualAddress>() as u16, 0, MemAccessSize::Mem8),
+        (struct_layouts::unit_flags::<E::VirtualAddress>() as u16, 0x8000, MemAccessSize::Mem32),
+    ];
+    let ecx = ctx.register(1);
+    for &(offset, value, size) in writes {
+        let mem = ctx.mem_access(ecx, offset.into(), size);
+        exec.move_resolved(&DestOperand::Memory(mem), ctx.constant(value.into()));
+    }
+    let mut analysis =
+        FuncAnalysis::custom_state(binary, ctx, step_order, exec, Default::default());
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzeStepOrder<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut StepOrder<E::VirtualAddress>,
+    state: AnalyzeStepOrderState,
+    inline_depth: u8,
+    inline_depth_at_interceptor: u8,
+    inline_result: Option<Operand<'e>>,
+    entry_esp: Operand<'e>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum AnalyzeStepOrderState {
+    /// Inline calls, find call where first check is for unit.order_timer
+    FocusDisabled,
+    /// Inline to depth 2, find unit_id == 49 check
+    FindInterceptorCheck,
+    /// Find call of ai_focus_air(this.unit_specific_union.interceptor.parent)
+    FocusAir,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepOrder<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if let Operation::Jump { condition, .. } = *op {
+            if condition == ctx.const_1() && ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                // Don't follow tail calls
+                ctrl.end_branch();
+                return;
+            }
+        }
+        if let Operation::Return(..) = *op {
+            let result = ctrl.resolve(ctx.register(0));
+            if let Some(old) = self.inline_result {
+                if old != result {
+                    self.inline_result = Some(ctx.new_undef());
+                }
+            } else {
+                self.inline_result = Some(result);
+            }
+        }
+        let state = self.state;
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                if state == AnalyzeStepOrderState::FocusAir {
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let unit_specific = struct_layouts::unit_specific::<E::VirtualAddress>();
+                    let ok = ctrl.if_mem_word_offset(arg1, unit_specific)
+                        .filter(|&x| x == ctx.register(1))
+                        .is_some();
+                    if ok {
+                        self.result.ai_focus_air = Some(dest);
+                        ctrl.end_analysis();
+                        return;
+                    }
+                }
+                // Inlining
+                let inline_limit = match state {
+                    AnalyzeStepOrderState::FocusDisabled => 1,
+                    AnalyzeStepOrderState::FindInterceptorCheck |
+                        AnalyzeStepOrderState::FocusAir => 2,
+                };
+                if self.inline_depth < inline_limit {
+                    self.inline_depth += 1;
+                    let old_esp = self.entry_esp;
+                    self.entry_esp = ctrl.get_new_esp_for_call();
+                    let old_inline_result = self.inline_result;
+                    ctrl.analyze_with_current_state(self, dest);
+                    let inline_result = self.inline_result;
+                    self.entry_esp = old_esp;
+                    self.inline_result = old_inline_result;
+                    self.inline_depth -= 1;
+                    match state {
+                        AnalyzeStepOrderState::FocusDisabled => {
+                            if let Some(result) = self.result.ai_focus_disabled {
+                                if result.as_u64() == 0 {
+                                    self.result.ai_focus_disabled = Some(dest);
+                                }
+                                if self.inline_depth != 0 {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                        AnalyzeStepOrderState::FindInterceptorCheck => {
+                            if self.state != state {
+                                ctrl.end_analysis();
+                            }
+                        }
+                        AnalyzeStepOrderState::FocusAir => {
+                            if let Some(_) = self.result.ai_focus_air {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                    ctrl.do_call_with_result(inline_result.unwrap_or_else(|| ctx.new_undef()));
+                    return;
+                }
+            }
+        }
+        match state {
+            AnalyzeStepOrderState::FocusDisabled => {
+                if self.inline_depth != 0 {
+                    if let Operation::Jump { condition, .. } = *op {
+                        let condition = ctrl.resolve(condition);
+                        let order_timer = struct_layouts::unit_order_timer::<E::VirtualAddress>();
+                        let ok = condition.if_arithmetic_eq_neq_zero(ctx)
+                            .and_then(|x| x.0.if_mem8_offset(order_timer))
+                            .filter(|&x| x == ctx.register(1))
+                            .is_some();
+                        if ok {
+                            self.result.ai_focus_disabled = Some(E::VirtualAddress::from_u64(0));
+                            self.state = AnalyzeStepOrderState::FindInterceptorCheck;
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            AnalyzeStepOrderState::FindInterceptorCheck => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let unit_id = struct_layouts::unit_id::<E::VirtualAddress>();
+                    let ok = if_arithmetic_eq_neq(condition)
+                        .filter(|x| x.1.if_constant() == Some(0x49))
+                        .and_then(|x| {
+                            x.0.if_mem16_offset(unit_id).filter(|&x| x == ctx.register(1))?;
+                            Some(x.2)
+                        });
+                    if let Some(jump_if_eq) = ok {
+                        let dest = match jump_if_eq {
+                            true => match ctrl.resolve_va(to) {
+                                Some(s) => s,
+                                None => return,
+                            },
+                            false => ctrl.current_instruction_end(),
+                        };
+                        ctrl.clear_unchecked_branches();
+                        ctrl.continue_at_address(dest);
+                        self.state = AnalyzeStepOrderState::FocusAir;
+                        self.inline_depth_at_interceptor = self.inline_depth;
+                    }
+                }
+            }
+            AnalyzeStepOrderState::FocusAir => (),
+        }
     }
 }

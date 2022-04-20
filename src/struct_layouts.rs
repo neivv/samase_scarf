@@ -55,6 +55,13 @@ pub fn unit_order_state<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_order_timer<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x54,
+        false => 0x70,
+    }
+}
+
 pub fn unit_order_target_pos<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x58,
@@ -118,6 +125,13 @@ pub fn unit_secondary_order<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_specific<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xc0,
+        false => 0x108,
+    }
+}
+
 pub fn unit_current_tech<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xc8,
@@ -150,6 +164,34 @@ pub fn unit_next_pylon<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xfc,
         false => 0x178,
+    }
+}
+
+pub fn unit_lockdown_timer<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x117,
+        false => 0x1a3,
+    }
+}
+
+pub fn unit_stasis_timer<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x119,
+        false => 0x1a5,
+    }
+}
+
+pub fn unit_maelstrom_timer<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x124,
+        false => 0x1b4,
+    }
+}
+
+pub fn unit_acid_spore_count<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x126,
+        false => 0x1b6,
     }
 }
 

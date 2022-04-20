@@ -361,6 +361,8 @@ results! {
         CheckTechTargeting => "check_tech_targeting",
         CheckOrderTargeting => "check_order_targeting",
         CheckFowOrderTargeting => "check_fow_order_targeting",
+        AiFocusDisabled => "ai_focus_disabled",
+        AiFocusAir => "ai_focus_air",
     }
 }
 
@@ -991,6 +993,8 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             CheckTechTargeting => self.check_tech_targeting(),
             CheckOrderTargeting => self.check_order_targeting(),
             CheckFowOrderTargeting => self.check_fow_order_targeting(),
+            AiFocusDisabled => self.ai_focus_disabled(),
+            AiFocusAir => self.ai_focus_air(),
         }
     }
 
@@ -3072,6 +3076,20 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.analyze_many_addr(
             AddressAnalysis::CheckFowOrderTargeting,
             AnalysisCache::cache_handle_targeted_click,
+        )
+    }
+
+    pub fn ai_focus_disabled(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::AiFocusDisabled,
+            AnalysisCache::cache_step_order,
+        )
+    }
+
+    pub fn ai_focus_air(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::AiFocusAir,
+            AnalysisCache::cache_step_order,
         )
     }
 
@@ -5310,6 +5328,21 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
                 Some((
                     [result.check_weapon_targeting_flags, result.check_tech_targeting,
                         result.check_order_targeting, result.check_fow_order_targeting],
+                    [],
+                ))
+            });
+    }
+
+    fn cache_step_order(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[AiFocusDisabled, AiFocusAir],
+            &[],
+            |s| {
+                let step_order = s.step_order(actx)?;
+                let result = step_order::step_order_analysis(actx, step_order);
+                Some((
+                    [result.ai_focus_disabled, result.ai_focus_air],
                     [],
                 ))
             });
