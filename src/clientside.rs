@@ -9,7 +9,9 @@ use crate::{
     AnalysisCtx, ArgCache, EntryOf, EntryOfResult, entry_of_until, unwrap_sext, ControlExt,
     single_result_assign, OptionExt, if_arithmetic_eq_neq, FunctionFinder, is_global,
 };
-use crate::analysis_state::{AnalysisState, StateEnum, MiscClientSideAnalyzerState};
+use crate::analysis_state::{
+    AnalysisState, StateEnum, MiscClientSideAnalyzerState, HandleTargetedClickState,
+};
 use crate::hash_map::HashMap;
 use crate::struct_layouts;
 use crate::vtables::Vtables;
@@ -52,6 +54,13 @@ pub(crate) struct TargetingLclick<Va: VirtualAddress> {
     pub find_unit_for_click: Option<Va>,
     pub find_fow_sprite_for_click: Option<Va>,
     pub handle_targeted_click: Option<Va>,
+}
+
+pub(crate) struct HandleTargetedClick<Va: VirtualAddress> {
+    pub check_weapon_targeting_flags: Option<Va>,
+    pub check_tech_targeting: Option<Va>,
+    pub check_order_targeting: Option<Va>,
+    pub check_fow_order_targeting: Option<Va>,
 }
 
 // Candidates are either a global ref with Some(global), or a call with None
@@ -973,3 +982,238 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for TargetingLclickAnaly
         }
     }
 }
+
+pub(crate) fn analyze_handle_targeted_click<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    handle_targeted_click: E::VirtualAddress,
+    orders_dat: (E::VirtualAddress, u32),
+) -> HandleTargetedClick<E::VirtualAddress> {
+    let mut result = HandleTargetedClick {
+        check_weapon_targeting_flags: None,
+        check_tech_targeting: None,
+        check_order_targeting: None,
+        check_fow_order_targeting: None,
+    };
+
+    // Find check_weapon_targeting_flags(orders_dat_weapon[order], target(this arg3)),
+    // preceded by orders_dat_use_weapon_targeting[order] != 0 jump
+    //
+    // Find check_tech_targeting(orders_dat_tech[order], target, fow, x, y, _),
+    // preceded by orders_dat_tech[order] != 2c jump
+    //
+    // Find check_order_targeting(order, target, x, y, _)
+    // and check_fow_order_targeting(order, fow, x, y, _)
+    // in branch where weapon_targeting == false and tech == 2c
+    //
+    // `order` operand will be same Undefined for all checks, get it from one of the
+    // orders_dat_x indexing jumps
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let orders_dat_use_weapon_targeting =
+        match binary.read_address(orders_dat.0 + orders_dat.1 * 0x1)
+    {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+    let orders_dat_weapon = match binary.read_address(orders_dat.0 + orders_dat.1 * 0xd) {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+    let orders_dat_tech = match binary.read_address(orders_dat.0 + orders_dat.1 * 0xe) {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+
+    let bump = &actx.bump;
+
+    let mut analyzer = HandleTargetedClickAnalyzer {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        orders_dat_use_weapon_targeting,
+        orders_dat_tech,
+        orders_dat_weapon,
+        order_operand: None,
+        phantom: Default::default(),
+    };
+    let state = HandleTargetedClickState {
+        order_weapon_branch: None,
+        order_tech_branch: None,
+    };
+    let state = AnalysisState::new(bump, StateEnum::HandleTargetedClick(state));
+    let exec = E::initial_state(ctx, binary);
+    let mut analysis =
+        FuncAnalysis::custom_state(binary, ctx, handle_targeted_click, exec, state);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+struct HandleTargetedClickAnalyzer<'e, 'acx, 'a, E: ExecutionState<'e>> {
+    result: &'a mut HandleTargetedClick<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    orders_dat_use_weapon_targeting: E::VirtualAddress,
+    orders_dat_tech: E::VirtualAddress,
+    orders_dat_weapon: E::VirtualAddress,
+    order_operand: Option<Operand<'e>>,
+    phantom: std::marker::PhantomData<&'acx ()>,
+}
+
+impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    HandleTargetedClickAnalyzer<'e, 'acx, 'a, E>
+{
+    type State = AnalysisState<'acx, 'e>;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Jump { condition, to } = *op {
+            if let Some(to) = ctrl.resolve_va(to) {
+                let condition = ctrl.resolve(condition);
+                let ok = if_arithmetic_eq_neq(condition)
+                    .and_then(|(l, r, is_eq)| {
+                        let constant = r.if_constant()?;
+                        let mem = l.if_mem8()?;
+                        let (index, address) = mem.address();
+                        // false => order jump
+                        let weapon_jump;
+                        if address == self.orders_dat_use_weapon_targeting.as_u64() &&
+                            constant == 0
+                        {
+                            weapon_jump = true;
+                        } else if address == self.orders_dat_tech.as_u64() && constant == 0x2c {
+                            weapon_jump = false;
+                        } else {
+                            return None;
+                        }
+                        if let Some(op) = self.order_operand {
+                            if op != index {
+                                return None;
+                            }
+                        } else {
+                            self.order_operand = Some(index);
+                        }
+                        // For both cases eq branch is not weapon/tech branch:
+                        // use_weapon_targeting == 0 or tech == NO_TECH
+                        let no_jump = ctrl.current_instruction_end();
+                        let (true_branch, false_branch) = match is_eq {
+                            true => (no_jump, to),
+                            false => (to, no_jump),
+                        };
+                        let state = ctrl.user_state().get::<HandleTargetedClickState>();
+                        if weapon_jump {
+                            state.order_weapon_branch = Some(true);
+                        } else {
+                            state.order_tech_branch = Some(true);
+                        }
+                        ctrl.add_branch_with_current_state(true_branch);
+                        let state = ctrl.user_state().get::<HandleTargetedClickState>();
+                        if weapon_jump {
+                            state.order_weapon_branch = Some(false);
+                        } else {
+                            state.order_tech_branch = Some(false);
+                        }
+                        ctrl.continue_at_address(false_branch);
+                        Some(())
+                    })
+                    .is_some();
+                if !ok {
+                    ctrl.assign_to_unresolved_on_eq_branch(condition, to);
+                }
+            }
+        } else if let Operation::Call(dest) = *op {
+            let dest = match ctrl.resolve_va(dest) {
+                Some(s) => s,
+                None => return,
+            };
+            let ctx = ctrl.ctx();
+            let args: [Operand<'e>; 5] = array_init::array_init(|i| {
+                ctrl.resolve(self.arg_cache.on_thiscall_call(i as u8))
+            });
+            let state = ctrl.user_state().get::<HandleTargetedClickState>();
+            let mut got_result = false;
+            if state.order_weapon_branch == Some(true) {
+                let ok =
+                    self.is_dat_index(ctx.and_const(args[0], 0xff), self.orders_dat_weapon) &&
+                    args[1] == self.arg_cache.on_entry(2);
+                if ok {
+                    single_result_assign(
+                        Some(dest),
+                        &mut self.result.check_weapon_targeting_flags,
+                    );
+                    got_result = true;
+                }
+            } else if state.order_tech_branch == Some(true) {
+                let ok = self.is_dat_index(ctx.and_const(args[0], 0xff), self.orders_dat_tech) &&
+                    args[1] == self.arg_cache.on_entry(2) &&
+                    ctx.and_const(args[2], 0xffff) ==
+                        ctx.and_const(self.arg_cache.on_entry(3), 0xffff) &&
+                    ctx.and_const(args[3], 0xffff_ffff) ==
+                        ctx.and_const(self.arg_cache.on_entry(0), 0xffff_ffff) &&
+                    ctx.and_const(args[4], 0xffff_ffff) ==
+                        ctx.and_const(self.arg_cache.on_entry(1), 0xffff_ffff);
+                if ok {
+                    single_result_assign(Some(dest), &mut self.result.check_tech_targeting);
+                    got_result = true;
+                }
+            } else if state.order_weapon_branch == Some(false) &&
+                state.order_tech_branch == Some(false)
+            {
+                let ok = Some(ctx.and_const(args[0], 0xff)) == self.order_operand &&
+                    ctx.and_const(args[2], 0xffff_ffff) ==
+                        ctx.and_const(self.arg_cache.on_entry(0), 0xffff_ffff) &&
+                    ctx.and_const(args[3], 0xffff_ffff) ==
+                        ctx.and_const(self.arg_cache.on_entry(1), 0xffff_ffff);
+                if ok {
+                    if args[1] == self.arg_cache.on_entry(2) {
+                        single_result_assign(Some(dest), &mut self.result.check_order_targeting);
+                        got_result = true;
+                    } else if ctx.and_const(args[1], 0xffff) ==
+                        ctx.and_const(self.arg_cache.on_entry(3), 0xffff)
+                    {
+                        single_result_assign(
+                            Some(dest),
+                            &mut self.result.check_fow_order_targeting,
+                        );
+                        got_result = true;
+                    }
+                }
+            }
+            if got_result {
+                ctrl.end_branch();
+                let result = &mut self.result;
+                if result.check_weapon_targeting_flags.is_some() &&
+                    result.check_tech_targeting.is_some() &&
+                    result.check_order_targeting.is_some() &&
+                    result.check_fow_order_targeting.is_some()
+                {
+                    ctrl.end_analysis();
+                }
+            }
+        } else if let Operation::Move(ref dest, val, Some(condition)) = *op {
+            // Assume that orders_dat_obscured[x] is never 0xbd
+            let condition = ctrl.resolve(condition);
+            if let Some((_, right, is_eq)) = if_arithmetic_eq_neq(condition) {
+                if right.if_constant() == Some(0xbd) {
+                    // If move when x == bd => skip
+                    // If move when x != bd => do unconditionally
+                    ctrl.skip_operation();
+                    if !is_eq {
+                        ctrl.move_unresolved(dest, val);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> HandleTargetedClickAnalyzer<'e, 'acx, 'a, E> {
+    fn is_dat_index(&mut self, op: Operand<'e>, dat: E::VirtualAddress) -> bool {
+        op.if_mem8()
+            .filter(|mem| {
+                let (index, address) = mem.address();
+                Some(index) == self.order_operand && address == dat.as_u64()
+            })
+            .is_some()
+    }
+}
+

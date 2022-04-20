@@ -37,6 +37,7 @@ pub enum StateEnum<'e> {
     StepNetwork(StepNetworkState),
     FontCacheRenderAscii(FindCacheRenderAsciiState),
     IsFontCacheRenderAscii(IsCacheRenderAsciiState),
+    HandleTargetedClick(HandleTargetedClickState),
 }
 
 impl<'acx, 'e> AnalysisState<'acx, 'e> {
@@ -131,6 +132,7 @@ states! {
     StepNetwork(StepNetworkState),
     FontCacheRenderAscii(FindCacheRenderAsciiState),
     IsFontCacheRenderAscii(IsCacheRenderAsciiState),
+    HandleTargetedClick(HandleTargetedClickState),
 }
 
 #[derive(Clone, Copy)]
@@ -520,6 +522,23 @@ impl IsCacheRenderAsciiState {
     fn merge(&mut self, newer: &Self) {
         if self.last_ok_call != newer.last_ok_call {
             self.last_ok_call = None;
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct HandleTargetedClickState {
+    pub order_weapon_branch: Option<bool>,
+    pub order_tech_branch: Option<bool>,
+}
+
+impl HandleTargetedClickState {
+    fn merge(&mut self, newer: &Self) {
+        if self.order_tech_branch != newer.order_tech_branch {
+            self.order_tech_branch = None;
+        }
+        if self.order_weapon_branch != newer.order_weapon_branch {
+            self.order_weapon_branch = None;
         }
     }
 }

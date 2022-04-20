@@ -357,6 +357,10 @@ results! {
         FindUnitForClick => "find_unit_for_click",
         FindFowSpriteForClick => "find_fow_sprite_for_click",
         HandleTargetedClick => "handle_targeted_click",
+        CheckWeaponTargetingFlags => "check_weapon_targeting_flags",
+        CheckTechTargeting => "check_tech_targeting",
+        CheckOrderTargeting => "check_order_targeting",
+        CheckFowOrderTargeting => "check_fow_order_targeting",
     }
 }
 
@@ -982,6 +986,10 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             FindUnitForClick => self.find_unit_for_click(),
             FindFowSpriteForClick => self.find_fow_sprite_for_click(),
             HandleTargetedClick => self.handle_targeted_click(),
+            CheckWeaponTargetingFlags => self.check_weapon_targeting_flags(),
+            CheckTechTargeting => self.check_tech_targeting(),
+            CheckOrderTargeting => self.check_order_targeting(),
+            CheckFowOrderTargeting => self.check_fow_order_targeting(),
         }
     }
 
@@ -3024,6 +3032,34 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.analyze_many_addr(
             AddressAnalysis::HandleTargetedClick,
             AnalysisCache::cache_targeting_lclick,
+        )
+    }
+
+    pub fn check_weapon_targeting_flags(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::CheckWeaponTargetingFlags,
+            AnalysisCache::cache_handle_targeted_click,
+        )
+    }
+
+    pub fn check_tech_targeting(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::CheckTechTargeting,
+            AnalysisCache::cache_handle_targeted_click,
+        )
+    }
+
+    pub fn check_order_targeting(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::CheckOrderTargeting,
+            AnalysisCache::cache_handle_targeted_click,
+        )
+    }
+
+    pub fn check_fow_order_targeting(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::CheckFowOrderTargeting,
+            AnalysisCache::cache_handle_targeted_click,
         )
     }
 
@@ -5229,6 +5265,31 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
                 ))
             });
     }
+
+    fn handle_targeted_click(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::HandleTargetedClick,
+            |s| s.cache_targeting_lclick(actx),
+        )
+    }
+
+    fn cache_handle_targeted_click(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[CheckWeaponTargetingFlags, CheckTechTargeting, CheckOrderTargeting,
+                CheckFowOrderTargeting],
+            &[],
+            |s| {
+                let click = s.handle_targeted_click(actx)?;
+                let orders_dat = s.dat_virtual_address(DatType::Orders, actx)?;
+                let result = clientside::analyze_handle_targeted_click(actx, click, orders_dat);
+                Some((
+                    [result.check_weapon_targeting_flags, result.check_tech_targeting,
+                        result.check_order_targeting, result.check_fow_order_targeting],
+                    [],
+                ))
+            });
+    }
 }
 
 pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
@@ -6125,6 +6186,18 @@ trait ControlExt<'e, E: ExecutionStateTrait<'e>> {
     /// rax which will keep it's value of stack alloc size after call.
     /// Return true if the operation was skipped.
     fn check_stack_probe(&mut self) -> bool;
+    /// If condition is `register == constant`, assign constant to register
+    /// on the branch that the condition is true on.
+    ///
+    /// (Assumed to be called on Operation::Jump; args must be resolved)
+    ///
+    /// Useful for cases where codegen follows `reg == 0` jump by using `reg` as zero value
+    /// afterwards.
+    fn assign_to_unresolved_on_eq_branch(
+        &mut self,
+        condition: Operand<'e>,
+        to: E::VirtualAddress,
+    );
 }
 
 impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
@@ -6237,5 +6310,75 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
             }
         }
         false
+    }
+
+    fn assign_to_unresolved_on_eq_branch(
+        &mut self,
+        condition: Operand<'e>,
+        jump_dest: <A::Exec as ExecutionStateTrait<'e>>::VirtualAddress,
+    ) {
+        if_arithmetic_eq_neq(condition)
+            .filter(|x| x.1.if_constant().is_some())
+            .and_then(|(l, r, is_eq)| {
+                let no_jump_dest = self.current_instruction_end();
+                let (assign_branch, other_branch) = match is_eq {
+                    true => (jump_dest, no_jump_dest),
+                    false => (no_jump_dest, jump_dest),
+                };
+                let register_count = match
+                    <A::Exec as ExecutionStateTrait<'e>>::VirtualAddress::SIZE
+                {
+                    4 => 8,
+                    8 | _ => 16,
+                };
+                let mut registers = [false; 16];
+                let exec_state = self.exec_state();
+                let mut any_moved = false;
+                let (l, mask) = Operand::and_masked(l);
+                for register in 0..register_count {
+                    let val = remove_32bit_and::<A::Exec>(exec_state.resolve_register(register));
+                    if val == l {
+                        registers[register as usize] = true;
+                        any_moved = true;
+                    }
+                }
+                if any_moved {
+                    self.add_branch_with_current_state(other_branch);
+                    let ctx = self.ctx();
+                    let exec_state = self.exec_state();
+                    for register in 0..register_count {
+                        if registers[register as usize] {
+                            let new = if mask == u64::MAX {
+                                r
+                            } else {
+                                ctx.or(
+                                    ctx.and_const(
+                                        exec_state.resolve_register(register),
+                                        !mask,
+                                    ),
+                                    r,
+                                )
+                            };
+                            exec_state.move_resolved(
+                                &scarf::DestOperand::Register64(register),
+                                new,
+                            );
+                        }
+                    }
+                    self.continue_at_address(assign_branch);
+                }
+                Some(())
+            });
+    }
+}
+
+// Hackyish fix for accounting scarf sometimes removing `& ffff_ffff` in 32bit mode
+// (Maybe that scarf behaviour can be removed?)
+#[inline]
+fn remove_32bit_and<'e, E: ExecutionStateTrait<'e>>(op: Operand<'e>) -> Operand<'e> {
+    if E::VirtualAddress::SIZE == 4 {
+        op.if_arithmetic_and_const(0xffff_ffff).unwrap_or(op)
+    } else {
+        op
     }
 }
