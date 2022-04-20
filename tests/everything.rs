@@ -1600,7 +1600,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 PlayerSkins | ClientSelection | BaseAnimSet | ImageGrps | ImageOverlays |
                 FireOverlayMax | NetPlayerFlags | PlayerTurns | PlayerTurnsSize | CmdIconsDdsGrp |
                 CmdBtnsDdsGrp | SyncData | PaletteSet | MainPalette | TfontGam |
-                UnitSkinMap | SpriteSkinMap | GrpWireDdsGrp | TranWireDdsGrp =>
+                UnitSkinMap | SpriteSkinMap | GrpWireDdsGrp | TranWireDdsGrp |
+                SpriteIncludeInVisionSync =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }

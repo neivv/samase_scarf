@@ -80,6 +80,11 @@ pub(crate) struct UpdateUnitVisibility<'e, Va: VirtualAddress> {
     pub duplicate_sprite: Option<Va>,
 }
 
+pub(crate) struct UnitStrength<'e> {
+    pub unit_strength: Option<Operand<'e>>,
+    pub sprite_include_in_vision_sync: Option<Operand<'e>>,
+}
+
 pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     orders_dat: (E::VirtualAddress, u32),
@@ -686,79 +691,123 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnaly
     }
 }
 
+/// This is actually more like init_game_analysis_for_point_after_init_units
 pub(crate) fn strength<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     init_game: E::VirtualAddress,
     init_units: E::VirtualAddress,
-) -> Option<Operand<'e>> {
+) -> UnitStrength<'e> {
+    let mut result = UnitStrength {
+        unit_strength: None,
+        sprite_include_in_vision_sync: None,
+    };
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     let mut analyzer = StrengthAnalyzer::<E> {
-        result: None,
+        result: &mut result,
+        state: StrengthState::FindInitUnits,
         init_units,
-        init_units_seen: false,
         candidate: None,
         inline_depth: 0,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, init_game);
     analysis.analyze(&mut analyzer);
-    analyzer.result
+    result
 }
 
-struct StrengthAnalyzer<'e, E: ExecutionState<'e>> {
-    result: Option<Operand<'e>>,
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum StrengthState {
+    FindInitUnits,
+    UnitStrength,
+    SpriteVisionSync,
+}
+
+struct StrengthAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut UnitStrength<'e>,
     init_units: E::VirtualAddress,
-    init_units_seen: bool,
+    state: StrengthState,
     candidate: Option<MemAccess<'e>>,
     inline_depth: u8,
 }
 
-impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StrengthAnalyzer<'e, E> {
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StrengthAnalyzer<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        match *op {
-            Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
-                    if !self.init_units_seen {
-                        if dest == self.init_units {
-                            self.init_units_seen = true;
-                        }
-                        return;
-                    }
+        let state = self.state;
+        if matches!(state, StrengthState::UnitStrength | StrengthState::SpriteVisionSync) {
+            // Inline a bit for these states
+            if let Operation::Call(dest) = *op {
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     if self.inline_depth < 2 {
                         self.inline_depth += 1;
                         ctrl.analyze_with_current_state(self, dest);
                         self.inline_depth -= 1;
-                        if self.result.is_some() {
+                        if self.state != state {
+                            if self.inline_depth != 0 {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+        }
+        match state {
+            StrengthState::FindInitUnits => {
+                if let Operation::Call(dest) = *op {
+                    if ctrl.resolve_va(dest) == Some(self.init_units) {
+                        self.state = StrengthState::UnitStrength;
+                        ctrl.clear_unchecked_branches();
+                    }
+                }
+            }
+            StrengthState::UnitStrength => {
+                if let Operation::Move(DestOperand::Memory(ref mem), _, None) = *op {
+                    if mem.size == MemAccessSize::Mem32 {
+                        let dest = ctrl.resolve_mem(mem);
+                        let ctx = ctrl.ctx();
+                        if is_global(dest.address().0) {
+                            if let Some(old) = self.candidate {
+                                // Ground strength is guaranteed to be 0xe4 * 4 bytes after air
+                                let (old_base, old_offset) = old.address();
+                                let (new_base, new_offset) = dest.address();
+                                if old_base == new_base &&
+                                    old_offset.wrapping_add(0xe4 * 4) == new_offset
+                                {
+                                    self.result.unit_strength = Some(old.address_op(ctx));
+                                    if self.inline_depth != 0 {
+                                        ctrl.end_analysis();
+                                    }
+                                    self.state = StrengthState::SpriteVisionSync;
+                                    return;
+                                }
+                            }
+                            self.candidate = Some(dest);
+                        }
+                    }
+                }
+            }
+            StrengthState::SpriteVisionSync => {
+                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    let value = ctrl.resolve(value);
+                    let ctx = ctrl.ctx();
+                    if value == ctx.const_1() {
+                        let mem = ctrl.resolve_mem(mem);
+                        // Check for flingy_dat_sprite[units_dat_flingy[_]]
+                        // flingy_dat_sprite is Mem16, units_dat_flingy is Mem8
+                        let result = mem.if_add_either(ctx, |x| x.if_mem16())
+                            .and_then(|x| {
+                                x.0.address().0.if_arithmetic_mul_const(2)?.if_mem8()?;
+                                Some(x.1)
+                            });
+                        if let Some(result) = result {
+                            self.result.sprite_include_in_vision_sync = Some(result);
                             ctrl.end_analysis();
                         }
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), _, None) => {
-                if self.init_units_seen && mem.size == MemAccessSize::Mem32 {
-                    let dest = ctrl.resolve_mem(mem);
-                    let ctx = ctrl.ctx();
-                    if is_global(dest.address().0) {
-                        if let Some(old) = self.candidate {
-                            // Ground strength is guaranteed to be 0xe4 * 4 bytes after air
-                            let (old_base, old_offset) = old.address();
-                            let (new_base, new_offset) = dest.address();
-                            if old_base == new_base &&
-                                old_offset.wrapping_add(0xe4 * 4) == new_offset
-                            {
-                                self.result = Some(old.address_op(ctx));
-                                ctrl.end_analysis();
-                                return;
-                            }
-                        }
-                        self.candidate = Some(dest);
-                    }
-                }
-            }
-            _ => (),
         }
     }
 }

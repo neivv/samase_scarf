@@ -385,6 +385,7 @@ results! {
         StatusScreenMode => "status_screen_mode",
         CheatFlags => "cheat_flags",
         UnitStrength => "unit_strength",
+        SpriteIncludeInVisionSync => "sprite_include_in_vision_sync",
         WireframDdsgrp => "wirefram_ddsgrp",
         ChkInitPlayers => "chk_init_players",
         OriginalChkPlayerTypes => "original_chk_player_types",
@@ -1015,6 +1016,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             StatusScreenMode => self.status_screen_mode(),
             CheatFlags => self.cheat_flags(),
             UnitStrength => self.unit_strength(),
+            SpriteIncludeInVisionSync => self.sprite_include_in_vision_sync(),
             WireframDdsgrp => self.wirefram_ddsgrp(),
             ChkInitPlayers => self.chk_init_players(),
             OriginalChkPlayerTypes => self.original_chk_player_types(),
@@ -2047,7 +2049,17 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
     }
 
     pub fn unit_strength(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.unit_strength(s))
+        self.analyze_many_op(
+            OperandAnalysis::UnitStrength,
+            AnalysisCache::cache_unit_strength_etc,
+        )
+    }
+
+    pub fn sprite_include_in_vision_sync(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::SpriteIncludeInVisionSync,
+            AnalysisCache::cache_unit_strength_etc,
+        )
     }
 
     pub fn grpwire_grp(&mut self) -> Option<Operand<'e>> {
@@ -4517,10 +4529,22 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    fn cache_unit_strength_etc(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[],
+            &[UnitStrength, SpriteIncludeInVisionSync],
+            |s| {
+                let result = units::strength(actx, s.init_game(actx)?, s.init_units(actx)?);
+                Some((
+                    [],
+                    [result.unit_strength, result.sprite_include_in_vision_sync],
+                ))
+            })
+    }
+
     fn unit_strength(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.cache_single_operand(OperandAnalysis::UnitStrength, |s| {
-            units::strength(actx, s.init_game(actx)?, s.init_units(actx)?)
-        })
+        self.cache_many_op(OperandAnalysis::UnitStrength, |s| s.cache_unit_strength_etc(actx))
     }
 
     /// Smaller size wireframes, that is multiselection and transport
