@@ -1,11 +1,18 @@
 use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
-use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
+use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{Operand};
 use scarf::{BinaryFile, BinarySection, DestOperand, Operation};
 
-use crate::{AnalysisCtx, ArgCache, if_callable_const, FunctionFinder, single_result_assign};
+use crate::{
+    AnalysisCtx, ArgCache, if_callable_const, FunctionFinder, single_result_assign,
+    is_global, ControlExt,
+};
+
+pub(crate) struct OpenFile<Va: VirtualAddress> {
+    pub file_exists: Option<Va>,
+}
 
 struct FindLoadDat<'acx, 'e, E: ExecutionState<'e>> {
     result: BumpVec<'acx, (E::VirtualAddress, E::VirtualAddress)>,
@@ -61,7 +68,7 @@ enum Arg {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-struct OpenFileFnIntermediate<Va: VirtualAddressTrait> {
+struct OpenFileFnIntermediate<Va: VirtualAddress> {
     address: Va,
     filename_arg: Arg,
 }
@@ -232,4 +239,49 @@ pub(crate) fn open_file<'e, E: ExecutionState<'e>>(
         }
     }
     result
+}
+
+pub(crate) fn open_file_analysis<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    open_file: E::VirtualAddress,
+) -> OpenFile<E::VirtualAddress> {
+    let mut result = OpenFile {
+        file_exists: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analysis = FuncAnalysis::new(binary, ctx, open_file);
+    let mut analyzer = AnalyzeOpenFile {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzeOpenFile<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OpenFile<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOpenFile<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                // file_exists(&local_buffer, 104, path(arg2), open_params(arg3))
+                let arg_cache = self.arg_cache;
+                let ok = ctrl.resolve(arg_cache.on_call(1)).if_constant() == Some(0x104) &&
+                    ctrl.resolve(arg_cache.on_call(2)) == arg_cache.on_entry(1) &&
+                    ctrl.resolve(arg_cache.on_call(3)) == arg_cache.on_entry(2) &&
+                    !is_global(ctrl.resolve(arg_cache.on_call(0)));
+                if ok {
+                    self.result.file_exists = Some(dest);
+                    ctrl.end_analysis();
+                }
+            }
+        }
+    }
 }

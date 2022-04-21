@@ -363,6 +363,7 @@ results! {
         CheckFowOrderTargeting => "check_fow_order_targeting",
         AiFocusDisabled => "ai_focus_disabled",
         AiFocusAir => "ai_focus_air",
+        FileExists => "file_exists",
     }
 }
 
@@ -995,6 +996,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
             CheckFowOrderTargeting => self.check_fow_order_targeting(),
             AiFocusDisabled => self.ai_focus_disabled(),
             AiFocusAir => self.ai_focus_air(),
+            FileExists => self.file_exists(),
         }
     }
 
@@ -3090,6 +3092,13 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         self.analyze_many_addr(
             AddressAnalysis::AiFocusAir,
             AnalysisCache::cache_step_order,
+        )
+    }
+
+    pub fn file_exists(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::FileExists,
+            AnalysisCache::cache_open_file,
         )
     }
 
@@ -5343,6 +5352,21 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
                 let result = step_order::step_order_analysis(actx, step_order);
                 Some((
                     [result.ai_focus_disabled, result.ai_focus_air],
+                    [],
+                ))
+            });
+    }
+
+    fn cache_open_file(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[FileExists],
+            &[],
+            |s| {
+                let open_file = s.open_file(actx)?;
+                let result = file::open_file_analysis(actx, open_file);
+                Some((
+                    [result.file_exists],
                     [],
                 ))
             });
