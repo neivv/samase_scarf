@@ -1,16 +1,20 @@
 // Compile warnings out in release, but leave them for debug.
-// Tests will also ideally use them at some point to verify they
-// don't regress.
+// Tests will also use them at some point to verify they don't regress.
 //
-// $self can be anything that has add_warning(&self, String) method.
-#[cfg(any(debug_assertions, test_assertions))]
+// When enabled, warnings get to written to a DatWarnings struct that is stored
+// in TLS for the current thread, valid for dat_patches call.
+#[cfg(any(debug_assertions, feature = "test_assertions", feature = "binaries"))]
 macro_rules! dat_warn {
     ($self:expr, $($rest:tt)*) => {
-        $self.add_warning(format!($($rest)*))
+        crate::dat::add_warning_tls(
+            file!(),
+            line!(),
+            format!($($rest)*),
+        )
     }
 }
 
-#[cfg(not(any(debug_assertions, test_assertions)))]
+#[cfg(not(any(debug_assertions, feature = "test_assertions", feature = "binaries")))]
 macro_rules! dat_warn {
     ($self:expr, $($rest:tt)*) => {
         if false {
@@ -99,6 +103,80 @@ pub struct DatPatches<'e, Va: VirtualAddress> {
     pub code_bytes: Vec<u8>,
     pub arrays_in_code_bytes: Vec<(usize, DatType, u8)>,
     pub set_status_screen_tooltip: Option<Va>,
+    pub warnings: DatWarnings,
+}
+
+/// Type that contains any warnings found during dat analysis.
+/// No-op in release builds when used as library.
+/// The warnings get added to test compares (--dump-test-compares)
+/// so they need to be active with feature = "test_assertions" and feature = "binaries"
+#[cfg(not(any(debug_assertions, feature = "test_assertions", feature = "binaries")))]
+pub struct DatWarnings;
+
+#[cfg(not(any(debug_assertions, feature = "test_assertions", feature = "binaries")))]
+impl DatWarnings {
+    fn new() -> DatWarnings {
+        DatWarnings
+    }
+
+    pub fn get_all(&self) -> &[(&'static str, u32, String)] {
+        &[]
+    }
+}
+
+#[cfg(any(debug_assertions, feature = "test_assertions", feature = "binaries"))]
+pub struct DatWarnings(Vec<(&'static str, u32, String)>);
+
+#[cfg(any(debug_assertions, feature = "test_assertions", feature = "binaries"))]
+impl DatWarnings {
+    fn new() -> DatWarnings {
+        DatWarnings(vec![])
+    }
+
+    fn push(&mut self, file: &'static str, line: u32, msg: String) {
+        // When used as library in debug mode, output to logger
+        // Dump binary prints the warning to stdout (or file) anyway so don't duplicate it here.
+        #[cfg(not(any(feature = "test_assertions", feature = "binaries")))]
+        warn!("{}:{} {}", file, line, msg);
+        self.0.push((file, line, msg));
+    }
+
+    pub fn get_all(&self) -> &[(&'static str, u32, String)] {
+        &self.0
+    }
+}
+
+#[cfg(not(any(debug_assertions, feature = "test_assertions", feature = "binaries")))]
+#[inline(always)]
+fn init_warnings_tls() {
+}
+
+#[cfg(not(any(debug_assertions, feature = "test_assertions", feature = "binaries")))]
+#[inline(always)]
+fn get_warnings_tls() -> DatWarnings {
+    DatWarnings
+}
+
+#[cfg(any(debug_assertions, feature = "test_assertions", feature = "binaries"))]
+fn init_warnings_tls() {
+    WARNINGS.with(|w| *w.borrow_mut() = DatWarnings::new());
+}
+
+#[cfg(any(debug_assertions, feature = "test_assertions", feature = "binaries"))]
+thread_local!(static WARNINGS: std::cell::RefCell<DatWarnings> =
+    std::cell::RefCell::new(DatWarnings::new()));
+
+#[cfg(any(debug_assertions, feature = "test_assertions", feature = "binaries"))]
+fn get_warnings_tls() -> DatWarnings {
+    WARNINGS.with(|w| {
+        let mut w = w.borrow_mut();
+        mem::replace(&mut *w, DatWarnings::new())
+    })
+}
+
+#[cfg(any(debug_assertions, feature = "test_assertions", feature = "binaries"))]
+fn add_warning_tls(file: &'static str, line: u32, msg: String) {
+    WARNINGS.with(|w| w.borrow_mut().push(file, line, msg));
 }
 
 impl<'e, Va: VirtualAddress> DatPatches<'e, Va> {
@@ -108,6 +186,7 @@ impl<'e, Va: VirtualAddress> DatPatches<'e, Va> {
             code_bytes: Vec::new(),
             arrays_in_code_bytes: Vec::new(),
             set_status_screen_tooltip: None,
+            warnings: DatWarnings::new(),
         }
     }
 }
@@ -294,6 +373,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     cache: &mut AnalysisCache<'e, E>,
     analysis: &AnalysisCtx<'e, E>,
 ) -> Option<DatPatches<'e, E::VirtualAddress>> {
+    init_warnings_tls();
     let dats = [
         DatType::Units, DatType::Weapons, DatType::Flingy, DatType::Upgrades,
         DatType::TechData, DatType::Orders,
@@ -349,6 +429,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     triggers::trigger_analysis(dat_ctx)?;
     cmdbtns::cmdbtn_analysis(dat_ctx)?;
     dat_ctx.finish_all_patches();
+    dat_ctx.result.warnings = get_warnings_tls();
     Some(mem::replace(&mut dat_ctx.result, DatPatches::empty()))
 }
 
@@ -587,6 +668,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 code_bytes: Vec::with_capacity(2048),
                 arrays_in_code_bytes: Vec::with_capacity(64),
                 set_status_screen_tooltip: None,
+                warnings: DatWarnings::new(),
             },
             patched_addresses: HashSet::with_capacity_and_hasher(64, Default::default()),
             analyzed_functions: HashMap::with_capacity_and_hasher(64, Default::default()),
@@ -601,11 +683,6 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             required_stable_addresses: RequiredStableAddressesMap::with_capacity(1024, bump),
             rdtsc_custom: ctx.and_const(ctx.custom(RDTSC_CUSTOM), 0xffff_ffff),
         })
-    }
-
-    #[cfg(any(debug_assertions, test_assertions))]
-    fn add_warning(&mut self, msg: String) {
-        warn!("{}", msg);
     }
 
     fn add_dat(
@@ -1474,11 +1551,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             mode,
             required_stable_addresses,
         }
-    }
-
-    #[cfg(any(debug_assertions, test_assertions))]
-    fn add_warning(&mut self, msg: String) {
-        self.dat_ctx.add_warning(msg);
     }
 
     /// If there's a conflict in a jump instruction then converts to IsJumpDest::No.
@@ -3223,11 +3295,6 @@ struct FunctionHookContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
 }
 
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'acx, 'e, E> {
-    #[cfg(any(debug_assertions, test_assertions))]
-    fn add_warning(&mut self, msg: String) {
-        warn!("{}", msg);
-    }
-
     /// Creates patches from pending hooks and adds them to result.
     fn process_pending_hooks(
         &mut self,

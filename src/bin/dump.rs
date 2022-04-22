@@ -134,7 +134,7 @@ fn dump<'e, E: ExecutionState<'e>>(
     } else if args.dump_euds {
         samase_scarf::dump::dump_euds(&mut analysis)
     } else if args.dump_dat_patches {
-        samase_scarf::dump::dump_dat_patches(&mut analysis)
+        samase_scarf::dump::dump_dat_patches(&mut analysis, true)
     } else {
         let arg2 = std::env::args_os().nth(2);
         let arg2 = arg2.as_ref();

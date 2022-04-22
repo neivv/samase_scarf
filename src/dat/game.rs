@@ -385,11 +385,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 }
 
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> {
-    #[cfg(any(debug_assertions, test_assertions))]
-    fn add_warning(&mut self, msg: String) {
-        warn!("{}", msg);
-    }
-
     fn reached_game_ref(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         let mut imm_addr = ctrl.current_instruction_end() - 4;
         while imm_addr > ctrl.address() {

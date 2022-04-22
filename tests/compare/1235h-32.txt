@@ -1196,6 +1196,14 @@ crt_fastfail: [VirtualAddress(00cabb3f), VirtualAddress(00cabc44), VirtualAddres
 190913d8:4 = 11a4b7c (00000000)
 
 -- Dat patches --
+WARN Unknown Weapons dat offset @ VirtualAddress(005789ac): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(005789ac): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Upgrades dat offset @ VirtualAddress(00780f53): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
+WARN Unknown Upgrades dat offset @ VirtualAddress(00780f68): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
+WARN Overlapping stable addresses (VirtualAddress(0072a359), VirtualAddress(0072a35e)) for jump VirtualAddress(0072a344) -> VirtualAddress(0072a355)
+WARN Overlapping stable addresses (VirtualAddress(0072a359), VirtualAddress(0072a35e)) for jump VirtualAddress(0072a353) -> VirtualAddress(0072a35c)
+WARN Overlapping stable addresses (VirtualAddress(0072a359), VirtualAddress(0072a35e)) for jump VirtualAddress(0072a344) -> VirtualAddress(0072a355)
+WARN Overlapping stable addresses (VirtualAddress(0072a359), VirtualAddress(0072a35e)) for jump VirtualAddress(0072a353) -> VirtualAddress(0072a35c)
 Units entry count patches: [f28530, f28540, f28550, f28560, f28570, f28580, f28590, f285a0, f285b0, f285c0, f285d0, f285e0, f285f0, f28600, f28610, f28620, f28630, f28640, f28650, f28660, f28670, f28680, f28690, f286a0, f286b0, f286c0, f286d0, f286e0, f286f0, f28700, f28710, f28720, f28730, f28740, f28750, f28760, f28770, f28780, f28790, f287a0, f287b0, f287c0, f287d0, f287e0, f287f0, f28800, f28810, f28820, f28830, f28840, f28850, f28860, f28870, f28880]
 Units array patches:
     00: [57efc8, 5915df, 5af6f6, 5b32cd, 5b332d, 5b338e, 5d2280, 5d878e, 5dee81, 5e1e45, 74b165, 74bf19, f28528, f288c4]

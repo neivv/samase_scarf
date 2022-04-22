@@ -1196,6 +1196,11 @@ crt_fastfail: [VirtualAddress(00bfb170), VirtualAddress(00bfb275), VirtualAddres
 190913d8:4 = 107ac74 (00000000)
 
 -- Dat patches --
+WARN Unknown Weapons dat offset @ VirtualAddress(0059467f): rcx
+WARN Unknown Weapons dat offset @ VirtualAddress(00568f4e): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(00568f4e): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Upgrades dat offset @ VirtualAddress(00772c60): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
+WARN Unknown Upgrades dat offset @ VirtualAddress(00772c72): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
 Units entry count patches: [e0b530, e0b540, e0b550, e0b560, e0b570, e0b580, e0b590, e0b5a0, e0b5b0, e0b5c0, e0b5d0, e0b5e0, e0b5f0, e0b600, e0b610, e0b620, e0b630, e0b640, e0b650, e0b660, e0b670, e0b680, e0b690, e0b6a0, e0b6b0, e0b6c0, e0b6d0, e0b6e0, e0b6f0, e0b700, e0b710, e0b720, e0b730, e0b740, e0b750, e0b760, e0b770, e0b780, e0b790, e0b7a0, e0b7b0, e0b7c0, e0b7d0, e0b7e0, e0b7f0, e0b800, e0b810, e0b820, e0b830, e0b840, e0b850, e0b860, e0b870, e0b880]
 Units array patches:
     00: [56f288, 5814ad, 5a1216, 5a6b1d, 5a6b7d, 5a6bde, 5c56d0, 5cb69d, 5ce0ee, 5cf4c2, 73dba5, 73e959, e0b528, e0b8c4]

@@ -228,9 +228,17 @@ pub fn dump<'e, E: ExecutionState<'e>>(
 
 pub fn dump_dat_patches<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
+    file_lines: bool,
 ) -> String {
     let mut out = String::new();
     if let Some(dat_patches) = analysis.dat_patches_debug_data() {
+        for (file, line, warning) in &dat_patches.warnings {
+            if file_lines {
+                out!(&mut out, "WARN {}:{} {}", file, line, warning);
+            } else {
+                out!(&mut out, "WARN {}", warning);
+            }
+        }
         let mut vec = dat_patches.tables.into_iter().collect::<Vec<_>>();
         vec.sort_by_key(|x| x.0);
         for (dat, debug) in vec {
@@ -358,7 +366,7 @@ pub fn dump_all<'e, E: ExecutionState<'e>>(
 ) -> String {
     let main = dump(analysis, None);
     let euds = dump_euds(analysis);
-    let dat = dump_dat_patches(analysis);
+    let dat = dump_dat_patches(analysis, false);
     format!(
         "-- Main --\n\
         {}\n\

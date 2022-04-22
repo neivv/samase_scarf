@@ -48,11 +48,6 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
         }
     }
 
-    #[cfg(any(debug_assertions, test_assertions))]
-    fn add_warning(&self, msg: String) {
-        warn!("{}", msg);
-    }
-
     pub fn operation<A>(&mut self, ctrl: &mut Control<'e, '_, '_, A>, op: &Operation<'e>)
     where A: analysis::Analyzer<'e, Exec=E>,
     {

@@ -3107,6 +3107,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         &mut self,
     ) -> Option<DatPatchesDebug<'e, E::VirtualAddress>> {
         let patches = self.dat_patches()?;
+        let warnings = patches.warnings.get_all().into();
         let mut map = fxhash::FxHashMap::default();
         let mut replaces = Vec::new();
         let mut func_replaces = Vec::new();
@@ -3180,6 +3181,7 @@ impl<'e, E: ExecutionStateTrait<'e>> Analysis<'e, E> {
         grp_index_hooks.sort_unstable_by_key(|x| *x);
         grp_texture_hooks.sort_unstable_by_key(|x| x.0);
         Some(DatPatchesDebug {
+            warnings,
             tables: map,
             replaces,
             func_replaces,
@@ -5374,6 +5376,7 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
 }
 
 pub struct DatPatchesDebug<'e, Va: VirtualAddressTrait> {
+    pub warnings: Vec<(&'static str, u32, String)>,
     pub tables: fxhash::FxHashMap<DatType, DatTablePatchesDebug<Va>>,
     pub replaces: Vec<(Va, Vec<u8>)>,
     pub func_replaces: Vec<(Va, DatReplaceFunc)>,

@@ -390,6 +390,20 @@ crt_fastfail: [VirtualAddress(00c42570), VirtualAddress(00c42677), VirtualAddres
 -- Euds --
 
 -- Dat patches --
+WARN Unknown Weapons dat offset @ VirtualAddress(00816e30): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00816e38): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00816e88): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00816e90): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00816ed7): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00816edf): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(006622ba): Mem8[((Undefined_1 + 1) & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(006622ba): Mem8[(Undefined_9d & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(0067b24f): rcx
+WARN Unknown Weapons dat offset @ VirtualAddress(00816df5): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00816e12): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00816e6a): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00816eb9): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Reached jump @ set_buttons VirtualAddress(00811f45)
 Units entry count patches: [dc6398, dc63a4, dc63b0, dc63bc, dc63c8, dc63d4, dc63e0, dc63ec, dc63f8, dc6404, dc6410, dc641c, dc6428, dc6434, dc6440, dc644c, dc6458, dc6464, dc6470, dc647c, dc6488, dc6494, dc64a0, dc64ac, dc64b8, dc64c4, dc64d0, dc64dc, dc64e8, dc64f4, dc6500, dc650c, dc6518, dc6524, dc6530, dc653c, dc6548, dc6554, dc6560, dc656c, dc6578, dc6584, dc6590, dc659c, dc65a8, dc65b4, dc65c0, dc65cc, dc65d8, dc65e4, dc65f0, dc65fc, dc6608, dc6614]
 Units array patches:
     00: [666018, 66ec18, 691ea6, 694bcd, 694c2d, 694c77, 6ba860, 6bffb1, 6c051a, 6c0584, 6c4f6c, 7daa05, 7db55b, dc6390]

@@ -1196,6 +1196,23 @@ crt_fastfail: [VirtualAddress(00b9fb59), VirtualAddress(00b9fc5e), VirtualAddres
 190913d8:4 = fbf88c (00000000)
 
 -- Dat patches --
+WARN Unknown Weapons dat offset @ VirtualAddress(00774ff3): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00774ffb): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00775061): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00775069): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(007750d1): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(007750d9): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Upgrades dat offset @ VirtualAddress(0077072f): Mem8[Mem32[Mem32[rsp + 8] + 28] + e]
+WARN Unknown Upgrades dat offset @ VirtualAddress(00770741): Mem8[Mem32[Mem32[rsp + 8] + 28] + e]
+WARN Unknown Weapons dat offset @ VirtualAddress(00541b30): Mem8[((Undefined_2 + 1) & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(00541b30): Mem8[(Undefined_15c & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(0056fa2f): rcx
+WARN Unknown Weapons dat offset @ VirtualAddress(00774fb3): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00774fb3): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00774fdc): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(0077504a): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(007750ba): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Reached jump @ set_buttons VirtualAddress(007703ed)
 Units entry count patches: [d89608, d89618, d89628, d89638, d89648, d89658, d89668, d89678, d89688, d89698, d896a8, d896b8, d896c8, d896d8, d896e8, d896f8, d89708, d89718, d89728, d89738, d89748, d89758, d89768, d89778, d89788, d89798, d897a8, d897b8, d897c8, d897d8, d897e8, d897f8, d89808, d89818, d89828, d89838, d89848, d89858, d89868, d89878, d89888, d89898, d898a8, d898b8, d898c8, d898d8, d898e8, d898f8, d89908, d89918, d89928, d89938, d89948, d89958]
 Units array patches:
     00: [547188, 56398e, 580f53, 58661d, 58667d, 5866de, 5aa2bc, 5b0bf1, 5b13ba, 5b1414, 5b4ae6, 5b670c, 7379a5, 738988, d89554, d89600]

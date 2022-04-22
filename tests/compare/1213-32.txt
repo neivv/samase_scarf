@@ -1193,6 +1193,25 @@ crt_fastfail: [VirtualAddress(00ad2435), VirtualAddress(00ad253c), VirtualAddres
 190913d8:4 = e7fc04 (00000000)
 
 -- Dat patches --
+WARN Unknown Weapons dat offset @ VirtualAddress(006e0f80): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(006e0f88): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(006e0fe7): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(006e0fef): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(006e1052): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(006e105a): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Overlapping stable addresses (VirtualAddress(005560ea), VirtualAddress(005560ec)) for jump to VirtualAddress(005560e6)
+WARN Unknown Weapons dat offset @ VirtualAddress(0053915c): Mem8[((Undefined_2 + 1) & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(0053915c): Mem8[(Undefined_a2 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(006e0f45): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(006e0f62): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(006e0fc9): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(006e1034): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(0055b7cf): rcx
+WARN Overlapping stable addresses (VirtualAddress(0053d080), VirtualAddress(0053d083)) for jump VirtualAddress(0053d071) -> VirtualAddress(0053d082)
+WARN Overlapping stable addresses (VirtualAddress(0053d080), VirtualAddress(0053d083)) for jump VirtualAddress(0053d077) -> VirtualAddress(0053d082)
+WARN Overlapping stable addresses (VirtualAddress(0053d080), VirtualAddress(0053d083)) for jump VirtualAddress(0053d071) -> VirtualAddress(0053d082)
+WARN Overlapping stable addresses (VirtualAddress(0053d080), VirtualAddress(0053d083)) for jump VirtualAddress(0053d077) -> VirtualAddress(0053d082)
+WARN Reached jump @ set_buttons VirtualAddress(006dd17d)
 Units entry count patches: [c61558, c61564, c61570, c6157c, c61588, c61594, c615a0, c615ac, c615b8, c615c4, c615d0, c615dc, c615e8, c615f4, c61600, c6160c, c61618, c61624, c61630, c6163c, c61648, c61654, c61660, c6166c, c61678, c61684, c61690, c6169c, c616a8, c616b4, c616c0, c616cc, c616d8, c616e4, c616f0, c616fc, c61708, c61714, c61720, c6172c, c61738, c61744, c61750, c6175c, c61768, c61774, c61780, c6178c, c61798, c617a4, c617b0, c617bc, c617c8, c617d4]
 Units array patches:
     00: [53c768, 55188c, 56b946, 56e90d, 56e96d, 56e9ce, 588d80, 59088a, 5943bf, 59717c, 6ae705, 6af259, c614a4, c61550]

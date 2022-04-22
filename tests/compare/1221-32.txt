@@ -1192,6 +1192,23 @@ crt_fastfail: [VirtualAddress(00c45bbe), VirtualAddress(00c45cc5), VirtualAddres
 190913d8:4 = 107999c (00000000)
 
 -- Dat patches --
+WARN Unknown Weapons dat offset @ VirtualAddress(00768d0b): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00768d13): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00768d79): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00768d81): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00768dca): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00768dd2): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Upgrades dat offset @ VirtualAddress(007641bf): Mem8[Mem32[Mem32[rsp + 8] + 28] + e]
+WARN Unknown Upgrades dat offset @ VirtualAddress(007641d1): Mem8[Mem32[Mem32[rsp + 8] + 28] + e]
+WARN Unknown Weapons dat offset @ VirtualAddress(0054ed30): Mem8[((Undefined_2 + 1) & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(0054ed30): Mem8[(Undefined_160 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(00768ccb): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00768ccb): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00768cf4): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00768d62): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(00768db3): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Unknown Weapons dat offset @ VirtualAddress(0056f55f): rcx
+WARN Reached jump @ set_buttons VirtualAddress(00763e7d)
 Units entry count patches: [e4a530, e4a540, e4a550, e4a560, e4a570, e4a580, e4a590, e4a5a0, e4a5b0, e4a5c0, e4a5d0, e4a5e0, e4a5f0, e4a600, e4a610, e4a620, e4a630, e4a640, e4a650, e4a660, e4a670, e4a680, e4a690, e4a6a0, e4a6b0, e4a6c0, e4a6d0, e4a6e0, e4a6f0, e4a700, e4a710, e4a720, e4a730, e4a740, e4a750, e4a760, e4a770, e4a780, e4a790, e4a7a0, e4a7b0, e4a7c0, e4a7d0, e4a7e0, e4a7f0, e4a800, e4a810, e4a820, e4a830, e4a840, e4a850, e4a860, e4a870, e4a880]
 Units array patches:
     00: [552dc8, 5610d0, 585613, 58b5ed, 58b64d, 58b6ae, 5a86ec, 5b0240, 5b5d3c, 5b771c, 726b45, 727ae8, e4a528, e4a8c4]
