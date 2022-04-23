@@ -6,14 +6,16 @@ use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation, Rva};
 use scarf::operand::{OperandCtx};
 
 use crate::{
-    AnalysisCtx, ArgCache, EntryOf, EntryOfResult, entry_of_until, unwrap_sext, ControlExt,
-    single_result_assign, OptionExt, if_arithmetic_eq_neq, FunctionFinder, is_global,
+    AnalysisCtx, ArgCache, EntryOf, EntryOfResult, entry_of_until, FunctionFinder,
 };
 use crate::analysis_state::{
     AnalysisState, StateEnum, MiscClientSideAnalyzerState, HandleTargetedClickState,
 };
 use crate::hash_map::HashMap;
 use crate::struct_layouts;
+use crate::util::{
+    ControlExt, OperandExt, OptionExt, single_result_assign, if_arithmetic_eq_neq, is_global,
+};
 use crate::vtables::Vtables;
 
 pub enum ResultOrEntries<'acx, T, Va: VirtualAddress> {
@@ -247,10 +249,8 @@ pub(crate) fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
                 }
                 Operation::Call(to) => {
                     let to = ctrl.resolve(to);
-                    let arg1 = ctrl.resolve(self.args.on_call(0));
-                    let arg1 = unwrap_sext(arg1);
-                    let arg2 = ctrl.resolve(self.args.on_call(1));
-                    let arg2 = unwrap_sext(arg2);
+                    let arg1 = ctrl.resolve(self.args.on_call(0)).unwrap_sext();
+                    let arg2 = ctrl.resolve(self.args.on_call(1)).unwrap_sext();
                     if let Some(dest) = to.if_constant() {
                         if arg1.if_mem16().is_some() && arg2.if_mem16().is_some() {
                             self.result = Some(E::VirtualAddress::from_u64(dest));
@@ -341,8 +341,7 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
                         .and_then(if_f32_div)
                         .and_then(|(l, divisor)| {
                             if_int_to_float(l)
-                                .map(unwrap_sext)
-                                .and_then(|x| x.if_mem16())
+                                .and_then(|x| x.unwrap_sext().if_mem16())
                                 .map(|mem| (screen_coord, divisor, mem.address().1 as u32))
                         })
                 })

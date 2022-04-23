@@ -6,13 +6,15 @@ use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
 use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 
 use crate::{
-    AnalysisCtx, ArgCache, ControlExt, EntryOf, OptionExt, if_callable_const,
-    entry_of_until, single_result_assign, find_bytes, read_u32_at, if_arithmetic_eq_neq,
-    bumpvec_with_capacity, OperandExt, FunctionFinder, is_global,
+    AnalysisCtx, ArgCache, EntryOf, entry_of_until, find_bytes, FunctionFinder,
 };
 use crate::analysis_state::{AnalysisState, StateEnum, IsReplayState, StepNetworkState};
 use crate::switch::CompleteSwitch;
 use crate::struct_layouts;
+use crate::util::{
+    ControlExt, OptionExt, OperandExt, if_callable_const, read_u32_at, if_arithmetic_eq_neq,
+    is_global, bumpvec_with_capacity, single_result_assign,
+};
 
 #[derive(Clone, Debug)]
 pub struct Selections<'e> {

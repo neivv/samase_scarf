@@ -4,11 +4,9 @@ use scarf::analysis::{self, Control, FuncAnalysis, RelocValues};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{DestOperand, MemAccess, Operation, Operand, OperandType};
 
-use crate::{
-    AnalysisCtx, OperandExt, read_u32_at, find_bytes, FunctionFinder, entry_of_until, EntryOf,
-    bumpvec_with_capacity,
-};
+use crate::{AnalysisCtx, entry_of_until, find_bytes, FunctionFinder, EntryOf};
 use crate::struct_layouts;
+use crate::util::{OperandExt, read_u32_at, bumpvec_with_capacity};
 
 const BUTTONSET_BUTTON_COUNTS: [u8; 13] = [6, 9, 6, 5, 0, 7, 0, 9, 7, 8, 6, 7, 6];
 /// Buttonsets are in format { button_count, pointer, linked (0xffff usually) },
