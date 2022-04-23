@@ -3158,18 +3158,23 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     pub fn globals_with_values(&mut self) -> Rc<Vec<RelocValues<E::VirtualAddress>>> {
         let result = match self.globals_with_values.is_none() {
             true => {
-                if E::VirtualAddress::SIZE == 4 {
-                    let relocs = self.relocs();
-                    match scarf::analysis::relocs_with_values(self.binary, &relocs) {
-                        Ok(o) => o,
-                        Err(e) => {
-                            debug!("Error getting relocs with values: {}", e);
-                            Vec::new()
-                        }
+                let relocs = self.relocs();
+                let mut result = match scarf::analysis::relocs_with_values(self.binary, &relocs) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        debug!("Error getting relocs with values: {}", e);
+                        Vec::new()
                     }
-                } else {
-                    x86_64_globals::x86_64_globals(self.binary)
+                };
+                if E::VirtualAddress::SIZE == 8 {
+                    let mut text_globals = x86_64_globals::x86_64_globals(self.binary);
+                    if result.len() < text_globals.len() {
+                        std::mem::swap(&mut result, &mut text_globals);
+                    }
+                    result.extend_from_slice(&text_globals);
+                    result.sort_unstable_by_key(|x| x.value);
                 }
+                result
             }
             false => Vec::new(),
         };

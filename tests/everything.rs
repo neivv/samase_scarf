@@ -1661,11 +1661,11 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         }
     } else {
         // All 64bit exes are new_codegen3 versions
-        assert_eq!(results.requirement_table_refs.units.len(), 12);
-        assert_eq!(results.requirement_table_refs.upgrades.len(), 2);
-        assert_eq!(results.requirement_table_refs.tech_use.len(), 2);
-        assert_eq!(results.requirement_table_refs.tech_research.len(), 2);
-        assert_eq!(results.requirement_table_refs.orders.len(), 2);
+        assert_eq!(results.requirement_table_refs.units.len(), 13);
+        assert_eq!(results.requirement_table_refs.upgrades.len(), 3);
+        assert_eq!(results.requirement_table_refs.tech_use.len(), 3);
+        assert_eq!(results.requirement_table_refs.tech_research.len(), 3);
+        assert_eq!(results.requirement_table_refs.orders.len(), 3);
     }
 
     let step_secondary_order = analysis.step_secondary_order();
