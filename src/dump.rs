@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{Analysis, DatType};
+use crate::analysis::{Analysis, DatType};
 
 /// writeln! that unwraps the result. Since writing to a string won't fail.
 macro_rules! out {

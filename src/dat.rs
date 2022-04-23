@@ -51,15 +51,16 @@ use scarf::{
     MemAccess, Operation, Rva
 };
 
-use crate::{
-    ArgCache, AnalysisCtx, EntryOf, StringRefs, DatType, entry_of_until, single_result_assign,
-    if_callable_const, OperandExt, bumpvec_with_capacity, AnalysisCache, ControlExt,
-    FunctionFinder, OptionExt,
-};
+use crate::analysis::{AnalysisCache, AnalysisCtx, ArgCache, DatType};
+use crate::analysis_find::{EntryOf, FunctionFinder, StringRefs, entry_of_until};
 use crate::detect_tail_call::DetectTailCall;
 use crate::hash_map::{HashMap, HashSet};
 use crate::range_list::RangeList;
 use crate::struct_layouts;
+use crate::util::{
+    bumpvec_with_capacity, single_result_assign, if_callable_const, ControlExt, OperandExt,
+    OptionExt,
+};
 
 static UNIT_ARRAY_WIDTHS: &[u8] = &[
     1, 2, 2, 2, 4, 1, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1,

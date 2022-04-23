@@ -2,9 +2,10 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{DestOperand, Operation};
 
-use crate::{ControlExt, DatType, entry_of_until, EntryOf};
+use crate::analysis_find::{entry_of_until, EntryOf};
+use crate::util::{ControlExt};
 
-use super::{DatPatch, DatEntryCountPatch, DatPatchContext};
+use super::{DatType, DatPatch, DatEntryCountPatch, DatPatchContext};
 
 /// init_hp_bar_texture() has hardcoded constant of 183 which should be replaced
 /// with sprite entry count. Find by the function also referring to sprites_dat_hp_bar (Arr 1)

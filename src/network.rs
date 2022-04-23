@@ -4,8 +4,10 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{MemAccessSize, Operand, OperandCtx, Operation, BinarySection, BinaryFile};
 
-use crate::{AnalysisCtx, ArgCache, single_result_assign, find_bytes, FunctionFinder, EntryOf, OptionExt, OperandExt, entry_of_until, if_arithmetic_eq_neq, VirtualAddressTrait};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{FunctionFinder, find_bytes, entry_of_until, EntryOf};
 use crate::add_terms::collect_arith_add_terms;
+use crate::util::{OperandExt, OptionExt, single_result_assign, if_arithmetic_eq_neq};
 use crate::vtables::Vtables;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -390,7 +392,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStartUdpServer<'e, 
 }
 
 #[derive(Clone, Debug)]
-pub struct NetFormatTurnRate<'e, Va: VirtualAddressTrait> {
+pub struct NetFormatTurnRate<'e, Va: VirtualAddress> {
     pub net_format_turn_rate: Option<Va>,
     pub net_user_latency: Option<Operand<'e>>,
 }

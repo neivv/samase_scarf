@@ -383,7 +383,7 @@ where F: FnMut(Va) -> EntryOf<R>
     EntryOfResult::None
 }
 
-pub(crate) struct FunctionFinder<'a, 'e, E: ExecutionState<'e>> {
+pub struct FunctionFinder<'a, 'e, E: ExecutionState<'e>> {
     functions: &'a [E::VirtualAddress],
     globals_with_values: &'a [RelocValues<E::VirtualAddress>],
     functions_with_callers: &'a [FuncCallPair<E::VirtualAddress>],

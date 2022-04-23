@@ -4,8 +4,9 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
 
-use crate::{DatType, OperandExt, entry_of_until, EntryOf, bumpvec_with_capacity};
-use super::{DatPatchContext, DatArrayPatch, reloc_address_of_instruction};
+use crate::analysis_find::{entry_of_until, EntryOf};
+use crate::util::{bumpvec_with_capacity, OperandExt};
+use super::{DatType, DatPatchContext, DatArrayPatch, reloc_address_of_instruction};
 
 pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
     dat_ctx: &mut DatPatchContext<'a, '_, 'e, E>,

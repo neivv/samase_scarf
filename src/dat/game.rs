@@ -5,13 +5,13 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{OperandType};
 use scarf::{BinaryFile, DestOperand, MemAccess, Operand, Operation, Rva};
 
-use crate::{
-    AnalysisCache, AnalysisCtx, EntryOf, entry_of_until, OperandExt, OptionExt, FunctionFinder,
-    ControlExt,
-};
+use crate::analysis::{AnalysisCache, AnalysisCtx};
+use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::detect_tail_call::DetectTailCall;
 use crate::hash_map::{HashSet, HashMap};
 use crate::struct_layouts;
+use crate::util::{OperandExt, OptionExt, ControlExt};
+
 use super::{
     DatPatches, DatPatch, ExtArrayPatch, RequiredStableAddressesMap, RequiredStableAddresses,
     FunctionHookContext,
