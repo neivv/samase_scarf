@@ -1345,6 +1345,15 @@ TechData array patches:
     08: [dbd440, dbd4e8]
     09: [dbd460, dbd4f8]
     0a: [dbd444, dbd508]
+Sprites entry count patches: [6d4a48, dbd3d0, dbd3e0, dbd3f0, dbd400, dbd410, dbd420]
+Sprites array patches:
+    00: [5596eb, 55977e, 55c57d, 5697ea, 58480f, 598ff6, 599068, 599285, 5b515b, 738f85, 739f68, dbd3b4, dbd3c8]
+    01: ["557c6f:0+0", "6d3bf1:0+0", "6d3c54:0+0", "6d3d96:0+0", "6d3e70:0+0", "6d3eca:0+0", "6d3fa2:0+0", "6d41a2:0+0", "6d41a8:0+0", "6d43d5:0+0", "6d44a3:0+0", "6d461d:0+0", "6d4a31:82+0", "6d5b8c:0+0", "dbd3d8:82+0", "dbf644:82+0"]
+    02: [dbd3c0, dbd3e8]
+    03: [55c56a, dbd3bc, dbd3f8]
+    04: ["556108:0+0", "557c76:0+0", "dbd3b0:82+0", "dbd408:82+0"]
+    05: ["55612a:0+0", "557cff:0+0", "dbd3b8:82+0", "dbd418:82+0"]
+    ff: [55e816, 55f126, 607ec9]
 Orders entry count patches: [dbd208, dbd218, dbd228, dbd238, dbd248, dbd258, dbd268, dbd278, dbd288, dbd298, dbd2a8, dbd2b8, dbd2c8, dbd2d8, dbd2e8, dbd2f8, dbd308, dbd318, dbd328]
 Orders array patches:
     00: [dbd1e8, dbd200]
@@ -1707,6 +1716,7 @@ Orders array patches:
 006bcd87 = [75, 2f]
 006bd62a = [90, 90]
 006bf869 = [74, 0c]
+006d4a46 = [90, bf]
 006d56cb = [75, 68]
 006e7975 = [90, 8b, d1]
 006e79a3 = [90, 8b, d1]

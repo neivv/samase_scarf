@@ -27,6 +27,7 @@ mod cmdbtns;
 mod game;
 mod units;
 mod stack_analysis;
+mod sprites;
 mod triggers;
 mod wireframe;
 
@@ -74,6 +75,10 @@ static WEAPON_ARRAY_WIDTHS: &[u8] = &[
 
 static FLINGY_ARRAY_WIDTHS: &[u8] = &[
     2, 4, 2, 4, 1, 1, 1,
+];
+
+static SPRITE_ARRAY_WIDTHS: &[u8] = &[
+    2, 1, 1, 1, 1, 1,
 ];
 
 static UPGRADE_ARRAY_WIDTHS: &[u8] = &[
@@ -236,6 +241,8 @@ pub struct DatArrayPatch<Va: VirtualAddress> {
     /// Units:
     ///     0xff: Status screen funcs
     ///     0xfe: Unit buttons
+    /// Sprites:
+    ///     0xff: Include in vision sync
     pub field_id: u8,
     /// Unaligned address of a pointer in .text (Or .data/.rdata, whynot)
     /// (e.g. casting it to *const usize and reading it would give pointer to the orig
@@ -375,10 +382,11 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
 ) -> Option<DatPatches<'e, E::VirtualAddress>> {
     init_warnings_tls();
     let dats = [
-        DatType::Units, DatType::Weapons, DatType::Flingy, DatType::Upgrades,
-        DatType::TechData, DatType::Orders,
+        DatType::Units, DatType::Weapons, DatType::Flingy, DatType::Sprites,
+        DatType::Upgrades, DatType::TechData, DatType::Orders,
     ];
     let firegraft = cache.firegraft_addresses(analysis);
+    let sprite_sync = cache.sprite_include_in_vision_sync(analysis)?;
     let mut dat_ctx = DatPatchContext::new(cache, analysis);
     let dat_ctx = dat_ctx.as_mut()?;
     for &dat in &dats {
@@ -411,6 +419,11 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         dat_ctx.add_dat_global_refs(DatType::Units, 0xfe, buttons, end_ptr, 0, 0xc, false);
         units::button_use_analysis(dat_ctx, buttons)?;
     }
+    if let Some(sync) = sprite_sync.if_constant() {
+        let sync = E::VirtualAddress::from_u64(sync);
+        let end_ptr = sync + 0x205;
+        dat_ctx.add_dat_global_refs(DatType::Sprites, 0xff, sync, end_ptr, 0, 0x1, false);
+    }
     if dat_ctx.unknown_global_u8_mem.len() != 1 {
         dat_warn!(
             dat_ctx, "Expected to have 1 unknown global u8 memory, got {}",
@@ -428,6 +441,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     wireframe::grp_index_patches(dat_ctx)?;
     triggers::trigger_analysis(dat_ctx)?;
     cmdbtns::cmdbtn_analysis(dat_ctx)?;
+    sprites::patch_hp_bar_init(dat_ctx)?;
     dat_ctx.finish_all_patches();
     dat_ctx.result.warnings = get_warnings_tls();
     Some(mem::replace(&mut dat_ctx.result, DatPatches::empty()))
@@ -439,6 +453,7 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     units: DatTable<E::VirtualAddress>,
     weapons: DatTable<E::VirtualAddress>,
     flingy: DatTable<E::VirtualAddress>,
+    sprites: DatTable<E::VirtualAddress>,
     upgrades: DatTable<E::VirtualAddress>,
     techdata: DatTable<E::VirtualAddress>,
     orders: DatTable<E::VirtualAddress>,
@@ -655,6 +670,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             units: dat_table(0x36),
             weapons: dat_table(0x18),
             flingy: dat_table(0x7),
+            sprites: dat_table(0x6),
             upgrades: dat_table(0xc),
             techdata: dat_table(0xb),
             orders: dat_table(0x13),
@@ -695,6 +711,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             DatType::Units => (&mut self.units, 0xe4, &UNIT_ARRAY_WIDTHS),
             DatType::Weapons => (&mut self.weapons, 0x82, &WEAPON_ARRAY_WIDTHS),
             DatType::Flingy => (&mut self.flingy, 0xd1, &FLINGY_ARRAY_WIDTHS),
+            DatType::Sprites => (&mut self.sprites, 0x205, &SPRITE_ARRAY_WIDTHS),
             DatType::Upgrades => (&mut self.upgrades, 0x3d, &UPGRADE_ARRAY_WIDTHS),
             DatType::TechData => (&mut self.techdata, 0x2c, &TECHDATA_ARRAY_WIDTHS),
             DatType::Orders => (&mut self.orders, 0xbd, &ORDER_ARRAY_WIDTHS),

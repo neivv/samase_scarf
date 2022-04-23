@@ -1332,6 +1332,15 @@ TechData array patches:
     08: [ede440, ede4e8]
     09: [ede460, ede4f8]
     0a: [ede444, ede508]
+Sprites entry count patches: [6fabab, ede3b8, ede3c8, ede3d8, ede3e8, ede3f8, ede408]
+Sprites array patches:
+    00: [57221c, 5722c8, 577ed9, 581e56, 59601d, 5ac6da, 5ac71a, 5ac91e, 5c0ac3, 757025, 757dd9, ede3b0, ede424]
+    01: ["56f24d:0+0", "5a36c9:0+0", "6fab9b:82+0", "ede3c0:82+0", "ee0b04:82+0"]
+    02: [ede3d0, ede430]
+    03: [577ec6, ede3e0, ede42c]
+    04: ["56f247:0+0", "56f543:0+0", "ede3f0:82+0", "ede420:82+0"]
+    05: ["56f261:0+0", "56f568:0+0", "ede400:82+0", "ede428:82+0"]
+    ff: [577fe6, 578a36, 61f659]
 Orders entry count patches: [ede208, ede218, ede228, ede238, ede248, ede258, ede268, ede278, ede288, ede298, ede2a8, ede2b8, ede2c8, ede2d8, ede2e8, ede2f8, ede308, ede318, ede328]
 Orders array patches:
     00: [ede1e8, ede200]
@@ -1533,6 +1542,7 @@ Orders array patches:
 00664941 = [89, 45, 10]
 006dd08f = [90, 90]
 006e116a = [90, 90]
+006fabaa = [b8]
 0070c4a5 = [90, 8b, d1]
 0070c4d3 = [90, 8b, d1]
 0070c647 = [90, 8b, d1]

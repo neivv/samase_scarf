@@ -1341,6 +1341,15 @@ TechData array patches:
     08: [dd64b8, dd6500]
     09: [dd64c8, dd6520]
     0a: [dd64d8, dd6504]
+Sprites entry count patches: [6dd32b, dd63b8, dd63c8, dd63d8, dd63e8, dd63f8, dd6408]
+Sprites array patches:
+    00: [5674a7, 567553, 5695f0, 575544, 58e163, 5a67ea, 5a682a, 5a6a2e, 5baae3, 73a835, 73b409, dd63b0, dd6424]
+    01: ["56445d:0+0", "5a2019:0+0", "6dd31b:82+0", "dd63c0:82+0", "dd8b04:82+0"]
+    02: [dd63d0, dd6430]
+    03: [5695dd, dd63e0, dd642c]
+    04: ["564457:0+0", "564753:0+0", "dd63f0:82+0", "dd6420:82+0"]
+    05: ["564471:0+0", "564778:0+0", "dd6400:82+0", "dd6428:82+0"]
+    ff: [56c4f6, 56ce06, 617727]
 Orders entry count patches: [dd61b8, dd61c8, dd61d8, dd61e8, dd61f8, dd6208, dd6218, dd6228, dd6238, dd6248, dd6258, dd6268, dd6278, dd6288, dd6298, dd62a8, dd62b8, dd62c8, dd62d8]
 Orders array patches:
     00: [dd61b0, dd6328]
@@ -1544,6 +1553,7 @@ Orders array patches:
 0065c661 = [89, 45, 10]
 006c03ff = [90, 90]
 006c607a = [90, 90]
+006dd32a = [b8]
 006f49e5 = [90, 8b, d1]
 006f4a13 = [90, 8b, d1]
 006f4b87 = [90, 8b, d1]

@@ -4576,6 +4576,16 @@ impl<'e, E: ExecutionStateTrait<'e>> AnalysisCache<'e, E> {
         self.cache_many_op(OperandAnalysis::UnitStrength, |s| s.cache_unit_strength_etc(actx))
     }
 
+    fn sprite_include_in_vision_sync(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<Operand<'e>> {
+        self.cache_many_op(
+            OperandAnalysis::SpriteIncludeInVisionSync,
+            |s| s.cache_unit_strength_etc(actx),
+        )
+    }
+
     /// Smaller size wireframes, that is multiselection and transport
     /// (Fits multiple in status screen)
     /// Also relevant mostly for SD, HD always uses wirefram.ddsgrp for the drawing.
@@ -6282,6 +6292,7 @@ trait ControlExt<'e, E: ExecutionStateTrait<'e>> {
         condition: Operand<'e>,
         to: E::VirtualAddress,
     );
+    fn instruction_contains_address(&mut self, address: E::VirtualAddress) -> bool;
 }
 
 impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
@@ -6453,6 +6464,13 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
                 }
                 Some(())
             });
+    }
+
+    fn instruction_contains_address(
+        &mut self,
+        addr: <A::Exec as ExecutionStateTrait<'e>>::VirtualAddress,
+    ) -> bool {
+        self.address() <= addr && self.current_instruction_end() > addr
     }
 }
 
