@@ -95,6 +95,15 @@ static ORDER_ARRAY_WIDTHS: &[u8] = &[
     2, 2, 1,
 ];
 
+// Portdata label ints get converted to char * after loading
+static PORTDATA_ARRAY_WIDTHS_32: &[u8] = &[
+    4, 4, 1, 1, 1, 1,
+];
+
+static PORTDATA_ARRAY_WIDTHS_64: &[u8] = &[
+    8, 8, 1, 1, 1, 1,
+];
+
 const RDTSC_CUSTOM: u32 = 0x2000_0000;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -384,7 +393,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     init_warnings_tls();
     let dats = [
         DatType::Units, DatType::Weapons, DatType::Flingy, DatType::Sprites,
-        DatType::Upgrades, DatType::TechData, DatType::Orders,
+        DatType::Upgrades, DatType::TechData, DatType::PortData, DatType::Orders,
     ];
     let firegraft = cache.firegraft_addresses(analysis);
     let sprite_sync = cache.sprite_include_in_vision_sync(analysis)?;
@@ -457,6 +466,7 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     sprites: DatTable<E::VirtualAddress>,
     upgrades: DatTable<E::VirtualAddress>,
     techdata: DatTable<E::VirtualAddress>,
+    portdata: DatTable<E::VirtualAddress>,
     orders: DatTable<E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     text: &'e BinarySection<E::VirtualAddress>,
@@ -674,6 +684,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             sprites: dat_table(0x6),
             upgrades: dat_table(0xc),
             techdata: dat_table(0xb),
+            portdata: dat_table(0x6),
             orders: dat_table(0x13),
             binary: analysis.binary,
             relocs: cache.globals_with_values(),
@@ -715,8 +726,15 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             DatType::Sprites => (&mut self.sprites, 0x205, &SPRITE_ARRAY_WIDTHS),
             DatType::Upgrades => (&mut self.upgrades, 0x3d, &UPGRADE_ARRAY_WIDTHS),
             DatType::TechData => (&mut self.techdata, 0x2c, &TECHDATA_ARRAY_WIDTHS),
+            DatType::PortData => {
+                if E::VirtualAddress::SIZE == 4 {
+                    (&mut self.portdata, 0x6e, &PORTDATA_ARRAY_WIDTHS_32)
+                } else {
+                    (&mut self.portdata, 0x6e, &PORTDATA_ARRAY_WIDTHS_64)
+                }
+            }
             DatType::Orders => (&mut self.orders, 0xbd, &ORDER_ARRAY_WIDTHS),
-            _ => unimplemented!(),
+            _ => return Err(()),
         };
         entry.table_address = table_address;
         entry.entry_size = entry_size;
@@ -1274,7 +1292,7 @@ fn entry_limit_to_dat(entries: u32) -> Option<(DatType, bool)> {
         0x3e7 => (DatType::Images, false),
         0x3d => (DatType::Upgrades, true),
         0x2c => (DatType::TechData, true),
-        0xdc => (DatType::PortData, false),
+        0x6e => (DatType::PortData, false),
         0xbd => (DatType::Orders, false),
         _ => return None,
     })
