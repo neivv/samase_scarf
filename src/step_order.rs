@@ -220,115 +220,155 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
 pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     step_order: E::VirtualAddress,
-    order: u32,
+    order: u8,
 ) -> Option<E::VirtualAddress> {
     // Just take the last call when [ecx+4d] has been set to correct order.
     // Also guess long jumps as tail calls
-    struct Analyzer<'acx, 'f, F: ExecutionState<'f>> {
-        result: Option<F::VirtualAddress>,
-        start: F::VirtualAddress,
-        phantom: std::marker::PhantomData<&'acx ()>,
-    }
+    let this = analysis.ctx.register(1);
+    let offset = struct_layouts::unit_order::<E::VirtualAddress>();
+    find_order_function_any(analysis, step_order, this, offset, order)
+}
 
-    impl<'acx, 'e: 'acx, F: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'acx, 'e, F> {
-        type State = AnalysisState<'acx, 'e>;
-        type Exec = F;
-        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-            match *op {
-                Operation::Jump { condition, to } => {
-                    let ctx = ctrl.ctx();
-                    let condition = ctrl.resolve(condition);
-                    if condition == ctx.const_1() {
-                        if let Some(dest) = ctrl.resolve(to).if_constant() {
-                            let state = *ctrl.user_state().get::<StepOrderState>();
-                            if state == StepOrderState::HasSwitchJumped {
-                                let seems_tail_call = (dest < self.start.as_u64()) ||
-                                    (
-                                        dest > ctrl.address().as_u64() + 0x400 &&
-                                        dest > self.start.as_u64() + 0x800
-                                    );
+pub(crate) fn find_order_function_secondary<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    step_secondary_order: &SecondaryOrderHook<'e, E::VirtualAddress>,
+    order: u8,
+) -> Option<E::VirtualAddress> {
+    let (entry, this) = match *step_secondary_order {
+        SecondaryOrderHook::Inlined { entry, unit, .. } => (entry, unit),
+        SecondaryOrderHook::Separate(entry) => (entry, analysis.ctx.register(1)),
+    };
+    let offset = struct_layouts::unit_secondary_order::<E::VirtualAddress>();
+    find_order_function_any(analysis, entry, this, offset, order)
+}
 
-                                if seems_tail_call {
-                                    let ecx = ctx.register(1);
-                                    let esp = ctx.register(4);
-                                    // Tail call needs to have this == orig this
-                                    if ctrl.resolve(ecx) == ecx && ctrl.resolve(esp) == esp {
-                                        self.result = Some(VirtualAddress::from_u64(dest));
-                                        ctrl.end_analysis();
-                                    }
-                                }
-                            } else {
-                                // Assume "switch jump" if the condition is always true,
-                                // as the small 4-case switch at start isn't necessarily
-                                // a switch table but just chained comparisions.
-                                ctrl.user_state().set(StepOrderState::HasSwitchJumped);
-                                return;
-                            }
-                        }
-                    } else {
-                        // If a func return value was used for jump
-                        // (unit_is_disabled), then it is not the result.
-                        if let Some(result) = self.result {
-                            if let Some(func_return) = if_arithmetic_eq_neq(condition)
-                                .and_then(|x| Operand::and_masked(x.0).0.if_custom())
-                            {
-                                if func_return == result.as_u64() as u32 {
-                                    self.result = None;
-                                }
-                            }
-                        }
-                    }
-                    let state = if to.if_constant().is_none() {
-                        StepOrderState::HasSwitchJumped
-                    } else {
-                        StepOrderState::NotSwitchJumped
-                    };
-                    ctrl.user_state().set(state);
-                }
-                Operation::Call(dest) => {
-                    let state = *ctrl.user_state().get::<StepOrderState>();
-                    ctrl.skip_call_preserve_esp();
-                    if state == StepOrderState::HasSwitchJumped {
-                        if let Some(dest) = ctrl.resolve_va(dest) {
-                            self.result = Some(dest);
-                            let ctx = ctrl.ctx();
-                            let state = ctrl.exec_state();
-                            state.set_register(0, ctx.custom(dest.as_u64() as u32));
-                        }
-                    }
-                }
-                _ => (),
-            }
-        }
-    }
+pub(crate) fn find_order_function_hidden<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    step_order_hidden: &StepOrderHiddenHook<'e, E::VirtualAddress>,
+    order: u8,
+) -> Option<E::VirtualAddress> {
+    let (entry, this) = match *step_order_hidden {
+        StepOrderHiddenHook::Inlined { entry, unit, .. } => (entry, unit),
+        StepOrderHiddenHook::Separate(entry) => (entry, analysis.ctx.register(1)),
+    };
+    let offset = struct_layouts::unit_order::<E::VirtualAddress>();
+    find_order_function_any(analysis, entry, this, offset, order)
+}
 
-    let mut analyzer = Analyzer {
+fn find_order_function_any<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    entry: E::VirtualAddress,
+    this: Operand<'e>,
+    order_offset: u64,
+    order: u8,
+) -> Option<E::VirtualAddress> {
+    let mut analyzer = FindOrderFunc {
         result: None,
-        start: step_order,
+        start: entry,
         phantom: Default::default(),
+        order,
     };
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     let bump = &analysis.bump;
+
     let mut state = E::initial_state(ctx, binary);
-    let dest = DestOperand::from_oper(
-        ctx.mem8(
-            ctx.register(1),
-            struct_layouts::unit_order::<E::VirtualAddress>(),
-        )
-    );
+    let dest = DestOperand::Memory(ctx.mem_access(this, order_offset, MemAccessSize::Mem8));
     state.move_to(&dest, ctx.constant(order as u64));
     let user_state =
         AnalysisState::new(bump, StateEnum::StepOrder(StepOrderState::NotSwitchJumped));
     let mut analysis = FuncAnalysis::custom_state(
         binary,
         ctx,
-        step_order,
+        entry,
         state,
         user_state,
     );
     analysis.analyze(&mut analyzer);
     analyzer.result
+}
+
+struct FindOrderFunc<'acx, 'f, F: ExecutionState<'f>> {
+    result: Option<F::VirtualAddress>,
+    start: F::VirtualAddress,
+    phantom: std::marker::PhantomData<&'acx ()>,
+    order: u8,
+}
+
+impl<'acx, 'e: 'acx, F: ExecutionState<'e>> scarf::Analyzer<'e> for FindOrderFunc<'acx, 'e, F> {
+    type State = AnalysisState<'acx, 'e>;
+    type Exec = F;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Jump { condition, to } => {
+                let ctx = ctrl.ctx();
+                let condition = ctrl.resolve(condition);
+                if let Some(c) = condition.if_constant() {
+                    if let Some(dest) = ctrl.resolve(to).if_constant() {
+                        let state = *ctrl.user_state().get::<StepOrderState>();
+                        if state == StepOrderState::HasSwitchJumped && c == 1 {
+                            let seems_tail_call = (dest < self.start.as_u64()) ||
+                                (
+                                    dest > ctrl.address().as_u64() + 0x400 &&
+                                    dest > self.start.as_u64() + 0x800
+                                );
+
+                            if seems_tail_call {
+                                let ecx = ctx.register(1);
+                                let esp = ctx.register(4);
+                                // Tail call needs to have this == orig this
+                                if ctrl.resolve(ecx) == ecx && ctrl.resolve(esp) == esp {
+                                    self.result = Some(VirtualAddress::from_u64(dest));
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        } else {
+                            // Assume "switch jump" if the condition is always true,
+                            // as the small 4-case switch at start isn't necessarily
+                            // a switch table but just chained comparisions.
+                            // Also assume it be switch jump if condition is false
+                            // but order is 0x95 (secondary order hallucination)
+                            if c == 1 || self.order == 0x95 {
+                                ctrl.user_state().set(StepOrderState::HasSwitchJumped);
+                                return;
+                            }
+                        }
+                    }
+                } else {
+                    // If a func return value was used for jump
+                    // (unit_is_disabled), then it is not the result.
+                    if let Some(result) = self.result {
+                        if let Some(func_return) = if_arithmetic_eq_neq(condition)
+                            .and_then(|x| Operand::and_masked(x.0).0.if_custom())
+                        {
+                            if func_return == result.as_u64() as u32 {
+                                self.result = None;
+                            }
+                        }
+                    }
+                }
+                let state = if to.if_constant().is_none() {
+                    StepOrderState::HasSwitchJumped
+                } else {
+                    StepOrderState::NotSwitchJumped
+                };
+                ctrl.user_state().set(state);
+            }
+            Operation::Call(dest) => {
+                let state = *ctrl.user_state().get::<StepOrderState>();
+                ctrl.skip_call_preserve_esp();
+                if state == StepOrderState::HasSwitchJumped {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.result = Some(dest);
+                        let ctx = ctrl.ctx();
+                        let state = ctrl.exec_state();
+                        state.set_register(0, ctx.custom(dest.as_u64() as u32));
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
 }
 
 fn step_order_hook_info<'e, E: ExecutionState<'e>>(

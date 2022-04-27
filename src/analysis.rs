@@ -3872,9 +3872,25 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some(cached)
             }
         } else {
-            let step_order = self.step_order(actx)?;
+            let func = match order {
+                0x5 | 0x25 | 0x26 | 0x3f | 0x44 | 0x4e | 0x66 | 0x6d | 0x6e | 0x83 | 0x95 => 1u8,
+                _ => 0,
+            };
             self.step_order_funcs[order as usize] = E::VirtualAddress::from_u64(1);
-            let result = step_order::find_order_function(actx, step_order, order as u32)?;
+            let result = if func == 0 {
+                let step = self.step_order(actx)?;
+                step_order::find_order_function(actx, step, order)?
+            } else {
+                if order == 5 {
+                    let step = self.step_order_hidden(actx);
+                    let step = step.get(0)?;
+                    step_order::find_order_function_hidden(actx, step, order)?
+                } else {
+                    let step = self.step_secondary_order(actx);
+                    let step = step.get(0)?;
+                    step_order::find_order_function_secondary(actx, step, order)?
+                }
+            };
             self.step_order_funcs[order as usize] = result;
             Some(result)
         }
