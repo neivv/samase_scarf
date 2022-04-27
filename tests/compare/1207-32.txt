@@ -30,6 +30,8 @@ create_bullet: 0064cae0
 create_fow_sprite: 00666400
 create_game_multiplayer: 007cb210
 create_lone_sprite: 006664b0
+create_starting_units: 007ebb50
+create_team_game_starting_units: 007ec720
 create_unit: 0068aa80
 deserialize_sprites: 0065ab30
 do_attack: 0067e860
@@ -59,6 +61,7 @@ give_unit: 006fb220
 glucmpgn_event_handler: 00778690
 handle_targeted_click: 00839c80
 init_game: 00739f40
+init_game_before_map_load_hook: 00739fb0
 init_game_network: 007cad10
 init_map_from_path: 00797620
 init_net_player: 007dc740
@@ -304,6 +307,7 @@ sync_data: 11256f8
 targeted_order_fow: Mem8[1140ba5]
 targeted_order_ground: Mem8[1140ba4]
 targeted_order_unit: Mem8[1140ba3]
+team_game_teams: Mem8[112353d]
 tfontgam: 115b980
 tooltip_draw_func: Mem32[f36ed0]
 tranwire_ddsgrp: 113ff34

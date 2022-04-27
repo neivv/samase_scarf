@@ -305,6 +305,11 @@ results! {
         AiFocusDisabled => "ai_focus_disabled",
         AiFocusAir => "ai_focus_air",
         FileExists => "file_exists",
+        // Hook after unit strength / sprite vision sync init is done, but
+        // before map is loaded.
+        InitGameBeforeMapLoadHook => "init_game_before_map_load_hook",
+        CreateStartingUnits => "create_starting_units",
+        CreateTeamGameStartingUnits => "create_team_game_starting_units",
     }
 }
 
@@ -330,6 +335,7 @@ results! {
         CheatFlags => "cheat_flags",
         UnitStrength => "unit_strength",
         SpriteIncludeInVisionSync => "sprite_include_in_vision_sync",
+        TeamGameTeams => "team_game_teams",
         WireframDdsgrp => "wirefram_ddsgrp",
         ChkInitPlayers => "chk_init_players",
         OriginalChkPlayerTypes => "original_chk_player_types",
@@ -911,6 +917,9 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             AiFocusDisabled => self.ai_focus_disabled(),
             AiFocusAir => self.ai_focus_air(),
             FileExists => self.file_exists(),
+            InitGameBeforeMapLoadHook => self.init_game_before_map_load_hook(),
+            CreateStartingUnits => self.create_starting_units(),
+            CreateTeamGameStartingUnits => self.create_team_game_starting_units(),
         }
     }
 
@@ -937,6 +946,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             CheatFlags => self.cheat_flags(),
             UnitStrength => self.unit_strength(),
             SpriteIncludeInVisionSync => self.sprite_include_in_vision_sync(),
+            TeamGameTeams => self.team_game_teams(),
             WireframDdsgrp => self.wirefram_ddsgrp(),
             ChkInitPlayers => self.chk_init_players(),
             OriginalChkPlayerTypes => self.original_chk_player_types(),
@@ -1978,6 +1988,34 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     pub fn sprite_include_in_vision_sync(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(
             OperandAnalysis::SpriteIncludeInVisionSync,
+            AnalysisCache::cache_unit_strength_etc,
+        )
+    }
+
+    pub fn team_game_teams(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::TeamGameTeams,
+            AnalysisCache::cache_unit_strength_etc,
+        )
+    }
+
+    pub fn init_game_before_map_load_hook(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::InitGameBeforeMapLoadHook,
+            AnalysisCache::cache_unit_strength_etc,
+        )
+    }
+
+    pub fn create_starting_units(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::CreateStartingUnits,
+            AnalysisCache::cache_unit_strength_etc,
+        )
+    }
+
+    pub fn create_team_game_starting_units(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::CreateTeamGameStartingUnits,
             AnalysisCache::cache_unit_strength_etc,
         )
     }
@@ -3991,6 +4029,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::InitGame, |s| s.cache_init_game(actx))
     }
 
+    fn loaded_save(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::LoadedSave, |s| s.cache_init_game(actx))
+    }
+
     fn cache_sprites(&mut self, actx: &AnalysisCtx<'e, E>) {
         use OperandAnalysis::*;
         self.cache_many(&[AddressAnalysis::CreateLoneSprite], &[
@@ -4477,15 +4519,23 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     }
 
     fn cache_unit_strength_etc(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
         use OperandAnalysis::*;
         self.cache_many(
-            &[],
-            &[UnitStrength, SpriteIncludeInVisionSync],
+            &[InitGameBeforeMapLoadHook, CreateStartingUnits, CreateTeamGameStartingUnits],
+            &[UnitStrength, SpriteIncludeInVisionSync, TeamGameTeams],
             |s| {
-                let result = units::strength(actx, s.init_game(actx)?, s.init_units(actx)?);
+                let init_game = s.init_game(actx)?;
+                let init_units = s.init_units(actx)?;
+                let loaded_save = s.loaded_save(actx)?;
+                let is_multiplayer = s.is_multiplayer(actx)?;
+                let result =
+                    units::strength(actx, init_game, init_units, loaded_save, is_multiplayer);
                 Some((
-                    [],
-                    [result.unit_strength, result.sprite_include_in_vision_sync],
+                    [result.init_game_before_map_load_hook, result.create_starting_units,
+                        result.create_team_game_starting_units],
+                    [result.unit_strength, result.sprite_include_in_vision_sync,
+                        result.team_game_teams],
                 ))
             })
     }

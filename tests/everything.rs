@@ -1588,7 +1588,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 FirstFreeSelectionCircle | LastFreeSelectionCircle | GrpWireGrp | TranWireGrp |
                 StatusScreen | MapMpq | ReplayScenarioChk | ReplayScenarioChkSize |
                 GameScreenLClickCallback | GameScreenRClickCallback | TargetedOrderFow |
-                TargetedOrderGround | TargetedOrderUnit | MinimapCursorType =>
+                TargetedOrderGround | TargetedOrderUnit | MinimapCursorType | TeamGameTeams =>
             {
                 check_global_opt(result, binary, op.name());
             }
