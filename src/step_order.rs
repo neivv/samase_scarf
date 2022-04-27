@@ -217,13 +217,6 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
     }
 }
 
-pub(crate) fn find_order_nuke_track<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'e, E>,
-    step_order: E::VirtualAddress,
-) -> Option<E::VirtualAddress> {
-    find_order_function(analysis, step_order, 0x81)
-}
-
 pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     step_order: E::VirtualAddress,
@@ -272,6 +265,18 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
                                 return;
                             }
                         }
+                    } else {
+                        // If a func return value was used for jump
+                        // (unit_is_disabled), then it is not the result.
+                        if let Some(result) = self.result {
+                            if let Some(func_return) = if_arithmetic_eq_neq(condition)
+                                .and_then(|x| Operand::and_masked(x.0).0.if_custom())
+                            {
+                                if func_return == result.as_u64() as u32 {
+                                    self.result = None;
+                                }
+                            }
+                        }
                     }
                     let state = if to.if_constant().is_none() {
                         StepOrderState::HasSwitchJumped
@@ -282,12 +287,15 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
                 }
                 Operation::Call(dest) => {
                     let state = *ctrl.user_state().get::<StepOrderState>();
+                    ctrl.skip_call_preserve_esp();
                     if state == StepOrderState::HasSwitchJumped {
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             self.result = Some(dest);
+                            let ctx = ctrl.ctx();
+                            let state = ctrl.exec_state();
+                            state.set_register(0, ctx.custom(dest.as_u64() as u32));
                         }
                     }
-                    ctrl.skip_call_preserve_esp();
                 }
                 _ => (),
             }

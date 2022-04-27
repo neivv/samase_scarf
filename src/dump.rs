@@ -222,6 +222,9 @@ pub fn dump<'e, E: ExecutionState<'e>>(
         );
 
         out!(&mut out, "crt_fastfail: {:?}", analysis.crt_fastfail());
+        for i in 0..0xbc {
+            out!(&mut out, "order_{:x}: {:?}", i, analysis.order_function(i));
+        }
     }
     out
 }

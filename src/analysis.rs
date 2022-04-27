@@ -483,6 +483,9 @@ pub struct AnalysisCache<'e, E: ExecutionState<'e>> {
     address_results: [E::VirtualAddress; AddressAnalysis::COUNT],
     // None = Not calculated, Custom(1234578) = Not found
     operand_results: [Option<Operand<'e>>; OperandAnalysis::COUNT],
+    // Technically there are 0xbd order, but the last one is fully no-op so it cannot
+    // have a step function.
+    step_order_funcs: [E::VirtualAddress; 0xbc],
     operand_not_found: Operand<'e>,
     process_commands_switch: Cached<Option<CompleteSwitch<'e>>>,
     process_lobby_commands_switch: Cached<Option<CompleteSwitch<'e>>>,
@@ -683,6 +686,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
                 address_results:
                     [E::VirtualAddress::from_u64(0); AddressAnalysis::COUNT],
                 operand_results: [None; OperandAnalysis::COUNT],
+                step_order_funcs: [E::VirtualAddress::from_u64(0); 0xbc],
                 operand_not_found: ctx.custom(0x12345678),
                 process_commands_switch: Default::default(),
                 process_lobby_commands_switch: Default::default(),
@@ -1397,11 +1401,11 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     }
 
     pub fn net_user_latency(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.net_user_latency(s))
+        self.enter(AnalysisCache::net_user_latency)
     }
 
     pub fn net_format_turn_rate(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.net_format_turn_rate(s))
+        self.enter(AnalysisCache::net_format_turn_rate)
     }
 
     pub fn storm_command_user(&mut self) -> Option<Operand<'e>> {
@@ -1409,15 +1413,15 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     }
 
     pub fn init_game_network(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.init_game_network(s))
+        self.enter(AnalysisCache::init_game_network)
     }
 
     pub fn snp_definitions(&mut self) -> Option<SnpDefinitions<'e>> {
-        self.enter(|x, s| x.snp_definitions(s))
+        self.enter(AnalysisCache::snp_definitions)
     }
 
     pub fn lobby_state(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.lobby_state(s))
+        self.enter(AnalysisCache::lobby_state)
     }
 
     pub fn init_storm_networking(&mut self) -> Option<E::VirtualAddress> {
@@ -1435,19 +1439,23 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     }
 
     pub fn step_order(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.step_order(s))
+        self.enter(AnalysisCache::step_order)
+    }
+
+    pub fn order_function(&mut self, order: u8) -> Option<E::VirtualAddress> {
+        self.enter(|x, s| x.order_function(order, s))
     }
 
     pub fn step_order_hidden(&mut self) ->
         Rc<Vec<step_order::StepOrderHiddenHook<'e, E::VirtualAddress>>>
     {
-        self.enter(|x, s| x.step_order_hidden(s))
+        self.enter(AnalysisCache::step_order_hidden)
     }
 
     pub fn step_secondary_order(&mut self) ->
         Rc<Vec<step_order::SecondaryOrderHook<'e, E::VirtualAddress>>>
     {
-        self.enter(|x, s| x.step_secondary_order(s))
+        self.enter(AnalysisCache::step_secondary_order)
     }
 
     pub fn step_iscript(&mut self) -> Option<E::VirtualAddress> {
@@ -3850,6 +3858,28 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    fn order_function(
+        &mut self,
+        order: u8,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<E::VirtualAddress> {
+        let &cached = self.step_order_funcs.get(order as usize)?;
+        let val = cached.as_u64();
+        if val != 0 {
+            if val == 1 {
+                None
+            } else {
+                Some(cached)
+            }
+        } else {
+            let step_order = self.step_order(actx)?;
+            self.step_order_funcs[order as usize] = E::VirtualAddress::from_u64(1);
+            let result = step_order::find_order_function(actx, step_order, order as u32)?;
+            self.step_order_funcs[order as usize] = result;
+            Some(result)
+        }
+    }
+
     fn step_order_hidden(
         &mut self,
         actx: &AnalysisCtx<'e, E>,
@@ -4039,8 +4069,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             SpriteHlines, SpriteHlinesEnd, FirstFreeSprite, LastFreeSprite, FirstLoneSprite,
             LastLoneSprite, FirstFreeLoneSprite, LastFreeLoneSprite,
         ], |s| {
-            let step_order = s.step_order(actx)?;
-            let order_nuke_track = step_order::find_order_nuke_track(actx, step_order)?;
+            let order_nuke_track = s.order_function(0x81, actx)?;
             let result = sprites::sprites(actx, order_nuke_track);
             s.sprite_x_position = result.sprite_x_position;
             s.sprite_y_position = result.sprite_y_position;
@@ -4081,8 +4110,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     fn cache_map_tile_flags(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(&[UpdateVisibilityPoint], &[OperandAnalysis::MapTileFlags], |s| {
-            let step_order = s.step_order(actx)?;
-            let order_nuke_track = step_order::find_order_nuke_track(actx, step_order)?;
+            let order_nuke_track = s.order_function(0x81, actx)?;
             let result = map::map_tile_flags(actx, order_nuke_track);
             Some(([result.update_visibility_point], [result.map_tile_flags]))
         })
@@ -4158,8 +4186,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         actx: &AnalysisCtx<'e, E>,
     ) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::AiUpdateAttackTarget, |s| {
-            let step_order = s.step_order(actx)?;
-            let order_computer_return = step_order::find_order_function(actx, step_order, 0xa3)?;
+            let order_computer_return = s.order_function(0xa3, actx)?;
             ai::ai_update_attack_target(actx, order_computer_return)
         })
     }
@@ -4216,8 +4243,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     fn cache_unit_creation(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(&[CreateUnit, FinishUnitPre, FinishUnitPost], &[], |s| {
-            let step_order = s.step_order(actx)?;
-            let order_scan = step_order::find_order_function(actx, step_order, 0x8b)?;
+            let order_scan = s.order_function(0x8b, actx)?;
             let result = units::unit_creation(actx, order_scan);
             Some(([result.create_unit, result.finish_unit_pre, result.finish_unit_post], []))
         })
@@ -4445,8 +4471,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
         self.cache_many(&[DoAttack, DoAttackMain], &[LastBulletSpawner], |s| {
-            let step_order = s.step_order(actx)?;
-            let attack_order = step_order::find_order_function(actx, step_order, 0xa)?;
+            let attack_order = s.order_function(0xa, actx)?;
             let result = step_order::do_attack(actx, attack_order)?;
             Some(([Some(result.do_attack), Some(result.do_attack_main)],
                 [Some(result.last_bullet_spawner)]))
@@ -4707,8 +4732,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
 
     fn ai_prepare_moving_to(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::AiPrepareMovingTo, |s| {
-            let step_order = s.step_order(actx)?;
-            let order_move = step_order::find_order_function(actx, step_order, 0x6)?;
+            let order_move = s.order_function(0x6, actx)?;
             ai::ai_prepare_moving_to(actx, order_move)
         })
     }
@@ -4899,8 +4923,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
 
     fn ai_spell_cast(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::AiSpellCast, |s| {
-            let step_order = s.step_order(actx)?;
-            let order_guard = step_order::find_order_function(actx, step_order, 0xa0)?;
+            let order_guard = s.order_function(0xa0, actx)?;
             ai::ai_spell_cast(actx, order_guard)
         })
     }
@@ -5161,8 +5184,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
         self.cache_many(&[AddPylonAura], &[FirstPylon, PylonAurasVisible, PylonRefresh], |s| {
-            let step_order = s.step_order(actx)?;
-            let order_pylon_init = step_order::find_order_function(actx, step_order, 0xa4)?;
+            let order_pylon_init = s.order_function(0xa4, actx)?;
             let result = units::pylon_aura(actx, order_pylon_init);
             Some((
                 [result.add_pylon_aura],
