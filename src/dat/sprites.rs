@@ -35,6 +35,16 @@ pub(crate) fn patch_hp_bar_init<'a, 'e, E: ExecutionState<'e>>(
             analyzer.result
         }).into_option().is_some();
         if ok {
+            // Also fix the already added array patch to refer to start of the array now
+            for patch in &mut dat_ctx.result.patches {
+                if let DatPatch::Array(ref mut arr) = *patch {
+                    if arr.address == global.use_address {
+                        arr.entry = 0;
+                        return Some(());
+                    }
+                }
+            }
+            dat_warn!(self, "Didn't find existing array patch for HP bar");
             return Some(());
         }
     }
