@@ -39,9 +39,11 @@ pub enum SecondaryOrderHook<'e, Va: VirtualAddress> {
 
 #[derive(Clone, Copy)]
 pub struct DoAttack<'e, Va: VirtualAddress> {
-    pub do_attack: Va,
-    pub do_attack_main: Va,
-    pub last_bullet_spawner: Operand<'e>,
+    pub ai_try_return_home: Option<Va>,
+    pub update_attack_target: Option<Va>,
+    pub do_attack: Option<Va>,
+    pub do_attack_main: Option<Va>,
+    pub last_bullet_spawner: Option<Operand<'e>>,
 }
 
 pub(crate) struct StepOrder<Va: VirtualAddress> {
@@ -767,129 +769,206 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
 pub(crate) fn do_attack<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     attack_order: E::VirtualAddress,
-) -> Option<DoAttack<'e, E::VirtualAddress>> {
+) -> DoAttack<'e, E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
     let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, attack_order);
     let mut analyzer = FindDoAttack {
+        ai_try_return_home: None,
+        update_attack_target: None,
         do_attack: None,
         do_attack_main: None,
         last_bullet_spawner: None,
         arg_cache,
         inlining: false,
         entry_esp: ctx.register(4),
+        state: DoAttackState::AiTryReturnHome,
     };
     analysis.analyze(&mut analyzer);
-    Some(DoAttack {
-        do_attack: analyzer.do_attack?,
-        do_attack_main: analyzer.do_attack_main?,
-        last_bullet_spawner: analyzer.last_bullet_spawner?,
-    })
+    DoAttack {
+        ai_try_return_home: analyzer.ai_try_return_home,
+        update_attack_target: analyzer.update_attack_target,
+        do_attack: analyzer.do_attack,
+        do_attack_main: analyzer.do_attack_main,
+        last_bullet_spawner: analyzer.last_bullet_spawner,
+    }
 }
 
 struct FindDoAttack<'a, 'e, E: ExecutionState<'e>> {
+    ai_try_return_home: Option<E::VirtualAddress>,
+    update_attack_target: Option<E::VirtualAddress>,
     do_attack: Option<E::VirtualAddress>,
     do_attack_main: Option<E::VirtualAddress>,
     last_bullet_spawner: Option<Operand<'e>>,
     arg_cache: &'a ArgCache<'e, E>,
     inlining: bool,
     entry_esp: Operand<'e>,
+    state: DoAttackState,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum DoAttackState {
+    // ai_try_return_home(arg1 = this, arg2 = 0)
+    AiTryReturnHome,
+    // update_attack_target(this = this), right after ai_try_return_home
+    // Verify by the function starting with flags & 0x0800_0000 check
+    UpdateAttackTarget,
+    VerifyUpdateAttackTarget,
+    // do_attack(this = this, arg1 = 5)
+    DoAttack,
+    LastBulletSpawner,
+    DoAttackMain,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        let step = match () {
-            () if self.do_attack.is_none() => 0,
-            () if self.last_bullet_spawner.is_none() => 1,
-            () => 2,
-        };
         let ctx = ctrl.ctx();
-        match *op {
-            Operation::Call(dest) => {
-                if self.inlining {
-                    ctrl.end_analysis();
-                    return;
+        let state = self.state;
+        match state {
+            DoAttackState::AiTryReturnHome => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let ok = arg1 == ctx.register(1) &&
+                            ctx.and_const(arg2, 0xff) == ctx.const_0();
+                        if ok {
+                            self.ai_try_return_home = Some(dest);
+                            self.state = DoAttackState::UpdateAttackTarget;
+                            ctrl.clear_all_branches();
+                        }
+                    }
                 }
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
-                    if step == 0 {
-                        // Step 0: Check for do_attack(this, 0x5)
-                        if self.is_do_attack_call(ctrl) {
-                            self.do_attack = Some(dest);
+            }
+            DoAttackState::UpdateAttackTarget => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ctx.register(1));
+                        if this == ctx.register(1) {
+                            self.state = DoAttackState::VerifyUpdateAttackTarget;
                             ctrl.analyze_with_current_state(self, dest);
-                            if self.do_attack_main.is_some() {
-                                ctrl.end_analysis();
+                            if self.update_attack_target.is_some() {
+                                self.update_attack_target = Some(dest);
+                                self.state = DoAttackState::DoAttack;
                             } else {
-                                self.do_attack = None;
+                                self.state = DoAttackState::UpdateAttackTarget;
                             }
                         }
-                    } else if step == 1 {
-                        self.inlining = true;
-                        ctrl.analyze_with_current_state(self, dest);
-                        self.inlining = false;
-                    } else if step == 2 {
-                        // Step 2: Check for do_attack_main(this, 2, units_dat_air_weapon[x])
-                        let ok = Some(())
-                            .filter(|_| ctrl.resolve(ctx.register(1)) == ctx.register(1))
-                            .and_then(|_| {
-                                ctrl.resolve(self.arg_cache.on_thiscall_call(0)).if_constant()
-                            })
-                            .filter(|&c| c == 2)
-                            .and_then(|_| {
-                                ctrl.resolve(self.arg_cache.on_thiscall_call(1)).if_mem8()
-                            })
-                            .filter(|x| {
-                                let (base, offset) = x.address();
-                                base != ctx.const_0() && offset != 0
-                            })
-                            .is_some();
-                        if ok {
-                            self.do_attack_main = Some(dest);
-                            ctrl.end_analysis();
-                        }
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, None) if step == 1 => {
-                // Step 1: Look for assignment of zero to global memory
-                if mem.size == E::WORD_SIZE {
-                    let dest = ctrl.resolve_mem(mem);
-                    let val = ctrl.resolve(val);
-                    if val == ctx.const_0() && is_global(dest.address().0) {
-                        let ctx = ctrl.ctx();
-                        self.last_bullet_spawner = Some(ctx.memory(&dest));
+            DoAttackState::VerifyUpdateAttackTarget => {
+                if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let ok = condition.if_arithmetic_eq_neq_zero(ctx)
+                        .and_then(|x| {
+                            x.0.if_arithmetic_and_const(0x8)?
+                                .if_mem8_offset(
+                                    struct_layouts::unit_flags::<E::VirtualAddress>() + 3
+                                )
+                        }) == Some(ctx.register(1));
+                    if ok {
+                        self.update_attack_target = Some(E::VirtualAddress::from_u64(0));
                     }
-                }
-            }
-            Operation::Jump { condition, to } => {
-                if self.inlining {
                     ctrl.end_analysis();
-                    return;
                 }
-                if step == 0 {
-                    if condition == ctx.const_1() {
-                        // Step 0 check can also be a tail call
-                        if ctrl.resolve(ctx.register(4)) == self.entry_esp {
-                            if let Some(to) = ctrl.resolve_va(to) {
+            }
+            DoAttackState::DoAttack | DoAttackState::LastBulletSpawner |
+                DoAttackState::DoAttackMain =>
+            {
+                match *op {
+                    Operation::Call(dest) => {
+                        if self.inlining {
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                            let dest = E::VirtualAddress::from_u64(dest);
+                            if state == DoAttackState::DoAttack {
+                                // Check for do_attack(this, 0x5)
                                 if self.is_do_attack_call(ctrl) {
-                                    self.do_attack = Some(to);
-                                    ctrl.analyze_with_current_state(self, to);
+                                    self.do_attack = Some(dest);
+                                    self.state = DoAttackState::LastBulletSpawner;
+                                    ctrl.analyze_with_current_state(self, dest);
                                     if self.do_attack_main.is_some() {
                                         ctrl.end_analysis();
                                     } else {
                                         self.do_attack = None;
                                     }
                                 }
+                            } else if state == DoAttackState::LastBulletSpawner {
+                                self.inlining = true;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inlining = false;
+                            } else if state == DoAttackState::DoAttackMain {
+                                // Step 2: Check for do_attack_main(this, 2, units_dat_air_weapon[x])
+                                let ok = Some(())
+                                    .filter(|_| ctrl.resolve(ctx.register(1)) == ctx.register(1))
+                                    .and_then(|_| {
+                                        ctrl.resolve(self.arg_cache.on_thiscall_call(0)).if_constant()
+                                    })
+                                    .filter(|&c| c == 2)
+                                    .and_then(|_| {
+                                        ctrl.resolve(self.arg_cache.on_thiscall_call(1)).if_mem8()
+                                    })
+                                    .filter(|x| {
+                                        let (base, offset) = x.address();
+                                        base != ctx.const_0() && offset != 0
+                                    })
+                                    .is_some();
+                                if ok {
+                                    self.do_attack_main = Some(dest);
+                                    ctrl.end_analysis();
+                                }
                             }
                         }
                     }
+                    Operation::Move(DestOperand::Memory(ref mem), val, None)
+                        if state == DoAttackState::LastBulletSpawner =>
+                    {
+                        // Step 1: Look for assignment of zero to global memory
+                        if mem.size == E::WORD_SIZE {
+                            let dest = ctrl.resolve_mem(mem);
+                            let val = ctrl.resolve(val);
+                            if val == ctx.const_0() && is_global(dest.address().0) {
+                                let ctx = ctrl.ctx();
+                                self.last_bullet_spawner = Some(ctx.memory(&dest));
+                                self.state = DoAttackState::DoAttackMain;
+                            }
+                        }
+                    }
+                    Operation::Jump { condition, to } => {
+                        if self.inlining {
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        if state == DoAttackState::DoAttack {
+                            if condition == ctx.const_1() {
+                                // Step 0 check can also be a tail call
+                                if ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                                    if let Some(to) = ctrl.resolve_va(to) {
+                                        if self.is_do_attack_call(ctrl) {
+                                            self.do_attack = Some(to);
+                                            self.state = DoAttackState::LastBulletSpawner;
+                                            ctrl.analyze_with_current_state(self, to);
+                                            if self.do_attack_main.is_some() {
+                                                ctrl.end_analysis();
+                                            } else {
+                                                self.do_attack = None;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => (),
                 }
             }
-            _ => (),
         }
     }
 }
@@ -897,16 +976,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
 impl<'a, 'e, E: ExecutionState<'e>> FindDoAttack<'a, 'e, E> {
     fn is_do_attack_call(&self, ctrl: &mut Control<'e, '_, '_, Self>) -> bool {
         let ctx = ctrl.ctx();
-        Some(())
-            .filter(|_| ctrl.resolve(ctx.register(1)) == ctx.register(1))
-            .map(|_| {
-                ctx.and_const(
-                    ctrl.resolve(self.arg_cache.on_thiscall_call(0)),
-                    0xff,
-                )
-            })
-            .filter(|&c| c.if_constant() == Some(5))
-            .is_some()
+        let ecx = ctx.register(1);
+        let this = ctrl.resolve(ecx);
+        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+        this == ecx && ctx.and_const(arg1, 0xff).if_constant() == Some(5)
     }
 }
 

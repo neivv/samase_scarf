@@ -236,6 +236,8 @@ results! {
         AiSpendMoney => "ai_spend_money",
         DoAttack => "do_attack",
         DoAttackMain => "do_attack_main",
+        AiTryReturnHome => "ai_try_return_home",
+        UpdateAttackTarget => "update_attack_target",
         CheckUnitRequirements => "check_unit_requirements",
         SnetSendPackets => "snet_send_packets",
         SnetRecvPackets => "snet_recv_packets",
@@ -863,6 +865,8 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             AiSpendMoney => self.ai_spend_money(),
             DoAttack => self.do_attack(),
             DoAttackMain => self.do_attack_main(),
+            AiTryReturnHome => self.ai_try_return_home(),
+            UpdateAttackTarget => self.update_attack_target(),
             CheckUnitRequirements => self.check_unit_requirements(),
             SnetSendPackets => self.snet_send_packets(),
             SnetRecvPackets => self.snet_recv_packets(),
@@ -1942,6 +1946,17 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
 
     pub fn do_attack_main(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(AddressAnalysis::DoAttackMain, AnalysisCache::cache_do_attack)
+    }
+
+    pub fn ai_try_return_home(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::AiTryReturnHome, AnalysisCache::cache_do_attack)
+    }
+
+    pub fn update_attack_target(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UpdateAttackTarget,
+            AnalysisCache::cache_do_attack,
+        )
     }
 
     pub fn last_bullet_spawner(&mut self) -> Option<Operand<'e>> {
@@ -4522,12 +4537,16 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     fn cache_do_attack(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
-        self.cache_many(&[DoAttack, DoAttackMain], &[LastBulletSpawner], |s| {
-            let attack_order = s.order_function(0xa, actx)?;
-            let result = step_order::do_attack(actx, attack_order)?;
-            Some(([Some(result.do_attack), Some(result.do_attack_main)],
-                [Some(result.last_bullet_spawner)]))
-        })
+        self.cache_many(
+            &[DoAttack, DoAttackMain, AiTryReturnHome, UpdateAttackTarget],
+            &[LastBulletSpawner],
+            |s| {
+                let attack_order = s.order_function(0xa, actx)?;
+                let result = step_order::do_attack(actx, attack_order);
+                Some(([result.do_attack, result.do_attack_main, result.ai_try_return_home,
+                    result.update_attack_target],
+                    [result.last_bullet_spawner]))
+            })
     }
 
     fn smem_alloc(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
