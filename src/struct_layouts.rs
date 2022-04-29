@@ -160,6 +160,20 @@ pub fn unit_flags<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_secondary_order_state<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xe2,
+        false => 0x146,
+    }
+}
+
+pub fn unit_currently_building<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xec,
+        false => 0x158,
+    }
+}
+
 pub fn unit_next_pylon<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xfc,

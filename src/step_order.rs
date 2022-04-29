@@ -49,6 +49,13 @@ pub(crate) struct StepOrder<Va: VirtualAddress> {
     pub ai_focus_air: Option<Va>,
 }
 
+pub(crate) struct OrderTrain<Va: VirtualAddress> {
+    pub step_train: Option<Va>,
+    pub add_ai_to_trained_unit: Option<Va>,
+    pub cancel_queued_unit: Option<Va>,
+    pub refresh_ui: Option<Va>,
+}
+
 // Checks for comparing secondary_order to 0x95 (Hallucination)
 // Returns the unit operand
 fn step_secondary_order_hallu_jump_check<'e, Va: VirtualAddress>(
@@ -1091,6 +1098,163 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepOrder<
                 }
             }
             AnalyzeStepOrderState::FocusAir => (),
+        }
+    }
+}
+
+pub(crate) fn analyze_order_train<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    order_train: E::VirtualAddress,
+) -> OrderTrain<E::VirtualAddress> {
+    let mut result = OrderTrain {
+        step_train: None,
+        add_ai_to_trained_unit: None,
+        cancel_queued_unit: None,
+        refresh_ui: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = AnalyzeOrderTrain::<E> {
+        result: &mut result,
+        state: OrderTrainState::StepTrain,
+        arg_cache: &actx.arg_cache,
+        cancel_queued_branch: None,
+    };
+    let mut exec = E::initial_state(ctx, binary);
+    // Use secondary order state 2
+    let mem = ctx.mem_access(
+        ctx.register(1),
+        struct_layouts::unit_secondary_order_state::<E::VirtualAddress>(),
+        MemAccessSize::Mem8,
+    );
+    exec.move_resolved(&DestOperand::Memory(mem), ctx.constant(2));
+    let mut analysis =
+        FuncAnalysis::custom_state(binary, ctx, order_train, exec, Default::default());
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzeOrderTrain<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OrderTrain<E::VirtualAddress>,
+    state: OrderTrainState,
+    arg_cache: &'a ArgCache<'e, E>,
+    cancel_queued_branch: Option<(E::VirtualAddress, E)>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum OrderTrainState {
+    /// Find step_train(this = this.currently_building, _, 1).
+    /// Returns bool that is branched on immediately.
+    StepTrain,
+    /// After step_train, branch ret != 0, calls
+    /// add_ai_to_trained_unit(a1 = this, a2 = this.currently_building)
+    AddAiToTrainedUnit,
+    /// step_train ret == 0 branch calls immediately cancel_queued_unit(this = this, 0),
+    /// followed by refresh_ui() and nothing else.
+    CancelQueuedUnit,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderTrain<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            OrderTrainState::StepTrain => {
+                if self.result.step_train.is_none() {
+                    if let Operation::Call(dest) = *op {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let ecx = ctx.register(1);
+                            let this = ctrl.resolve(ecx);
+                            let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                            let currently_building =
+                                struct_layouts::unit_currently_building::<E::VirtualAddress>();
+                            let ok = ctrl.if_mem_word_offset(this, currently_building) ==
+                                    Some(ecx) &&
+                                ctx.and_const(arg2, 0xff) == ctx.const_1();
+                            if ok {
+                                self.result.step_train = Some(dest);
+                                ctrl.do_call_with_result(ctx.custom(0));
+                            } else {
+                                ctrl.skip_call_preserve_esp();
+                            }
+                        }
+                    }
+                } else {
+                    if let Operation::Jump { condition, to } = *op {
+                        if let Some(to) = ctrl.resolve_va(to) {
+                            let condition = ctrl.resolve(condition);
+                            if let Some(jump_if_zero) = condition.if_arithmetic_eq_neq_zero(ctx)
+                                .filter(|x| Operand::and_masked(x.0).0.if_custom() == Some(0))
+                                .map(|x| x.1)
+                            {
+                                let no_jump = ctrl.current_instruction_end();
+                                let (zero_branch, nonzero_branch) = match jump_if_zero {
+                                    true => (to, no_jump),
+                                    false => (no_jump, to),
+                                };
+                                let state = ctrl.exec_state();
+                                self.cancel_queued_branch = Some((zero_branch, state.clone()));
+                                self.state = OrderTrainState::AddAiToTrainedUnit;
+                                ctrl.continue_at_address(nonzero_branch);
+                            } else {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            OrderTrainState::AddAiToTrainedUnit => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let ecx = ctx.register(1);
+                        let currently_building =
+                            struct_layouts::unit_currently_building::<E::VirtualAddress>();
+                        let ok = arg1 == ecx &&
+                            ctrl.if_mem_word_offset(arg2, currently_building) == Some(ecx);
+                        if ok {
+                            self.result.add_ai_to_trained_unit = Some(dest);
+                            ctrl.clear_unchecked_branches();
+                            ctrl.end_branch();
+                            if let Some((addr, state)) = self.cancel_queued_branch.take() {
+                                ctrl.add_branch_with_state(addr, state, Default::default());
+                                self.state = OrderTrainState::CancelQueuedUnit;
+                            }
+                        }
+                    }
+                }
+            }
+            OrderTrainState::CancelQueuedUnit => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.result.cancel_queued_unit.is_none() {
+                            let this = ctrl.resolve(ctx.register(1));
+                            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                            let ok = this == ctx.register(1) &&
+                                ctx.and_const(arg1, 0xff) == ctx.const_0();
+                            if ok {
+                                self.result.cancel_queued_unit = Some(dest);
+                            }
+                        } else if self.result.refresh_ui.is_none() {
+                            self.result.refresh_ui = Some(dest);
+                        } else {
+                            self.result.refresh_ui = None;
+                            ctrl.end_analysis();
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), _, None) = *op {
+                    if self.result.cancel_queued_unit.is_some() {
+                        let mem = ctrl.resolve_mem(mem);
+                        if is_global(mem.address().0) {
+                            // refresh_ui got inlined, cannot find it
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
         }
     }
 }

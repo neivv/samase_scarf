@@ -1,4 +1,5 @@
 -- Main --
+add_ai_to_trained_unit: 005be2e0
 add_asset_change_callback: 0051d300
 add_overlay_iscript: 0053b500
 add_pylon_aura: 0057cdc0
@@ -16,6 +17,7 @@ ai_update_attack_target: 00560480
 anim_asset_change_cb: 0053cbd0
 building_placement_lclick: 006b1110
 building_placement_rclick: 00635b80
+cancel_queued_unit: 00555eb0
 change_ai_region_state: 005c87f0
 check_dat_requirements: 0050c830
 check_fow_order_targeting: 005742f0
@@ -105,6 +107,7 @@ process_lobby_commands: 0069d710
 read_whole_mpq_file: None
 read_whole_mpq_file2: None
 receive_storm_turns: 00695440
+refresh_ui: 006ed9b0
 remove_from_client_selection: 005714a0
 remove_from_selections: 006d4200
 render_screen: 00879010
@@ -144,6 +147,7 @@ step_network: 0069ee40
 step_objects: 0064e710
 step_order: 00591540
 step_replay_commands: 0069ea30
+step_train: 00553fb0
 step_unit_movement: 005782c0
 targeting_lclick: 005a6f50
 targeting_rclick: 00635ba0

@@ -310,6 +310,10 @@ results! {
         InitGameBeforeMapLoadHook => "init_game_before_map_load_hook",
         CreateStartingUnits => "create_starting_units",
         CreateTeamGameStartingUnits => "create_team_game_starting_units",
+        StepTrain => "step_train",
+        AddAiToTrainedUnit => "add_ai_to_trained_unit",
+        CancelQueuedUnit => "cancel_queued_unit",
+        RefreshUi => "refresh_ui",
     }
 }
 
@@ -924,6 +928,10 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             InitGameBeforeMapLoadHook => self.init_game_before_map_load_hook(),
             CreateStartingUnits => self.create_starting_units(),
             CreateTeamGameStartingUnits => self.create_team_game_starting_units(),
+            StepTrain => self.step_train(),
+            AddAiToTrainedUnit => self.add_ai_to_trained_unit(),
+            CancelQueuedUnit => self.cancel_queued_unit(),
+            RefreshUi => self.refresh_ui(),
         }
     }
 
@@ -3059,6 +3067,34 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.analyze_many_addr(
             AddressAnalysis::FileExists,
             AnalysisCache::cache_open_file,
+        )
+    }
+
+    pub fn step_train(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepTrain,
+            AnalysisCache::cache_order_train,
+        )
+    }
+
+    pub fn add_ai_to_trained_unit(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::AddAiToTrainedUnit,
+            AnalysisCache::cache_order_train,
+        )
+    }
+
+    pub fn cancel_queued_unit(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::CancelQueuedUnit,
+            AnalysisCache::cache_order_train,
+        )
+    }
+
+    pub fn refresh_ui(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::RefreshUi,
+            AnalysisCache::cache_order_train,
         )
     }
 
@@ -5385,6 +5421,22 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let result = file::open_file_analysis(actx, open_file);
                 Some((
                     [result.file_exists],
+                    [],
+                ))
+            });
+    }
+
+    fn cache_order_train(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[StepTrain, AddAiToTrainedUnit, CancelQueuedUnit, RefreshUi],
+            &[],
+            |s| {
+                let train = s.order_function(0x26, actx)?;
+                let result = step_order::analyze_order_train(actx, train);
+                Some((
+                    [result.step_train, result.add_ai_to_trained_unit, result.cancel_queued_unit,
+                        result.refresh_ui],
                     [],
                 ))
             });
