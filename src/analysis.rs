@@ -316,6 +316,9 @@ results! {
         CancelQueuedUnit => "cancel_queued_unit",
         RefreshUi => "refresh_ui",
         GetSightRange => "get_sight_range",
+        GetTargetAcquisitionRange => "get_target_acquisition_range",
+        PickAutoTarget => "pick_auto_target",
+        AttackUnit => "attack_unit",
     }
 }
 
@@ -936,6 +939,9 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             CancelQueuedUnit => self.cancel_queued_unit(),
             RefreshUi => self.refresh_ui(),
             GetSightRange => self.get_sight_range(),
+            GetTargetAcquisitionRange => self.get_target_acquisition_range(),
+            PickAutoTarget => self.pick_auto_target(),
+            AttackUnit => self.attack_unit(),
         }
     }
 
@@ -3105,6 +3111,27 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
 
     pub fn get_sight_range(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(AddressAnalysis::GetSightRange, AnalysisCache::cache_order_matrix)
+    }
+
+    pub fn get_target_acquisition_range(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::GetTargetAcquisitionRange,
+            AnalysisCache::cache_order_player_guard,
+        )
+    }
+
+    pub fn pick_auto_target(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::PickAutoTarget,
+            AnalysisCache::cache_order_player_guard,
+        )
+    }
+
+    pub fn attack_unit(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::AttackUnit,
+            AnalysisCache::cache_order_player_guard,
+        )
     }
 
     /// Mainly for tests/dump
@@ -5461,11 +5488,27 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             &[GetSightRange],
             &[],
             |s| {
-                let train = s.order_function(0x8d, actx)?;
+                let matrix = s.order_function(0x8d, actx)?;
                 let units_dat = s.dat_virtual_address(DatType::Units, actx)?;
-                let result = step_order::analyze_order_matrix(actx, train, units_dat);
+                let result = step_order::analyze_order_matrix(actx, matrix, units_dat);
                 Some((
                     [result.get_sight_range],
+                    [],
+                ))
+            });
+    }
+
+    fn cache_order_player_guard(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[GetTargetAcquisitionRange, PickAutoTarget, AttackUnit],
+            &[],
+            |s| {
+                let guard = s.order_function(0x3, actx)?;
+                let result = step_order::analyze_order_player_guard(actx, guard);
+                Some((
+                    [result.get_target_acquisition_range, result.pick_auto_target,
+                        result.attack_unit],
                     [],
                 ))
             });

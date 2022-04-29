@@ -10,6 +10,7 @@ use crate::{
     bumpvec_with_capacity, FunctionFinder, ControlExt, is_global, if_arithmetic_eq_neq,
 };
 use crate::analysis_state::{AnalysisState, StateEnum, StepOrderState};
+use crate::call_tracker::CallTracker;
 use crate::inline_hook::{EspOffsetRegs, InlineHookState, inline_hook_state};
 use crate::struct_layouts;
 
@@ -60,6 +61,12 @@ pub(crate) struct OrderTrain<Va: VirtualAddress> {
 
 pub(crate) struct OrderMatrix<Va: VirtualAddress> {
     pub get_sight_range: Option<Va>,
+}
+
+pub(crate) struct OrderPlayerGuard<Va: VirtualAddress> {
+    pub get_target_acquisition_range: Option<Va>,
+    pub pick_auto_target: Option<Va>,
+    pub attack_unit: Option<Va>,
 }
 
 // Checks for comparing secondary_order to 0x95 (Hallucination)
@@ -1414,6 +1421,138 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderMatri
                             self.result.get_sight_range = Some(E::VirtualAddress::from_u64(0));
                             ctrl.end_analysis();
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_order_player_guard<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    order_player_guard: E::VirtualAddress,
+) -> OrderPlayerGuard<E::VirtualAddress> {
+    let mut result = OrderPlayerGuard {
+        get_target_acquisition_range: None,
+        pick_auto_target: None,
+        attack_unit: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut analyzer = AnalyzeOrderPlayerGuard::<E> {
+        result: &mut result,
+        state: OrderPlayerGuardState::GetTargetAcqRange,
+        arg_cache: &actx.arg_cache,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x8),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, order_player_guard);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzeOrderPlayerGuard<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OrderPlayerGuard<E::VirtualAddress>,
+    state: OrderPlayerGuardState,
+    arg_cache: &'a ArgCache<'e, E>,
+    call_tracker: CallTracker<'acx, 'e, E>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum OrderPlayerGuardState {
+    /// Find get_target_acq_range(this = this)
+    /// Assume unit.ai != 0 to skip past some code
+    GetTargetAcqRange,
+    /// get_target_acq_range should jump based on unit.order == 6b
+    VerifyGetTargetAcqRange,
+    /// attack_unit(a1 = this, a2 = pick_auto_target(), a3 = 1, a4 = 0)
+    AttackUnit,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    AnalyzeOrderPlayerGuard<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            OrderPlayerGuardState::GetTargetAcqRange => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ecx = ctx.register(1);
+                        if ctrl.resolve(ecx) == ecx {
+                            self.state = OrderPlayerGuardState::VerifyGetTargetAcqRange;
+                            ctrl.analyze_with_current_state(self, dest);
+                            if self.result.get_target_acquisition_range.is_some() {
+                                self.result.get_target_acquisition_range = Some(dest);
+                                self.state = OrderPlayerGuardState::AttackUnit;
+                            } else {
+                                self.state = OrderPlayerGuardState::GetTargetAcqRange;
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    if let Some(to) = ctrl.resolve_va(to) {
+                        let condition = ctrl.resolve(condition);
+                        let jump_if_ai_zero = condition.if_arithmetic_eq_neq_zero(ctx)
+                            .and_then(|x| {
+                                let ai = struct_layouts::unit_ai::<E::VirtualAddress>();
+                                ctrl.if_mem_word_offset(x.0, ai)
+                                    .filter(|&x| x == ctx.register(1))?;
+                                Some(x.1)
+                            });
+                        if let Some(jump) = jump_if_ai_zero {
+                            let nonzero = match jump {
+                                true => ctrl.current_instruction_end(),
+                                false => to,
+                            };
+                            ctrl.continue_at_address(nonzero);
+                        }
+                    }
+                }
+            }
+            OrderPlayerGuardState::VerifyGetTargetAcqRange => {
+                if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let ok = if_arithmetic_eq_neq(condition)
+                        .filter(|x| x.1.if_constant() == Some(0x6b))
+                        .and_then(|x| {
+                            x.0.if_mem8_offset(struct_layouts::unit_order::<E::VirtualAddress>())
+                        })
+                        .filter(|&x| x == ctx.register(1))
+                        .is_some();
+                    if ok {
+                        self.result.get_target_acquisition_range =
+                            Some(E::VirtualAddress::from_u64(0));
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            OrderPlayerGuardState::AttackUnit => {
+                let dest = match *op {
+                    Operation::Call(dest) => dest,
+                    Operation::Jump { condition, to } if condition == ctx.const_1() &&
+                        ctrl.resolve(ctx.register(4)) == ctx.register(4) => to,
+                    _ => return,
+                };
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                    let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                    let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
+                    let ok = arg1 == ctx.register(1) &&
+                        arg2.if_custom().is_some() &&
+                        ctx.and_const(arg3, 0xff) == ctx.const_1() &&
+                        ctx.and_const(arg4, 0xff) == ctx.const_0();
+                    if ok {
+                        self.result.attack_unit = Some(dest);
+                        self.result.pick_auto_target = arg2.if_custom()
+                            .and_then(|c| self.call_tracker.custom_id_to_func(c));
+                        ctrl.end_analysis();
+                    } else {
+                        self.call_tracker.add_call(ctrl, dest);
                     }
                 }
             }
