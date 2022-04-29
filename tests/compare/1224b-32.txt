@@ -158,7 +158,6 @@ ttf_render_sdf: 009512e0
 ui_default_char_handler: 0069d950
 ui_default_key_down_handler: 0069e140
 ui_default_key_up_handler: 0069e180
-ui_default_left_double_handler: 0069e1a0
 ui_default_left_down_handler: 0069e1a0
 ui_default_middle_down_handler: 0069e1c0
 ui_default_middle_up_handler: 0069e2e0
@@ -282,7 +281,7 @@ player_turns: 1032be0
 player_turns_size: 1032c10
 player_unit_skins: None
 players: ((75a6ae40 - ((Mem8[e19776] >> 6) | ((Mem32[e19773] * 4) & fffffffc))) ^ Mem32[1032768])
-pylon_auras_visible: Mem8[e3acbc]
+pylon_auras_visible: Mem32[e3af88]
 pylon_refresh: Mem32[e3af84]
 replay_bfix: None
 replay_data: Mem32[10341d8]

@@ -1542,8 +1542,16 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     binary: &'e scarf::BinaryFile<E::VirtualAddress>,
     analysis: &mut samase_scarf::Analysis<'e, E>,
 ) {
+    let mut result_ops = fxhash::FxHashMap::with_capacity_and_hasher(0x100, Default::default());
+    let mut result_addrs = fxhash::FxHashMap::with_capacity_and_hasher(0x100, Default::default());
     for addr in samase_scarf::AddressAnalysis::iter() {
         use samase_scarf::AddressAnalysis::*;
+        let result = analysis.address_analysis(addr);
+        if let Some(result) = result {
+            if let Some(old) = result_addrs.insert(result, addr.name()) {
+                panic!("Got same result for {} and {}: {:?}", old, addr.name(), result);
+            }
+        }
         match addr {
             // special handling
             JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins | StepGameLoop |
@@ -1551,12 +1559,16 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 ReadWholeMpqFile2 => continue,
             _ => (),
         }
-        let result = analysis.address_analysis(addr);
         assert!(result.is_some(), "Missing {}", addr.name());
     }
     for op in samase_scarf::OperandAnalysis::iter() {
         use samase_scarf::OperandAnalysis::*;
         let result = analysis.operand_analysis(op);
+        if let Some(result) = result {
+            if let Some(old) = result_ops.insert(result.hash_by_address(), op.name()) {
+                panic!("Got same result for {} and {}: {}", old, op.name(), result);
+            }
+        }
         match op {
             // special handling
             Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg |

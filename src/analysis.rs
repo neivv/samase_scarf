@@ -289,7 +289,6 @@ results! {
         UiDefaultKeyDownHandler => "ui_default_key_down_handler",
         UiDefaultKeyUpHandler => "ui_default_key_up_handler",
         UiDefaultLeftDownHandler => "ui_default_left_down_handler",
-        UiDefaultLeftDoubleHandler => "ui_default_left_double_handler",
         UiDefaultRightDownHandler => "ui_default_right_down_handler",
         UiDefaultMiddleDownHandler => "ui_default_middle_down_handler",
         UiDefaultMiddleUpHandler => "ui_default_middle_up_handler",
@@ -912,7 +911,6 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             UiDefaultKeyDownHandler => self.ui_default_key_down_handler(),
             UiDefaultKeyUpHandler => self.ui_default_key_up_handler(),
             UiDefaultLeftDownHandler => self.ui_default_left_down_handler(),
-            UiDefaultLeftDoubleHandler => self.ui_default_left_double_handler(),
             UiDefaultRightDownHandler => self.ui_default_right_down_handler(),
             UiDefaultMiddleDownHandler => self.ui_default_middle_down_handler(),
             UiDefaultMiddleUpHandler => self.ui_default_middle_up_handler(),
@@ -2938,13 +2936,6 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         )
     }
 
-    pub fn ui_default_left_double_handler(&mut self) -> Option<E::VirtualAddress> {
-        self.analyze_many_addr(
-            AddressAnalysis::UiDefaultLeftDoubleHandler,
-            AnalysisCache::cache_ui_event_handlers,
-        )
-    }
-
     pub fn ui_default_right_down_handler(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(
             AddressAnalysis::UiDefaultRightDownHandler,
@@ -4909,7 +4900,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             &[ResetUiEventHandlers, UiDefaultScrollHandler, TargetingLClick, TargetingRClick,
                 BuildingPlacementLClick, BuildingPlacementRClick, GameScreenLClick,
                 UiDefaultKeyDownHandler, UiDefaultKeyUpHandler, UiDefaultLeftDownHandler,
-                UiDefaultLeftDoubleHandler, UiDefaultRightDownHandler,
+                UiDefaultRightDownHandler,
                 UiDefaultMiddleDownHandler, UiDefaultMiddleUpHandler, UiDefaultPeriodicHandler,
                 UiDefaultCharHandler],
             &[GlobalEventHandlers, GameScreenLClickCallback, GameScreenRClickCallback],
@@ -4930,7 +4921,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                         result.building_placement_lclick, result.building_placement_rclick,
                         result.game_screen_l_click, result.default_key_down_handler,
                         result.default_key_up_handler, result.default_left_down_handler,
-                        result.default_left_double_handler, result.default_right_down_handler,
+                        result.default_right_down_handler,
                         result.default_middle_down_handler, result.default_middle_up_handler,
                         result.default_periodic_handler, result.default_char_handler],
                     [result.global_event_handlers, result.game_screen_lclick_callback,

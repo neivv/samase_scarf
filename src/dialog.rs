@@ -68,7 +68,6 @@ pub(crate) struct UiEventHandlers<'e, Va: VirtualAddress> {
     pub default_key_down_handler: Option<Va>,
     pub default_key_up_handler: Option<Va>,
     pub default_left_down_handler: Option<Va>,
-    pub default_left_double_handler: Option<Va>,
     pub default_right_down_handler: Option<Va>,
     pub default_middle_down_handler: Option<Va>,
     pub default_middle_up_handler: Option<Va>,
@@ -1441,7 +1440,6 @@ pub(crate) fn ui_event_handlers<'e, E: ExecutionState<'e>>(
         default_key_down_handler: None,
         default_key_up_handler: None,
         default_left_down_handler: None,
-        default_left_double_handler: None,
         default_right_down_handler: None,
         default_middle_down_handler: None,
         default_middle_up_handler: None,
@@ -1640,7 +1638,6 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> ResetUiEventHandlersAnalyzer<'a, 'acx,
             self.result.default_key_down_handler = Some(result_addrs[0x0]);
             self.result.default_key_up_handler = Some(result_addrs[0x2]);
             self.result.default_left_down_handler = Some(result_addrs[0x4]);
-            self.result.default_left_double_handler = Some(result_addrs[0x6]);
             self.result.default_right_down_handler = Some(result_addrs[0x7]);
             self.result.default_middle_down_handler = Some(result_addrs[0xa]);
             self.result.default_middle_up_handler = Some(result_addrs[0xb]);

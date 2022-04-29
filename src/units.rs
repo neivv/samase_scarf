@@ -5,14 +5,16 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, MemAccess, MemAccessSize, Operand, OperandCtx, Operation};
 
-use crate::{
-    AnalysisCtx, ControlExt, OptionExt, OperandExt, EntryOf, ArgCache, single_result_assign,
-    entry_of_until, bumpvec_with_capacity, FunctionFinder, if_arithmetic_eq_neq, is_global,
-};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{EntryOf, entry_of_until, FunctionFinder};
 use crate::add_terms::collect_arith_add_terms;
 use crate::call_tracker::CallTracker;
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
+use crate::util::{
+    ControlExt, OptionExt, OperandExt, single_result_assign, bumpvec_with_capacity,
+    is_global, if_arithmetic_eq_neq, seems_assertion_call,
+};
 
 #[derive(Clone, Debug)]
 pub struct ActiveHiddenUnits<'e> {
@@ -2224,6 +2226,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PylonInitAnalyzer
                         self.inline_depth = 0;
                         if self.state != PylonInitState::AddPylonAuraVerify {
                             self.result.add_pylon_aura = Some(dest);
+                            ctrl.clear_all_branches();
+                            if self.state == PylonInitState::PylonAurasVisible {
+                                self.state = PylonInitState::PylonRefresh;
+                            }
                         } else {
                             ctrl.end_analysis();
                         }
@@ -2235,6 +2241,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PylonInitAnalyzer
                     let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                     if arg1.if_constant() == Some(0x141) {
                         self.state = PylonInitState::PylonAurasVisible;
+                        ctrl.clear_unchecked_branches();
                     } else {
                         if self.limit == 0 {
                             ctrl.end_analysis();
@@ -2259,6 +2266,27 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PylonInitAnalyzer
                             } else {
                                 self.result.pylon_refresh = Some(dest);
                                 ctrl.end_analysis();
+                            }
+                        }
+                    }
+                } else if let Operation::Call(dest) = *op {
+                    if seems_assertion_call(ctrl, self.arg_cache) {
+                        ctrl.end_branch();
+                        return;
+                    }
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        // Inline once if searching pylon_auras_visible
+                        // (inline_depth == 1 already from AddPylonAuraVerify)
+                        if self.state == PylonInitState::PylonAurasVisible {
+                            if self.inline_depth < 2 {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.state != PylonInitState::PylonAurasVisible {
+                                    if self.inline_depth != 0 {
+                                        ctrl.end_analysis();
+                                    }
+                                }
                             }
                         }
                     }

@@ -1,6 +1,6 @@
 use bumpalo::collections::Vec as BumpVec;
 
-use scarf::{BinaryFile, DestOperand, Operand, Operation};
+use scarf::{DestOperand, Operand, Operation};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{MemAccessSize};
 
@@ -9,7 +9,8 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use crate::analysis_state::{AnalysisState, StateEnum, LocalPlayerState};
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
-use crate::{AnalysisCtx, ArgCache, ControlExt, OptionExt, bumpvec_with_capacity};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::util::{ControlExt, OptionExt, bumpvec_with_capacity, seems_assertion_call};
 
 pub struct NetPlayers<'e, Va: VirtualAddress> {
     // Array, struct size
@@ -178,7 +179,6 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindInitNetPlayer<'a
 
 struct FindNetPlayerArr<'acx, 'e, E: ExecutionState<'e>> {
     result: Option<(Operand<'e>, usize)>,
-    binary: &'e BinaryFile<E::VirtualAddress>,
     delay_eax_move: Option<Operand<'e>>,
     bump: &'acx bumpalo::Bump,
     arg_cache: &'acx ArgCache<'e, E>,
@@ -207,7 +207,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
         let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
-                if crate::seems_assertion_call(ctrl, self.binary) {
+                if seems_assertion_call(ctrl, self.arg_cache) {
                     return;
                 }
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
@@ -321,7 +321,6 @@ pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
     if let Some(init_net_player) = analyzer.result {
         let mut analyzer = FindNetPlayerArr::<E> {
             result: None,
-            binary,
             delay_eax_move: None,
             bump,
             arg_cache: &actx.arg_cache,

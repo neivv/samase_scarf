@@ -91,7 +91,7 @@ pub(crate) use analysis_find::{
 };
 pub(crate) use util::{
     ControlExt, OptionExt, OperandExt, if_callable_const, if_arithmetic_eq_neq, is_global,
-    is_stack_address, bumpvec_with_capacity, seems_assertion_call, single_result_assign,
+    is_stack_address, bumpvec_with_capacity, single_result_assign,
 };
 
 pub fn test_assertions() -> bool {

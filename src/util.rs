@@ -13,6 +13,8 @@ use scarf::{
     ArithOpType, BinaryFile, BinarySection, MemAccessSize, Operand, OperandCtx, OperandType, Rva
 };
 
+use crate::analysis::ArgCache;
+
 // When not testing, immediatly end once a value is found, for tests require all values
 // to be same.
 #[cfg(not(feature = "test_assertions"))]
@@ -113,25 +115,23 @@ impl<'e> OptionExt<'e> for Option<(Operand<'e>, Operand<'e>)> {
 
 /// Returns true if the stack is setup for a call that seems to be reporting an assertion
 /// error
-pub fn seems_assertion_call<'exec, A: analysis::Analyzer<'exec>, Va: VirtualAddress>(
+pub fn seems_assertion_call<'exec, A: analysis::Analyzer<'exec>>(
     ctrl: &mut Control<'exec, '_, '_, A>,
-    binary: &BinaryFile<Va>,
+    arg_cache: &ArgCache<'exec, A::Exec>,
 ) -> bool {
-    let ctx = ctrl.ctx();
-    let esp = ctx.register(4);
-    let arg1 = match ctrl.resolve(ctx.mem32(esp, 0)).if_constant() {
+    let arg1 = match ctrl.resolve(arg_cache.on_call(0)).if_constant() {
         Some(s) => s,
         None => return false,
     };
-    let arg2 = match ctrl.resolve(ctx.mem32(esp, 4)).if_constant() {
+    let arg2 = match ctrl.resolve(arg_cache.on_call(1)).if_constant() {
         Some(s) => s,
         None => return false,
     };
-    let arg3 = match ctrl.resolve(ctx.mem32(esp, 8)).if_constant() {
+    let arg3 = match ctrl.resolve(arg_cache.on_call(2)).if_constant() {
         Some(s) => s,
         None => return false,
     };
-    let arg4 = match ctrl.resolve(ctx.mem32(esp, 0xc)).if_constant() {
+    let arg4 = match ctrl.resolve(arg_cache.on_call(3)).if_constant() {
         Some(s) => s,
         None => return false,
     };
@@ -139,14 +139,12 @@ pub fn seems_assertion_call<'exec, A: analysis::Analyzer<'exec>, Va: VirtualAddr
         return false;
     }
     // Could check that these are strings
-    if binary.section_by_addr(Va::from_u64(arg1)).is_none() {
-        return false;
-    }
-    if binary.section_by_addr(Va::from_u64(arg2)).is_none() {
-        return false;
-    }
-    if binary.section_by_addr(Va::from_u64(arg3)).is_none() {
-        return false;
+    let binary = ctrl.binary();
+    for arg in [arg1, arg2, arg3] {
+        let addr = <A::Exec as ExecutionState<'_>>::VirtualAddress::from_u64(arg);
+        if binary.section_by_addr(addr).is_none() {
+            return false;
+        }
     }
     true
 }
