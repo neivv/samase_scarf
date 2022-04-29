@@ -58,6 +58,10 @@ pub(crate) struct OrderTrain<Va: VirtualAddress> {
     pub refresh_ui: Option<Va>,
 }
 
+pub(crate) struct OrderMatrix<Va: VirtualAddress> {
+    pub get_sight_range: Option<Va>,
+}
+
 // Checks for comparing secondary_order to 0x95 (Hallucination)
 // Returns the unit operand
 fn step_secondary_order_hallu_jump_check<'e, Va: VirtualAddress>(
@@ -1323,6 +1327,91 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderTrain
                         let mem = ctrl.resolve_mem(mem);
                         if is_global(mem.address().0) {
                             // refresh_ui got inlined, cannot find it
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_order_matrix<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    order_matrix: E::VirtualAddress,
+    units_dat: (E::VirtualAddress, u32),
+) -> OrderMatrix<E::VirtualAddress> {
+    let mut result = OrderMatrix {
+        get_sight_range: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let units_dat_sight_range = match binary.read_address(units_dat.0 + units_dat.1 * 0x18) {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+
+    let mut analyzer = AnalyzeOrderMatrix::<E> {
+        result: &mut result,
+        state: OrderMatrixState::GetSightRange,
+        arg_cache: &actx.arg_cache,
+        units_dat_sight_range,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, order_matrix);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzeOrderMatrix<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OrderMatrix<E::VirtualAddress>,
+    state: OrderMatrixState,
+    arg_cache: &'a ArgCache<'e, E>,
+    units_dat_sight_range: E::VirtualAddress,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum OrderMatrixState {
+    /// Find get_sight_range(this = this.currently_building, 1).
+    GetSightRange,
+    /// get_sight_range should read units_dat_sight_range
+    VerifyGetSightRange,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderMatrix<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            OrderMatrixState::GetSightRange => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ecx = ctx.register(1);
+                        let this = ctrl.resolve(ecx);
+                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let ok = this == ecx &&
+                            ctx.and_const(arg1, 0xff) == ctx.const_1();
+                        if ok {
+                            self.state = OrderMatrixState::VerifyGetSightRange;
+                            ctrl.analyze_with_current_state(self, dest);
+                            if self.result.get_sight_range.is_some() {
+                                self.result.get_sight_range = Some(dest);
+                                ctrl.end_analysis();
+                            } else {
+                                self.state = OrderMatrixState::GetSightRange;
+                            }
+                        }
+                    }
+                }
+            }
+            OrderMatrixState::VerifyGetSightRange => {
+                if let Operation::Move(_, value, None) = *op {
+                    if let Some(mem) = value.if_mem8() {
+                        let mem = ctrl.resolve_mem(mem);
+                        let (_index, base) = mem.address();
+                        if base == self.units_dat_sight_range.as_u64() {
+                            self.result.get_sight_range = Some(E::VirtualAddress::from_u64(0));
                             ctrl.end_analysis();
                         }
                     }

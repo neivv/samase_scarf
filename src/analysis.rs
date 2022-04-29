@@ -315,6 +315,7 @@ results! {
         AddAiToTrainedUnit => "add_ai_to_trained_unit",
         CancelQueuedUnit => "cancel_queued_unit",
         RefreshUi => "refresh_ui",
+        GetSightRange => "get_sight_range",
     }
 }
 
@@ -934,6 +935,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             AddAiToTrainedUnit => self.add_ai_to_trained_unit(),
             CancelQueuedUnit => self.cancel_queued_unit(),
             RefreshUi => self.refresh_ui(),
+            GetSightRange => self.get_sight_range(),
         }
     }
 
@@ -3098,10 +3100,11 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     }
 
     pub fn refresh_ui(&mut self) -> Option<E::VirtualAddress> {
-        self.analyze_many_addr(
-            AddressAnalysis::RefreshUi,
-            AnalysisCache::cache_order_train,
-        )
+        self.analyze_many_addr(AddressAnalysis::RefreshUi, AnalysisCache::cache_order_train)
+    }
+
+    pub fn get_sight_range(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::GetSightRange, AnalysisCache::cache_order_matrix)
     }
 
     /// Mainly for tests/dump
@@ -5447,6 +5450,22 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some((
                     [result.step_train, result.add_ai_to_trained_unit, result.cancel_queued_unit,
                         result.refresh_ui],
+                    [],
+                ))
+            });
+    }
+
+    fn cache_order_matrix(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[GetSightRange],
+            &[],
+            |s| {
+                let train = s.order_function(0x8d, actx)?;
+                let units_dat = s.dat_virtual_address(DatType::Units, actx)?;
+                let result = step_order::analyze_order_matrix(actx, train, units_dat);
+                Some((
+                    [result.get_sight_range],
                     [],
                 ))
             });
