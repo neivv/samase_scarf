@@ -542,43 +542,12 @@ struct SetLimitsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     call_tracker: CallTracker<'acx, 'e, E>,
 }
 
-impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+impl<'a, 'acx, 'e: 'a + 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     FindSetLimits<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        fn check_esp<'e>(esp: Operand<'e>, ctx: OperandCtx<'e>) -> bool {
-            // Allow esp and
-            // ((esp - y) & 0xffff_fff0)
-            let reg4 = ctx.register(4);
-            esp == reg4 ||
-                esp.if_arithmetic_and()
-                    .filter(|&(_, r)| r.if_constant().is_some())
-                    .filter(|&(l, _)| {
-                        l == reg4 || l.if_arithmetic_sub()
-                            .filter(|&(l, r)| l == reg4 && r.if_constant().is_some())
-                            .is_some()
-                    })
-                    .is_some()
-        }
-
-        fn esp_offset<'e>(val: Operand<'e>, ctx: OperandCtx<'e>) -> Option<u32> {
-            val.if_arithmetic_sub()
-                .filter(|&(l, _)| check_esp(l, ctx))
-                .and_then(|(_, r)| r.if_constant())
-                .map(|c| c as u32)
-        }
-
-        fn esp_offset_mem<'e>(val: &MemAccess<'e>, ctx: OperandCtx<'e>) -> Option<u32> {
-            let (base, offset) = val.address();
-            if check_esp(base, ctx) {
-                Some(offset as u32)
-            } else {
-                None
-            }
-        }
-
         let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
@@ -587,7 +556,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     None => return,
                 };
                 let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                if let Some(offset) = esp_offset(arg1, ctx).filter(|&x| x >= 6 * 4) {
+                if let Some(offset) = Self::esp_offset(arg1, ctx).filter(|&x| x >= 6 * 4) {
                     let u32_offset = offset / 4;
                     if (0..7).all(|i| self.is_local_u32_set(u32_offset - i)) {
                         let mut analysis = FuncAnalysis::new(self.binary, ctx, dest);
@@ -626,7 +595,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             Operation::Move(DestOperand::Memory(ref mem), _, _) => {
                 let dest_mem = ctrl.resolve_mem(mem);
-                if let Some(offset) = esp_offset_mem(&dest_mem, ctx) {
+                if let Some(offset) = Self::esp_offset_mem(&dest_mem, ctx) {
                     let u32_offset = offset / 4;
                     self.set_local_u32(u32_offset);
                     if mem.size == MemAccessSize::Mem64 {
@@ -639,7 +608,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-impl<'a, 'acx, 'e, E: ExecutionState<'e>> FindSetLimits<'a, 'acx, 'e, E> {
+impl<'a, 'acx, 'e: 'a + 'acx, E: ExecutionState<'e>> FindSetLimits<'a, 'acx, 'e, E> {
     fn is_local_u32_set(&self, offset: u32) -> bool {
         let index = (offset / 8) as usize;
         let bit = offset & 7;
@@ -657,6 +626,44 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> FindSetLimits<'a, 'acx, 'e, E> {
             self.game_loop_set_local_u32s.resize((index >> 3) + 1, U8Chunk([0u8; 8]));
         }
         self.game_loop_set_local_u32s[(index >> 3)].0[index & 7] |= 1 << bit;
+    }
+
+    fn check_esp(esp: Operand<'e>, ctx: OperandCtx<'e>) -> bool {
+        // Allow esp and
+        // ((esp - y) & 0xffff_fff0)
+        let reg4 = ctx.register(4);
+        esp == reg4 ||
+            esp.if_arithmetic_and()
+                .filter(|&(_, r)| r.if_constant().is_some())
+                .filter(|&(l, _)| {
+                    l == reg4 || l.if_arithmetic_sub()
+                        .filter(|&(l, r)| l == reg4 && r.if_constant().is_some())
+                        .is_some()
+                })
+                .is_some()
+    }
+
+    fn esp_offset(val: Operand<'e>, ctx: OperandCtx<'e>) -> Option<u32> {
+        val.if_arithmetic_sub()
+            .filter(|&(l, _)| Self::check_esp(l, ctx))
+            .and_then(|(_, r)| r.if_constant())
+            .map(|c| c as u32)
+    }
+
+    fn esp_offset_mem(val: &MemAccess<'e>, ctx: OperandCtx<'e>) -> Option<u32> {
+        let (base, offset) = val.address();
+        let sext_offset = match E::VirtualAddress::SIZE == 4 {
+            true => offset as i32 as i64,
+            false => offset as i64,
+        };
+        if sext_offset > 0 || sext_offset < -0x20000 {
+            return None;
+        }
+        if Self::check_esp(base, ctx) {
+            Some(0i32.wrapping_sub(sext_offset as i32) as u32)
+        } else {
+            None
+        }
     }
 }
 
