@@ -74,6 +74,10 @@ pub(crate) struct OrderArbiterCloak<Va: VirtualAddress> {
     pub find_unit_borders_rect: Option<Va>,
 }
 
+pub(crate) struct OrderTower<Va: VirtualAddress> {
+    pub pick_random_target: Option<Va>,
+}
+
 // Checks for comparing secondary_order to 0x95 (Hallucination)
 // Returns the unit operand
 fn step_secondary_order_hallu_jump_check<'e, Va: VirtualAddress>(
@@ -1669,6 +1673,94 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             false => ctrl.current_instruction_end(),
                         };
                         ctrl.continue_at_address(dest);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_order_tower<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    order_tower: E::VirtualAddress,
+    get_target_acquisition_range: E::VirtualAddress,
+) -> OrderTower<E::VirtualAddress> {
+    let mut result = OrderTower {
+        pick_random_target: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut analyzer = AnalyzeOrderTower::<E> {
+        result: &mut result,
+        state: OrderTowerState::PickRandomTarget,
+        order_timer_store_seen: false,
+        get_target_acquisition_range,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, order_tower);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzeOrderTower<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OrderTower<E::VirtualAddress>,
+    state: OrderTowerState,
+    order_timer_store_seen: bool,
+    get_target_acquisition_range: E::VirtualAddress,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum OrderTowerState {
+    /// First call after 0xf store to order_timer
+    PickRandomTarget,
+    /// pick_random_target should call get_target_acquisition_range
+    VerifyPickRandomTarget,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    AnalyzeOrderTower<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            OrderTowerState::PickRandomTarget => {
+                if self.order_timer_store_seen {
+                    if let Operation::Call(dest) = *op {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let ecx = ctx.register(1);
+                            let this = ctrl.resolve(ecx);
+                            if this == ecx {
+                                self.state = OrderTowerState::VerifyPickRandomTarget;
+                                ctrl.analyze_with_current_state(self, dest);
+                                if self.result.pick_random_target.is_some() {
+                                    self.result.pick_random_target = Some(dest);
+                                    ctrl.end_analysis();
+                                } else {
+                                    self.state = OrderTowerState::VerifyPickRandomTarget;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    if let Operation::Move(DestOperand::Memory(..), value, None) = *op {
+                        if ctrl.resolve(value).if_constant() == Some(0xf) {
+                            self.order_timer_store_seen = true;
+                        }
+                    }
+                }
+            }
+            OrderTowerState::VerifyPickRandomTarget => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ecx = ctx.register(1);
+                        let this = ctrl.resolve(ecx);
+                        if this == ecx && dest == self.get_target_acquisition_range {
+                            self.result.pick_random_target = Some(E::VirtualAddress::from_u64(0));
+                            ctrl.end_analysis();
+                        }
                     }
                 }
             }

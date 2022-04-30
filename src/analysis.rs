@@ -321,6 +321,7 @@ results! {
         AttackUnit => "attack_unit",
         GetAttackRange => "get_attack_range",
         FindUnitBordersRect => "find_unit_borders_rect",
+        PickRandomTarget => "pick_random_target",
     }
 }
 
@@ -946,6 +947,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             AttackUnit => self.attack_unit(),
             GetAttackRange => self.get_attack_range(),
             FindUnitBordersRect => self.find_unit_borders_rect(),
+            PickRandomTarget => self.pick_random_target(),
         }
     }
 
@@ -3149,6 +3151,13 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.analyze_many_addr(
             AddressAnalysis::FindUnitBordersRect,
             AnalysisCache::cache_order_arbiter_cloak,
+        )
+    }
+
+    pub fn pick_random_target(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::PickRandomTarget,
+            AnalysisCache::cache_order_tower,
         )
     }
 
@@ -5532,6 +5541,16 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             });
     }
 
+    fn get_target_acquisition_range(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::GetTargetAcquisitionRange,
+            |s| s.cache_order_player_guard(actx),
+        )
+    }
+
     fn cache_order_arbiter_cloak(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(
@@ -5543,6 +5562,22 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let result = step_order::analyze_order_arbiter_cloak(actx, cloak, units_dat);
                 Some((
                     [result.get_attack_range, result.find_unit_borders_rect],
+                    [],
+                ))
+            });
+    }
+
+    fn cache_order_tower(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[PickRandomTarget],
+            &[],
+            |s| {
+                let tower = s.order_function(0x12, actx)?;
+                let get_acq = s.get_target_acquisition_range(actx)?;
+                let result = step_order::analyze_order_tower(actx, tower, get_acq);
+                Some((
+                    [result.pick_random_target],
                     [],
                 ))
             });
