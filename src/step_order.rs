@@ -69,6 +69,11 @@ pub(crate) struct OrderPlayerGuard<Va: VirtualAddress> {
     pub attack_unit: Option<Va>,
 }
 
+pub(crate) struct OrderArbiterCloak<Va: VirtualAddress> {
+    pub get_attack_range: Option<Va>,
+    pub find_unit_borders_rect: Option<Va>,
+}
+
 // Checks for comparing secondary_order to 0x95 (Hallucination)
 // Returns the unit operand
 fn step_secondary_order_hallu_jump_check<'e, Va: VirtualAddress>(
@@ -1553,6 +1558,117 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         ctrl.end_analysis();
                     } else {
                         self.call_tracker.add_call(ctrl, dest);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_order_arbiter_cloak<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    order_arbiter_cloak: E::VirtualAddress,
+    units_dat: (E::VirtualAddress, u32),
+) -> OrderArbiterCloak<E::VirtualAddress> {
+    let mut result = OrderArbiterCloak {
+        get_attack_range: None,
+        find_unit_borders_rect: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let units_dat_air_weapon = match binary.read_address(units_dat.0 + units_dat.1 * 0x13) {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+
+    let mut analyzer = AnalyzeOrderArbiterCloak::<E> {
+        result: &mut result,
+        state: OrderArbiterCloakState::GetAttackRange,
+        arg_cache: &actx.arg_cache,
+        units_dat_air_weapon,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, order_arbiter_cloak);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzeOrderArbiterCloak<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OrderArbiterCloak<E::VirtualAddress>,
+    state: OrderArbiterCloakState,
+    arg_cache: &'a ArgCache<'e, E>,
+    units_dat_air_weapon: E::VirtualAddress,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum OrderArbiterCloakState {
+    /// get_attack_range(this = this, a1 = units_dat_air_weapon[x])
+    GetAttackRange,
+    /// find_unit_borders_rect(&rect), where rect.left and rect.top are `x/y - attack_range`.
+    UnitBorders,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    AnalyzeOrderArbiterCloak<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            OrderArbiterCloakState::GetAttackRange => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ecx = ctx.register(1);
+                        let this = ctrl.resolve(ecx);
+                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let ok = this == ecx &&
+                            arg1.if_mem8_offset(self.units_dat_air_weapon.as_u64()).is_some();
+                        if ok {
+                            self.state = OrderArbiterCloakState::UnitBorders;
+                            self.result.get_attack_range = Some(dest);
+                            ctrl.do_call_with_result(ctx.custom(0));
+                            ctrl.clear_unchecked_branches();
+                        }
+                    }
+                }
+            }
+            OrderArbiterCloakState::UnitBorders => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let mem = ctx.mem_access(arg1, 0, MemAccessSize::Mem16);
+                        let left = ctrl.read_memory(&mem);
+                        let top =
+                            ctrl.read_memory(&mem.with_offset_size(2, MemAccessSize::Mem16));
+                        let ok = left.if_arithmetic_and_const(0xffff)
+                                .and_then(|x| x.if_arithmetic_sub())
+                                .filter(|x| x.1.if_custom() == Some(0)).is_some() &&
+                            top.if_arithmetic_and_const(0xffff)
+                                .and_then(|x| x.if_arithmetic_sub())
+                                .filter(|x| x.1.if_custom() == Some(0)).is_some();
+                        if ok {
+                            self.result.find_unit_borders_rect = Some(dest);
+                            ctrl.end_analysis();
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    // Assume that i16 subtraction won't be less than 0
+                    // Makes sure that left/top rect fields aren't just undefined
+                    // at call.
+                    let jump_if_pos = condition.if_arithmetic_eq_neq_zero(ctx)
+                        .filter(|x| x.0.if_arithmetic_and_const(0x8000).is_some())
+                        .map(|x| x.1);
+                    if let Some(jump) = jump_if_pos {
+                        let dest = match jump {
+                            true => match ctrl.resolve_va(to) {
+                                Some(s) => s,
+                                None => return,
+                            },
+                            false => ctrl.current_instruction_end(),
+                        };
+                        ctrl.continue_at_address(dest);
                     }
                 }
             }

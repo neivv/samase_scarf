@@ -319,6 +319,8 @@ results! {
         GetTargetAcquisitionRange => "get_target_acquisition_range",
         PickAutoTarget => "pick_auto_target",
         AttackUnit => "attack_unit",
+        GetAttackRange => "get_attack_range",
+        FindUnitBordersRect => "find_unit_borders_rect",
     }
 }
 
@@ -942,6 +944,8 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             GetTargetAcquisitionRange => self.get_target_acquisition_range(),
             PickAutoTarget => self.pick_auto_target(),
             AttackUnit => self.attack_unit(),
+            GetAttackRange => self.get_attack_range(),
+            FindUnitBordersRect => self.find_unit_borders_rect(),
         }
     }
 
@@ -3131,6 +3135,20 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.analyze_many_addr(
             AddressAnalysis::AttackUnit,
             AnalysisCache::cache_order_player_guard,
+        )
+    }
+
+    pub fn get_attack_range(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::GetAttackRange,
+            AnalysisCache::cache_order_arbiter_cloak,
+        )
+    }
+
+    pub fn find_unit_borders_rect(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::FindUnitBordersRect,
+            AnalysisCache::cache_order_arbiter_cloak,
         )
     }
 
@@ -5509,6 +5527,22 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some((
                     [result.get_target_acquisition_range, result.pick_auto_target,
                         result.attack_unit],
+                    [],
+                ))
+            });
+    }
+
+    fn cache_order_arbiter_cloak(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[GetAttackRange, FindUnitBordersRect],
+            &[],
+            |s| {
+                let cloak = s.order_function(0x83, actx)?;
+                let units_dat = s.dat_virtual_address(DatType::Units, actx)?;
+                let result = step_order::analyze_order_arbiter_cloak(actx, cloak, units_dat);
+                Some((
+                    [result.get_attack_range, result.find_unit_borders_rect],
                     [],
                 ))
             });
