@@ -1493,6 +1493,12 @@ fn everything_1239b() {
     });
 }
 
+#[test]
+fn everything_1239c() {
+    test_with_extra_checks_32_64(Path::new("1239c.exe"), |_ctx, _analysis| {
+    });
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
 }
@@ -1635,6 +1641,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
             ((&filename_str[3..filename_str.len() - 1]).parse::<u32>().unwrap(), revision)
         }
     };
+    let version = (1, minor_version, patch_version, revision);
     let extended_limits = minor_version >= 21;
     let new_codegen = minor_version > 21 || (minor_version == 21 && patch_version >= 2);
     let new_codegen2 = minor_version > 22 || (minor_version == 22 && patch_version >= 1);
@@ -1928,10 +1935,11 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     if extended_limits {
         assert!(limits.set_limits.is_some());
         // 1238d removed (inlined?) SMemAlloc and SMemFree
-        let has_smem_alloc = !is_major_2021_patch;
+        // 1239c too though it seems to not have other major changes
+        let has_smem_alloc = !is_major_2021_patch &&
+            version < (1, 23, 9, b'c');
         // Allocator as a virtual struct was added in 1233a
-        let has_allocator = minor_version > 23 ||
-            (minor_version == 23 && patch_version >= 3);
+        let has_allocator = version >= (1, 23, 3, b'a');
         if has_smem_alloc {
             assert!(analysis.smem_alloc().is_some());
             assert!(analysis.smem_free().is_some());
