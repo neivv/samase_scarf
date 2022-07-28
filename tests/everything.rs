@@ -1499,6 +1499,12 @@ fn everything_1239c() {
     });
 }
 
+#[test]
+fn everything_1239d() {
+    test_with_extra_checks_32_64(Path::new("1239d.exe"), |_ctx, _analysis| {
+    });
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
 }
