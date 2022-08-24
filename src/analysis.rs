@@ -684,6 +684,10 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         ctx: scarf::OperandCtx<'e>,
     ) -> Analysis<'e, E> {
         let text = binary.section(b".text\0\0\0").unwrap();
+        let data = binary.section(b".data\0\0\0").unwrap();
+        let rdata = binary.section(b".rdata\0\0").unwrap();
+        let arg_cache = ArgCache::new(ctx);
+        let bump = Bump::new();
         Analysis {
             cache: AnalysisCache {
                 binary,
@@ -731,13 +735,13 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             shareable: AnalysisCtx {
                 binary,
                 binary_sections: BinarySections {
-                    rdata: binary.section(b".rdata\0\0").unwrap(),
-                    data: binary.section(b".data\0\0\0").unwrap(),
+                    rdata,
+                    data,
                     text,
                 },
                 ctx,
-                bump: Bump::new(),
-                arg_cache: ArgCache::new(ctx),
+                bump,
+                arg_cache,
             },
         }
     }
