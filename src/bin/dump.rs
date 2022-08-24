@@ -319,11 +319,13 @@ fn dump_shader(path: &Path, format: u8, data: &[u8]) -> Result<()> {
         .with_context(|| format!("Couldn't create {}", filename.display()))?;
     file.write_all(shader_bin).context("Writing shader")?;
     if matches!(format, 0 | 4) {
+        #[cfg(windows)]
         d3d_disassemble(path, &name, shader_bin)?;
     }
     Ok(())
 }
 
+#[cfg(windows)]
 fn d3d_disassemble(path: &Path, name: &str, data: &[u8]) -> Result<()> {
     use winapi::um::d3dcompiler::D3DDisassemble;
 
