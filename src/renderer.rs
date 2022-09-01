@@ -2,16 +2,19 @@ use std::rc::Rc;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use scarf::{BinaryFile, DestOperand, Operand, OperandType, Operation};
+use scarf::{BinaryFile, BinarySection, DestOperand, Operand, OperandType, Operation};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::analysis::{self, Control, FuncAnalysis};
+use scarf::operand::{OperandHashByAddress};
 
-use crate::{
-    AnalysisCtx, ArgCache, EntryOf, entry_of_until, single_result_assign, OperandExt, ControlExt,
-    FunctionFinder,
-};
 use crate::add_terms::collect_arith_add_terms;
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{FunctionFinder, entry_of_until, EntryOf};
+use crate::call_tracker::CallTracker;
+use crate::float_cmp::{FloatEqTracker, FloatCmpJump};
+use crate::hash_map::{HashSet};
 use crate::struct_layouts;
+use crate::util::{ControlExt, OperandExt, single_result_assign, is_global};
 use crate::vtables::Vtables;
 
 #[derive(Clone)]
@@ -534,6 +537,14 @@ pub(crate) struct DrawGameLayer<'e, E: ExecutionState<'e>> {
     pub cursor_marker: Option<Operand<'e>>,
 }
 
+pub(crate) struct RenderScreen<'e, E: ExecutionState<'e>> {
+    pub config_vsync_value: Option<E::VirtualAddress>,
+    pub get_render_target: Option<E::VirtualAddress>,
+    pub clear_render_target: Option<E::VirtualAddress>,
+    pub renderer: Option<Operand<'e>>,
+    pub draw_commands: Option<Operand<'e>>,
+}
+
 pub(crate) fn analyze_draw_game_layer<'e, E: ExecutionState<'e>>(
     actx: &AnalysisCtx<'e, E>,
     draw_game_layer: E::VirtualAddress,
@@ -667,6 +678,277 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer
                     }
                 }
                 _ => (),
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_render_screen<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    render_screen: E::VirtualAddress,
+) -> RenderScreen<'e, E> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut result = RenderScreen {
+        config_vsync_value: None,
+        get_render_target: None,
+        clear_render_target: None,
+        renderer: None,
+        draw_commands: None,
+    };
+
+    let mut analyzer = AnalyzeRenderScreen::<E> {
+        result: &mut result,
+        rdata: actx.binary_sections.rdata,
+        state: RenderScreenState::FindCmpZero,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+        float_eq_tracker: FloatEqTracker::new(ctx),
+        vsync_candidate: None,
+        get_render_target_candidate: None,
+        inline_depth: 0,
+        inline_limit: 0,
+        arg_cache: &actx.arg_cache,
+        seen_funcs: HashSet::with_capacity_and_hasher(0x80, Default::default()),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, render_screen);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum RenderScreenState {
+    /// Find comparision of float == 0.0, follow path where it is true
+    /// (sd_hd_fade_amount == 0.0 comparision to skip queueing second set of draw commands
+    /// with the other asset type so they can be blended together)
+    FindCmpZero,
+    /// After the jump, there should be the following function calls
+    /// finish_draw() (small function, may be inlined) {
+    ///     cap_fps(); (only called from finish_draw, may be inlined when finish_draw is not)
+    ///     flush_frame();
+    ///     something_minor();
+    /// }
+    /// cap_fps does get_vsync_value() == -1 and get_vsync_value() == 1 jumps
+    FindVsyncJump,
+    /// flush_frame will do
+    /// clear_render_targets() (usually inlined) {
+    ///     clear_render_target(get_render_target(0))
+    ///     clear_render_target(get_render_target(1))
+    ///     clear_render_target(get_render_target(2))
+    /// }
+    /// Find that. Specifically detect one with arg2
+    RenderTargets,
+    /// Find renderer.vtable[7](renderer, draw_commands, _, _)
+    /// May be inner function of flush_frame
+    Draw,
+}
+
+struct AnalyzeRenderScreen<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut RenderScreen<'e, E>,
+    rdata: &'a BinarySection<E::VirtualAddress>,
+    state: RenderScreenState,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    float_eq_tracker: FloatEqTracker<'e>,
+    vsync_candidate: Option<Operand<'e>>,
+    get_render_target_candidate: Option<E::VirtualAddress>,
+    inline_depth: u8,
+    inline_limit: u8,
+    arg_cache: &'a ArgCache<'e, E>,
+    /// Used to avoid unnecessarily repeated inlining into child functions.
+    /// All ones we care about will not have been seen before.
+    seen_funcs: HashSet<OperandHashByAddress<'e>>,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    AnalyzeRenderScreen<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let mut call_was_seen = false;
+        if let Operation::Call(dest) = *op {
+            call_was_seen = !self.seen_funcs.insert(dest.hash_by_address());
+        }
+        ctrl.aliasing_memory_fix(op);
+        match self.state {
+            RenderScreenState::FindCmpZero => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    match self.float_eq_tracker.check_jump(condition) {
+                        FloatCmpJump::Done(a, b, jump) => {
+                            if self.resolve_rdata_const(a) == Some(0) ||
+                                self.resolve_rdata_const(b) == Some(0)
+                            {
+                                let eq_zero_branch = match jump {
+                                    true => match ctrl.resolve_va(to) {
+                                        Some(s) => s,
+                                        None => return,
+                                    },
+                                    false => ctrl.current_instruction_end(),
+                                };
+                                ctrl.clear_unchecked_branches();
+                                ctrl.continue_at_address(eq_zero_branch);
+                                self.state = RenderScreenState::FindVsyncJump;
+                            }
+                        }
+                        FloatCmpJump::ContinueAt(jump) => {
+                            let next = match jump {
+                                true => match ctrl.resolve_va(to) {
+                                    Some(s) => s,
+                                    None => return,
+                                },
+                                false => ctrl.current_instruction_end(),
+                            };
+                            ctrl.continue_at_address(next);
+                        }
+                        FloatCmpJump::Nothing => (),
+                    }
+                }
+            }
+            RenderScreenState::FindVsyncJump => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if !call_was_seen && self.inline_depth < 2 {
+                            self.inline_depth += 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth -= 1;
+                            if self.state != RenderScreenState::FindVsyncJump {
+                                if self.inline_depth >= 2 {
+                                    ctrl.end_analysis();
+                                }
+                                return;
+                            }
+                        }
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let result = condition.if_arithmetic_eq_neq()
+                        .and_then(|x| {
+                            let c = x.1.if_constant()?;
+                            if c == 1 || c == 0xffff_ffff {
+                                Some((x.0, x.2))
+                            } else {
+                                None
+                            }
+                        });
+                    if let Some((vsync, jump_if_eq)) = result {
+                        if let Some(old) = self.vsync_candidate {
+                            if old == vsync {
+                                let value = Operand::and_masked(vsync).0;
+                                if let Some(c) = value.if_custom() {
+                                    if let Some(func) = self.call_tracker.custom_id_to_func(c) {
+                                        self.result.config_vsync_value = Some(func);
+                                    }
+                                }
+                                // Continue at point after fps limiting
+                                let addr = match jump_if_eq {
+                                    true => match ctrl.resolve_va(to) {
+                                        Some(s) => s,
+                                        None => return,
+                                    },
+                                    false => ctrl.current_instruction_end(),
+                                };
+                                ctrl.clear_unchecked_branches();
+                                ctrl.continue_at_address(addr);
+                                self.state = RenderScreenState::RenderTargets;
+                                if self.inline_depth >= 2 {
+                                    ctrl.end_analysis();
+                                    self.inline_limit = 1 + 2;
+                                } else {
+                                    self.inline_limit = self.inline_depth + 2;
+                                }
+                            }
+                        } else {
+                            self.vsync_candidate = Some(vsync);
+                        }
+                    }
+                }
+            }
+            RenderScreenState::RenderTargets => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let ctx = ctrl.ctx();
+                        if arg1.if_constant() == Some(2) {
+                            self.get_render_target_candidate = Some(dest);
+                            ctrl.do_call_with_result(ctx.custom(0));
+                        } else {
+                            let this = ctrl.resolve(ctx.register(1));
+                            if this.if_custom() == Some(0) {
+                                if let Some(get) = self.get_render_target_candidate {
+                                    self.result.get_render_target = Some(get);
+                                    self.result.clear_render_target = Some(dest);
+                                    ctrl.clear_unchecked_branches();
+                                    self.state = RenderScreenState::Draw;
+                                    if self.inline_depth == self.inline_limit {
+                                        ctrl.end_analysis();
+                                    } else {
+                                        self.inline_limit = self.inline_depth + 1;
+                                    }
+                                }
+                            } else {
+                                self.get_render_target_candidate = None;
+                                if !call_was_seen && self.inline_depth < self.inline_limit {
+                                    self.inline_depth += 1;
+                                    ctrl.analyze_with_current_state(self, dest);
+                                    self.inline_depth -= 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            RenderScreenState::Draw => {
+                if self.result.renderer.is_some() {
+                    ctrl.end_analysis();
+                    return;
+                }
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if !call_was_seen && self.inline_depth < self.inline_limit {
+                            self.inline_depth += 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth -= 1;
+                        }
+                        self.call_tracker.add_call(ctrl, dest);
+                    } else {
+                        let dest = ctrl.resolve(dest);
+                        let offset = 7 * E::VirtualAddress::SIZE;
+                        let renderer = ctrl.if_mem_word_offset(dest, offset as u64)
+                            .and_then(|x| ctrl.if_mem_word_offset(x, 0));
+                        if let Some(renderer) = renderer {
+                            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                            let draw_commands = self.call_tracker.resolve_calls(arg1);
+                            if is_global(draw_commands) {
+                                self.result.draw_commands = Some(draw_commands);
+                                self.result.renderer = Some(renderer);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> AnalyzeRenderScreen<'a, 'acx, 'e, E> {
+    fn resolve_rdata_const(&self, value: Operand<'e>) -> Option<u64> {
+        if let Some(c) = value.if_constant() {
+            Some(c)
+        } else {
+            let mem = value.if_memory()?;
+            let addr = E::VirtualAddress::from_u64(mem.if_constant_address()?);
+            let rdata_start = self.rdata.virtual_address;
+            let rdata_end = rdata_start + self.rdata.virtual_size;
+            if addr >= rdata_start && addr < rdata_end {
+                let offset = (addr.as_u64() - rdata_start.as_u64()) as usize;
+                let bytes = self.rdata.data.get(offset..)?.get(..8)?;
+                Some(LittleEndian::read_u64(bytes) & mem.size.mask())
+            } else {
+                None
             }
         }
     }

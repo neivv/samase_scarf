@@ -31,6 +31,7 @@ mod dialog;
 mod eud;
 mod file;
 mod firegraft;
+mod float_cmp;
 mod game;
 mod game_init;
 mod hash_map;

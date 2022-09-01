@@ -322,6 +322,9 @@ results! {
         GetAttackRange => "get_attack_range",
         FindUnitBordersRect => "find_unit_borders_rect",
         PickRandomTarget => "pick_random_target",
+        ConfigVsyncValue => "config_vsync_value",
+        GetRenderTarget => "get_render_target",
+        ClearRenderTarget => "clear_render_target",
     }
 }
 
@@ -478,6 +481,8 @@ results! {
         TargetedOrderGround => "targeted_order_fow",
         TargetedOrderFow => "targeted_order_ground",
         MinimapCursorType => "minimap_cursor_type",
+        Renderer => "renderer",
+        DrawCommands => "draw_commands",
     }
 }
 
@@ -952,6 +957,9 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             GetAttackRange => self.get_attack_range(),
             FindUnitBordersRect => self.find_unit_borders_rect(),
             PickRandomTarget => self.pick_random_target(),
+            ConfigVsyncValue => self.config_vsync_value(),
+            GetRenderTarget => self.get_render_target(),
+            ClearRenderTarget => self.clear_render_target(),
         }
     }
 
@@ -1109,6 +1117,8 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             TargetedOrderGround => self.targeted_order_fow(),
             TargetedOrderFow => self.targeted_order_ground(),
             MinimapCursorType => self.minimap_cursor_type(),
+            Renderer => self.renderer(),
+            DrawCommands => self.draw_commands(),
         }
     }
 
@@ -3163,6 +3173,35 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             AddressAnalysis::PickRandomTarget,
             AnalysisCache::cache_order_tower,
         )
+    }
+
+    pub fn config_vsync_value(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ConfigVsyncValue,
+            AnalysisCache::cache_render_screen,
+        )
+    }
+
+    pub fn get_render_target(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::GetRenderTarget,
+            AnalysisCache::cache_render_screen,
+        )
+    }
+
+    pub fn clear_render_target(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ClearRenderTarget,
+            AnalysisCache::cache_render_screen,
+        )
+    }
+
+    pub fn renderer(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::Renderer, AnalysisCache::cache_render_screen)
+    }
+
+    pub fn draw_commands(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(OperandAnalysis::DrawCommands, AnalysisCache::cache_render_screen)
     }
 
     /// Mainly for tests/dump
@@ -5254,12 +5293,16 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    pub fn step_network(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+    fn step_network(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::StepNetwork, |s| s.cache_game_loop(actx))
     }
 
     fn process_events(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::ProcessEvents, |s| s.cache_game_loop(actx))
+    }
+
+    fn render_screen(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::RenderScreen, |s| s.cache_game_loop(actx))
     }
 
     fn cache_prepare_issue_order(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -5583,6 +5626,23 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some((
                     [result.pick_random_target],
                     [],
+                ))
+            });
+    }
+
+    fn cache_render_screen(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[ConfigVsyncValue, GetRenderTarget, ClearRenderTarget],
+            &[Renderer, DrawCommands],
+            |s| {
+                let render = s.render_screen(actx)?;
+                let result = renderer::analyze_render_screen(actx, render);
+                Some((
+                    [result.config_vsync_value, result.get_render_target,
+                        result.clear_render_target],
+                    [result.renderer, result.draw_commands],
                 ))
             });
     }

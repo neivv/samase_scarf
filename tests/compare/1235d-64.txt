@@ -30,6 +30,8 @@ check_weapon_targeting_flags: 1401ae520
 choose_snp: 140390830
 clamp_zoom: 140231970
 clear_build_queue: 1401a3130
+clear_render_target: 14077a7b0
+config_vsync_value: 14041ff70
 create_bullet: 14017e630
 create_fow_sprite: 14019bbc0
 create_game_multiplayer: 14038feb0
@@ -62,6 +64,7 @@ get_attack_range: 1401b4660
 get_mouse_x: 1402f2b10
 get_mouse_y: 1402f2b30
 get_region: 1403c0a60
+get_render_target: 14077b2c0
 get_sight_range: 1401b6e50
 get_target_acquisition_range: 1401b1410
 give_ai: 1402835f0
@@ -206,6 +209,7 @@ current_tooltip_ctrl: Mem64[140e11208]
 cursor_marker: Mem64[140e10ad8]
 dat_requirement_error: Mem32[140e65f18]
 dialog_return_code: Mem32[141066f08]
+draw_commands: 14109bbd0
 draw_cursor_marker: Mem8[140e10a71]
 fire_overlay_max: 140dfa420
 first_active_bullet: Mem64[140df8318]
@@ -290,6 +294,7 @@ player_unit_skins: 14103a8d0
 players: ((Mem64[140ddb1d6] + 2d203ae9863eb834) ^ Mem64[14102a7d0])
 pylon_auras_visible: Mem32[140e10db4]
 pylon_refresh: Mem32[140e10db0]
+renderer: Mem64[14126bcc8]
 replay_bfix: 140d67898
 replay_data: Mem64[14102c328]
 replay_gcfg: 14102fe08

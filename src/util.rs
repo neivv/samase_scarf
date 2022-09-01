@@ -151,13 +151,7 @@ pub fn seems_assertion_call<'exec, A: analysis::Analyzer<'exec>>(
 
 // bool true => eq, bool false => not eq
 pub fn if_arithmetic_eq_neq<'e>(op: Operand<'e>) -> Option<(Operand<'e>, Operand<'e>, bool)> {
-    op.if_arithmetic_eq()
-        .map(|(l, r)| {
-            Operand::either(l, r, |x| x.if_constant().filter(|&c| c == 0))
-                .and_then(|(_, other)| other.if_arithmetic_eq())
-                .map(|(l, r)| (l, r, false))
-                .unwrap_or_else(|| (l, r, true))
-        })
+    op.if_arithmetic_eq_neq()
 }
 
 pub trait OperandExt<'e> {
@@ -167,6 +161,7 @@ pub trait OperandExt<'e> {
     fn if_arithmetic_and_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_lsh_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_rsh_const(self, offset: u64) -> Option<Operand<'e>>;
+    fn if_arithmetic_eq_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_gt_const(self, offset: u64) -> Option<Operand<'e>>;
     fn if_arithmetic_float(self, ty: ArithOpType) -> Option<(Operand<'e>, Operand<'e>)>;
     /// Returns `(x, const_off)` if `self` is `x + const_off`, else returns `(self, 0)`
@@ -180,6 +175,8 @@ pub trait OperandExt<'e> {
         self,
         binary: &BinaryFile<Va>,
     ) -> Option<u64>;
+    /// bool true => eq, bool false => not eq
+    fn if_arithmetic_eq_neq(self) -> Option<(Operand<'e>, Operand<'e>, bool)>;
     /// bool true => eq, bool false => not eq
     fn if_arithmetic_eq_neq_zero(self, ctx: OperandCtx<'e>) -> Option<(Operand<'e>, bool)>;
 }
@@ -245,6 +242,16 @@ impl<'e> OperandExt<'e> for Operand<'e> {
         }
     }
 
+    fn if_arithmetic_eq_const(self, offset: u64) -> Option<Operand<'e>> {
+        let (l, r) = self.if_arithmetic(ArithOpType::Equal)?;
+        let r = r.if_constant()?;
+        if r != offset {
+            None
+        } else {
+            Some(l)
+        }
+    }
+
     fn if_arithmetic_gt_const(self, offset: u64) -> Option<Operand<'e>> {
         let (l, r) = self.if_arithmetic(ArithOpType::GreaterThan)?;
         let r = r.if_constant()?;
@@ -288,6 +295,16 @@ impl<'e> OperandExt<'e> for Operand<'e> {
                 let mem = self.if_memory()?;
                 let addr = Va::from_u64(mem.if_constant_address()?);
                 Some(binary.read_u64(addr).ok()? & mem.size.mask())
+            })
+    }
+
+    fn if_arithmetic_eq_neq(self) -> Option<(Operand<'e>, Operand<'e>, bool)> {
+        self.if_arithmetic_eq()
+            .map(|(l, r)| {
+                Operand::either(l, r, |x| x.if_constant().filter(|&c| c == 0))
+                    .and_then(|(_, other)| other.if_arithmetic_eq())
+                    .map(|(l, r)| (l, r, false))
+                    .unwrap_or_else(|| (l, r, true))
             })
     }
 

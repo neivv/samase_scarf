@@ -1612,7 +1612,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 FirstFreeSelectionCircle | LastFreeSelectionCircle | GrpWireGrp | TranWireGrp |
                 StatusScreen | MapMpq | ReplayScenarioChk | ReplayScenarioChkSize |
                 GameScreenLClickCallback | GameScreenRClickCallback | TargetedOrderFow |
-                TargetedOrderGround | TargetedOrderUnit | MinimapCursorType | TeamGameTeams =>
+                TargetedOrderGround | TargetedOrderUnit | MinimapCursorType | TeamGameTeams |
+                Renderer =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1625,7 +1626,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 FireOverlayMax | NetPlayerFlags | PlayerTurns | PlayerTurnsSize | CmdIconsDdsGrp |
                 CmdBtnsDdsGrp | SyncData | PaletteSet | MainPalette | TfontGam |
                 UnitSkinMap | SpriteSkinMap | GrpWireDdsGrp | TranWireDdsGrp |
-                SpriteIncludeInVisionSync =>
+                SpriteIncludeInVisionSync | DrawCommands =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }
