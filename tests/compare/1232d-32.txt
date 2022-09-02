@@ -97,6 +97,7 @@ map_entry_load_save: 005fc0f0
 map_init_chk_callbacks: 00cb1060
 menu_swish_in: 006f03a0
 menu_swish_out: 006efa40
+move_screen: 006680b0
 net_format_turn_rate: 00730a90
 open_anim_multi_file: 0052d640
 open_anim_single_file: 0052d0d0
@@ -233,8 +234,10 @@ first_revealer: Mem32[e9ddc8]
 fonts: 10cd08c
 game: (Mem32[e04a78] ^ fd7b13ea)
 game_data: 109ace0
+game_screen_height_bwpx: Mem32[e039f4]
 game_screen_lclick_callback: Mem32[1071490]
 game_screen_rclick_callback: Mem32[1071494]
+game_screen_width_bwpx: Mem32[e039f0]
 global_event_handlers: 1070d90
 graphic_layers: 10ccfc0
 grpwire_ddsgrp: 10ab47c
@@ -329,6 +332,7 @@ tfontgam: 10cd0c0
 tooltip_draw_func: Mem32[e9e0cc]
 tranwire_ddsgrp: 10ab488
 tranwire_grp: Mem32[10ab470]
+trigger_current_player: Mem32[10b21b0]
 unique_command_user: Mem32[e2953c]
 unit_should_reveal_area: Mem32[e9de34]
 unit_skin_map: e02cb8

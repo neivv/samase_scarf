@@ -1613,7 +1613,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 StatusScreen | MapMpq | ReplayScenarioChk | ReplayScenarioChkSize |
                 GameScreenLClickCallback | GameScreenRClickCallback | TargetedOrderFow |
                 TargetedOrderGround | TargetedOrderUnit | MinimapCursorType | TeamGameTeams |
-                Renderer =>
+                Renderer | TriggerCurrentPlayer | GameScreenWidthBwpx | GameScreenHeightBwPx =>
             {
                 check_global_opt(result, binary, op.name());
             }

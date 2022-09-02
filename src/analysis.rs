@@ -325,6 +325,7 @@ results! {
         ConfigVsyncValue => "config_vsync_value",
         GetRenderTarget => "get_render_target",
         ClearRenderTarget => "clear_render_target",
+        MoveScreen => "move_screen",
     }
 }
 
@@ -483,6 +484,15 @@ results! {
         MinimapCursorType => "minimap_cursor_type",
         Renderer => "renderer",
         DrawCommands => "draw_commands",
+        TriggerCurrentPlayer => "trigger_current_player",
+        // Game screen size in "BW pixels"
+        //      - 1:1 with actual pixels in SD 640x480, and the coordinates used by gameplay logic.
+        // Affected by zoom: zooming out => more pixels shown on screen => w/h grow
+        // So in normal zoom, 4:3, width is 640, but height is 383 due to console covering
+        // rest of the screen. In replay/obs height becomes 480 instead.
+        // (Extra detail: 1.16.1 hardcodes the sizes as 640x400 instead of 640x383)
+        GameScreenWidthBwpx => "game_screen_width_bwpx",
+        GameScreenHeightBwPx => "game_screen_height_bwpx",
     }
 }
 
@@ -960,6 +970,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             ConfigVsyncValue => self.config_vsync_value(),
             GetRenderTarget => self.get_render_target(),
             ClearRenderTarget => self.clear_render_target(),
+            MoveScreen => self.move_screen(),
         }
     }
 
@@ -1119,6 +1130,9 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             MinimapCursorType => self.minimap_cursor_type(),
             Renderer => self.renderer(),
             DrawCommands => self.draw_commands(),
+            TriggerCurrentPlayer => self.trigger_current_player(),
+            GameScreenWidthBwpx => self.game_screen_width_bwpx(),
+            GameScreenHeightBwPx => self.game_screen_height_bwpx(),
         }
     }
 
@@ -3202,6 +3216,34 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
 
     pub fn draw_commands(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(OperandAnalysis::DrawCommands, AnalysisCache::cache_render_screen)
+    }
+
+    pub fn move_screen(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::MoveScreen,
+            AnalysisCache::cache_center_view_action,
+        )
+    }
+
+    pub fn trigger_current_player(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::TriggerCurrentPlayer,
+            AnalysisCache::cache_center_view_action,
+        )
+    }
+
+    pub fn game_screen_width_bwpx(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::GameScreenWidthBwpx,
+            AnalysisCache::cache_center_view_action,
+        )
+    }
+
+    pub fn game_screen_height_bwpx(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::GameScreenHeightBwPx,
+            AnalysisCache::cache_center_view_action,
+        )
     }
 
     /// Mainly for tests/dump
@@ -5643,6 +5685,30 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     [result.config_vsync_value, result.get_render_target,
                         result.clear_render_target],
                     [result.renderer, result.draw_commands],
+                ))
+            });
+    }
+
+    fn cache_center_view_action(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[MoveScreen],
+            &[TriggerCurrentPlayer, GameScreenWidthBwpx, GameScreenHeightBwPx],
+            |s| {
+                let actions = s.trigger_actions(actx)?;
+                let local_player_id = s.local_player_id(actx)?;
+                let is_multiplayer = s.is_multiplayer(actx)?;
+                let result = clientside::analyze_center_view_action(
+                    actx,
+                    actions,
+                    local_player_id,
+                    is_multiplayer,
+                );
+                Some((
+                    [result.move_screen],
+                    [result.trigger_current_player, result.game_screen_width_bwpx,
+                        result.game_screen_height_bwpx],
                 ))
             });
     }

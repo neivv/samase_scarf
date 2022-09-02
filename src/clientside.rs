@@ -11,6 +11,7 @@ use crate::{
 use crate::analysis_state::{
     AnalysisState, StateEnum, MiscClientSideAnalyzerState, HandleTargetedClickState,
 };
+use crate::call_tracker::CallTracker;
 use crate::hash_map::HashMap;
 use crate::struct_layouts;
 use crate::util::{
@@ -63,6 +64,13 @@ pub(crate) struct HandleTargetedClick<Va: VirtualAddress> {
     pub check_tech_targeting: Option<Va>,
     pub check_order_targeting: Option<Va>,
     pub check_fow_order_targeting: Option<Va>,
+}
+
+pub(crate) struct CenterViewAction<'e, Va: VirtualAddress> {
+    pub move_screen: Option<Va>,
+    pub trigger_current_player: Option<Operand<'e>>,
+    pub game_screen_width_bwpx: Option<Operand<'e>>,
+    pub game_screen_height_bwpx: Option<Operand<'e>>,
 }
 
 // Candidates are either a global ref with Some(global), or a call with None
@@ -1216,3 +1224,116 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> HandleTargetedClickAnalyzer<'e, 
     }
 }
 
+pub(crate) fn analyze_center_view_action<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    trigger_actions: E::VirtualAddress,
+    local_player_id: Operand<'e>,
+    is_multiplayer: Operand<'e>,
+) -> CenterViewAction<'e, E::VirtualAddress> {
+    let mut result = CenterViewAction {
+        move_screen: None,
+        trigger_current_player: None,
+        game_screen_width_bwpx: None,
+        game_screen_height_bwpx: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let action_ptr = trigger_actions + E::VirtualAddress::SIZE * 0xa;
+    let action = match binary.read_address(action_ptr) {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+
+    let mut analyzer = CenterViewActionAnalyzer {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        local_player_id,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+    };
+    let mut exec = E::initial_state(ctx, binary);
+    // Center view has move-screen-over-time logic in single player,
+    // this analysis just cares about instant move so set multiplayer = 1
+    if let Some(mem) = is_multiplayer.if_memory() {
+        exec.move_to(
+            &DestOperand::Memory(*mem),
+            ctx.const_1(),
+        );
+    }
+    let mut analysis = FuncAnalysis::custom_state(binary, ctx, action, exec, Default::default());
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+struct CenterViewActionAnalyzer<'e, 'acx, 'a, E: ExecutionState<'e>> {
+    result: &'a mut CenterViewAction<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    local_player_id: Operand<'e>,
+    call_tracker: CallTracker<'acx, 'e, E>,
+}
+
+impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    CenterViewActionAnalyzer<'e, 'acx, 'a, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.result.trigger_current_player.is_none() {
+            // Search for jump trigger_current_player == local_player_id
+            match *op {
+                Operation::Jump { condition, .. } => {
+                    let condition = ctrl.resolve(condition);
+                    let result = condition.if_arithmetic_eq_neq()
+                        .map(|x| (x.0, x.1))
+                        .and_if_either_other(|x| x == self.local_player_id);
+                    if let Some(result) = result {
+                        self.result.trigger_current_player =
+                            Some(self.call_tracker.resolve_calls(result));
+                    }
+                }
+                Operation::Call(dest) => {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                }
+                _ => (),
+            }
+        } else {
+            if let Operation::Call(dest) = *op {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let ctx = ctrl.ctx();
+                    if let Some(w) = self.screen_size_from_move_screen_arg(ctx, arg1) {
+                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        if let Some(h) = self.screen_size_from_move_screen_arg(ctx, arg2) {
+                            self.result.move_screen = Some(dest);
+                            self.result.game_screen_width_bwpx = Some(w);
+                            self.result.game_screen_height_bwpx = Some(h);
+                            ctrl.end_analysis();
+                            return;
+                        }
+                    }
+                    self.call_tracker.add_call_preserve_esp(ctrl, dest);
+                }
+            }
+        }
+    }
+}
+
+impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> CenterViewActionAnalyzer<'e, 'acx, 'a, E> {
+    fn screen_size_from_move_screen_arg(
+        &mut self,
+        ctx: OperandCtx<'e>,
+        value: Operand<'e>,
+    ) -> Option<Operand<'e>> {
+        // move_screen arguments are
+        // int(loc.l + loc.r) / 2 - int(screen_w) / 2
+        // Signed divisions are bit pain to inspect, so mask with 0x7fff_ffff
+        let x = Operand::and_masked(value).0.if_arithmetic_sub()?.1;
+        let x = Operand::and_masked(ctx.and_const(x, 0x7fff_ffff)).0
+            .if_arithmetic_rsh_const(1)?;
+        let (l, _) = x.if_arithmetic_sub()?;
+        Some(self.call_tracker.resolve_calls(l))
+    }
+}
