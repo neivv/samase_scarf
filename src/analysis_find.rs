@@ -544,17 +544,13 @@ pub fn find_address_refs<'a, Va: VirtualAddress>(
     result
 }
 
-pub fn find_bytes<'a>(bump: &'a Bump, mut data: &[u8], needle: &[u8]) -> BumpVec<'a, Rva> {
-    use memmem::{TwoWaySearcher, Searcher};
+pub fn find_bytes<'a>(bump: &'a Bump, data: &[u8], needle: &[u8]) -> BumpVec<'a, Rva> {
+    use memchr::memmem::{Finder};
 
     let mut ret = BumpVec::new_in(bump);
-    let mut pos = 0;
-    let searcher = TwoWaySearcher::new(needle);
-    while let Some(index) = searcher.search_in(data) {
-        pos += index as u32;
-        ret.push(Rva(pos));
-        pos += needle.len() as u32;
-        data = &data[index + needle.len()..];
+    let finder = Finder::new(needle);
+    for index in finder.find_iter(data) {
+        ret.push(Rva(index as u32));
     }
     ret
 }

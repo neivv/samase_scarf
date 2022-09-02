@@ -501,16 +501,13 @@ fn find_const_refs_in_code<Va: VirtualAddress>(
     value: u32,
     out: &mut BumpVec<'_, Va>,
 ) {
-    use memmem::{TwoWaySearcher, Searcher};
+    use memchr::memmem::{Finder};
 
     let code_section = binary.code_section();
-    let mut haystack = &code_section.data[..];
-    let mut pos = 0;
+    let haystack = &code_section.data[..];
     let needle = value.to_le_bytes();
-    let searcher = TwoWaySearcher::new(&needle[..]);
-    while let Some(index) = searcher.search_in(haystack) {
-        pos += index as u32;
-        out.push(code_section.virtual_address + pos);
-        haystack = &haystack[index + 4..];
+    let finder = Finder::new(&needle[..]);
+    for index in finder.find_iter(haystack) {
+        out.push(code_section.virtual_address + index as u32);
     }
 }
