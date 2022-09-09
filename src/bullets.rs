@@ -10,13 +10,17 @@ use crate::analysis_state::{AnalysisState, StateEnum, FindCreateBulletState};
 use crate::switch;
 use crate::struct_layouts;
 
-pub struct BulletCreation<'e, Va: VirtualAddress> {
+pub(crate) struct BulletCreation<'e, Va: VirtualAddress> {
     pub first_active_bullet: Option<Operand<'e>>,
     pub last_active_bullet: Option<Operand<'e>>,
     pub first_free_bullet: Option<Operand<'e>>,
     pub last_free_bullet: Option<Operand<'e>>,
     pub create_bullet: Option<Va>,
     pub active_iscript_unit: Option<Operand<'e>>,
+}
+
+pub(crate) struct StepBulletFrame<Va: VirtualAddress> {
+    pub step_moving_bullet_frame: Option<Va>,
 }
 
 struct FindCreateBullet<'a, 'acx, 'e, E: ExecutionState<'e>> {
@@ -319,4 +323,72 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
         result.last_free_bullet = analyzer.last_free;
     }
     result
+}
+
+pub(crate) fn analyze_step_bullet_frame<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    step_bullet_frame: E::VirtualAddress,
+) -> StepBulletFrame<E::VirtualAddress> {
+    let mut result = StepBulletFrame {
+        step_moving_bullet_frame: None,
+    };
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let mut analyzer = StepBulletFrameAnalyzer::<E> {
+        result: &mut result,
+        switch_jumped: false,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, step_bullet_frame);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct StepBulletFrameAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut StepBulletFrame<E::VirtualAddress>,
+    switch_jumped: bool,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepBulletFrameAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if !self.switch_jumped {
+            if let Operation::Jump { condition, to } = *op {
+                if condition == ctx.const_1() {
+                    let to = ctrl.resolve(to);
+                    let exec = ctrl.exec_state();
+                    if let Some(switch) = switch::CompleteSwitch::new(to, ctx, exec) {
+                        let binary = ctrl.binary();
+                        if let Some(branch) = switch.branch(binary, ctx, 1) {
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_address(branch);
+                            self.switch_jumped = true;
+                        }
+                    }
+                }
+            }
+        } else {
+            let dest = match *op {
+                Operation::Call(dest) => Some(dest),
+                Operation::Jump { condition, to } => {
+                    let esp = ctx.register(4);
+                    if condition == ctx.const_1() && ctrl.resolve(esp) == esp {
+                        // Tail call
+                        Some(to)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(dest) = dest.and_then(|x| ctrl.resolve_va(x)) {
+                let this = ctrl.resolve(ctx.register(1));
+                if this == ctx.register(1) {
+                    self.result.step_moving_bullet_frame = Some(dest);
+                    ctrl.end_analysis();
+                }
+            }
+        }
+    }
 }

@@ -327,6 +327,7 @@ results! {
         ClearRenderTarget => "clear_render_target",
         MoveScreen => "move_screen",
         UpdateGameScreenSize => "update_game_screen_size",
+        StepMovingBulletFrame => "step_moving_bullet_frame",
     }
 }
 
@@ -990,6 +991,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             ClearRenderTarget => self.clear_render_target(),
             MoveScreen => self.move_screen(),
             UpdateGameScreenSize => self.update_game_screen_size(),
+            StepMovingBulletFrame => self.step_moving_bullet_frame(),
         }
     }
 
@@ -3312,6 +3314,13 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         )
     }
 
+    pub fn step_moving_bullet_frame(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepMovingBulletFrame,
+            AnalysisCache::cache_step_bullet_frame,
+        )
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -5359,6 +5368,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::RevealUnitArea, |s| s.cache_step_objects(actx))
     }
 
+    fn step_bullet_frame(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::StepBulletFrame, |s| s.cache_step_objects(actx))
+    }
+
     fn update_unit_visibility(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(
             AddressAnalysis::UpdateUnitVisibility,
@@ -5786,6 +5799,18 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                         result.game_screen_height_bwpx],
                 ))
             });
+    }
+
+    fn cache_step_bullet_frame(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[StepMovingBulletFrame],
+            &[],
+            |s| {
+                let step_bullet_frame = s.step_bullet_frame(actx)?;
+                let result = bullets::analyze_step_bullet_frame(actx, step_bullet_frame);
+                Some(([result.step_moving_bullet_frame], []))
+            })
     }
 }
 
