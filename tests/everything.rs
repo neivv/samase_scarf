@@ -1619,7 +1619,9 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 StatusScreen | MapMpq | ReplayScenarioChk | ReplayScenarioChkSize |
                 GameScreenLClickCallback | GameScreenRClickCallback | TargetedOrderFow |
                 TargetedOrderGround | TargetedOrderUnit | MinimapCursorType | TeamGameTeams |
-                Renderer | TriggerCurrentPlayer | GameScreenWidthBwpx | GameScreenHeightBwPx =>
+                Renderer | TriggerCurrentPlayer | GameScreenWidthBwpx | GameScreenHeightBwPx |
+                ZoomActionActive | ZoomActionMode | ZoomActionStart | ZoomActionTarget |
+                ZoomActionCompletion =>
             {
                 check_global_opt(result, binary, op.name());
             }

@@ -185,6 +185,7 @@ unit_update_speed_iscript: 005af5e0
 unlock_mission: 00794f00
 update_attack_target: 0058d760
 update_cloak_state: 005b3b30
+update_game_screen_size: 0060d640
 update_unit_visibility: 005ca240
 update_visibility_point: 0057b300
 active_iscript_bullet: Mem32[e8dac8]
@@ -343,6 +344,11 @@ vision_update_counter: Mem32[106ed88]
 vision_updated: Mem8[106ed5c]
 wirefram_ddsgrp: 10a983c
 zoom: Mem32[e00a00]
+zoom_action_active: Mem8[e00a0c]
+zoom_action_completion: Mem32[e00a10]
+zoom_action_mode: Mem8[e00a24]
+zoom_action_start: Mem32[e00a04]
+zoom_action_target: Mem32[e00a08]
 join_param_variant_type_offset: None
 bnet_message_vtable_type: Some(4)
 bnet_message_switch: Mem32[(Custom_4 * 4) + 7c9250]

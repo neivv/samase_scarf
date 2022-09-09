@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use scarf::{BinaryFile, BinarySection, DestOperand, Operand, OperandType, Operation};
+use scarf::{ArithOpType, BinaryFile, BinarySection, DestOperand, Operand, OperandType, Operation};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandHashByAddress};
@@ -14,7 +14,9 @@ use crate::call_tracker::CallTracker;
 use crate::float_cmp::{FloatEqTracker, FloatCmpJump};
 use crate::hash_map::{HashSet};
 use crate::struct_layouts;
-use crate::util::{ControlExt, OperandExt, single_result_assign, is_global};
+use crate::util::{
+    ControlExt, OperandExt, OptionExt, single_result_assign, is_global, resolve_rdata_const,
+};
 use crate::vtables::Vtables;
 
 #[derive(Clone)]
@@ -535,6 +537,12 @@ pub(crate) struct DrawGameLayer<'e, E: ExecutionState<'e>> {
     pub prepare_draw_image: Option<E::VirtualAddress>,
     pub draw_image: Option<E::VirtualAddress>,
     pub cursor_marker: Option<Operand<'e>>,
+    pub update_game_screen_size: Option<E::VirtualAddress>,
+    pub zoom_action_active: Option<Operand<'e>>,
+    pub zoom_action_mode: Option<Operand<'e>>,
+    pub zoom_action_start: Option<Operand<'e>>,
+    pub zoom_action_target: Option<Operand<'e>>,
+    pub zoom_action_completion: Option<Operand<'e>>,
 }
 
 pub(crate) struct RenderScreen<'e, E: ExecutionState<'e>> {
@@ -557,6 +565,12 @@ pub(crate) fn analyze_draw_game_layer<'e, E: ExecutionState<'e>>(
         prepare_draw_image: None,
         draw_image: None,
         cursor_marker: None,
+        update_game_screen_size: None,
+        zoom_action_active: None,
+        zoom_action_mode: None,
+        zoom_action_start: None,
+        zoom_action_target: None,
+        zoom_action_completion: None,
     };
     let sprite_first_overlay_offset =
         match struct_layouts::sprite_first_overlay::<E::VirtualAddress>(sprite_size)
@@ -566,10 +580,14 @@ pub(crate) fn analyze_draw_game_layer<'e, E: ExecutionState<'e>>(
     };
 
     let mut analyzer = AnalyzeDrawGameLayer::<E> {
+        state: DrawGameLayerState::Init,
         result: &mut result,
         inline_depth: 0,
         inline_limit: 0,
         sprite_first_overlay_offset,
+        arg_cache: &actx.arg_cache,
+        rdata: actx.binary_sections.rdata,
+        call_seen: false,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, draw_game_layer);
     analysis.analyze(&mut analyzer);
@@ -578,10 +596,31 @@ pub(crate) fn analyze_draw_game_layer<'e, E: ExecutionState<'e>>(
 }
 
 struct AnalyzeDrawGameLayer<'a, 'e, E: ExecutionState<'e>> {
+    state: DrawGameLayerState,
     result: &'a mut DrawGameLayer<'e, E>,
     inline_depth: u8,
     inline_limit: u8,
     sprite_first_overlay_offset: u32,
+    arg_cache: &'a ArgCache<'e, E>,
+    rdata: &'a BinarySection<E::VirtualAddress>,
+    call_seen: bool,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum DrawGameLayerState {
+    /// Find jump for a5 == 0, follow the 0 branch
+    /// (Code that is only ran on main draw, not secondary asset draw)
+    Init,
+    /// Inline once to step_zooming(), first jump should be is_zooming == 0
+    /// (Follow nonzero branch)
+    /// Then jump where global == 0 should be zoom_mode, follow zero branch
+    IsZoomingAndMode,
+    /// Find completion + step * 8.0 instruction
+    ZoomCompletion,
+    /// Find (target - start) * x
+    ZoomStartTarget,
+    DrawImage,
+    CursorMarker,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer<'a, 'e, E> {
@@ -598,86 +637,212 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer
                 }
             }
         }
-        if self.result.draw_image.is_none() {
-            // prepare_draw_image and draw_image are from functions which are called
-            // with this = some_sprite.first_overlay and some_sprite.last_overlay
-            match *op {
-                Operation::Call(dest) => {
-                    if let Some(dest) = ctrl.resolve_va(dest) {
-                        let this = ctrl.resolve(ctx.register(1));
-                        let overlay_offset = if self.result.prepare_draw_image.is_none() {
-                            self.sprite_first_overlay_offset
-                        } else {
-                            self.sprite_first_overlay_offset + E::VirtualAddress::SIZE
-                        };
-                        let is_overlay = ctrl.if_mem_word_offset(this, overlay_offset.into())
-                            .is_some();
-                        if is_overlay {
-                            if self.result.prepare_draw_image.is_none() {
-                                self.result.prepare_draw_image = Some(dest);
-                            } else {
-                                self.result.draw_image = Some(dest);
-                            }
-                            if self.inline_depth != 0 {
-                                ctrl.end_analysis();
-                            }
-                        } else if self.inline_depth == 0 {
-                            self.inline_depth = 1;
-                            self.inline_limit = 12;
-                            ctrl.analyze_with_current_state(self, dest);
-                            self.inline_limit = 0;
-                            self.inline_depth = 0;
+        match self.state {
+            DrawGameLayerState::Init => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let ctx = ctrl.ctx();
+                    if let Some((op, jump_if_zero)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                        let op = ctx.and_const(op, 0xff);
+                        let arg5 = ctx.and_const(self.arg_cache.on_entry(4), 0xff);
+                        if op == arg5 {
+                            let dest = match jump_if_zero {
+                                false => ctrl.current_instruction_end(),
+                                true => match ctrl.resolve_va(to) {
+                                    Some(s) => s,
+                                    None => return,
+                                },
+                            };
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_address(dest);
+                            self.state = DrawGameLayerState::IsZoomingAndMode;
                         }
                     }
                 }
-                _ => (),
             }
-        } else if let Some(draw_image) = self.result.draw_image {
-            // Cursor marker.
-            // Search for draw_image call with this = cursor_marker.sprite.last_overlay
-            // Inline from 0 -> 1 unconditionally, 1 -> 2 if this could be cursor_marker.sprite
-            ctrl.aliasing_memory_fix(op);
-            match *op {
-                Operation::Call(dest) => {
-                    if let Some(dest) = ctrl.resolve_va(dest) {
-                        let this = ctrl.resolve(ctx.register(1));
-                        if dest == draw_image {
-                            let offset = self.sprite_first_overlay_offset +
-                                E::VirtualAddress::SIZE;
-                            let cursor_marker = ctrl.if_mem_word_offset(this, offset.into())
-                                .and_then(|sprite| {
-                                    let sprite_offset =
-                                        struct_layouts::unit_sprite::<E::VirtualAddress>();
-                                    ctrl.if_mem_word_offset(sprite, sprite_offset)
-                                });
-                            if let Some(cursor_marker) = cursor_marker {
-                                self.result.cursor_marker = Some(cursor_marker);
-                                ctrl.end_analysis();
+            DrawGameLayerState::IsZoomingAndMode => {
+                if self.result.zoom_action_active.is_some() && !self.call_seen {
+                    // Wait for at least one call after zoom_action_active
+                    // Avoids false positives from assertions
+                    if let Operation::Call(..) = *op {
+                        self.call_seen = true;
+                        ctrl.clear_unchecked_branches();
+                    }
+                    return;
+                }
+
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let ctx = ctrl.ctx();
+                    if let Some((op, jump_if_zero)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                        if is_global(op) {
+                            let follow_zero;
+                            if self.result.zoom_action_active.is_none() {
+                                self.result.zoom_action_active = Some(op);
+                                self.inline_limit = 0;
+                                follow_zero = false;
+                            } else {
+                                self.result.zoom_action_mode = Some(op);
+                                self.state = DrawGameLayerState::ZoomCompletion;
+                                follow_zero = true;
                             }
-                        } else {
-                            let should_inline = self.inline_depth == 0 ||
-                                (self.inline_depth == 1 && {
-                                    let sprite_offset =
-                                        struct_layouts::unit_sprite::<E::VirtualAddress>();
-                                    ctrl.if_mem_word_offset(this, sprite_offset).is_some()
-                                });
-                            if should_inline {
-                                self.inline_depth += 1;
-                                let old_inline_limit = self.inline_limit;
-                                if self.inline_depth == 1 {
-                                    self.inline_limit = 16;
-                                }
-                                ctrl.analyze_with_current_state(self, dest);
-                                self.inline_depth -= 1;
-                                self.inline_limit = old_inline_limit;
-                                if self.result.cursor_marker.is_some() {
+                            let dest = match jump_if_zero ^ !follow_zero {
+                                false => ctrl.current_instruction_end(),
+                                true => match ctrl.resolve_va(to) {
+                                    Some(s) => s,
+                                    None => return,
+                                },
+                            };
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_address(dest);
+                        }
+                    }
+                } else if let Operation::Call(dest) = *op {
+                    if self.inline_depth == 0 {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.inline_limit = 2;
+                            self.inline_depth = 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = 0;
+                            if self.result.zoom_action_active.is_some() {
+                                self.state = DrawGameLayerState::DrawImage;
+                            }
+                        }
+                    }
+                }
+            }
+            DrawGameLayerState::ZoomCompletion => {
+                if let Operation::Move(_, value, None) = *op {
+                    let value = ctrl.resolve(value);
+                    let result = value.if_arithmetic_float(ArithOpType::Add)
+                        .and_either_other(|x| {
+                            x.if_arithmetic_float(ArithOpType::Mul)
+                                .and_either(|x| resolve_rdata_const(x, self.rdata))
+                        });
+                    if let Some(result) = result {
+                        if is_global(result) {
+                            self.result.zoom_action_completion = Some(result);
+                            self.state = DrawGameLayerState::ZoomStartTarget;
+                            ctrl.clear_unchecked_branches();
+                        }
+                    }
+                }
+            }
+            DrawGameLayerState::ZoomStartTarget => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let a1 = ctrl.resolve(self.arg_cache.on_call_f32(0));
+                        // start + (end - start) * pos
+                        let result = a1.if_arithmetic_float(ArithOpType::Add)
+                            .and_either(|x| {
+                                x.if_arithmetic_float(ArithOpType::Mul)
+                                    .and_either(|x| {
+                                        x.if_arithmetic_float(ArithOpType::Sub)
+                                    })
+                                    .map(|x| x.0)
+                            })
+                            .map(|x| x.0);
+                        if let Some((end, start)) = result {
+                            if is_global(end) && is_global(start) {
+                                self.result.zoom_action_target = Some(end);
+                                self.result.zoom_action_start = Some(start);
+                                self.result.update_game_screen_size = Some(dest);
+                                self.state = DrawGameLayerState::DrawImage;
+                                if self.inline_depth != 0 {
                                     ctrl.end_analysis();
                                 }
                             }
                         }
                     }
                 }
-                _ => (),
+            }
+            DrawGameLayerState::DrawImage => {
+                // prepare_draw_image and draw_image are from functions which are called
+                // with this = some_sprite.first_overlay and some_sprite.last_overlay
+                match *op {
+                    Operation::Call(dest) => {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let this = ctrl.resolve(ctx.register(1));
+                            let overlay_offset = if self.result.prepare_draw_image.is_none() {
+                                self.sprite_first_overlay_offset
+                            } else {
+                                self.sprite_first_overlay_offset + E::VirtualAddress::SIZE
+                            };
+                            let is_overlay = ctrl.if_mem_word_offset(this, overlay_offset.into())
+                                .is_some();
+                            if is_overlay {
+                                if self.result.prepare_draw_image.is_none() {
+                                    self.result.prepare_draw_image = Some(dest);
+                                } else {
+                                    self.result.draw_image = Some(dest);
+                                    self.state = DrawGameLayerState::CursorMarker;
+                                }
+                                if self.inline_depth != 0 {
+                                    ctrl.end_analysis();
+                                }
+                            } else if self.inline_depth == 0 {
+                                self.inline_depth = 1;
+                                self.inline_limit = 12;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_limit = 0;
+                                self.inline_depth = 0;
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            DrawGameLayerState::CursorMarker => {
+                let draw_image = match self.result.draw_image {
+                    Some(s) => s,
+                    None => return,
+                };
+                // Cursor marker.
+                // Search for draw_image call with this = cursor_marker.sprite.last_overlay
+                // Inline from 0 -> 1 unconditionally, 1 -> 2 if this could be cursor_marker.sprite
+                ctrl.aliasing_memory_fix(op);
+                match *op {
+                    Operation::Call(dest) => {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let this = ctrl.resolve(ctx.register(1));
+                            if dest == draw_image {
+                                let offset = self.sprite_first_overlay_offset +
+                                    E::VirtualAddress::SIZE;
+                                let cursor_marker = ctrl.if_mem_word_offset(this, offset.into())
+                                    .and_then(|sprite| {
+                                        let sprite_offset =
+                                            struct_layouts::unit_sprite::<E::VirtualAddress>();
+                                        ctrl.if_mem_word_offset(sprite, sprite_offset)
+                                    });
+                                if let Some(cursor_marker) = cursor_marker {
+                                    self.result.cursor_marker = Some(cursor_marker);
+                                    ctrl.end_analysis();
+                                }
+                            } else {
+                                let should_inline = self.inline_depth == 0 ||
+                                    (self.inline_depth == 1 && {
+                                        let sprite_offset =
+                                            struct_layouts::unit_sprite::<E::VirtualAddress>();
+                                        ctrl.if_mem_word_offset(this, sprite_offset).is_some()
+                                    });
+                                if should_inline {
+                                    self.inline_depth += 1;
+                                    let old_inline_limit = self.inline_limit;
+                                    if self.inline_depth == 1 {
+                                        self.inline_limit = 16;
+                                    }
+                                    ctrl.analyze_with_current_state(self, dest);
+                                    self.inline_depth -= 1;
+                                    self.inline_limit = old_inline_limit;
+                                    if self.result.cursor_marker.is_some() {
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => (),
+                }
             }
         }
     }
@@ -777,8 +942,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     let condition = ctrl.resolve(condition);
                     match self.float_eq_tracker.check_jump(condition) {
                         FloatCmpJump::Done(a, b, jump) => {
-                            if self.resolve_rdata_const(a) == Some(0) ||
-                                self.resolve_rdata_const(b) == Some(0)
+                            if resolve_rdata_const(a, self.rdata) == Some(0) ||
+                                resolve_rdata_const(b, self.rdata) == Some(0)
                             {
                                 let eq_zero_branch = match jump {
                                     true => match ctrl.resolve_va(to) {
@@ -929,26 +1094,6 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-impl<'a, 'acx, 'e, E: ExecutionState<'e>> AnalyzeRenderScreen<'a, 'acx, 'e, E> {
-    fn resolve_rdata_const(&self, value: Operand<'e>) -> Option<u64> {
-        if let Some(c) = value.if_constant() {
-            Some(c)
-        } else {
-            let mem = value.if_memory()?;
-            let addr = E::VirtualAddress::from_u64(mem.if_constant_address()?);
-            let rdata_start = self.rdata.virtual_address;
-            let rdata_end = rdata_start + self.rdata.virtual_size;
-            if addr >= rdata_start && addr < rdata_end {
-                let offset = (addr.as_u64() - rdata_start.as_u64()) as usize;
-                let bytes = self.rdata.data.get(offset..)?.get(..8)?;
-                Some(LittleEndian::read_u64(bytes) & mem.size.mask())
-            } else {
-                None
             }
         }
     }

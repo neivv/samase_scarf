@@ -326,6 +326,7 @@ results! {
         GetRenderTarget => "get_render_target",
         ClearRenderTarget => "clear_render_target",
         MoveScreen => "move_screen",
+        UpdateGameScreenSize => "update_game_screen_size",
     }
 }
 
@@ -493,6 +494,11 @@ results! {
         // (Extra detail: 1.16.1 hardcodes the sizes as 640x400 instead of 640x383)
         GameScreenWidthBwpx => "game_screen_width_bwpx",
         GameScreenHeightBwPx => "game_screen_height_bwpx",
+        ZoomActionActive => "zoom_action_active",
+        ZoomActionMode => "zoom_action_mode",
+        ZoomActionStart => "zoom_action_start",
+        ZoomActionTarget => "zoom_action_target",
+        ZoomActionCompletion => "zoom_action_completion",
     }
 }
 
@@ -597,6 +603,18 @@ impl<'e, E: ExecutionState<'e>> ArgCache<'e, E> {
                 stack_pointer,
                 index as u64 * size,
             )
+        }
+    }
+
+    pub fn on_call_f32(&self, index: u8) -> Operand<'e> {
+        if E::VirtualAddress::SIZE == 8 {
+            if index < 4 {
+                self.ctx.xmm(index, 0)
+            } else {
+                self.ctx.and_const(self.on_call(index), 0xffff_ffff)
+            }
+        } else {
+            self.on_call(index)
         }
     }
 
@@ -971,6 +989,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             GetRenderTarget => self.get_render_target(),
             ClearRenderTarget => self.clear_render_target(),
             MoveScreen => self.move_screen(),
+            UpdateGameScreenSize => self.update_game_screen_size(),
         }
     }
 
@@ -1133,6 +1152,11 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             TriggerCurrentPlayer => self.trigger_current_player(),
             GameScreenWidthBwpx => self.game_screen_width_bwpx(),
             GameScreenHeightBwPx => self.game_screen_height_bwpx(),
+            ZoomActionActive => self.zoom_action_active(),
+            ZoomActionMode => self.zoom_action_mode(),
+            ZoomActionStart => self.zoom_action_start(),
+            ZoomActionTarget => self.zoom_action_target(),
+            ZoomActionCompletion => self.zoom_action_completion(),
         }
     }
 
@@ -3246,6 +3270,48 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         )
     }
 
+    pub fn zoom_action_active(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ZoomActionActive,
+            AnalysisCache::cache_draw_game_layer,
+        )
+    }
+
+    pub fn zoom_action_mode(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ZoomActionMode,
+            AnalysisCache::cache_draw_game_layer,
+        )
+    }
+
+    pub fn zoom_action_start(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ZoomActionStart,
+            AnalysisCache::cache_draw_game_layer,
+        )
+    }
+
+    pub fn zoom_action_target(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ZoomActionTarget,
+            AnalysisCache::cache_draw_game_layer,
+        )
+    }
+
+    pub fn zoom_action_completion(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ZoomActionCompletion,
+            AnalysisCache::cache_draw_game_layer,
+        )
+    }
+
+    pub fn update_game_screen_size(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UpdateGameScreenSize,
+            AnalysisCache::cache_draw_game_layer,
+        )
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -4318,12 +4384,21 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
 
     fn cache_draw_game_layer(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
-        self.cache_many(&[PrepareDrawImage, DrawImage], &[OperandAnalysis::CursorMarker], |s| {
-            let draw_game_layer = s.draw_game_layer(actx)?;
-            let sprite_size = s.sprite_array(actx)?.1;
-            let result = renderer::analyze_draw_game_layer(actx, draw_game_layer, sprite_size);
-            Some(([result.prepare_draw_image, result.draw_image], [result.cursor_marker]))
-        })
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[PrepareDrawImage, DrawImage, UpdateGameScreenSize],
+            &[CursorMarker, ZoomActionActive, ZoomActionMode, ZoomActionStart, ZoomActionTarget,
+                ZoomActionCompletion],
+            |s| {
+                let draw_game_layer = s.draw_game_layer(actx)?;
+                let sprite_size = s.sprite_array(actx)?.1;
+                let result = renderer::analyze_draw_game_layer(actx, draw_game_layer, sprite_size);
+                Some(([result.prepare_draw_image, result.draw_image,
+                    result.update_game_screen_size], [result.cursor_marker,
+                    result.zoom_action_active, result.zoom_action_mode,
+                    result.zoom_action_start, result.zoom_action_target,
+                    result.zoom_action_completion]))
+            })
     }
 
     fn draw_image(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {

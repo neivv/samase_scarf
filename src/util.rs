@@ -584,3 +584,24 @@ pub fn read_u32_at<Va: VirtualAddress>(section: &BinarySection<Va>, offset: Rva)
         .and_then(|x| x.get(..4))
         .map(|x| LittleEndian::read_u32(x))
 }
+
+pub fn resolve_rdata_const<'e, Va: VirtualAddress>(
+    value: Operand<'e>,
+    rdata: &BinarySection<Va>,
+) -> Option<u64> {
+    if let Some(c) = value.if_constant() {
+        Some(c)
+    } else {
+        let mem = value.if_memory()?;
+        let addr = Va::from_u64(mem.if_constant_address()?);
+        let rdata_start = rdata.virtual_address;
+        let rdata_end = rdata_start + rdata.virtual_size;
+        if addr >= rdata_start && addr < rdata_end {
+            let offset = (addr.as_u64() - rdata_start.as_u64()) as usize;
+            let bytes = rdata.data.get(offset..)?.get(..8)?;
+            Some(LittleEndian::read_u64(bytes) & mem.size.mask())
+        } else {
+            None
+        }
+    }
+}
