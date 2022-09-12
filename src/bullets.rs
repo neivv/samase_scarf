@@ -1,14 +1,15 @@
 use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashMap;
 
-use scarf::{MemAccess, Operand, Operation, DestOperand};
+use scarf::{MemAccess, Operand, Operation, DestOperand, MemAccessSize};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{AnalysisCtx, ArgCache, ControlExt, OptionExt, bumpvec_with_capacity};
+use crate::{AnalysisCtx, ArgCache};
 use crate::analysis_state::{AnalysisState, StateEnum, FindCreateBulletState};
 use crate::switch;
 use crate::struct_layouts;
+use crate::util::{bumpvec_with_capacity, ControlExt, OptionExt, OperandExt, is_global};
 
 pub(crate) struct BulletCreation<'e, Va: VirtualAddress> {
     pub first_active_bullet: Option<Operand<'e>>,
@@ -21,6 +22,28 @@ pub(crate) struct BulletCreation<'e, Va: VirtualAddress> {
 
 pub(crate) struct StepBulletFrame<Va: VirtualAddress> {
     pub step_moving_bullet_frame: Option<Va>,
+}
+
+pub(crate) struct StepMovingBulletFrame<'e, Va: VirtualAddress> {
+    pub flingy_flags_tmp: Option<Operand<'e>>,
+    pub flingy_x_old: Option<Operand<'e>>,
+    pub flingy_y_old: Option<Operand<'e>>,
+    pub flingy_x_new: Option<Operand<'e>>,
+    pub flingy_y_new: Option<Operand<'e>>,
+    pub flingy_exact_x_new: Option<Operand<'e>>,
+    pub flingy_exact_y_new: Option<Operand<'e>>,
+    pub flingy_flags_new: Option<Operand<'e>>,
+    pub flingy_show_end_walk_anim: Option<Operand<'e>>,
+    pub flingy_show_start_walk_anim: Option<Operand<'e>>,
+    pub flingy_speed_used_for_move: Option<Operand<'e>>,
+    pub map_width_pixels: Option<Operand<'e>>,
+    pub map_height_pixels: Option<Operand<'e>>,
+    pub flingy_update_target_dir: Option<Va>,
+    pub step_flingy_speed: Option<Va>,
+    pub step_flingy_movement_start_end: Option<Va>,
+    pub step_flingy_position: Option<Va>,
+    pub move_sprite: Option<Va>,
+    pub step_flingy_turning: Option<Va>,
 }
 
 struct FindCreateBullet<'a, 'acx, 'e, E: ExecutionState<'e>> {
@@ -405,6 +428,404 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepBulletFrameAnaly
                 if this == self.this {
                     self.result.step_moving_bullet_frame = Some(dest);
                     ctrl.end_analysis();
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_step_moving_bullet_frame<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    step_moving_bullet_frame: E::VirtualAddress,
+) -> StepMovingBulletFrame<'e, E::VirtualAddress> {
+    let mut result = StepMovingBulletFrame {
+        flingy_flags_tmp: None,
+        flingy_x_old: None,
+        flingy_y_old: None,
+        flingy_x_new: None,
+        flingy_y_new: None,
+        flingy_exact_x_new: None,
+        flingy_exact_y_new: None,
+        flingy_flags_new: None,
+        flingy_show_end_walk_anim: None,
+        flingy_show_start_walk_anim: None,
+        flingy_speed_used_for_move: None,
+        map_width_pixels: None,
+        map_height_pixels: None,
+        flingy_update_target_dir: None,
+        step_flingy_speed: None,
+        step_flingy_movement_start_end: None,
+        step_flingy_position: None,
+        move_sprite: None,
+        step_flingy_turning: None,
+    };
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = StepMovingAnalyzer::<E> {
+        state: StepMovingState::FlingyFlagsTmp,
+        inline_depth: 0,
+        inlining_move_flingy: false,
+        verifying_func: false,
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        current_func: E::VirtualAddress::from_u64(0),
+        start_end_other_state: None,
+        start_end_candidate: None,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, step_moving_bullet_frame);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct StepMovingAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    state: StepMovingState,
+    inline_depth: u8,
+    inlining_move_flingy: bool,
+    verifying_func: bool,
+    result: &'a mut StepMovingBulletFrame<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    current_func: E::VirtualAddress,
+    start_end_other_state: Option<(E, E::VirtualAddress)>,
+    start_end_candidate: Option<Operand<'e>>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum StepMovingState {
+    /// Find write of flingy.flags to global
+    /// Allow inlining twice at start of the function
+    FlingyFlagsTmp,
+    /// Check for flingy_update_target_dir, step_flingy_speed, step_flingy_movement_start_end,
+    /// step_flingy_position calls each in order.
+    /// flingy_update_target_dir may be inlined though.
+    /// verify with:
+    /// flingy_update_target_dir: starts with comparision of next_move_waypoint.x, pos.x
+    ///     May be inlined and missing
+    /// step_flingy_speed: starts with jump of flingy_movement_type
+    /// step_flingy_movement_start_end: starts with jump of flags & 2
+    ///     flags & 2 == 0 path may write to startwalk anim,
+    ///     endwalk anim is another global written
+    /// step_flingy_position: writes flingy_speed to flingy_speed_used_for_move
+    FlingyFuncs,
+    AnalyzeStartEndStartWalk,
+    AnalyzeStartEndEndWalk,
+    /// old_flingy_x,y = flingy_pos.x,y
+    /// flingy_pos.x,y = new_flingy_x,y (Skip operation for move_sprite below)
+    /// flingy_exact_pos.x,y = new_flingy_exact_x,y
+    /// new_flingy_flags = flingy_flags (this way because bullet)
+    /// Ends on move_sprite(flingy.x, flingy.y)
+    /// May have to inline to this.move_flingy(), in that case no variables other than
+    /// new_flingy_flags have been found.
+    FlingyVarWrites,
+    /// Another func which starts with flags & 2 comparision (inside move_flingy like
+    /// in previous state)
+    StepFlingyTurning,
+    /// May inline out from FlingyFlagsTmp inline.
+    /// Check flingy.position.x >= map_width_pixels and
+    /// flingy.position.y >= map_height_pixels
+    MapWidthHeight,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let flingy_flags_offset = struct_layouts::flingy_flags::<E::VirtualAddress>();
+        let movement_type_offset = struct_layouts::flingy_movement_type::<E::VirtualAddress>();
+        let next_move_wp_offset = struct_layouts::flingy_next_move_waypoint::<E::VirtualAddress>();
+        let pos_offset = struct_layouts::flingy_pos::<E::VirtualAddress>();
+        let exact_pos_offset = struct_layouts::flingy_exact_pos::<E::VirtualAddress>();
+        let speed_offset = struct_layouts::flingy_speed::<E::VirtualAddress>();
+        let ctx = ctrl.ctx();
+        let ecx = ctx.register(1);
+        match self.state {
+            StepMovingState::FlingyFlagsTmp => {
+                match *op {
+                    Operation::Jump { .. } => {
+                        ctrl.end_analysis();
+                    }
+                    Operation::Call(dest) => {
+                        if self.inline_depth < 2 {
+                            if let Some(dest) = ctrl.resolve_va(dest) {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.state != StepMovingState::FlingyFlagsTmp {
+                                    self.state = StepMovingState::MapWidthHeight;
+                                }
+                            }
+                        }
+                    }
+                    Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+                        let value = ctrl.resolve(value);
+                        if value.if_mem8_offset(flingy_flags_offset) == Some(ecx) {
+                            let mem = ctrl.resolve_mem(mem);
+                            if is_global(mem.address().0) {
+                                self.result.flingy_flags_tmp = Some(ctx.memory(&mem));
+                                self.state = StepMovingState::FlingyFuncs;
+                            }
+                        }
+
+
+                    }
+                    _ => (),
+                }
+            }
+            StepMovingState::FlingyFuncs => {
+                if !self.verifying_func {
+                    if let Operation::Call(dest) = *op {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            if ctrl.resolve(ecx) == ecx {
+                                self.verifying_func = true;
+                                self.current_func = dest;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.verifying_func = false;
+                                if self.result.step_flingy_position.is_some() {
+                                    self.state = StepMovingState::FlingyVarWrites;
+                                } else {
+                                    self.state = StepMovingState::FlingyFuncs;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    if let Operation::Jump { condition, to } = *op {
+                        let condition = ctrl.resolve(condition);
+                        let pos_cmp = self.result.flingy_update_target_dir.is_none() &&
+                            condition.if_arithmetic_eq_neq()
+                                .map(|x| (x.0, x.1))
+                                .and_if_either_other(|x| {
+                                    x.if_mem16_offset(next_move_wp_offset) == Some(ecx)
+                                })
+                                .filter(|x| x.if_mem16_offset(pos_offset) == Some(ecx))
+                                .is_some();
+                        if pos_cmp {
+                            self.result.flingy_update_target_dir = Some(self.current_func);
+                            ctrl.end_analysis();
+                            return;
+                        }
+
+                        let speed_cmp = self.result.step_flingy_speed.is_none() &&
+                            condition.if_arithmetic_eq_neq()
+                                .filter(|x| x.1.if_constant().is_some())
+                                .and_then(|x| x.0.if_mem8_offset(movement_type_offset)) ==
+                                    Some(ecx);
+                        if speed_cmp {
+                            self.result.step_flingy_speed = Some(self.current_func);
+                            ctrl.end_analysis();
+                            return;
+                        }
+
+                        if self.result.step_flingy_movement_start_end.is_none() {
+                            let start_end_cmp = condition.if_arithmetic_eq_neq_zero(ctx)
+                                .and_then(|x| {
+                                    x.0.if_arithmetic_and_const(2)?
+                                        .if_mem8_offset(flingy_flags_offset)
+                                        .filter(|&x| x == ecx)?;
+                                    Some(x.1)
+                                });
+                            if let Some(follow) = start_end_cmp {
+                                let to = match ctrl.resolve_va(to) {
+                                    Some(s) => s,
+                                    None => return,
+                                };
+                                let no_jump = ctrl.current_instruction_end();
+                                let (next_addr, other_addr) = match follow {
+                                    true => (to, no_jump),
+                                    false => (no_jump, to),
+                                };
+                                self.result.step_flingy_movement_start_end =
+                                    Some(self.current_func);
+                                self.state = StepMovingState::AnalyzeStartEndStartWalk;
+                                self.start_end_other_state =
+                                    Some((ctrl.exec_state().clone(), other_addr));
+                                ctrl.clear_unchecked_branches();
+                                ctrl.continue_at_address(next_addr);
+                                return;
+                            }
+                        }
+                        ctrl.end_analysis();
+                    } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                        if self.result.step_flingy_position.is_none() {
+                            let value = ctrl.resolve(value);
+                            if value.if_mem32_offset(speed_offset) == Some(ecx) {
+                                self.result.step_flingy_position = Some(self.current_func);
+                                let mem = ctrl.resolve_mem(&mem);
+                                if is_global(mem.address().0) {
+                                    self.result.flingy_speed_used_for_move =
+                                        Some(ctx.memory(&mem));
+                                }
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            StepMovingState::AnalyzeStartEndStartWalk |
+                StepMovingState::AnalyzeStartEndEndWalk =>
+            {
+                if let Operation::Move(DestOperand::Memory(ref mem), _, None) = *op {
+                    if mem.size == MemAccessSize::Mem8 {
+                        let mem = ctrl.resolve_mem(mem);
+                        if is_global(mem.address().0) {
+                            let val = ctx.memory(&mem);
+                            if self.result.flingy_show_start_walk_anim != Some(val) {
+                                self.start_end_candidate = Some(ctx.memory(&mem));
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { .. } = *op {
+                    self.start_end_candidate = None;
+                } else if let Operation::Return(..) = *op {
+                    if let Some(result) = self.start_end_candidate {
+                        if self.state == StepMovingState::AnalyzeStartEndStartWalk {
+                            self.result.flingy_show_start_walk_anim = Some(result);
+                            self.state = StepMovingState::AnalyzeStartEndEndWalk;
+                            if let Some(next) = self.start_end_other_state.take() {
+                                ctrl.clear_unchecked_branches();
+                                ctrl.add_branch_with_state(next.1, next.0, Default::default());
+                            }
+                        } else {
+                            self.result.flingy_show_end_walk_anim = Some(result);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            StepMovingState::FlingyVarWrites => {
+                if let Operation::Move(DestOperand::Memory(ref dest), value, None) = *op {
+                    let dest = ctrl.resolve_mem(dest);
+                    let value = ctrl.resolve(value);
+                    if dest.address().0 == ecx && is_global(value) {
+                        let offset = dest.address().1;
+                        if offset == pos_offset {
+                            self.result.flingy_x_new = Some(value);
+                        } else if offset == pos_offset + 2 {
+                            self.result.flingy_y_new = Some(value);
+                        } else if offset == exact_pos_offset {
+                            self.result.flingy_exact_x_new = Some(value);
+                        } else if offset == exact_pos_offset + 4 {
+                            self.result.flingy_exact_y_new = Some(value);
+                        }
+                        // Skip operation so that self.pos.x can be checked for move_sprite arg
+                        ctrl.skip_operation();
+                    } else if let Some(mem) = value.if_memory() {
+                        if mem.address().0 == ecx {
+                            let offset = mem.address().1;
+                            if is_global(dest.address().0) {
+                                let dest_op = ctx.memory(&dest);
+                                if offset == flingy_flags_offset {
+                                    self.result.flingy_flags_new = Some(dest_op);
+                                } else if offset == pos_offset {
+                                    self.result.flingy_x_old = Some(dest_op);
+                                } else if offset == pos_offset + 2 {
+                                    self.result.flingy_y_old = Some(dest_op);
+                                }
+                            }
+                        }
+                    }
+                } if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ecx);
+                        if this == ecx && !self.inlining_move_flingy {
+                            if self.result.flingy_flags_new.is_some() &&
+                                self.result.flingy_x_old.is_none() &&
+                                self.result.flingy_x_new.is_none()
+                            {
+                                self.inlining_move_flingy = true;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inlining_move_flingy = false;
+                                self.state = StepMovingState::MapWidthHeight;
+                                return;
+                            }
+                        }
+                        let ok = struct_layouts::if_unit_sprite::<E::VirtualAddress>(this) ==
+                            Some(ecx);
+                        if ok {
+                            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                            let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                            let ok = arg1.if_mem16_offset(pos_offset) == Some(ecx) &&
+                                arg2.if_mem16_offset(pos_offset + 2) == Some(ecx);
+                            if ok {
+                                self.result.move_sprite = Some(dest);
+                                self.state = StepMovingState::StepFlingyTurning;
+                            }
+                        }
+                    }
+                }
+            }
+            StepMovingState::StepFlingyTurning => {
+                if !self.verifying_func {
+                    if let Operation::Call(dest) = *op {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            if ctrl.resolve(ecx) == ecx {
+                                self.verifying_func = true;
+                                self.current_func = dest;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.verifying_func = false;
+                                if self.result.step_flingy_turning.is_some() {
+                                    if self.inline_depth >= 2 || self.inlining_move_flingy {
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    if let Operation::Jump { condition, .. } = *op {
+                        let condition = ctrl.resolve(condition);
+                        let ok = condition.if_arithmetic_eq_neq_zero(ctx)
+                            .and_then(|x| {
+                                x.0.if_arithmetic_and_const(2)?
+                                    .if_mem8_offset(flingy_flags_offset)
+                            }) == Some(ecx);
+                        if ok {
+                            self.result.step_flingy_turning = Some(self.current_func);
+                            self.state = StepMovingState::MapWidthHeight;
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            StepMovingState::MapWidthHeight => {
+                if self.result.map_height_pixels.is_some() &&
+                    self.result.map_width_pixels.is_some()
+                {
+                    ctrl.end_analysis();
+                    return;
+                }
+                if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    // signed greater or equal jump, so annoying to match
+                    let result = condition.if_arithmetic_eq_neq()
+                        .map(|x| (x.0, x.1))
+                        .and_either(|x| {
+                            // l should be width/height global,
+                            // r is x + 8000_0000
+                            let (l, r) = x.if_arithmetic_gt()?;
+                            if !is_global(l) {
+                                return None;
+                            }
+                            let mem = Operand::and_masked(r).0
+                                .if_arithmetic_add_const(0x8000_0000)?
+                                .unwrap_sext()
+                                .if_mem16()?;
+                            let (base, offset) = mem.address();
+                            if base == ecx {
+                                Some((offset, l))
+                            } else {
+                                None
+                            }
+                        })
+                        .map(|x| x.0);
+                    if let Some((offset, val)) = result {
+                        if offset == pos_offset {
+                            self.result.map_width_pixels = Some(val);
+                        } else if offset == pos_offset + 2 {
+                            self.result.map_height_pixels = Some(val);
+                        }
+                    }
                 }
             }
         }

@@ -329,6 +329,12 @@ results! {
         MoveScreen => "move_screen",
         UpdateGameScreenSize => "update_game_screen_size",
         StepMovingBulletFrame => "step_moving_bullet_frame",
+        FlingyUpdateTargetDir => "flingy_update_target_dir",
+        StepFlingySpeed => "step_flingy_speed",
+        StepFlingyMovementStartEnd => "step_flingy_movement_start_end",
+        StepFlingyPosition => "step_flingy_position",
+        MoveSprite => "move_sprite",
+        StepFlingyTurning => "step_flingy_turning",
     }
 }
 
@@ -501,6 +507,20 @@ results! {
         ZoomActionStart => "zoom_action_start",
         ZoomActionTarget => "zoom_action_target",
         ZoomActionCompletion => "zoom_action_completion",
+        FlingyFlagsTmp => "flingy_flags_tmp",
+        FlingyXOld => "flingy_x_old",
+        FlingyYOld => "flingy_y_old",
+        FlingyXNew => "flingy_x_new",
+        FlingyYNew => "flingy_y_new",
+        FlingyExactXNew => "flingy_exact_x_new",
+        FlingyExactYNew => "flingy_exact_y_new",
+        FlingyFlagsNew => "flingy_flags_new",
+        FlingyShowEndWalkAnim => "flingy_show_end_walk_anim",
+        FlingyShowStartWalkAnim => "flingy_show_start_walk_anim",
+        // "What speed value was used for moving the flingy"
+        FlingySpeedUsedForMove => "flingy_speed_used_for_move",
+        MapWidthPixels => "map_width_pixels",
+        MapHeightPixels => "map_height_pixels",
     }
 }
 
@@ -994,6 +1014,12 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             MoveScreen => self.move_screen(),
             UpdateGameScreenSize => self.update_game_screen_size(),
             StepMovingBulletFrame => self.step_moving_bullet_frame(),
+            FlingyUpdateTargetDir => self.flingy_update_target_dir(),
+            StepFlingySpeed => self.step_flingy_speed(),
+            StepFlingyMovementStartEnd => self.step_flingy_movement_start_end(),
+            StepFlingyPosition => self.step_flingy_position(),
+            MoveSprite => self.move_sprite(),
+            StepFlingyTurning => self.step_flingy_turning(),
         }
     }
 
@@ -1161,6 +1187,19 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             ZoomActionStart => self.zoom_action_start(),
             ZoomActionTarget => self.zoom_action_target(),
             ZoomActionCompletion => self.zoom_action_completion(),
+            FlingyFlagsTmp => self.flingy_flags_tmp(),
+            FlingyXOld => self.flingy_x_old(),
+            FlingyYOld => self.flingy_y_old(),
+            FlingyXNew => self.flingy_x_new(),
+            FlingyYNew => self.flingy_y_new(),
+            FlingyExactXNew => self.flingy_exact_x_new(),
+            FlingyExactYNew => self.flingy_exact_y_new(),
+            FlingyFlagsNew => self.flingy_flags_new(),
+            FlingyShowEndWalkAnim => self.flingy_show_end_walk_anim(),
+            FlingyShowStartWalkAnim => self.flingy_show_start_walk_anim(),
+            FlingySpeedUsedForMove => self.flingy_speed_used_for_move(),
+            MapWidthPixels => self.map_width_pixels(),
+            MapHeightPixels => self.map_height_pixels(),
         }
     }
 
@@ -3327,6 +3366,139 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.analyze_many_addr(
             AddressAnalysis::StepMovingBulletFrame,
             AnalysisCache::cache_step_bullet_frame,
+        )
+    }
+
+    pub fn flingy_update_target_dir(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::FlingyUpdateTargetDir,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn step_flingy_speed(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepFlingySpeed,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn step_flingy_movement_start_end(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepFlingyMovementStartEnd,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn step_flingy_position(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepFlingyPosition,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn move_sprite(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::MoveSprite,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn step_flingy_turning(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepFlingyTurning,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn flingy_flags_tmp(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FlingyFlagsTmp,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn flingy_x_old(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FlingyXOld,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn flingy_y_old(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FlingyYOld,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn flingy_x_new(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FlingyXNew,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn flingy_y_new(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FlingyYNew,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn flingy_exact_x_new(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FlingyExactXNew,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn flingy_exact_y_new(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FlingyExactYNew,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn flingy_flags_new(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FlingyFlagsNew,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn flingy_show_end_walk_anim(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FlingyShowEndWalkAnim,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn flingy_show_start_walk_anim(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FlingyShowStartWalkAnim,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn flingy_speed_used_for_move(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FlingySpeedUsedForMove,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn map_width_pixels(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::MapWidthPixels,
+            AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn map_height_pixels(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::MapHeightPixels,
+            AnalysisCache::cache_step_moving_bullet_frame,
         )
     }
 
@@ -5831,6 +6003,37 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     first_active_bullet,
                 );
                 Some(([result.step_moving_bullet_frame], []))
+            })
+    }
+
+    fn step_moving_bullet_frame(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::StepMovingBulletFrame,
+            |s| s.cache_step_bullet_frame(actx),
+        )
+    }
+
+    fn cache_step_moving_bullet_frame(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[FlingyUpdateTargetDir, StepFlingySpeed, StepFlingyMovementStartEnd,
+                StepFlingyPosition, MoveSprite, StepFlingyTurning],
+            &[FlingyFlagsTmp, FlingyXOld, FlingyYOld, FlingyXNew, FlingyYNew, FlingyExactXNew,
+                FlingyExactYNew, FlingyFlagsNew, FlingyShowEndWalkAnim, FlingyShowStartWalkAnim,
+                MapWidthPixels, MapHeightPixels, FlingySpeedUsedForMove],
+            |s| {
+                let step = s.step_moving_bullet_frame(actx)?;
+                let r = bullets::analyze_step_moving_bullet_frame(actx, step);
+                Some(([r.flingy_update_target_dir, r.step_flingy_speed,
+                    r.step_flingy_movement_start_end, r.step_flingy_position, r.move_sprite,
+                    r.step_flingy_turning], [r.flingy_flags_tmp, r.flingy_x_old, r.flingy_y_old,
+                    r.flingy_x_new, r.flingy_y_new, r.flingy_exact_x_new, r.flingy_exact_y_new,
+                    r.flingy_flags_new, r.flingy_show_end_walk_anim, r.flingy_show_start_walk_anim,
+                    r.map_width_pixels, r.map_height_pixels, r.flingy_speed_used_for_move]))
             })
     }
 }

@@ -34,6 +34,48 @@ pub fn unit_sprite<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn flingy_next_move_waypoint<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x18,
+        false => 0x30,
+    }
+}
+
+pub fn flingy_flags<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x20,
+        false => 0x38,
+    }
+}
+
+pub fn flingy_movement_type<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x27,
+        false => 0x3f,
+    }
+}
+
+pub fn flingy_pos<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x28,
+        false => 0x40,
+    }
+}
+
+pub fn flingy_exact_pos<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x2c,
+        false => 0x44,
+    }
+}
+
+pub fn flingy_speed<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x38,
+        false => 0x50,
+    }
+}
+
 pub fn unit_player<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x4c,

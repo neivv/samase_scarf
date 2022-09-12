@@ -1574,7 +1574,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
             // special handling
             JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins | StepGameLoop |
                 GetMouseX | GetMouseY | NetFormatTurnRate | ReadWholeMpqFile |
-                ReadWholeMpqFile2 | StepBulletFrame => continue,
+                ReadWholeMpqFile2 | StepBulletFrame | FlingyUpdateTargetDir => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -1621,7 +1621,10 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 TargetedOrderGround | TargetedOrderUnit | MinimapCursorType | TeamGameTeams |
                 Renderer | TriggerCurrentPlayer | GameScreenWidthBwpx | GameScreenHeightBwPx |
                 ZoomActionActive | ZoomActionMode | ZoomActionStart | ZoomActionTarget |
-                ZoomActionCompletion =>
+                ZoomActionCompletion | FlingyFlagsTmp | FlingyXOld | FlingyYOld | FlingyXNew |
+                FlingyYNew | FlingyExactXNew | FlingyExactYNew | FlingyFlagsNew |
+                FlingyShowStartWalkAnim | FlingyShowEndWalkAnim | FlingySpeedUsedForMove |
+                MapWidthPixels | MapHeightPixels =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -2195,6 +2198,15 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(step_bullet_frame.is_none());
     } else {
         assert!(step_bullet_frame.is_some());
+    }
+
+    // flingy_update_target_dir was inlined to bullet movement in all 1.22 patches
+    // other than 1.22.0
+    let flingy_update_target_dir = analysis.flingy_update_target_dir();
+    if minor_version == 22 && patch_version > 0 {
+        assert!(flingy_update_target_dir.is_none());
+    } else {
+        assert!(flingy_update_target_dir.is_some());
     }
 
     let dump_text = samase_scarf::dump::dump_all(analysis);

@@ -56,6 +56,7 @@ find_unit_borders_rect: 1401a9d10
 find_unit_for_click: 140402c60
 finish_unit_post: 1401b0540
 finish_unit_pre: 1401b0850
+flingy_update_target_dir: 14017b990
 font_cache_render_ascii: 1405e2b80
 game_loop: 140356f90
 game_screen_lclick: 1404029a0
@@ -98,6 +99,7 @@ map_init_chk_callbacks: 140a04d80
 menu_swish_in: 14033a800
 menu_swish_out: 140339d50
 move_screen: 1402a5a40
+move_sprite: 140189bf0
 net_format_turn_rate: 14038dbb0
 open_anim_multi_file: 140145590
 open_anim_single_file: 140145010
@@ -151,6 +153,10 @@ step_ai_script: 140260ed0
 step_bnet_controller: 140425130
 step_bullet_frame: 140179060
 step_bullets: 140178ff0
+step_flingy_movement_start_end: 14017bba0
+step_flingy_position: 14017bab0
+step_flingy_speed: 14017bcf0
+step_flingy_turning: 14017bc30
 step_game_logic: 1402fffa0
 step_game_loop: 1402ffcf0
 step_hidden_unit_frame: 1401e31b0
@@ -234,6 +240,17 @@ first_lone_sprite: Mem64[140cfe000]
 first_player_unit: 140cfe210
 first_pylon: Mem64[140cfe2f8]
 first_revealer: Mem64[140cfe208]
+flingy_exact_x_new: Mem32[140ce78b0]
+flingy_exact_y_new: Mem32[140ce78b4]
+flingy_flags_new: Mem8[140ce78ce]
+flingy_flags_tmp: Mem8[140ce78cd]
+flingy_show_end_walk_anim: Mem8[140ce78cc]
+flingy_show_start_walk_anim: Mem8[140ce78cb]
+flingy_speed_used_for_move: Mem32[140ce78b8]
+flingy_x_new: Mem16[140ce78bc]
+flingy_x_old: Mem16[140ce78c4]
+flingy_y_new: Mem16[140ce78c0]
+flingy_y_old: Mem16[140ce78c8]
 fonts: 140f542d8
 game: (Mem64[140c3d410] ^ 58f2f6f71f97214)
 game_data: 140f17730
@@ -274,9 +291,11 @@ local_storm_player_id: Mem32[140c63164]
 local_unique_player_id: Mem32[140c63160]
 local_visions: Mem32[140f15fb0]
 main_palette: 140d042f0
+map_height_pixels: Mem16[140d5974c]
 map_history: None
 map_mpq: Mem64[140ef2ec0]
 map_tile_flags: Mem64[140d04718]
+map_width_pixels: Mem16[140d59748]
 menu_screen_id: (((Mem32[140cc9c20] + 42a6d55) ^ Mem32[140ef0344]) & ffffffff)
 minimap_cursor_type: Mem16[140eed678]
 mouse_x: None
