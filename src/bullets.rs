@@ -383,6 +383,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepBulletFrameAnaly
                         }
                     }
                 }
+            } else if let Operation::Call(..) = *op {
+                ctrl.skip_call_preserve_esp();
             }
         } else {
             let dest = match *op {
