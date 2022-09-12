@@ -327,18 +327,33 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
 
 pub(crate) fn analyze_step_bullet_frame<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
-    step_bullet_frame: E::VirtualAddress,
+    step_bullets: Option<E::VirtualAddress>,
+    step_bullet_frame: Option<E::VirtualAddress>,
+    first_active_bullet: Operand<'e>,
 ) -> StepBulletFrame<E::VirtualAddress> {
     let mut result = StepBulletFrame {
         step_moving_bullet_frame: None,
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    // If step_bullet_frame doesn't exist, it's inlined and hopefully step_bullets does.
+    // Technically both of them could be inlined which would be bit ugh, and this analysis
+    // would have to be moved to be yet another part of the massive step_objects analysis.
+    let (func, this) = if let Some(step) = step_bullet_frame {
+        (step, ctx.register(1))
+    } else {
+        let step_bullets = match step_bullets {
+            Some(s) => s,
+            None => return result,
+        };
+        (step_bullets, first_active_bullet)
+    };
     let mut analyzer = StepBulletFrameAnalyzer::<E> {
         result: &mut result,
         switch_jumped: false,
+        this,
     };
-    let mut analysis = FuncAnalysis::new(binary, ctx, step_bullet_frame);
+    let mut analysis = FuncAnalysis::new(binary, ctx, func);
     analysis.analyze(&mut analyzer);
     result
 }
@@ -346,6 +361,7 @@ pub(crate) fn analyze_step_bullet_frame<'e, E: ExecutionState<'e>>(
 struct StepBulletFrameAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut StepBulletFrame<E::VirtualAddress>,
     switch_jumped: bool,
+    this: Operand<'e>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepBulletFrameAnalyzer<'a, 'e, E> {
@@ -384,7 +400,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepBulletFrameAnaly
             };
             if let Some(dest) = dest.and_then(|x| ctrl.resolve_va(x)) {
                 let this = ctrl.resolve(ctx.register(1));
-                if this == ctx.register(1) {
+                if this == self.this {
                     self.result.step_moving_bullet_frame = Some(dest);
                     ctrl.end_analysis();
                 }

@@ -1574,7 +1574,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
             // special handling
             JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins | StepGameLoop |
                 GetMouseX | GetMouseY | NetFormatTurnRate | ReadWholeMpqFile |
-                ReadWholeMpqFile2 => continue,
+                ReadWholeMpqFile2 | StepBulletFrame => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -2183,6 +2183,18 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         check_global_opt(map_history, binary, "map_history");
     } else {
         assert!(map_history.is_none());
+    }
+
+    // step_bullet_frame was inlined to step_bullets in
+    // 1.20.7, 1.20.8, 1.20.11, 1.21.0b and 1.21.1,
+    let step_bullet_frame = analysis.step_bullet_frame();
+    if (minor_version == 20 && matches!(patch_version, 7 | 8 | 11))
+        || (minor_version == 21 && patch_version == 0 && revision == b'b')
+        || (minor_version == 21 && patch_version == 1)
+    {
+        assert!(step_bullet_frame.is_none());
+    } else {
+        assert!(step_bullet_frame.is_some());
     }
 
     let dump_text = samase_scarf::dump::dump_all(analysis);

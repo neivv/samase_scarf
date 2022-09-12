@@ -37,6 +37,7 @@ pub(crate) struct StepObjectsAnalysis<'e, Va: VirtualAddress> {
     pub step_active_frame: Option<Va>,
     pub step_hidden_frame: Option<Va>,
     pub step_bullet_frame: Option<Va>,
+    pub step_bullets: Option<Va>,
     pub reveal_area: Option<Va>,
     pub vision_update_counter: Option<Operand<'e>>,
     pub vision_updated: Option<Operand<'e>>,
@@ -922,6 +923,7 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         step_active_frame: None,
         step_hidden_frame: None,
         step_bullet_frame: None,
+        step_bullets: None,
         reveal_area: None,
         vision_update_counter: None,
         vision_updated: None,
@@ -957,6 +959,7 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         invisible_unit_checked_fns: bumpvec_with_capacity(0x10, &actx.bump),
         first_call_of_func: false,
         cloak_state_checked: false,
+        func_entry: step_objects,
     };
     loop {
         analysis.analyze(&mut analyzer);
@@ -993,6 +996,7 @@ struct StepObjectsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     invisible_unit_checked_fns: BumpVec<'acx, E::VirtualAddress>,
     first_call_of_func: bool,
     cloak_state_checked: bool,
+    func_entry: E::VirtualAddress,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -1355,26 +1359,35 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                         if self.inline_depth < 2 {
                             let old_inline_depth = self.inline_depth;
+                            let old_entry = self.func_entry;
                             self.inline_depth += 1;
+                            self.func_entry = dest;
                             ctrl.analyze_with_current_state(self, dest);
+                            self.func_entry = old_entry;
                             self.inline_depth = old_inline_depth;
-                            if let Some(func) = self.result.step_bullet_frame {
-                                if func.as_u64() == 0 {
-                                    self.result.step_bullet_frame = Some(dest);
-                                }
+                            if self.result.step_bullet_frame.is_some() {
                                 ctrl.end_analysis();
                             }
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
-                    if mem.size == E::WORD_SIZE && self.result.active_iscript_bullet.is_none() {
+                } else if let Operation::Move(ref dest, value, None) = *op {
+                    if let DestOperand::Memory(ref mem) = *dest {
+                        if mem.size == E::WORD_SIZE && self.result.active_iscript_bullet.is_none() {
+                            let value = ctrl.resolve(value);
+                            if value == self.first_active_bullet {
+                                let mem = ctrl.resolve_mem(mem);
+                                let dest_op = ctx.memory(&mem);
+                                if Some(dest_op) != self.result.active_iscript_flingy {
+                                    self.result.active_iscript_bullet = Some(dest_op);
+                                }
+                            }
+                        }
+                    } else if let Some(_) = ctrl.if_mem_word(value) {
+                        // If the instruction is a memory load from first_active_bullet,
+                        // assume that this function is step_bullets
                         let value = ctrl.resolve(value);
                         if value == self.first_active_bullet {
-                            let mem = ctrl.resolve_mem(mem);
-                            let dest_op = ctx.memory(&mem);
-                            if Some(dest_op) != self.result.active_iscript_flingy {
-                                self.result.active_iscript_bullet = Some(dest_op);
-                            }
+                            self.result.step_bullets = Some(self.func_entry);
                         }
                     }
                 } else if let Operation::Jump { condition, .. } = *op {
@@ -1386,7 +1399,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         .filter(|&x| x.0 == self.first_active_bullet)
                         .is_some();
                     if ok {
-                        self.result.step_bullet_frame = Some(E::VirtualAddress::from_u64(0));
+                        if Some(self.func_entry) != self.result.step_bullets {
+                            self.result.step_bullet_frame = Some(self.func_entry);
+                        }
+                        return;
                     }
                     // Only check first jump at depth 2
                     if self.inline_depth == 2 {

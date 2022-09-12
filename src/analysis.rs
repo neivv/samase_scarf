@@ -224,6 +224,7 @@ results! {
         StepActiveUnitFrame => "step_active_unit_frame",
         StepHiddenUnitFrame => "step_hidden_unit_frame",
         StepBulletFrame => "step_bullet_frame",
+        StepBullets => "step_bullets",
         RevealUnitArea => "reveal_unit_area",
         UpdateUnitVisibility => "update_unit_visibility",
         UpdateCloakState => "update_cloak_state",
@@ -897,6 +898,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             StepActiveUnitFrame => self.step_active_unit_frame(),
             StepHiddenUnitFrame => self.step_hidden_unit_frame(),
             StepBulletFrame => self.step_bullet_frame(),
+            StepBullets => self.step_bullets(),
             RevealUnitArea => self.reveal_unit_area(),
             UpdateUnitVisibility => self.update_unit_visibility(),
             UpdateCloakState => self.update_cloak_state(),
@@ -2517,6 +2519,13 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     pub fn step_bullet_frame(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(
             AddressAnalysis::StepBulletFrame,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn step_bullets(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::StepBullets,
             AnalysisCache::cache_step_objects,
         )
     }
@@ -5325,7 +5334,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use OperandAnalysis::*;
         self.cache_many(&[
             StepActiveUnitFrame, StepHiddenUnitFrame, StepBulletFrame, RevealUnitArea,
-            UpdateUnitVisibility, UpdateCloakState,
+            UpdateUnitVisibility, UpdateCloakState, StepBullets,
         ], &[
             VisionUpdateCounter, VisionUpdated, FirstDyingUnit, FirstRevealer, FirstInvisibleUnit,
             ActiveIscriptFlingy, ActiveIscriptBullet,
@@ -5348,6 +5357,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             Some(([
                 result.step_active_frame, result.step_hidden_frame, result.step_bullet_frame,
                 result.reveal_area, result.update_unit_visibility, result.update_cloak_state,
+                result.step_bullets,
             ], [
                 result.vision_update_counter, result.vision_updated, result.first_dying_unit,
                 result.first_revealer, result.first_invisible_unit, result.active_iscript_flingy,
@@ -5370,6 +5380,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
 
     fn step_bullet_frame(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::StepBulletFrame, |s| s.cache_step_objects(actx))
+    }
+
+    fn step_bullets(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::StepBullets, |s| s.cache_step_objects(actx))
     }
 
     fn update_unit_visibility(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -5807,8 +5821,15 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             &[StepMovingBulletFrame],
             &[],
             |s| {
-                let step_bullet_frame = s.step_bullet_frame(actx)?;
-                let result = bullets::analyze_step_bullet_frame(actx, step_bullet_frame);
+                let step_bullet_frame = s.step_bullet_frame(actx);
+                let step_bullets = s.step_bullets(actx);
+                let first_active_bullet = s.first_active_bullet(actx)?;
+                let result = bullets::analyze_step_bullet_frame(
+                    actx,
+                    step_bullets,
+                    step_bullet_frame,
+                    first_active_bullet,
+                );
                 Some(([result.step_moving_bullet_frame], []))
             })
     }
