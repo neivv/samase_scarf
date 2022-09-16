@@ -831,3 +831,47 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
         }
     }
 }
+
+pub(crate) fn do_missile_damage<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    iscript_switch: E::VirtualAddress,
+) -> Option<E::VirtualAddress> {
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+    // Search for iscript opcode 0x1b, calling into
+    // do_missile_dmg(this = active_iscript_bullet)
+    let switch_branch = switch::simple_switch_branch(binary, iscript_switch, 0x1b)?;
+    let mut analyzer = DoMissileDmgAnalyzer::<E> {
+        result: None,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, switch_branch);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct DoMissileDmgAnalyzer<'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DoMissileDmgAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                let ctx = ctrl.ctx();
+                let this = ctrl.resolve(ctx.register(1));
+                if ctrl.if_mem_word(this).is_some() {
+                    self.result = Some(dest);
+                    ctrl.end_analysis();
+                }
+            }
+        } else if let Operation::Jump { condition, to } = *op {
+            let ctx = ctrl.ctx();
+            if condition == ctx.const_1() && to.if_constant().is_none() {
+                // Looped back to switch
+                ctrl.end_branch();
+            }
+        }
+    }
+}

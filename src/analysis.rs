@@ -335,6 +335,7 @@ results! {
         StepFlingyPosition => "step_flingy_position",
         MoveSprite => "move_sprite",
         StepFlingyTurning => "step_flingy_turning",
+        DoMissileDamage => "do_missile_damage",
     }
 }
 
@@ -1020,6 +1021,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             StepFlingyPosition => self.step_flingy_position(),
             MoveSprite => self.move_sprite(),
             StepFlingyTurning => self.step_flingy_turning(),
+            DoMissileDamage => self.do_missile_damage(),
         }
     }
 
@@ -2250,6 +2252,10 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
 
     pub fn play_sound(&mut self) -> Option<E::VirtualAddress> {
         self.enter(|x, s| x.play_sound(s))
+    }
+
+    pub fn do_missile_damage(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(AnalysisCache::do_missile_damage)
     }
 
     pub fn ai_prepare_moving_to(&mut self) -> Option<E::VirtualAddress> {
@@ -5196,6 +5202,12 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     fn play_sound(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::PlaySound, |s| {
             sound::play_sound(actx, s.step_iscript_switch(actx)?)
+        })
+    }
+
+    fn do_missile_damage(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_single_address(AddressAnalysis::DoMissileDamage, |s| {
+            bullets::do_missile_damage(actx, s.step_iscript_switch(actx)?)
         })
     }
 
