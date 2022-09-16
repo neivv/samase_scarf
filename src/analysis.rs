@@ -2201,27 +2201,27 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
 
     /// Note: Struct that contains { grp, sd_ddsgrp, hd_ddsgrp }
     pub fn wirefram_ddsgrp(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.wirefram_ddsgrp(s))
+        self.enter(AnalysisCache::wirefram_ddsgrp)
     }
 
     pub fn init_status_screen(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.init_status_screen(s))
+        self.enter(AnalysisCache::init_status_screen)
     }
 
     pub fn trigger_conditions(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.trigger_conditions(s))
+        self.enter(AnalysisCache::trigger_conditions)
     }
 
     pub fn trigger_actions(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.trigger_actions(s))
+        self.enter(AnalysisCache::trigger_actions)
     }
 
     pub fn trigger_completed_units_cache(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.trigger_completed_units_cache(s))
+        self.enter(AnalysisCache::trigger_completed_units_cache)
     }
 
     pub fn trigger_all_units_cache(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.trigger_all_units_cache(s))
+        self.enter(AnalysisCache::trigger_all_units_cache)
     }
 
     pub fn snet_send_packets(&mut self) -> Option<E::VirtualAddress> {
@@ -2239,19 +2239,19 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     }
 
     pub fn chk_init_players(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.chk_init_players(s))
+        self.enter(AnalysisCache::chk_init_players)
     }
 
     pub fn original_chk_player_types(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.original_chk_player_types(s))
+        self.enter(AnalysisCache::original_chk_player_types)
     }
 
     pub fn give_ai(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.give_ai(s))
+        self.enter(AnalysisCache::give_ai)
     }
 
     pub fn play_sound(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.play_sound(s))
+        self.enter(AnalysisCache::play_sound)
     }
 
     pub fn do_missile_damage(&mut self) -> Option<E::VirtualAddress> {
@@ -2259,15 +2259,15 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     }
 
     pub fn ai_prepare_moving_to(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.ai_prepare_moving_to(s))
+        self.enter(AnalysisCache::ai_prepare_moving_to)
     }
 
     pub fn ai_transport_reachability_cached_region(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.ai_transport_reachability_cached_region(s))
+        self.enter(AnalysisCache::ai_transport_reachability_cached_region)
     }
 
     pub fn player_unit_skins(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.player_unit_skins(s))
+        self.enter(AnalysisCache::player_unit_skins)
     }
 
     /// A patch to show resource fog sprites on minimap in replays even if they're
@@ -2275,36 +2275,36 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     pub fn replay_minimap_unexplored_fog_patch(
         &mut self,
     ) -> Option<Rc<Patch<E::VirtualAddress>>> {
-        self.enter(|x, s| x.replay_minimap_unexplored_fog_patch(s))
+        self.enter(AnalysisCache::replay_minimap_unexplored_fog_patch)
     }
 
     pub fn draw_minimap_units(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.draw_minimap_units(s))
+        self.enter(AnalysisCache::draw_minimap_units)
     }
 
     pub fn step_replay_commands(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.step_replay_commands(s))
+        self.enter(AnalysisCache::step_replay_commands)
     }
 
     pub fn replay_data(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.replay_data(s))
+        self.enter(AnalysisCache::replay_data)
     }
 
     pub fn ai_train_military(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.ai_train_military(s))
+        self.enter(AnalysisCache::ai_train_military)
     }
 
     pub fn ai_add_military_to_region(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.ai_add_military_to_region(s))
+        self.enter(AnalysisCache::ai_add_military_to_region)
     }
 
     /// Renderer's vertex (and index) buffer
     pub fn vertex_buffer(&mut self) -> Option<Operand<'e>> {
-        self.enter(|x, s| x.vertex_buffer(s))
+        self.enter(AnalysisCache::vertex_buffer)
     }
 
     pub fn crt_fastfail(&mut self) -> Rc<Vec<E::VirtualAddress>> {
-        self.enter(|x, s| x.crt_fastfail(s))
+        self.enter(AnalysisCache::crt_fastfail)
     }
 
     pub fn reset_ui_event_handlers(&mut self) -> Option<E::VirtualAddress> {
@@ -2350,7 +2350,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     }
 
     pub fn clamp_zoom(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.clamp_zoom(s))
+        self.enter(AnalysisCache::clamp_zoom)
     }
 
     pub fn set_briefing_music(&mut self) -> Option<E::VirtualAddress> {
