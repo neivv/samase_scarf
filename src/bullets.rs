@@ -60,6 +60,11 @@ pub(crate) struct DoMissileDamage<Va: VirtualAddress> {
     pub unit_max_energy: Option<Va>,
 }
 
+pub(crate) struct HitUnit<Va: VirtualAddress> {
+    pub hallucination_hit: Option<Va>,
+    pub do_weapon_damage: Option<Va>,
+}
+
 struct FindCreateBullet<'a, 'acx, 'e, E: ExecutionState<'e>> {
     is_inlining: bool,
     result: Option<E::VirtualAddress>,
@@ -960,7 +965,7 @@ struct MissileDamageAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
 enum MissileDamageState {
     /// Find switch jumping on weapons_dat_effect[this.weapon_id]
     FindSwitch,
-    /// On switch branch 1, find jump on this.flags & 1 (is hallu bullet)
+    /// On switch branch 1, find jump on this.flags & 1 (is bullet missing)
     Type1Branch,
     /// flag_1 == 0 branch, find hit_unit(this = this.target, this, dmg_div)
     HitUnit,
@@ -1238,6 +1243,164 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             }
                         }
                         ctrl.end_analysis();
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_hit_unit<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    hit_unit: E::VirtualAddress,
+) -> HitUnit<E::VirtualAddress> {
+    let mut result = HitUnit {
+        hallucination_hit: None,
+        do_weapon_damage: None,
+    };
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = HitUnitAnalyzer::<E> {
+        state: HitUnitState::FindHalluJump,
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        not_hallu_state: None,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, hit_unit);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct HitUnitAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    state: HitUnitState,
+    result: &'a mut HitUnit<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    not_hallu_state: Option<(E::VirtualAddress, E)>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum HitUnitState {
+    /// find jump on arg1.flags & 2 (is hallu)
+    FindHalluJump,
+    /// flag_2 != 0 branch, find
+    /// hallucination_hit(this = this, arg1.weapon_id, arg1.facing_direction, arg1.parent)
+    HallucinationHit,
+    /// flag_2 == 0 branch, find
+    /// do_weapon_damage(this = this, dmg, arg1.weapon_id, arg2, arg1.facing_direction,
+    ///     arg1.parent, arg1.player)
+    DoWeaponDamage,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for HitUnitAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            HitUnitState::FindHalluJump => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let result = condition.if_arithmetic_eq_neq_zero(ctx)
+                        .and_then(|x| {
+                            x.0.if_arithmetic_and_const(0x2)?
+                                .if_mem8_offset(
+                                    struct_layouts::bullet_flags::<E::VirtualAddress>()
+                                )?;
+                            Some(x.1)
+                        });
+                    if let Some(jump_on_zero) = result {
+                        let jump_addr = match ctrl.resolve_va(to) {
+                            Some(s) => s,
+                            None => return,
+                        };
+                        let no_jump_addr = ctrl.current_instruction_end();
+                        let (continue_addr, other_addr) = match jump_on_zero {
+                            true => (no_jump_addr, jump_addr),
+                            false => (jump_addr, no_jump_addr),
+                        };
+                        self.state = HitUnitState::HallucinationHit;
+                        let exec = ctrl.exec_state();
+                        self.not_hallu_state = Some((other_addr, exec.clone()));
+                        ctrl.clear_unchecked_branches();
+                        ctrl.continue_at_address(continue_addr);
+
+                    }
+                }
+            }
+            HitUnitState::HallucinationHit | HitUnitState::DoWeaponDamage => {
+                let facing_offset = struct_layouts::flingy_facing_direction::<E::VirtualAddress>();
+                let parent_offset = struct_layouts::bullet_parent::<E::VirtualAddress>();
+                let weapon_id_offset = struct_layouts::bullet_weapon_id::<E::VirtualAddress>();
+                let call_dest = if let Operation::Call(dest) = *op {
+                    Some(dest)
+                } else if let Operation::Jump { condition, to } = *op {
+                    if condition == ctx.const_1() &&
+                        ctrl.resolve(ctx.register(4)) == ctx.register(4)
+                    {
+                        // Tail call
+                        Some(to)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                if let Some(dest) = call_dest {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ecx = ctx.register(1);
+                        let this = ctrl.resolve(ecx);
+                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        if this != ecx {
+                            if E::VirtualAddress::SIZE == 4 &&
+                                self.state == HitUnitState::DoWeaponDamage
+                            {
+                                if arg1 == ecx {
+                                    // Probably get_weapon_damage(), on 32bit it is stdcall,
+                                    // and may be mixed with do_weapon_damage args, so fix esp
+                                    // manually
+                                    ctrl.skip_call_preserve_esp();
+                                    ctrl.move_unresolved(
+                                        &DestOperand::Register64(4),
+                                        ctx.add_const(ctx.register(4), 4),
+                                    );
+                                }
+                            }
+                            return;
+                        }
+                        let bullet = self.arg_cache.on_thiscall_entry(0);
+                        let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                        let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
+                        let arg4 = ctrl.resolve(self.arg_cache.on_thiscall_call(3));
+                        let arg5 = ctrl.resolve(self.arg_cache.on_thiscall_call(4));
+                        let ok = if self.state == HitUnitState::HallucinationHit {
+                            ctx.and_const(arg1, 0xff)
+                                    .if_mem8_offset(weapon_id_offset) == Some(bullet) &&
+                                ctx.and_const(arg2, 0xff)
+                                    .if_mem8_offset(facing_offset) == Some(bullet) &&
+                                ctrl.if_mem_word_offset(arg3, parent_offset) == Some(bullet)
+                        } else {
+                            ctx.and_const(arg2, 0xff)
+                                    .if_mem8_offset(weapon_id_offset) == Some(bullet) &&
+                                ctx.and_const(arg3, 0xff) ==
+                                    ctx.and_const(self.arg_cache.on_thiscall_entry(1), 0xff) &&
+                                ctx.and_const(arg4, 0xff)
+                                    .if_mem8_offset(facing_offset) == Some(bullet) &&
+                                ctrl.if_mem_word_offset(arg5, parent_offset) == Some(bullet)
+                        };
+
+                        if ok {
+                            if self.state == HitUnitState::HallucinationHit {
+                                self.result.hallucination_hit = Some(dest);
+                                if let Some((addr, state)) = self.not_hallu_state.take() {
+                                    ctrl.clear_unchecked_branches();
+                                    ctrl.add_branch_with_state(addr, state, Default::default());
+                                    self.state = HitUnitState::DoWeaponDamage;
+                                }
+                            } else {
+                                self.result.do_weapon_damage = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                        }
                     }
                 }
             }

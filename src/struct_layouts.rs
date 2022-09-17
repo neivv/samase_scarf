@@ -48,6 +48,13 @@ pub fn flingy_flags<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn flingy_facing_direction<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x21,
+        false => 0x39,
+    }
+}
+
 pub fn flingy_movement_type<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x27,

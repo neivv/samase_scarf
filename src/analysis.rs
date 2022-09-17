@@ -344,6 +344,8 @@ results! {
         PlaySoundAtUnit => "play_sound_at_unit",
         KillUnit => "kill_unit",
         UnitMaxEnergy => "unit_max_energy",
+        HallucinationHit => "hallucination_hit",
+        DoWeaponDamage => "do_weapon_damage",
     }
 }
 
@@ -1038,6 +1040,8 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             PlaySoundAtUnit => self.play_sound_at_unit(),
             KillUnit => self.kill_unit(),
             UnitMaxEnergy => self.unit_max_energy(),
+            HallucinationHit => self.hallucination_hit(),
+            DoWeaponDamage => self.do_weapon_damage(),
         }
     }
 
@@ -3575,6 +3579,14 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             AddressAnalysis::UnitMaxEnergy,
             AnalysisCache::cache_do_missile_damage,
         )
+    }
+
+    pub fn hallucination_hit(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::HallucinationHit, AnalysisCache::cache_hit_unit)
+    }
+
+    pub fn do_weapon_damage(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::DoWeaponDamage, AnalysisCache::cache_hit_unit)
     }
 
     /// Mainly for tests/dump
@@ -6130,6 +6142,28 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some(([r.hit_unit, r.unit_was_hit, r.disable_unit, r.ai_unit_was_hit,
                     r.lookup_sound_id, r.play_sound_at_unit, r.kill_unit, r.unit_max_energy],
                     []))
+            })
+    }
+
+    fn hit_unit(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::HitUnit,
+            |s| s.cache_do_missile_damage(actx),
+        )
+    }
+
+    fn cache_hit_unit(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[HallucinationHit, DoWeaponDamage],
+            &[],
+            |s| {
+                let hit = s.hit_unit(actx)?;
+                let r = bullets::analyze_hit_unit(actx, hit);
+                Some(([r.hallucination_hit, r.do_weapon_damage], []))
             })
     }
 }
