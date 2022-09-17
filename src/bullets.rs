@@ -7,7 +7,8 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::{AnalysisCtx, ArgCache};
 use crate::analysis_state::{AnalysisState, StateEnum, FindCreateBulletState};
-use crate::switch;
+use crate::call_tracker::CallTracker;
+use crate::switch::{self, CompleteSwitch};
 use crate::struct_layouts;
 use crate::util::{
     bumpvec_with_capacity, ControlExt, OptionExt, OperandExt, is_global, seems_assertion_call,
@@ -46,6 +47,17 @@ pub(crate) struct StepMovingBulletFrame<'e, Va: VirtualAddress> {
     pub step_flingy_position: Option<Va>,
     pub move_sprite: Option<Va>,
     pub step_flingy_turning: Option<Va>,
+}
+
+pub(crate) struct DoMissileDamage<Va: VirtualAddress> {
+    pub hit_unit: Option<Va>,
+    pub unit_was_hit: Option<Va>,
+    pub disable_unit: Option<Va>,
+    pub ai_unit_was_hit: Option<Va>,
+    pub lookup_sound_id: Option<Va>,
+    pub play_sound_at_unit: Option<Va>,
+    pub kill_unit: Option<Va>,
+    pub unit_max_energy: Option<Va>,
 }
 
 struct FindCreateBullet<'a, 'acx, 'e, E: ExecutionState<'e>> {
@@ -399,7 +411,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepBulletFrameAnaly
                 if condition == ctx.const_1() {
                     let to = ctrl.resolve(to);
                     let exec = ctrl.exec_state();
-                    if let Some(switch) = switch::CompleteSwitch::new(to, ctx, exec) {
+                    if let Some(switch) = CompleteSwitch::new(to, ctx, exec) {
                         let binary = ctrl.binary();
                         if let Some(branch) = switch.branch(binary, ctx, 1) {
                             ctrl.clear_unchecked_branches();
@@ -879,6 +891,355 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DoMissileDmgAnalyzer
             if condition == ctx.const_1() && to.if_constant().is_none() {
                 // Looped back to switch
                 ctrl.end_branch();
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_do_missile_damage<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    do_missile_damage: E::VirtualAddress,
+) -> DoMissileDamage<E::VirtualAddress> {
+    let mut result = DoMissileDamage {
+        hit_unit: None,
+        unit_was_hit: None,
+        disable_unit: None,
+        ai_unit_was_hit: None,
+        lookup_sound_id: None,
+        play_sound_at_unit: None,
+        kill_unit: None,
+        unit_max_energy: None,
+    };
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = MissileDamageAnalyzer::<E> {
+        state: MissileDamageState::FindSwitch,
+        inline_depth: 0,
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        switch: None,
+        unit_was_hit_state: None,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+        increment_kill_scores_seen: false,
+        entry_esp: ctx.register(4),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, do_missile_damage);
+    analysis.analyze(&mut analyzer);
+    if let Some((switch, exec)) = analyzer.switch.take() {
+        let branches = [
+            (1, MissileDamageState::Type1Branch),
+            (4, MissileDamageState::DisableUnit),
+            (7, MissileDamageState::AiUnitWasHit),
+            (9, MissileDamageState::Sounds),
+            (0xe, MissileDamageState::KillUnit),
+        ];
+        for (branch, state) in branches {
+            if let Some(addr) = switch.branch(binary, ctx, branch) {
+                let mut analysis = FuncAnalysis::with_state(binary, ctx, addr, exec.clone());
+                analyzer.state = state;
+                analysis.analyze(&mut analyzer);
+            }
+        }
+    }
+    result
+}
+
+struct MissileDamageAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    state: MissileDamageState,
+    inline_depth: u8,
+    result: &'a mut DoMissileDamage<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    switch: Option<(CompleteSwitch<'e>, E)>,
+    unit_was_hit_state: Option<(E::VirtualAddress, E)>,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    increment_kill_scores_seen: bool,
+    entry_esp: Operand<'e>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum MissileDamageState {
+    /// Find switch jumping on weapons_dat_effect[this.weapon_id]
+    FindSwitch,
+    /// On switch branch 1, find jump on this.flags & 1 (is hallu bullet)
+    Type1Branch,
+    /// flag_1 == 0 branch, find hit_unit(this = this.target, this, dmg_div)
+    HitUnit,
+    /// flag_1 != 0 branch, find unit_was_hit(this = this.target, this.parent, 1)
+    UnitWasHit,
+    /// On switch branch 4 (lockdown), find
+    /// do_lockdown(this = this, 0x83) (maybe inlined) {
+    ///     this.target_lockdown_timer = 0x83;
+    ///     disable_unit(this = this.target)
+    /// }
+    DisableUnit,
+    /// On switch branch 7 (broodlings), find
+    /// ai_unit_was_hit(a1 = this.target, this.parent, 1, 0)
+    ///     a4 is not checked since it may be implicitly set from previous != 0 jump
+    AiUnitWasHit,
+    /// On switch branch 9 (irradiate), find
+    /// play_sound_at_unit(sound_id, this.target, 1, 0)
+    /// where sound_id is return value of lookup_sound_id (or constant in older versions)
+    Sounds,
+    /// On switch branch 0xe (consume), find
+    /// do_consume(this = this.parent, this.target) {
+    ///     increment_kill_scores(a1 = this.target, this.parent.player_id)
+    ///     kill_unit(this = this.target)
+    ///     if (this.parent.energy + 0x3200 > unit_max_energy) {
+    ///         ..
+    ///     }
+    /// }
+    KillUnit,
+    UnitMaxEnergy,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    MissileDamageAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        let target_offset = struct_layouts::unit_target::<E::VirtualAddress>();
+        let parent_offset = struct_layouts::bullet_parent::<E::VirtualAddress>();
+        let ecx = ctx.register(1);
+        match self.state {
+            MissileDamageState::FindSwitch => {
+                if let Operation::Jump { condition, to } = *op {
+                    if condition == ctx.const_1() {
+                        let to = ctrl.resolve(to);
+                        if to.if_constant().is_none() {
+                            let exec = ctrl.exec_state();
+                            if let Some(switch) = CompleteSwitch::new(to, ctx, exec) {
+                                self.switch = Some((switch, exec.clone()));
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            MissileDamageState::Type1Branch => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let result = condition.if_arithmetic_eq_const(0).map(|x| (x, true))
+                        .or_else(|| Some((condition, false)))
+                        .and_then(|x| {
+                            x.0.if_arithmetic_and_const(0x1)?
+                                .if_mem8_offset(
+                                    struct_layouts::bullet_flags::<E::VirtualAddress>()
+                                )?;
+                            Some(x.1)
+                        });
+                    if let Some(jump_on_zero) = result {
+                        let jump_addr = match ctrl.resolve_va(to) {
+                            Some(s) => s,
+                            None => return,
+                        };
+                        let no_jump_addr = ctrl.current_instruction_end();
+                        let (continue_addr, other_addr) = match jump_on_zero {
+                            true => (jump_addr, no_jump_addr),
+                            false => (no_jump_addr, jump_addr),
+                        };
+                        self.state = MissileDamageState::HitUnit;
+                        let exec = ctrl.exec_state();
+                        self.unit_was_hit_state = Some((other_addr, exec.clone()));
+                        ctrl.clear_unchecked_branches();
+                        ctrl.continue_at_address(continue_addr);
+
+                    }
+                }
+            }
+            MissileDamageState::HitUnit | MissileDamageState::UnitWasHit => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ecx);
+                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let ok = if self.state == MissileDamageState::HitUnit {
+                            ctrl.if_mem_word_offset(this, target_offset) == Some(ecx) &&
+                                arg1 == ecx
+                        } else {
+                            let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                            ctrl.if_mem_word_offset(this, target_offset) == Some(ecx) &&
+                                ctrl.if_mem_word_offset(arg1, parent_offset) == Some(ecx) &&
+                                arg2 == ctx.const_1()
+                        };
+
+                        if ok {
+                            if self.state == MissileDamageState::HitUnit {
+                                self.result.hit_unit = Some(dest);
+                                if let Some((addr, state)) = self.unit_was_hit_state.take() {
+                                    ctrl.clear_unchecked_branches();
+                                    ctrl.add_branch_with_state(addr, state, Default::default());
+                                    self.state = MissileDamageState::UnitWasHit;
+                                }
+                            } else {
+                                self.result.unit_was_hit = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            MissileDamageState::DisableUnit => {
+                let call_dest = if let Operation::Call(dest) = *op {
+                    Some(dest)
+                } else if let Operation::Jump { condition, to } = *op {
+                    if condition == ctx.const_1() &&
+                        ctrl.resolve(ctx.register(4)) == self.entry_esp
+                    {
+                        // Tail call
+                        Some(to)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(dest) = call_dest {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ecx);
+                        let this_target =
+                            ctrl.if_mem_word_offset(this, target_offset) == Some(ecx);
+                        if this_target {
+                            let timer_offset =
+                                struct_layouts::unit_lockdown_timer::<E::VirtualAddress>();
+                            let lockdown_timer = ctx.mem8(ecx, timer_offset);
+                            if ctrl.resolve(lockdown_timer).if_constant() == Some(0x83) {
+                                self.result.disable_unit = Some(dest);
+                                ctrl.end_analysis();
+                            } else if self.inline_depth == 0 {
+                                let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                                if arg1.if_constant() == Some(0x83) {
+                                    let old_esp = self.entry_esp;
+                                    self.inline_depth = 1;
+                                    self.entry_esp = ctrl.get_new_esp_for_call();
+                                    ctrl.analyze_with_current_state(self, dest);
+                                    self.inline_depth = 0;
+                                    self.entry_esp = old_esp;
+                                    if self.result.disable_unit.is_some() {
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), _, _) = *op {
+                    // Just move 0x83 always to lockdown timer value to not having
+                    // to handle min/max checks
+                    let mem = ctrl.resolve_mem(mem);
+                    if mem.address().1 ==
+                        struct_layouts::unit_lockdown_timer::<E::VirtualAddress>()
+                    {
+                        ctrl.move_resolved(&DestOperand::Memory(mem), ctx.constant(0x83));
+                        ctrl.skip_operation();
+                    }
+                }
+            }
+            MissileDamageState::AiUnitWasHit => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                        let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
+                        let ok = ctrl.if_mem_word_offset(arg1, target_offset) == Some(ecx) &&
+                            ctrl.if_mem_word_offset(arg2, parent_offset) == Some(ecx) &&
+                            arg3 == ctx.const_1() &&
+                            arg4 == ctx.const_0();
+
+                        if ok {
+                            self.result.ai_unit_was_hit = Some(dest);
+                            ctrl.end_analysis();
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    ctrl.update_jump_register_to_const(condition, to);
+                }
+            }
+            MissileDamageState::Sounds => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = Operand::and_masked(arg1).0;
+                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                        let ok = (arg1.if_custom().is_some() || arg1.if_constant().is_some()) &&
+                            ctrl.if_mem_word_offset(arg2, target_offset) == Some(ecx) &&
+                            arg3 == ctx.const_1();
+                        if ok {
+                            self.result.play_sound_at_unit = Some(dest);
+                            if let Some(custom) = arg1.if_custom() {
+                                if let Some(func) = self.call_tracker.custom_id_to_func(custom) {
+                                    self.result.lookup_sound_id = Some(func);
+                                }
+                            }
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        self.call_tracker.add_call_preserve_esp(ctrl, dest);
+                    }
+                }
+            }
+            MissileDamageState::KillUnit => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ecx);
+                        if self.inline_depth == 0 {
+                            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                            let inline =
+                                ctrl.if_mem_word_offset(this, parent_offset) == Some(ecx) &&
+                                ctrl.if_mem_word_offset(arg1, target_offset) == Some(ecx);
+                            if inline {
+                                self.inline_depth = 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth = 0;
+                                if self.result.kill_unit.is_some() {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                        if !self.increment_kill_scores_seen {
+                            // Check a2 != this.parent.player_id to avoid
+                            // confusing with increment_kill_scores
+                            let c_a2 = ctrl.resolve(self.arg_cache.on_call(1));
+                            let is_parent_player =
+                                c_a2.if_mem8_offset(
+                                    struct_layouts::unit_player::<E::VirtualAddress>()
+                                ).is_some();
+                            self.increment_kill_scores_seen = is_parent_player;
+                            ctrl.clear_unchecked_branches();
+                        } else {
+                            let this_target =
+                                ctrl.if_mem_word_offset(this, target_offset) == Some(ecx);
+                            if this_target {
+                                self.result.kill_unit = Some(dest);
+                                self.state = MissileDamageState::UnitMaxEnergy;
+                            }
+                        }
+                    }
+                }
+            }
+            MissileDamageState::UnitMaxEnergy => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                } else if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let result = condition.if_arithmetic_gt()
+                        .and_then(|(l, r)| {
+                            r.if_arithmetic_add_const(0x31ff)?;
+                            Some(Operand::and_masked(l).0)
+                        });
+                    if let Some(result) = result {
+                        if let Some(custom) = result.if_custom() {
+                            if let Some(func) = self.call_tracker.custom_id_to_func(custom) {
+                                self.result.unit_max_energy = Some(func);
+                            }
+                        }
+                        ctrl.end_analysis();
+                    }
+                }
             }
         }
     }

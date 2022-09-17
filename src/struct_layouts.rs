@@ -412,6 +412,20 @@ pub fn bullet_weapon_id<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn bullet_flags<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x62,
+        false => 0x8a,
+    }
+}
+
+pub fn bullet_parent<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x64,
+        false => 0x90,
+    }
+}
+
 pub fn status_screen_stat_dat<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x8,

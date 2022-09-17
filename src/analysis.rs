@@ -336,6 +336,14 @@ results! {
         MoveSprite => "move_sprite",
         StepFlingyTurning => "step_flingy_turning",
         DoMissileDamage => "do_missile_damage",
+        HitUnit => "hit_unit",
+        UnitWasHit => "unit_was_hit",
+        DisableUnit => "disable_unit",
+        AiUnitWasHit => "ai_unit_was_hit",
+        LookupSoundId => "lookup_sound_id",
+        PlaySoundAtUnit => "play_sound_at_unit",
+        KillUnit => "kill_unit",
+        UnitMaxEnergy => "unit_max_energy",
     }
 }
 
@@ -1022,6 +1030,14 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             MoveSprite => self.move_sprite(),
             StepFlingyTurning => self.step_flingy_turning(),
             DoMissileDamage => self.do_missile_damage(),
+            HitUnit => self.hit_unit(),
+            UnitWasHit => self.unit_was_hit(),
+            DisableUnit => self.disable_unit(),
+            AiUnitWasHit => self.ai_unit_was_hit(),
+            LookupSoundId => self.lookup_sound_id(),
+            PlaySoundAtUnit => self.play_sound_at_unit(),
+            KillUnit => self.kill_unit(),
+            UnitMaxEnergy => self.unit_max_energy(),
         }
     }
 
@@ -3505,6 +3521,59 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.analyze_many_op(
             OperandAnalysis::MapHeightPixels,
             AnalysisCache::cache_step_moving_bullet_frame,
+        )
+    }
+
+    pub fn hit_unit(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::HitUnit, AnalysisCache::cache_do_missile_damage)
+    }
+
+    pub fn unit_was_hit(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UnitWasHit,
+            AnalysisCache::cache_do_missile_damage,
+        )
+    }
+
+    pub fn disable_unit(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::DisableUnit,
+            AnalysisCache::cache_do_missile_damage,
+        )
+    }
+
+    pub fn ai_unit_was_hit(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::AiUnitWasHit,
+            AnalysisCache::cache_do_missile_damage,
+        )
+    }
+
+    pub fn lookup_sound_id(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::LookupSoundId,
+            AnalysisCache::cache_do_missile_damage,
+        )
+    }
+
+    pub fn play_sound_at_unit(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::PlaySoundAtUnit,
+            AnalysisCache::cache_do_missile_damage,
+        )
+    }
+
+    pub fn kill_unit(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::KillUnit,
+            AnalysisCache::cache_do_missile_damage,
+        )
+    }
+
+    pub fn unit_max_energy(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UnitMaxEnergy,
+            AnalysisCache::cache_do_missile_damage,
         )
     }
 
@@ -6046,6 +6115,21 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     r.flingy_x_new, r.flingy_y_new, r.flingy_exact_x_new, r.flingy_exact_y_new,
                     r.flingy_flags_new, r.flingy_show_end_walk_anim, r.flingy_show_start_walk_anim,
                     r.map_width_pixels, r.map_height_pixels, r.flingy_speed_used_for_move]))
+            })
+    }
+
+    fn cache_do_missile_damage(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[HitUnit, UnitWasHit, DisableUnit, AiUnitWasHit, LookupSoundId, PlaySoundAtUnit,
+                KillUnit, UnitMaxEnergy],
+            &[],
+            |s| {
+                let do_dmg = s.do_missile_damage(actx)?;
+                let r = bullets::analyze_do_missile_damage(actx, do_dmg);
+                Some(([r.hit_unit, r.unit_was_hit, r.disable_unit, r.ai_unit_was_hit,
+                    r.lookup_sound_id, r.play_sound_at_unit, r.kill_unit, r.unit_max_energy],
+                    []))
             })
     }
 }

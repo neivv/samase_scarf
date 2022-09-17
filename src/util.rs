@@ -386,6 +386,12 @@ pub trait ControlExt<'e, E: ExecutionState<'e>> {
         condition: Operand<'e>,
         to: E::VirtualAddress,
     );
+    /// Version of above which resolves the args
+    fn update_jump_register_to_const(
+        &mut self,
+        condition: Operand<'e>,
+        to: Operand<'e>,
+    );
     fn instruction_contains_address(&mut self, address: E::VirtualAddress) -> bool;
 }
 
@@ -537,7 +543,7 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
                     let exec_state = self.exec_state();
                     for register in 0..register_count {
                         if registers[register as usize] {
-                            let new = if mask == u64::MAX {
+                            let new = if mask >= A::Exec::WORD_SIZE.mask() {
                                 r
                             } else {
                                 ctx.or(
@@ -558,6 +564,17 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
                 }
                 Some(())
             });
+    }
+
+    fn update_jump_register_to_const(
+        &mut self,
+        condition: Operand<'e>,
+        to: Operand<'e>,
+    ) {
+        if let Some(to) = self.resolve_va(to) {
+            let condition = self.resolve(condition);
+            self.assign_to_unresolved_on_eq_branch(condition, to);
+        }
     }
 
     fn instruction_contains_address(

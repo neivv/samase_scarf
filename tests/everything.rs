@@ -1594,7 +1594,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
             // special handling
             JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins | StepGameLoop |
                 GetMouseX | GetMouseY | NetFormatTurnRate | ReadWholeMpqFile |
-                ReadWholeMpqFile2 | StepBulletFrame | FlingyUpdateTargetDir => continue,
+                ReadWholeMpqFile2 | StepBulletFrame | FlingyUpdateTargetDir |
+                LookupSoundId => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -2213,6 +2214,14 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(flingy_update_target_dir.is_none());
     } else {
         assert!(flingy_update_target_dir.is_some());
+    }
+
+    // sfx.json was added in 1.22.0
+    let lookup_sound_id = analysis.lookup_sound_id();
+    if minor_version < 22 {
+        assert!(lookup_sound_id.is_none());
+    } else {
+        assert!(lookup_sound_id.is_some());
     }
 
     let dump_text = samase_scarf::dump::dump_all(analysis);

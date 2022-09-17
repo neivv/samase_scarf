@@ -14,6 +14,7 @@ ai_spend_money: 005fb470
 ai_step_region: 00617e50
 ai_train_military: 00615d60
 ai_try_return_home: 00619b90
+ai_unit_was_hit: 00614970
 ai_update_attack_target: 00575550
 anim_asset_change_cb: 00550ca0
 attack_unit: 00576bd0
@@ -40,6 +41,7 @@ create_starting_units: 00724d70
 create_team_game_starting_units: 00725e60
 create_unit: 00580e90
 deserialize_sprites: 00554540
+disable_unit: 0059dfe0
 do_attack: 00575450
 do_attack_main: 005750c0
 do_missile_damage: 00541fe0
@@ -73,6 +75,7 @@ give_ai: 00619940
 give_unit: 006251c0
 glucmpgn_event_handler: 006b4160
 handle_targeted_click: 007753c0
+hit_unit: 00571cd0
 init_game: 00687670
 init_game_before_map_load_hook: 006876e0
 init_game_network: 006fd4e0
@@ -86,12 +89,14 @@ init_storm_networking: 00700880
 init_units: 00582cc0
 is_outside_game_screen: 0065ba10
 join_game: None
+kill_unit: 00588bd0
 layout_draw_text: 00905a90
 load_dat: 0068c630
 load_images: 0054e6c0
 load_pcx: 0068c920
 load_replay_scenario_chk: 006da7b0
 load_snp_list: 008d9c10
+lookup_sound_id: 00609f60
 mainmenu_entry_hook: 006d54c4
 map_entry_load_map: 005e1c60
 map_entry_load_replay: 005e10d0
@@ -111,6 +116,7 @@ pick_auto_target: 00596030
 pick_random_target: 00595ec0
 play_smk: 00727b80
 play_sound: 00757160
+play_sound_at_unit: 006af0c0
 player_gained_upgrade: 005b1530
 pre_mission_glue: 006559c0
 prepare_draw_image: 0054c380
@@ -189,8 +195,10 @@ unit_buffed_acceleration: 00586ca0
 unit_buffed_flingy_speed: 00586d60
 unit_buffed_turn_speed: 00586d00
 unit_changing_player: 00584710
+unit_max_energy: 0059dc50
 unit_update_speed: 005b12d0
 unit_update_speed_iscript: 00590fc0
+unit_was_hit: 00576ce0
 unlock_mission: 00774590
 update_attack_target: 0056f8b0
 update_cloak_state: 005977f0
