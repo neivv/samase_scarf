@@ -9,7 +9,9 @@ use crate::{AnalysisCtx, ArgCache};
 use crate::analysis_state::{AnalysisState, StateEnum, FindCreateBulletState};
 use crate::switch;
 use crate::struct_layouts;
-use crate::util::{bumpvec_with_capacity, ControlExt, OptionExt, OperandExt, is_global};
+use crate::util::{
+    bumpvec_with_capacity, ControlExt, OptionExt, OperandExt, is_global, seems_assertion_call,
+};
 
 pub(crate) struct BulletCreation<'e, Va: VirtualAddress> {
     pub first_active_bullet: Option<Operand<'e>>,
@@ -833,31 +835,37 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
 }
 
 pub(crate) fn do_missile_damage<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'e, E>,
+    actx: &AnalysisCtx<'e, E>,
     iscript_switch: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
-    let ctx = analysis.ctx;
-    let binary = analysis.binary;
+    let ctx = actx.ctx;
+    let binary = actx.binary;
     // Search for iscript opcode 0x1b, calling into
     // do_missile_dmg(this = active_iscript_bullet)
     let switch_branch = switch::simple_switch_branch(binary, iscript_switch, 0x1b)?;
     let mut analyzer = DoMissileDmgAnalyzer::<E> {
         result: None,
+        arg_cache: &actx.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, switch_branch);
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-struct DoMissileDmgAnalyzer<'e, E: ExecutionState<'e>> {
+struct DoMissileDmgAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
 }
 
-impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DoMissileDmgAnalyzer<'e, E> {
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DoMissileDmgAnalyzer<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if let Operation::Call(dest) = *op {
+            if seems_assertion_call(ctrl, self.arg_cache) {
+                ctrl.end_branch();
+                return;
+            }
             if let Some(dest) = ctrl.resolve_va(dest) {
                 let ctx = ctrl.ctx();
                 let this = ctrl.resolve(ctx.register(1));

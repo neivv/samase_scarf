@@ -1560,8 +1560,28 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     binary: &'e scarf::BinaryFile<E::VirtualAddress>,
     analysis: &mut samase_scarf::Analysis<'e, E>,
 ) {
+    let filename_str = filename.file_stem().unwrap().to_str().unwrap();
+    let minor_version = (&filename_str[1..3]).parse::<u32>().unwrap();
+    let is_ptr = filename_str.contains("ptr");
+    let (patch_version, revision) = if is_ptr {
+        ((filename_str[3..4]).parse::<u32>().unwrap(), b'a')
+    } else {
+        if let Ok(o) = (&filename_str[3..]).parse::<u32>() {
+            (o, b'a')
+        } else {
+            let &revision = filename_str.as_bytes().last().unwrap();
+            ((&filename_str[3..filename_str.len() - 1]).parse::<u32>().unwrap(), revision)
+        }
+    };
+    let version = (1, minor_version, patch_version, revision);
+
     let mut result_ops = fxhash::FxHashMap::with_capacity_and_hasher(0x100, Default::default());
     let mut result_addrs = fxhash::FxHashMap::with_capacity_and_hasher(0x100, Default::default());
+    if version == (1, 22, 1, b'a') {
+        // assertion failure sometimes becomes a result that gets through undetected,
+        // add conflict for 1.22.1 so that at least on that version it gets caught.
+        result_addrs.insert(E::VirtualAddress::from_u64(0x93e680), "assertion_failure");
+    }
     for addr in samase_scarf::AddressAnalysis::iter() {
         use samase_scarf::AddressAnalysis::*;
         let result = analysis.address_analysis(addr);
@@ -1646,20 +1666,6 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     let results = analysis.firegraft_addresses();
     assert_eq!(results.buttonsets.len(), 1);
     assert_eq!(results.unit_status_funcs.len(), 1);
-    let filename_str = filename.file_stem().unwrap().to_str().unwrap();
-    let minor_version = (&filename_str[1..3]).parse::<u32>().unwrap();
-    let is_ptr = filename_str.contains("ptr");
-    let (patch_version, revision) = if is_ptr {
-        ((filename_str[3..4]).parse::<u32>().unwrap(), b'a')
-    } else {
-        if let Ok(o) = (&filename_str[3..]).parse::<u32>() {
-            (o, b'a')
-        } else {
-            let &revision = filename_str.as_bytes().last().unwrap();
-            ((&filename_str[3..filename_str.len() - 1]).parse::<u32>().unwrap(), revision)
-        }
-    };
-    let version = (1, minor_version, patch_version, revision);
     let extended_limits = minor_version >= 21;
     let new_codegen = minor_version > 21 || (minor_version == 21 && patch_version >= 2);
     let new_codegen2 = minor_version > 22 || (minor_version == 22 && patch_version >= 1);
