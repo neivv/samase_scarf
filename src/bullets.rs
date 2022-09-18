@@ -65,6 +65,14 @@ pub(crate) struct HitUnit<Va: VirtualAddress> {
     pub do_weapon_damage: Option<Va>,
 }
 
+pub(crate) struct DoWeaponDamage<Va: VirtualAddress> {
+    pub damage_unit: Option<Va>,
+    pub show_shield_overlay_for_direction: Option<Va>,
+    pub show_shield_overlay: Option<Va>,
+    pub unit_update_strength: Option<Va>,
+    pub unit_calculate_strength: Option<Va>,
+}
+
 struct FindCreateBullet<'a, 'acx, 'e, E: ExecutionState<'e>> {
     is_inlining: bool,
     result: Option<E::VirtualAddress>,
@@ -1401,6 +1409,194 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for HitUnitAnalyzer<'a, 
                                 ctrl.end_analysis();
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_do_weapon_damage<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    do_weapon_damage: E::VirtualAddress,
+) -> DoWeaponDamage<E::VirtualAddress> {
+    let mut result = DoWeaponDamage {
+        damage_unit: None,
+        show_shield_overlay_for_direction: None,
+        show_shield_overlay: None,
+        unit_update_strength: None,
+        unit_calculate_strength: None,
+    };
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = WeaponDamageAnalyzer::<E> {
+        state: WeaponDamageState::DamageUnit,
+        result: &mut result,
+        inline_depth: 0,
+        inline_limit: 0,
+        arg_cache: &actx.arg_cache,
+        func_entry: do_weapon_damage,
+        entry_esp: ctx.register(4),
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, do_weapon_damage);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct WeaponDamageAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    state: WeaponDamageState,
+    inline_depth: u8,
+    inline_limit: u8,
+    result: &'a mut DoWeaponDamage<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    func_entry: E::VirtualAddress,
+    entry_esp: Operand<'e>,
+    call_tracker: CallTracker<'acx, 'e, E>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum WeaponDamageState {
+    /// find damage_unit(this = this, _, a5, a6, a2 == 0x22)
+    DamageUnit,
+    /// find show_shield_overlay_for_direction(this = this, a4)
+    /// or assume it was inlined and find
+    /// show_shield_overlay(this = this.sprite, (a4 - 0x7c / 8) & 0x1f)
+    ShowShieldOverlay,
+    /// find unit_update_strength(this = this) which may be inlined,
+    /// and unit.ground_strength = unit_calculate_strength(this = this, 1)
+    UnitUpdateStrength,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    WeaponDamageAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match self.state {
+            WeaponDamageState::DamageUnit => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ctx = ctrl.ctx();
+                        let ok = ctrl.resolve(ctx.register(1)) == ctx.register(1) && {
+                                let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                                let entry_arg5 = self.arg_cache.on_thiscall_entry(4);
+                                ctx.and_const(arg2, 0xff) == ctx.and_const(entry_arg5, 0xff)
+                            } && {
+                                let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
+                                let entry_arg6 = self.arg_cache.on_thiscall_entry(5);
+                                ctx.and_const(arg3, 0xff) == ctx.and_const(entry_arg6, 0xff)
+                            } && {
+                                let arg4 = ctrl.resolve(self.arg_cache.on_thiscall_call(3));
+                                ctx.and_const(arg4, 0xff)
+                                    .if_arithmetic_eq_neq()
+                                    .filter(|x| x.1.if_constant() == Some(0x22))
+                                    .is_some()
+                            };
+                        if ok {
+                            self.result.damage_unit = Some(dest);
+                            self.state = WeaponDamageState::ShowShieldOverlay;
+                        }
+                    }
+                }
+            }
+            WeaponDamageState::ShowShieldOverlay => {
+                let ctx = ctrl.ctx();
+                let dest = match *op {
+                    Operation::Call(dest) => Some(dest),
+                    Operation::Jump { condition, to } if self.inline_depth != 0 => {
+                        let is_tail_call = condition == ctx.const_1() &&
+                            ctrl.resolve(ctx.register(4)) == self.entry_esp;
+                        if is_tail_call {
+                            Some(to)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(dest) = dest.and_then(|x| ctrl.resolve_va(x)) {
+                    let ecx = ctx.register(1);
+                    let this = ctrl.resolve(ecx);
+                    let arg1 = if matches!(op, Operation::Call(..)) {
+                        self.arg_cache.on_thiscall_call(0)
+                    } else {
+                        self.arg_cache.on_thiscall_entry(0)
+                    };
+                    let arg1 = ctrl.resolve(arg1);
+                    if this == ecx {
+                        let ok = ctx.and_const(arg1, 0xff) ==
+                            ctx.and_const(self.arg_cache.on_thiscall_entry(3), 0xff);
+                        if ok {
+                            let old_esp = self.entry_esp;
+                            self.result.show_shield_overlay_for_direction = Some(dest);
+                            self.inline_depth = self.inline_depth.wrapping_add(1);
+                            self.entry_esp = ctrl.get_new_esp_for_call();
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.entry_esp = old_esp;
+                            self.inline_depth = self.inline_depth.wrapping_sub(1);
+                        }
+                    } else {
+                        let sprite_offset = struct_layouts::unit_sprite::<E::VirtualAddress>();
+                        let ok = ctrl.if_mem_word_offset(this, sprite_offset) == Some(ecx) &&
+                            arg1.if_arithmetic_and_const(0x1f).is_some();
+                        if ok {
+                            self.result.show_shield_overlay = Some(dest);
+                            self.state = WeaponDamageState::UnitUpdateStrength;
+                            if self.inline_depth != 0 {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            WeaponDamageState::UnitUpdateStrength => {
+                if self.inline_limit != 0 {
+                    if matches!(op, Operation::Call(..) | Operation::Jump { .. }) {
+                        self.inline_limit -= 1;
+                        if self.inline_limit == 0 {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+                let ctx = ctrl.ctx();
+                let ecx = ctx.register(1);
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.inline_depth == 0 {
+                            if ctrl.resolve(ecx) == ecx {
+                                let old_entry = self.func_entry;
+                                self.inline_limit = 10;
+                                self.inline_depth = 1;
+                                self.func_entry = dest;
+                                ctrl.analyze_with_current_state(self, dest);
+                                if self.result.unit_update_strength.is_some() {
+                                    ctrl.end_analysis();
+                                    return;
+                                }
+                                self.func_entry = old_entry;
+                                self.inline_limit = 0;
+                                self.inline_depth = 0;
+                            }
+                        }
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    let mem = ctrl.resolve_mem(mem);
+                    let strength_offset =
+                        struct_layouts::unit_ground_strength::<E::VirtualAddress>();
+                    if mem.address() == (ecx, strength_offset) {
+                        if self.inline_depth != 0 {
+                            self.result.unit_update_strength = Some(self.func_entry);
+                        }
+                        let value = ctrl.resolve(value);
+                        if let Some(custom) = Operand::and_masked(value).0.if_custom() {
+                            if let Some(func) = self.call_tracker.custom_id_to_func(custom) {
+                                self.result.unit_calculate_strength = Some(func);
+                            }
+                        }
+                        ctrl.end_analysis();
                     }
                 }
             }

@@ -40,6 +40,7 @@ create_lone_sprite: 14018a840
 create_starting_units: 14039eb20
 create_team_game_starting_units: 14039f810
 create_unit: 1401a8d20
+damage_unit: 1401996a0
 deserialize_sprites: 140186e00
 disable_unit: 1401c5890
 do_attack: 14019f2a0
@@ -148,6 +149,8 @@ set_scmain_state: 140340c90
 set_unit_player: 1401afca0
 sfile_close_archive: 1405be800
 show_mission_glue: 1402b2e10
+show_shield_overlay: 1401831f0
+show_shield_overlay_for_direction: 1401a5550
 single_player_map_end: 1404018a0
 single_player_start: 1403772c0
 snet_initialize_provider: 1403f6430
@@ -196,10 +199,12 @@ unit_apply_speed_upgrades: 1401d8330
 unit_buffed_acceleration: 1401af620
 unit_buffed_flingy_speed: 1401af700
 unit_buffed_turn_speed: 1401af690
+unit_calculate_strength: 1402614b0
 unit_changing_player: 1401acd40
 unit_max_energy: 1401c5440
 unit_update_speed: 1401d8c60
 unit_update_speed_iscript: 1401bb7a0
+unit_update_strength: 140260c30
 unit_was_hit: 1401a0300
 unlock_mission: 1404020d0
 update_attack_target: 140199260

@@ -265,6 +265,13 @@ pub fn unit_ai<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_ground_strength<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x13a,
+        false => 0x1d2,
+    }
+}
+
 pub fn if_mul_image_size<'e, Va: VirtualAddress>(op: Operand<'e>) -> Option<Operand<'e>> {
     if Va::SIZE == 4 {
         op.if_arithmetic(scarf::ArithOpType::Lsh)

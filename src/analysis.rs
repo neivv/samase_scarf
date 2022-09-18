@@ -346,6 +346,11 @@ results! {
         UnitMaxEnergy => "unit_max_energy",
         HallucinationHit => "hallucination_hit",
         DoWeaponDamage => "do_weapon_damage",
+        DamageUnit => "damage_unit",
+        ShowShieldOverlayForDirection => "show_shield_overlay_for_direction",
+        ShowShieldOverlay => "show_shield_overlay",
+        UnitUpdateStrength => "unit_update_strength",
+        UnitCalculateStrength => "unit_calculate_strength",
     }
 }
 
@@ -1042,6 +1047,11 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             UnitMaxEnergy => self.unit_max_energy(),
             HallucinationHit => self.hallucination_hit(),
             DoWeaponDamage => self.do_weapon_damage(),
+            DamageUnit => self.damage_unit(),
+            ShowShieldOverlayForDirection => self.show_shield_overlay_for_direction(),
+            ShowShieldOverlay => self.show_shield_overlay(),
+            UnitUpdateStrength => self.unit_update_strength(),
+            UnitCalculateStrength => self.unit_calculate_strength(),
         }
     }
 
@@ -3587,6 +3597,38 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
 
     pub fn do_weapon_damage(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(AddressAnalysis::DoWeaponDamage, AnalysisCache::cache_hit_unit)
+    }
+
+    pub fn damage_unit(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(AddressAnalysis::DamageUnit, AnalysisCache::cache_do_weapon_damage)
+    }
+
+    pub fn show_shield_overlay_for_direction(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ShowShieldOverlayForDirection,
+            AnalysisCache::cache_do_weapon_damage,
+        )
+    }
+
+    pub fn show_shield_overlay(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ShowShieldOverlay,
+            AnalysisCache::cache_do_weapon_damage,
+        )
+    }
+
+    pub fn unit_update_strength(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UnitUpdateStrength,
+            AnalysisCache::cache_do_weapon_damage,
+        )
+    }
+
+    pub fn unit_calculate_strength(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::UnitCalculateStrength,
+            AnalysisCache::cache_do_weapon_damage,
+        )
     }
 
     /// Mainly for tests/dump
@@ -6149,10 +6191,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         &mut self,
         actx: &AnalysisCtx<'e, E>,
     ) -> Option<E::VirtualAddress> {
-        self.cache_many_addr(
-            AddressAnalysis::HitUnit,
-            |s| s.cache_do_missile_damage(actx),
-        )
+        self.cache_many_addr(AddressAnalysis::HitUnit, |s| s.cache_do_missile_damage(actx))
     }
 
     fn cache_hit_unit(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -6164,6 +6203,27 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let hit = s.hit_unit(actx)?;
                 let r = bullets::analyze_hit_unit(actx, hit);
                 Some(([r.hallucination_hit, r.do_weapon_damage], []))
+            })
+    }
+
+    fn do_weapon_damage(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::DoWeaponDamage, |s| s.cache_hit_unit(actx))
+    }
+
+    fn cache_do_weapon_damage(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[DamageUnit, ShowShieldOverlayForDirection, ShowShieldOverlay, UnitUpdateStrength,
+                UnitCalculateStrength],
+            &[],
+            |s| {
+                let do_dmg = s.do_weapon_damage(actx)?;
+                let r = bullets::analyze_do_weapon_damage(actx, do_dmg);
+                Some(([r.damage_unit, r.show_shield_overlay_for_direction, r.show_shield_overlay,
+                    r.unit_update_strength, r.unit_calculate_strength], []))
             })
     }
 }
