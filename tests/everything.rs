@@ -1651,7 +1651,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 ZoomActionCompletion | FlingyFlagsTmp | FlingyXOld | FlingyYOld | FlingyXNew |
                 FlingyYNew | FlingyExactXNew | FlingyExactYNew | FlingyFlagsNew |
                 FlingyShowStartWalkAnim | FlingyShowEndWalkAnim | FlingySpeedUsedForMove |
-                MapWidthPixels | MapHeightPixels =>
+                MapWidthPixels | MapHeightPixels | DcreepNextUpdate =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1664,7 +1664,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 FireOverlayMax | NetPlayerFlags | PlayerTurns | PlayerTurnsSize | CmdIconsDdsGrp |
                 CmdBtnsDdsGrp | SyncData | PaletteSet | MainPalette | TfontGam |
                 UnitSkinMap | SpriteSkinMap | GrpWireDdsGrp | TranWireDdsGrp |
-                SpriteIncludeInVisionSync | DrawCommands =>
+                SpriteIncludeInVisionSync | DrawCommands | CreepFuncs | DcreepLookup |
+                DcreepListBegin | DcreepListSize =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }

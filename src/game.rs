@@ -3,15 +3,19 @@ use fxhash::FxHashMap;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, OperandCtx, Operand, DestOperand, Operation, MemAccess, MemAccessSize};
-
-use crate::{
-    AnalysisCtx, ControlExt, OptionExt, EntryOf, FunctionFinder, if_arithmetic_eq_neq,
-    OperandExt, single_result_assign, if_callable_const, entry_of_until, ArgCache,
-    bumpvec_with_capacity, is_stack_address,
+use scarf::{
+    BinaryFile, BinarySection, OperandCtx, Operand, DestOperand, Operation, MemAccess,
+    MemAccessSize,
 };
+
+use crate::analysis::{ArgCache, AnalysisCtx};
+use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::call_tracker::CallTracker;
 use crate::struct_layouts;
+use crate::util::{
+    ControlExt, OperandExt, OptionExt, bumpvec_with_capacity, if_arithmetic_eq_neq,
+    if_callable_const, single_result_assign, is_stack_address,
+};
 
 #[derive(Clone)]
 pub struct Limits<'e, Va: VirtualAddress> {
@@ -48,6 +52,14 @@ pub(crate) struct StepObjectsAnalysis<'e, Va: VirtualAddress> {
     pub active_iscript_bullet: Option<Operand<'e>>,
     pub update_unit_visibility: Option<Va>,
     pub update_cloak_state: Option<Va>,
+    pub dcreep_next_update: Option<Operand<'e>>,
+    pub dcreep_list_size: Option<Operand<'e>>,
+    pub dcreep_list_begin: Option<Operand<'e>>,
+    pub dcreep_lookup: Option<Operand<'e>>,
+    pub creep_funcs: Option<Operand<'e>>,
+    pub creep_modify_state: Option<Va>,
+    pub for_each_surrounding_tile: Option<Va>,
+    pub creep_update_border_for_tile: Option<Va>,
 }
 
 pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
@@ -934,6 +946,14 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         active_iscript_bullet: None,
         update_unit_visibility: None,
         update_cloak_state: None,
+        dcreep_next_update: None,
+        dcreep_list_size: None,
+        dcreep_list_begin: None,
+        dcreep_lookup: None,
+        creep_funcs: None,
+        creep_modify_state: None,
+        for_each_surrounding_tile: None,
+        creep_update_border_for_tile: None,
     };
 
     let ctx = actx.ctx;
@@ -944,6 +964,7 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         result: &mut result,
         arg_cache,
         inline_depth: 0,
+        max_inline_depth: 0,
         inline_limit: 0,
         needs_inline_verify: false,
         game,
@@ -951,7 +972,7 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         first_hidden_unit,
         first_active_bullet,
         active_iscript_unit,
-        state: StepObjectsAnalysisState::VisionUpdateCounter,
+        state: StepObjectsAnalysisState::DcreepUpdateCounter,
         continue_state: None,
         simulated_funcs: FxHashMap::with_capacity_and_hasher(64, Default::default()),
         active_iscript_flingy_candidate: None,
@@ -960,6 +981,7 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         first_call_of_func: false,
         cloak_state_checked: false,
         func_entry: step_objects,
+        text: actx.binary_sections.text,
     };
     loop {
         analysis.analyze(&mut analyzer);
@@ -978,6 +1000,7 @@ struct StepObjectsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut StepObjectsAnalysis<'e, E::VirtualAddress>,
     arg_cache: &'acx ArgCache<'e, E>,
     inline_depth: u8,
+    max_inline_depth: u8,
     inline_limit: u8,
     needs_inline_verify: bool,
     game: Operand<'e>,
@@ -997,10 +1020,26 @@ struct StepObjectsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     first_call_of_func: bool,
     cloak_state_checked: bool,
     func_entry: E::VirtualAddress,
+    text: &'e BinarySection<E::VirtualAddress>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum StepObjectsAnalysisState {
+    // Search for update_counter = [const_arr[dcreep_list_size[9] >> 7]]
+    // Inline once to update_dcreep
+    DcreepUpdateCounter,
+    // dcreep_list_begin[n] = [dcreep_list_begin[n]]
+    // dcreep_lookup[n] = [dcreep_lookup[n] + 2 * WORD]
+    DcreepLists,
+    // Search for modify_creep_state(x_tile, y_tile, callback, 0)
+    // May inline once to clear_creep(x_tile, y_tile)
+    CreepModifyState,
+    // Search for call of creep_funcs[2](x_tile, y_tile)
+    CreepFuncs,
+    // Search for call of
+    // for_each_surrounding_tile(x_tile, y_tile, creep_update_border_for_tile, 0)
+    CreepUpdateBorderForTile,
+    // (Stop inlining back to depth 0)
     // Search for move of 0x64 to Mem32[vision_update_counter]
     VisionUpdateCounter,
     // Search for move 0 to Mem8[vision_updated], followed by comparision of that
@@ -1039,7 +1078,145 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let ctx = ctrl.ctx();
+        let dcreep_list_index_offset =
+            struct_layouts::dcreep_list_index::<E::VirtualAddress>();
+        let dcreep_x_offset = struct_layouts::dcreep_x::<E::VirtualAddress>();
         match self.state {
+            StepObjectsAnalysisState::DcreepUpdateCounter => {
+                if let Operation::Call(dest) = *op {
+                    if self.inline_depth == 0 {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.inline_depth = 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = 0;
+                            if self.state != StepObjectsAnalysisState::DcreepUpdateCounter {
+                                self.state = StepObjectsAnalysisState::VisionUpdateCounter;
+                            }
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref dest), value, None) = *op {
+                    let value = ctrl.resolve(value);
+                    let result = value.if_mem8()
+                        .and_then(|mem| {
+                            let (index, _) = mem.address();
+                            let list_index9 = index.if_arithmetic_rsh_const(7)?
+                                .if_mem16()?;
+                            let list_start = list_index9.with_offset_size(
+                                0u64.wrapping_sub(9 * 2),
+                                MemAccessSize::Mem16,
+                            );
+                            Some(list_start.address_op(ctx))
+                        });
+                    if let Some(list) = result {
+                        let dest = ctrl.resolve_mem(dest);
+                        self.result.dcreep_list_size = Some(list);
+                        self.result.dcreep_next_update = Some(ctx.memory(&dest));
+                        self.state = StepObjectsAnalysisState::DcreepLists;
+                    }
+                }
+            }
+            StepObjectsAnalysisState::DcreepLists => {
+                if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    // Match either
+                    // MemWord[dcreep_list_begin + a.list_index * W] == a
+                    // or
+                    // MemWord[dcreep_lookup + ((a.x + a.y * 0x11) & 0x3ff) * W] == a
+                    // So start with extracting MemWord[result + index * W] == _
+                    let result = condition.if_arithmetic_eq_neq()
+                        .map(|x| (x.0, x.1))
+                        .and_either(|x| {
+                            let mem = ctrl.if_mem_word(x)?;
+                            mem.if_add_either(ctx, |x| {
+                                x.if_arithmetic_mul_const(E::VirtualAddress::SIZE as u64)
+                            })
+                        })
+                        .map(|x| x.0);
+                    if let Some((index, result)) = result {
+                        if let Some(_) = index.if_mem8_offset(dcreep_list_index_offset) {
+                            single_result_assign(
+                                Some(result),
+                                &mut self.result.dcreep_list_begin,
+                            );
+                        } else {
+                            let ok = index.if_arithmetic_and_const(0x3ff)
+                                .and_then(|x| {
+                                    x.if_arithmetic_add()
+                                        .and_either_other(|x| x.if_arithmetic_mul_const(0x11))?
+                                        .if_mem8_offset(dcreep_x_offset)
+                                })
+                                .is_some();
+                            if ok {
+                                single_result_assign(
+                                    Some(result),
+                                    &mut self.result.dcreep_lookup,
+                                );
+                            }
+                        }
+                        if self.result.dcreep_list_begin.is_some() &&
+                            self.result.dcreep_lookup.is_some()
+                        {
+                            self.state = StepObjectsAnalysisState::CreepModifyState;
+                            self.max_inline_depth = self.inline_depth.wrapping_add(1);
+                        }
+                    }
+                }
+            }
+            StepObjectsAnalysisState::CreepModifyState | StepObjectsAnalysisState::CreepFuncs |
+                StepObjectsAnalysisState::CreepUpdateBorderForTile =>
+            {
+                if let Operation::Call(dest) = *op {
+                    let dest = ctrl.resolve(dest);
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let is_x = arg1.if_mem8_offset(dcreep_x_offset).is_some();
+                    if is_x {
+                        if self.state == StepObjectsAnalysisState::CreepFuncs {
+                            if let Some(mem) = ctrl.if_mem_word(dest) {
+                                let base = mem.with_offset_size(
+                                    0u64.wrapping_sub(E::VirtualAddress::SIZE as u64 * 2),
+                                    mem.size,
+                                );
+                                self.result.creep_funcs = Some(base.address_op(ctx));
+                                ctrl.clear_all_branches();
+                                self.state = StepObjectsAnalysisState::CreepUpdateBorderForTile;
+                            }
+                        } else if let Some(dest) = dest.if_constant() {
+                            let dest = E::VirtualAddress::from_u64(dest);
+                            if let Some(arg3) = ctrl.resolve_va(self.arg_cache.on_call(2)) {
+                                if self.text.contains(arg3) {
+                                    if self.state == StepObjectsAnalysisState::CreepModifyState {
+                                        self.result.creep_modify_state = Some(dest);
+                                        self.state = StepObjectsAnalysisState::CreepFuncs;
+                                        ctrl.clear_all_branches();
+                                        return;
+                                    } else {
+                                        self.result.for_each_surrounding_tile = Some(dest);
+                                        self.result.creep_update_border_for_tile = Some(arg3);
+                                        self.state = StepObjectsAnalysisState::VisionUpdateCounter;
+                                        if self.inline_depth != 0 {
+                                            ctrl.end_analysis();
+                                        }
+                                        return;
+                                    }
+                                }
+                            }
+                            if self.state == StepObjectsAnalysisState::CreepModifyState &&
+                                self.inline_depth < self.max_inline_depth
+                            {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.state != StepObjectsAnalysisState::CreepModifyState
+                                {
+                                    if self.inline_depth != 0 {
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             StepObjectsAnalysisState::VisionUpdateCounter => {
                 if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     if mem.size == MemAccessSize::Mem32 {

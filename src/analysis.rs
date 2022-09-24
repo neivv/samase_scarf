@@ -225,6 +225,9 @@ results! {
         StepHiddenUnitFrame => "step_hidden_unit_frame",
         StepBulletFrame => "step_bullet_frame",
         StepBullets => "step_bullets",
+        CreepModifyState => "creep_modify_state",
+        ForEachSurroundingile => "for_each_surrounding_tile",
+        CreepUpdateBorderForTile => "creep_update_border_for_tile",
         RevealUnitArea => "reveal_unit_area",
         UpdateUnitVisibility => "update_unit_visibility",
         UpdateCloakState => "update_cloak_state",
@@ -449,6 +452,12 @@ results! {
         FirstInvisibleUnit => "first_invisible_unit",
         ActiveIscriptFlingy => "active_iscript_flingy",
         ActiveIscriptBullet => "active_iscript_bullet",
+        // Disappearing creep state
+        DcreepNextUpdate => "dcreep_next_update",
+        DcreepListSize => "dcreep_list_size",
+        DcreepListBegin => "dcreep_list_begin",
+        DcreepLookup => "dcreep_lookup",
+        CreepFuncs => "creep_funcs",
         UnitShouldRevealArea => "unit_should_reveal_area",
         MenuScreenId => "menu_screen_id",
         NetPlayerFlags => "net_player_flags",
@@ -935,6 +944,9 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             StepHiddenUnitFrame => self.step_hidden_unit_frame(),
             StepBulletFrame => self.step_bullet_frame(),
             StepBullets => self.step_bullets(),
+            CreepModifyState => self.creep_modify_state(),
+            ForEachSurroundingile => self.for_each_surrounding_tile(),
+            CreepUpdateBorderForTile => self.creep_update_border_for_tile(),
             RevealUnitArea => self.reveal_unit_area(),
             UpdateUnitVisibility => self.update_unit_visibility(),
             UpdateCloakState => self.update_cloak_state(),
@@ -1151,6 +1163,11 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             FirstInvisibleUnit => self.first_invisible_unit(),
             ActiveIscriptFlingy => self.active_iscript_flingy(),
             ActiveIscriptBullet => self.active_iscript_bullet(),
+            DcreepNextUpdate => self.dcreep_next_update(),
+            DcreepListSize => self.dcreep_list_size(),
+            DcreepListBegin => self.dcreep_list_begin(),
+            DcreepLookup => self.dcreep_lookup(),
+            CreepFuncs => self.creep_funcs(),
             UnitShouldRevealArea => self.unit_should_reveal_area(),
             MenuScreenId => self.menu_screen_id(),
             NetPlayerFlags => self.net_player_flags(),
@@ -2605,6 +2622,27 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         )
     }
 
+    pub fn creep_modify_state(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::CreepModifyState,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn for_each_surrounding_tile(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ForEachSurroundingile,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn creep_update_border_for_tile(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::CreepUpdateBorderForTile,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
     pub fn reveal_unit_area(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(AddressAnalysis::RevealUnitArea, AnalysisCache::cache_step_objects)
     }
@@ -2645,6 +2683,41 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     pub fn active_iscript_bullet(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(
             OperandAnalysis::ActiveIscriptBullet,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn dcreep_next_update(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::DcreepNextUpdate,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn dcreep_list_size(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::DcreepListSize,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn dcreep_list_begin(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::DcreepListBegin,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn dcreep_lookup(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::DcreepLookup,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn creep_funcs(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::CreepFuncs,
             AnalysisCache::cache_step_objects,
         )
     }
@@ -5641,10 +5714,12 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use OperandAnalysis::*;
         self.cache_many(&[
             StepActiveUnitFrame, StepHiddenUnitFrame, StepBulletFrame, RevealUnitArea,
-            UpdateUnitVisibility, UpdateCloakState, StepBullets,
+            UpdateUnitVisibility, UpdateCloakState, StepBullets, CreepModifyState,
+            ForEachSurroundingile, CreepUpdateBorderForTile,
         ], &[
             VisionUpdateCounter, VisionUpdated, FirstDyingUnit, FirstRevealer, FirstInvisibleUnit,
-            ActiveIscriptFlingy, ActiveIscriptBullet,
+            ActiveIscriptFlingy, ActiveIscriptBullet, DcreepNextUpdate, DcreepListSize,
+            DcreepListBegin, DcreepLookup, CreepFuncs,
         ], |s| {
             let step_objects = s.step_objects(actx)?;
             let game = s.game(actx)?;
@@ -5664,11 +5739,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             Some(([
                 result.step_active_frame, result.step_hidden_frame, result.step_bullet_frame,
                 result.reveal_area, result.update_unit_visibility, result.update_cloak_state,
-                result.step_bullets,
+                result.step_bullets, result.creep_modify_state, result.for_each_surrounding_tile,
+                result.creep_update_border_for_tile,
             ], [
                 result.vision_update_counter, result.vision_updated, result.first_dying_unit,
                 result.first_revealer, result.first_invisible_unit, result.active_iscript_flingy,
-                result.active_iscript_bullet,
+                result.active_iscript_bullet, result.dcreep_next_update, result.dcreep_list_size,
+                result.dcreep_list_begin, result.dcreep_lookup, result.creep_funcs,
             ]))
         })
     }

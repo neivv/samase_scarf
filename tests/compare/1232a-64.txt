@@ -40,6 +40,8 @@ create_lone_sprite: 14018e780
 create_starting_units: 1403af250
 create_team_game_starting_units: 1403aff30
 create_unit: 1401afc90
+creep_modify_state: 140617850
+creep_update_border_for_tile: 140616b90
 damage_unit: 1401a0510
 deserialize_sprites: 140188b10
 disable_unit: 1401d42b0
@@ -63,6 +65,7 @@ finish_unit_post: 1401b0540
 finish_unit_pre: 1401b0850
 flingy_update_target_dir: 14017b990
 font_cache_render_ascii: 1405e2b80
+for_each_surrounding_tile: 140616ad0
 game_loop: 140356f90
 game_screen_lclick: 1404029a0
 game_screen_rclick: 1403b3140
@@ -230,10 +233,15 @@ cmdbtns_ddsgrp: 140f29020
 cmdicons_ddsgrp: 140f290a0
 command_user: Mem32[140c63150]
 continue_game_loop: Mem8[140eed70e]
+creep_funcs: 140f59128
 current_campaign_mission: Mem64[140f36128]
 current_tooltip_ctrl: Mem64[140cfe768]
 cursor_marker: Mem64[140cfe038]
 dat_requirement_error: Mem32[140d534a8]
+dcreep_list_begin: 140f36010
+dcreep_list_size: 140f36060
+dcreep_lookup: 140f34010
+dcreep_next_update: Mem32[140f36074]
 dialog_return_code: Mem32[140f57bc8]
 draw_commands: 140f8c850
 draw_cursor_marker: Mem8[140cfdfd1]

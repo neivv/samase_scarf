@@ -516,3 +516,17 @@ pub fn pathing_map_tile_regions<Va: VirtualAddress>() -> u64 {
         false => 0x18,
     }
 }
+
+pub fn dcreep_list_index<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x12,
+        false => 0x22,
+    }
+}
+
+pub fn dcreep_x<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x10,
+        false => 0x20,
+    }
+}
