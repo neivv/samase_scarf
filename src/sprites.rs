@@ -12,6 +12,7 @@ use crate::{
     entry_of_until, single_result_assign, bumpvec_with_capacity,
 };
 use crate::hash_map::HashMap;
+use crate::linked_list::DetectListAdd;
 use crate::struct_layouts;
 
 pub struct Sprites<'e, Va: VirtualAddress> {
@@ -82,10 +83,6 @@ pub(crate) fn sprites<'e, E: ExecutionState<'e>>(
         sprites_free: Default::default(),
         hlines: Default::default(),
         last_ptr_candidates: BumpVec::new_in(bump),
-        active_list_candidate_branches: Default::default(),
-        is_checking_active_list_candidate: None,
-        active_list_candidate_head: None,
-        active_list_candidate_tail: None,
         create_lone_sprite: None,
         function_to_custom_map: HashMap::with_capacity_and_hasher(16, Default::default()),
         custom_to_function_map: bumpvec_with_capacity(16, bump),
@@ -94,6 +91,7 @@ pub(crate) fn sprites<'e, E: ExecutionState<'e>>(
         binary,
         arg_cache,
         ctx,
+        list_add_tracker: DetectListAdd::new(ctx.const_0()),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, order_nuke_track);
     analysis.analyze(&mut analyzer);
@@ -144,16 +142,6 @@ struct SpriteAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     // *last = (*first).prev
     // If this pattern is seen before first is confirmed, store (first, last) here.
     last_ptr_candidates: BumpVec<'acx, (Operand<'e>, Operand<'e>)>,
-    // Adding to active sprites is detected as
-    // if (*first_active == null) {
-    //     *first_active = *first_free;
-    //     *last_active = *first_free;
-    // }
-    // If detecting such branch, store its address and first_active
-    active_list_candidate_branches: HashMap<E::VirtualAddress, Operand<'e>>,
-    is_checking_active_list_candidate: Option<Operand<'e>>,
-    active_list_candidate_head: Option<Operand<'e>>,
-    active_list_candidate_tail: Option<Operand<'e>>,
     create_lone_sprite: Option<E::VirtualAddress>,
     // Dest, arg1, arg2 if Mem32[x] where the resolved value is a constant
     function_to_custom_map: HashMap<(Rva, Option<u64>, Option<u64>), u32>,
@@ -163,6 +151,7 @@ struct SpriteAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     binary: &'e BinaryFile<E::VirtualAddress>,
     arg_cache: &'acx ArgCache<'e, E>,
     ctx: OperandCtx<'e>,
+    list_add_tracker: DetectListAdd<'e, E>,
 }
 
 enum ChildFunctionFormula<'e> {
@@ -174,6 +163,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if matches!(
+            self.state,
+            FindSpritesState::CreateLone_Post | FindSpritesState::CreateSprite,
+        ) {
+            self.list_add_tracker.operation(ctrl, op);
+        }
         match *op {
             Operation::Call(to) => {
                 if let Some(dest) = ctrl.resolve_va(to) {
@@ -184,13 +179,16 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                         // Nuke dot sprite, either calling create lone or create sprite
                         // Their args are the same though, so cannot verify much here.
                         let old_state = self.state;
-                        self.state = match self.state {
-                            FindSpritesState::NukeTrack => FindSpritesState::CreateLone,
-                            FindSpritesState::CreateLone => FindSpritesState::CreateSprite,
+                        match self.state {
+                            FindSpritesState::NukeTrack => {
+                                self.state = FindSpritesState::CreateLone;
+                            }
+                            FindSpritesState::CreateLone => {
+                                self.switch_to_create_sprite();
+                            }
                             FindSpritesState::CreateSprite => {
                                 // Going to inline this, likely initialize_sprite
                                 // which will contain x/y pos
-                                FindSpritesState::CreateSprite
                             }
                             FindSpritesState::CreateLone_Post => {
                                 ctrl.end_analysis();
@@ -207,7 +205,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                                 ctrl.end_analysis();
                             }
                             FindSpritesState::CreateLone => {
-                                self.state = FindSpritesState::CreateLone_Post;
+                                self.switch_to_create_lone_post();
                             }
                             // Guess nothing changed
                             FindSpritesState::CreateSprite => (),
@@ -297,113 +295,78 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                         }
                     }
                 }
-                if let Some(head_candidate) = self.is_checking_active_list_candidate {
-                    // Adding to active sprites is detected as
-                    // if (*first_active == null) {
-                    //     *first_active = *first_free;
-                    //     *last_active = *first_free;
-                    // }
-                    let free_list = match self.state {
-                        FindSpritesState::CreateLone_Post => {
-                            Some(&self.lone_free)
-                        }
-                        FindSpritesState::CreateSprite => {
-                            Some(&self.sprites_free)
-                        }
-                        _ => None
-                    };
-                    if let Some(first_free) = free_list.and_then(|x| x.head) {
-                        if value == first_free {
-                            if dest_addr == head_candidate {
-                                self.active_list_candidate_head = Some(dest_addr);
-                            } else {
-                                self.active_list_candidate_tail = Some(dest_addr);
-                            }
-                        }
-                    }
-                }
-            }
-            Operation::Jump { condition, to } => {
-                match self.state {
-                    FindSpritesState::CreateLone_Post | FindSpritesState::CreateSprite => (),
-                    FindSpritesState::CreateLone | FindSpritesState::NukeTrack => return,
-                }
-                let ctx = ctrl.ctx();
-                let condition = ctrl.resolve(condition);
-                let dest_addr = match ctrl.resolve(to).if_constant() {
-                    Some(s) => VirtualAddress::from_u64(s),
-                    None => return,
-                };
-                // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
-                let (val, jump_if_null) = match if_arithmetic_eq_zero(ctx, condition) {
-                    Some(other) => match if_arithmetic_eq_zero(ctx, other) {
-                        Some(other) => (other, false),
-                        None => (other, true),
-                    }
-                    None => return,
-                };
-                if let Some(inner) = ctrl.if_mem_word(val) {
-                    let addr = match jump_if_null {
-                        true => dest_addr,
-                        false => ctrl.current_instruction_end(),
-                    };
-                    // There's also code that reads back to free lists, so ignore cases where
-                    // we're looking at free list head.
-                    let is_free_list_head =
-                        self.lone_free.head.filter(|&x| x == val).is_some() ||
-                        self.sprites_free.head.filter(|&x| x == val).is_some();
-                    if !is_free_list_head {
-                        self.active_list_candidate_branches.insert(addr, inner.address_op(ctx));
-                    }
-                }
             }
             _ => (),
         }
     }
 
     fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
-        let head_candidate = self.active_list_candidate_branches.get(&ctrl.address());
-        self.is_checking_active_list_candidate = head_candidate.cloned();
+        self.list_add_tracker.branch_start(ctrl);
     }
 
     fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         // Since hlines should be [hlines + 4 * x]
         // Prefer 4 * undefined as an 4 * (x - 1) offset will change base
-        fn hlines_base<'e, Va: VirtualAddress>(val: Operand<'e>) -> Option<Operand<'e>> {
-            val.if_arithmetic_add()
-                .and_either_other(|x| {
+        fn hlines_base<'e, Va: VirtualAddress>(
+            ctx: OperandCtx<'e>,
+            val: Operand<'e>,
+        ) -> Option<Operand<'e>> {
+            val.if_memory()?
+                .if_add_either_other(ctx, |x| {
                     x.if_arithmetic_mul_const(Va::SIZE.into())
                         .filter(|idx| idx.is_undefined() || idx.if_custom().is_some())
                 })
         }
 
-        if let Some(_) = self.is_checking_active_list_candidate.take() {
-            let head = self.active_list_candidate_head.take();
-            let tail = self.active_list_candidate_tail.take();
-            if let (Some(head), Some(tail)) = (head, tail) {
-                match self.state {
-                    FindSpritesState::CreateSprite => {
-                        let head = hlines_base::<E::VirtualAddress>(head);
-                        let tail = hlines_base::<E::VirtualAddress>(tail);
-                        if let (Some(head), Some(tail)) = (head, tail) {
-                            self.hlines.head = Some(head);
-                            self.hlines.tail = Some(tail);
-                            self.state = FindSpritesState::CreateLone_Post;
-                        }
+        let ctx = ctrl.ctx();
+        if let Some(result) = self.list_add_tracker.result(ctx) {
+            // There's also code that reads back to free lists, so ignore cases where
+            // we're looking at free list head.
+            if Some(result.head) == self.lone_free.head ||
+                Some(result.head) == self.sprites_free.head
+            {
+                return;
+            }
+            match self.state {
+                FindSpritesState::CreateSprite => {
+                    let head = hlines_base::<E::VirtualAddress>(ctx, result.head);
+                    let tail = hlines_base::<E::VirtualAddress>(ctx, result.tail);
+                    if let (Some(head), Some(tail)) = (head, tail) {
+                        self.hlines.head = Some(head);
+                        self.hlines.tail = Some(tail);
+                        self.switch_to_create_lone_post();
                     }
-                    FindSpritesState::CreateLone_Post => {
-                        self.lone_active.head = Some(ctrl.mem_word(head, 0));
-                        self.lone_active.tail = Some(ctrl.mem_word(tail, 0));
-                        ctrl.end_analysis();
-                    }
-                    _ => (),
                 }
+                FindSpritesState::CreateLone_Post => {
+                    self.lone_active.head = Some(result.head);
+                    self.lone_active.tail = Some(result.tail);
+                    ctrl.end_analysis();
+                }
+                _ => (),
             }
         }
     }
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
+    fn switch_to_create_lone_post(&mut self) {
+        self.state = FindSpritesState::CreateLone_Post;
+        let first_free_lone = match self.lone_free.head {
+            Some(s) => s,
+            None => return,
+        };
+        self.list_add_tracker.reset(first_free_lone);
+    }
+
+    fn switch_to_create_sprite(&mut self) {
+        self.state = FindSpritesState::CreateSprite;
+        let first_free = match self.sprites_free.head {
+            Some(s) => s,
+            None => return,
+        };
+        self.list_add_tracker.reset(first_free);
+    }
+
     fn check_position_store(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
@@ -603,8 +566,8 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
         } else if self.sprites_free.head.is_none() {
             // Check for duplicate lone set
             if self.lone_free.head.filter(|&x| x == value).is_none() {
-                self.state = FindSpritesState::CreateSprite;
                 self.sprites_free.head = Some(value);
+                self.switch_to_create_sprite();
             }
         }
     }
@@ -941,11 +904,8 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                     let condition = ctrl.resolve(condition);
                     let ctx = ctrl.ctx();
                     // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
-                    let (val, jump_if_null) = match if_arithmetic_eq_zero(ctx, condition) {
-                        Some(other) => match if_arithmetic_eq_zero(ctx, other) {
-                            Some(other) => (other, false),
-                            None => (other, true),
-                        }
+                    let (val, jump_if_null) = match condition.if_arithmetic_eq_neq_zero(ctx) {
+                        Some(x) => x,
                         None => return,
                     };
                     if ctrl.if_mem_word(val).is_some() {
@@ -1140,10 +1100,4 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             _ => (),
         }
     }
-}
-
-fn if_arithmetic_eq_zero<'e>(ctx: OperandCtx<'e>, op: Operand<'e>) -> Option<Operand<'e>> {
-    op.if_arithmetic_eq()
-        .filter(|x| x.1 == ctx.const_0())
-        .map(|x| x.0)
 }

@@ -37,6 +37,7 @@ mod game_init;
 mod hash_map;
 mod inline_hook;
 mod iscript;
+mod linked_list;
 mod map;
 mod minimap;
 mod network;
