@@ -91,7 +91,7 @@ pub(crate) fn sprites<'e, E: ExecutionState<'e>>(
         binary,
         arg_cache,
         ctx,
-        list_add_tracker: DetectListAdd::new(ctx.const_0()),
+        list_add_tracker: DetectListAdd::new(None),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, order_nuke_track);
     analysis.analyze(&mut analyzer);
@@ -740,10 +740,7 @@ pub(crate) fn fow_sprites<'e, E: ExecutionState<'e>>(
         free: Default::default(),
         active: Default::default(),
         last_ptr_candidates: BumpVec::new_in(bump),
-        free_list_candidate_branches: Default::default(),
-        is_checking_free_list_candidate: None,
-        free_list_candidate_head: None,
-        free_list_candidate_tail: None,
+        list_add_tracker: DetectListAdd::new(None),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, step_objects);
     analysis.analyze(&mut analyzer);
@@ -774,11 +771,8 @@ struct FowSpriteAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     free: IncompleteList<'e>,
     active: IncompleteList<'e>,
     // Explanation for these is at SpriteAnalyzer
+    list_add_tracker: DetectListAdd<'e, E>,
     last_ptr_candidates: BumpVec<'acx, (Operand<'e>, Operand<'e>)>,
-    free_list_candidate_branches: HashMap<E::VirtualAddress, Operand<'e>>,
-    is_checking_free_list_candidate: Option<Operand<'e>>,
-    free_list_candidate_head: Option<Operand<'e>>,
-    free_list_candidate_tail: Option<Operand<'e>>,
     first_lone: Operand<'e>,
 }
 
@@ -801,6 +795,11 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                     state.move_to(&DestOperand::from_oper(value), ctx.const_0());
                 }
                 return;
+            }
+        }
+        if self.state == FowSpritesState::StepLoneSpritesFound {
+            if self.active.head.is_some() {
+                self.list_add_tracker.operation(ctrl, op);
             }
         }
         match *op {
@@ -860,6 +859,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                     if let Some(last) = self.last_ptr_first_known(dest_value) {
                         self.active.tail = Some(last);
                     }
+                    self.list_add_tracker.reset(dest_value);
                     return;
                 }
                 // last_active_sprite = (*first_active_sprite).prev
@@ -878,44 +878,6 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                         }
                     }
                 }
-                if let Some(head_candidate) = self.is_checking_free_list_candidate {
-                    // Adding to free sprites is detected as
-                    // if (*first_free == null) {
-                    //     *first_free = *first_active;
-                    //     *last_free = *first_active;
-                    // }
-                    let active_list = &self.active;
-                    if let Some(first_active) = active_list.head {
-                        if value == first_active {
-                            if dest_value == head_candidate {
-                                self.free_list_candidate_head = Some(dest_value);
-                            } else {
-                                self.free_list_candidate_tail = Some(dest_value);
-                            }
-                        }
-                    }
-                }
-            }
-            Operation::Jump { condition, to } => {
-                if self.state != FowSpritesState::StepLoneSpritesFound {
-                    return;
-                }
-                if let Some(dest_addr) = ctrl.resolve_va(to) {
-                    let condition = ctrl.resolve(condition);
-                    let ctx = ctrl.ctx();
-                    // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
-                    let (val, jump_if_null) = match condition.if_arithmetic_eq_neq_zero(ctx) {
-                        Some(x) => x,
-                        None => return,
-                    };
-                    if ctrl.if_mem_word(val).is_some() {
-                        let addr = match jump_if_null {
-                            true => dest_addr,
-                            false => ctrl.current_instruction_end(),
-                        };
-                        self.free_list_candidate_branches.insert(addr, val);
-                    }
-                }
             }
             _ => (),
         }
@@ -923,17 +885,17 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
     }
 
     fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
-        let head_candidate = self.free_list_candidate_branches.get(&ctrl.address());
-        self.is_checking_free_list_candidate = head_candidate.copied();
+        if self.active.head.is_some() {
+            self.list_add_tracker.branch_start(ctrl);
+        }
     }
 
     fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
-        if let Some(_) = self.is_checking_free_list_candidate.take() {
-            let head = self.free_list_candidate_head.take();
-            let tail = self.free_list_candidate_tail.take();
-            if let (Some(head), Some(tail)) = (head, tail) {
-                self.free.head = Some(head);
-                self.free.tail = Some(tail);
+        if self.active.head.is_some() {
+            let ctx = ctrl.ctx();
+            if let Some(result) = self.list_add_tracker.result(ctx) {
+                self.free.head = Some(result.head);
+                self.free.tail = Some(result.tail);
                 ctrl.end_analysis();
             }
         }

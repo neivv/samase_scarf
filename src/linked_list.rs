@@ -15,7 +15,7 @@ use crate::util::{ControlExt, OperandExt};
 pub(crate) struct DetectListAdd<'e, E: ExecutionState<'e>> {
     head: Option<MemAccess<'e>>,
     tail: Option<MemAccess<'e>>,
-    value: Operand<'e>,
+    value: Option<Operand<'e>>,
     head_candidate: Option<MemAccess<'e>>,
     head_candidate_branches: HashMap<E::VirtualAddress, MemAccess<'e>>,
 }
@@ -26,7 +26,7 @@ pub(crate) struct ListHeadTail<'e> {
 }
 
 impl<'e, E: ExecutionState<'e>> DetectListAdd<'e, E> {
-    pub fn new(value: Operand<'e>) -> DetectListAdd<'e, E> {
+    pub fn new(value: Option<Operand<'e>>) -> DetectListAdd<'e, E> {
         DetectListAdd {
             head: None,
             tail: None,
@@ -40,7 +40,7 @@ impl<'e, E: ExecutionState<'e>> DetectListAdd<'e, E> {
         self.head = None;
         self.tail = None;
         self.head_candidate = None;
-        self.value = value;
+        self.value = Some(value);
         self.head_candidate_branches.clear();
     }
 
@@ -74,7 +74,7 @@ impl<'e, E: ExecutionState<'e>> DetectListAdd<'e, E> {
                 let dest = ctrl.resolve_mem(mem);
                 if let Some(head_candidate) = self.head_candidate {
                     let value = ctrl.resolve(value);
-                    if value == self.value {
+                    if Some(value) == self.value {
                         if dest == head_candidate {
                             self.head = Some(dest);
                         } else {

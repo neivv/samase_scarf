@@ -1,5 +1,4 @@
 use bumpalo::collections::Vec as BumpVec;
-use fxhash::FxHashMap;
 
 use scarf::{MemAccess, Operand, Operation, DestOperand, MemAccessSize};
 use scarf::analysis::{self, Control, FuncAnalysis};
@@ -8,6 +7,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use crate::{AnalysisCtx, ArgCache};
 use crate::analysis_state::{AnalysisState, StateEnum, FindCreateBulletState};
 use crate::call_tracker::CallTracker;
+use crate::linked_list::DetectListAdd;
 use crate::switch::{self, CompleteSwitch};
 use crate::struct_layouts;
 use crate::util::{
@@ -161,10 +161,7 @@ struct FindBulletLists<'acx, 'e, E: ExecutionState<'e>> {
     is_inlining: bool,
     // first active, first_free
     active_bullets: Option<(Operand<'e>, Operand<'e>)>,
-    active_list_candidate_branches: FxHashMap<E::VirtualAddress, Operand<'e>>,
-    is_checking_active_list_candidate: Option<Operand<'e>>,
-    active_list_candidate_head: Option<Operand<'e>>,
-    active_list_candidate_tail: Option<Operand<'e>>,
+    list_add_tracker: DetectListAdd<'e, E>,
     first_free: Option<Operand<'e>>,
     last_free: Option<Operand<'e>>,
     // Since last ptr for free lists (removing) is detected as
@@ -177,12 +174,13 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        self.list_add_tracker.operation(ctrl, op);
         match *op {
             Operation::Call(to) => {
                 if !self.is_inlining {
-                    if let Some(dest) = ctrl.resolve(to).if_constant() {
+                    if let Some(dest) = ctrl.resolve_va(to) {
                         self.is_inlining = true;
-                        ctrl.analyze_with_current_state(self, E::VirtualAddress::from_u64(dest));
+                        ctrl.analyze_with_current_state(self, dest);
                         self.is_inlining = false;
                         if self.active_bullets.is_some() {
                             ctrl.end_analysis();
@@ -206,6 +204,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
                 );
                 if value == first_free_next {
                     self.first_free = Some(dest_value);
+                    self.list_add_tracker.reset(dest_value);
                     if let Some(last) = self.last_ptr_first_known(dest_value) {
                         self.last_free = Some(last);
                     }
@@ -229,65 +228,19 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
                         }
                     }
                 }
-                if let Some(head_candidate) = self.is_checking_active_list_candidate {
-                    // Adding to active bullets is detected as
-                    // if (*first_active == null) {
-                    //     *first_active = *first_free;
-                    //     *last_active = *first_free;
-                    // }
-                    if let Some(first_free) = self.first_free {
-                        if value == first_free {
-                            if dest_value == head_candidate {
-                                self.active_list_candidate_head = Some(dest_value);
-                            } else {
-                                self.active_list_candidate_tail = Some(dest_value);
-                            }
-                        }
-                    }
-                }
-            }
-            Operation::Jump { condition, to } => {
-                let condition = ctrl.resolve(condition);
-                let dest_addr = match ctrl.resolve_va(to) {
-                    Some(s) => s,
-                    None => return,
-                };
-                fn if_arithmetic_eq_zero<'e>(op: Operand<'e>) -> Option<Operand<'e>> {
-                    op.if_arithmetic_eq()
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                }
-                // jump cond x == 0 jumps if x is 0, (x == 0) == 0 jumps if it is not
-                let (val, jump_if_null) = match if_arithmetic_eq_zero(condition) {
-                    Some(other) => match if_arithmetic_eq_zero(other) {
-                        Some(other) => (other, false),
-                        None => (other, true),
-                    }
-                    None => return,
-                };
-                if ctrl.if_mem_word(val).is_some() {
-                    let addr = match jump_if_null {
-                        true => dest_addr,
-                        false => ctrl.current_instruction_end(),
-                    };
-                    self.active_list_candidate_branches.insert(addr, val);
-                }
             }
             _ => (),
         }
     }
 
     fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
-        let head_candidate = self.active_list_candidate_branches.get(&ctrl.address());
-        self.is_checking_active_list_candidate = head_candidate.cloned();
+        self.list_add_tracker.branch_start(ctrl);
     }
 
-    fn branch_end(&mut self, _ctrl: &mut Control<'e, '_, '_, Self>) {
-        if let Some(_) = self.is_checking_active_list_candidate.take() {
-            let head = self.active_list_candidate_head.take();
-            let tail = self.active_list_candidate_tail.take();
-            if let (Some(head), Some(tail)) = (head, tail) {
-                self.active_bullets = Some((head, tail));
-            }
+    fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        let ctx = ctrl.ctx();
+        if let Some(result) = self.list_add_tracker.result(ctx) {
+            self.active_bullets = Some((result.head, result.tail));
         }
     }
 }
@@ -355,13 +308,10 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
         let mut analyzer = FindBulletLists::<E> {
             is_inlining: false,
             active_bullets: None,
+            list_add_tracker: DetectListAdd::new(None),
             first_free: None,
             last_free: None,
-            is_checking_active_list_candidate: None,
-            active_list_candidate_head: None,
-            active_list_candidate_tail: None,
             last_ptr_candidates: bumpvec_with_capacity(8, bump),
-            active_list_candidate_branches: FxHashMap::default(),
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, create_bullet);
         analysis.analyze(&mut analyzer);
