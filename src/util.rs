@@ -622,3 +622,8 @@ pub fn resolve_rdata_const<'e, Va: VirtualAddress>(
         }
     }
 }
+
+#[inline]
+pub fn test_assertions() -> bool {
+    cfg!(feature = "test_assertions")
+}

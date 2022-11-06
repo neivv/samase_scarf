@@ -1,7 +1,7 @@
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{OperandCtx, Operand, OperandType};
 
-use crate::is_global;
+use crate::util::is_global;
 
 fn unresolve_add_chain_part<'e>(
     ctx: OperandCtx<'e>,

@@ -3167,7 +3167,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
                 Operation::Jump { condition, .. } => {
                     let condition = ctrl.resolve(condition);
-                    let inf_kerry_cmp = crate::if_arithmetic_eq_neq(condition)
+                    let inf_kerry_cmp = condition.if_arithmetic_eq_neq()
                         .filter(|x| x.1.if_constant() == Some(0x33))
                         .and_then(|x| {
                             x.0.if_mem16_offset(struct_layouts::unit_id::<E::VirtualAddress>())

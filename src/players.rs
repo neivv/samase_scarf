@@ -10,7 +10,10 @@ use crate::analysis_state::{AnalysisState, StateEnum, LocalPlayerState};
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
 use crate::analysis::{AnalysisCtx, ArgCache};
-use crate::util::{ControlExt, OptionExt, bumpvec_with_capacity, seems_assertion_call};
+use crate::util::{
+    ControlExt, OptionExt, OperandExt, bumpvec_with_capacity, seems_assertion_call,
+    single_result_assign,
+};
 
 pub struct NetPlayers<'e, Va: VirtualAddress> {
     // Array, struct size
@@ -44,7 +47,7 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
                         ctrl.user_state().get::<LocalPlayerState>()
                     {
                         let condition = ctrl.resolve(condition);
-                        let local_player_id = crate::if_arithmetic_eq_neq(condition)
+                        let local_player_id = condition.if_arithmetic_eq_neq()
                             .and_then(|(l, r, _)| {
                                 Some((l, r))
                                     .and_either_other(|x| {
@@ -64,7 +67,7 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
 
                             })
                             .filter(|x| x.if_memory().is_some());
-                        if crate::single_result_assign(local_player_id, &mut self.result) {
+                        if single_result_assign(local_player_id, &mut self.result) {
                             ctrl.end_analysis();
                         } else {
                             // Still end the branch on test builds
@@ -159,7 +162,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindInitNetPlayer<'a
                     let arg4_base = arg4.if_mem16_offset(6);
                     match (arg3_base, arg4_base) {
                         (Some(a), Some(b)) if a == b => {
-                            if crate::single_result_assign(Some(dest), &mut self.result) {
+                            if single_result_assign(Some(dest), &mut self.result) {
                                 ctrl.end_analysis();
                             }
                         }
