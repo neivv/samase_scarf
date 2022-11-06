@@ -2246,7 +2246,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     if dump_text != compare {
         for (i, (a, b)) in dump_text.lines().zip(compare.lines()).enumerate() {
             if a != b {
-                panic!("Text dump mismatch at line {}:\n{}\n{}\n", i, a, b);
+                panic!("Text dump mismatch at line {}:\n{}\n{}\n", i + 1, a, b);
             }
         }
         panic!("Text dump didn't match compare (no lines in dump??)");
