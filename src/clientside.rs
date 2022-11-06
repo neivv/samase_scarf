@@ -5,9 +5,8 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation, Rva};
 use scarf::operand::{OperandCtx};
 
-use crate::{
-    AnalysisCtx, ArgCache, EntryOf, EntryOfResult, entry_of_until, FunctionFinder,
-};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{EntryOf, EntryOfResult, FunctionFinder, entry_of_until};
 use crate::analysis_state::{
     AnalysisState, StateEnum, MiscClientSideAnalyzerState, HandleTargetedClickState,
 };
@@ -256,12 +255,12 @@ pub(crate) fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
                     ctrl.end_analysis();
                 }
                 Operation::Call(to) => {
-                    let to = ctrl.resolve(to);
+                    let to = ctrl.resolve_va(to);
                     let arg1 = ctrl.resolve(self.args.on_call(0)).unwrap_sext();
                     let arg2 = ctrl.resolve(self.args.on_call(1)).unwrap_sext();
-                    if let Some(dest) = to.if_constant() {
+                    if let Some(dest) = to {
                         if arg1.if_mem16().is_some() && arg2.if_mem16().is_some() {
-                            self.result = Some(E::VirtualAddress::from_u64(dest));
+                            self.result = Some(dest);
                             ctrl.end_analysis();
                         }
                     }
@@ -368,10 +367,9 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
             }
             match *op {
                 Operation::Call(to) => {
-                    let to = ctrl.resolve(to);
-                    if let Some(dest) = to.if_constant() {
+                    if let Some(dest) = ctrl.resolve_va(to) {
                         if !self.is_outside_game_screen_seen {
-                            if dest == self.is_outside_game_screen.as_u64() {
+                            if dest == self.is_outside_game_screen {
                                 self.is_outside_game_screen_seen = true;
                                 self.set_eax_to_zero = true;
                             }
@@ -381,7 +379,7 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
                         if self.depth == 0 {
                             if self.is_event_pos_in_game_coords_call(ctrl) {
                                 self.depth += 1;
-                                ctrl.inline(self, E::VirtualAddress::from_u64(dest));
+                                ctrl.inline(self, dest);
                                 ctrl.skip_operation();
                                 self.depth -= 1;
                             }
@@ -390,7 +388,7 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
                             return;
                         } else {
                             self.depth += 1;
-                            ctrl.inline(self, E::VirtualAddress::from_u64(dest));
+                            ctrl.inline(self, dest);
                             ctrl.skip_operation();
                             self.depth -= 1;
                         }
@@ -634,8 +632,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'acx, 'e, E
                     // is_eq: true jumps if x == 0
                     // is_eq: false jumps if x != 0
                     let branch_start = match is_eq {
-                        true => match ctrl.resolve(to).if_constant() {
-                            Some(s) => E::VirtualAddress::from_u64(s),
+                        true => match ctrl.resolve_va(to) {
+                            Some(s) => s,
                             None => return,
                         },
                         false => ctrl.current_instruction_end(),
@@ -662,8 +660,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'acx, 'e, E
                     // is inside function
                     let old_inline_depth = self.inline_depth;
                     self.inline_depth += 1;
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         ctrl.inline(self, dest);
                         ctrl.skip_operation();
                     }
@@ -687,8 +684,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'acx, 'e, E
                     });
                 if let Some(is_eq) = cond_ok {
                     let branch_start = match is_eq {
-                        true => match ctrl.resolve(to).if_constant() {
-                            Some(s) => E::VirtualAddress::from_u64(s),
+                        true => match ctrl.resolve_va(to) {
+                            Some(s) => s,
                             None => return,
                         },
                         false => ctrl.current_instruction_end(),
@@ -709,8 +706,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'acx, 'e, E
         use MiscClientSideAnalyzerState as State;
         match *op {
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     if self.inline_depth == 0 {
                         self.inline_depth += 1;
                         ctrl.inline(self, dest);
@@ -734,8 +730,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'acx, 'e, E
                         });
                     if let Some(is_eq) = cond_ok {
                         let branch_start = match is_eq {
-                            true => match ctrl.resolve(to).if_constant() {
-                                Some(s) => E::VirtualAddress::from_u64(s),
+                            true => match ctrl.resolve_va(to) {
+                                Some(s) => s,
                                 None => return,
                             },
                             false => ctrl.current_instruction_end(),
@@ -768,8 +764,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'acx, 'e, E
         // These two are similar checks.
         match *op {
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     if self.inline_depth == 0 {
                         self.inline_depth += 1;
                         ctrl.inline(self, dest);

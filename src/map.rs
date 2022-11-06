@@ -2,7 +2,7 @@ use scarf::{DestOperand, FlagUpdate, FlagArith, Operand, Operation};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{AnalysisCtx, ArgCache};
+use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until_with_limit};
 use crate::struct_layouts;
 use crate::util::{ControlExt, OperandExt, single_result_assign};

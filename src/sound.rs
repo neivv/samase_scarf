@@ -2,8 +2,9 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState};
 use scarf::{Operand, Operation};
 
-use crate::{AnalysisCtx, ArgCache, ControlExt};
+use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::switch;
+use crate::util::{ControlExt};
 
 pub(crate) fn play_sound<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,

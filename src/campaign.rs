@@ -3,7 +3,8 @@ use bumpalo::collections::Vec as BumpVec;
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operand};
 
-use crate::AnalysisCtx;
+use crate::analysis::AnalysisCtx;
+use crate::analysis_find::{find_bytes, find_address_refs};
 
 static ZERG_CAMPAIGN_SIGNATURE: &[u8] = &[
     0x20, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -27,11 +28,11 @@ pub(crate) fn campaigns<'e, E: ExecutionState<'e>>(
     let rdata = analysis.binary_sections.rdata;
     let data = analysis.binary_sections.data;
     let bump = &analysis.bump;
-    let zerg_campaign_refs = crate::find_bytes(bump, &rdata.data, ZERG_CAMPAIGN_SIGNATURE);
+    let zerg_campaign_refs = find_bytes(bump, &rdata.data, ZERG_CAMPAIGN_SIGNATURE);
     let va_size = <E::VirtualAddress as VirtualAddress>::SIZE;
     let candidates = zerg_campaign_refs.iter().flat_map(|&zref| {
         let address = rdata.virtual_address + zref.0;
-        crate::find_address_refs(bump, &data.data, address)
+        find_address_refs(bump, &data.data, address)
     });
     let candidates = BumpVec::from_iter_in(candidates, bump);
     let result = candidates.iter()

@@ -9,18 +9,22 @@ use scarf::{DestOperand, MemAccess, Operand, OperandCtx, Operation, BinaryFile, 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandType, ArithOpType, MemAccessSize};
 
-use crate::{
-    AnalysisCtx, ArgCache, entry_of_until, EntryOfResult, EntryOf, OptionExt, OperandExt,
-    if_arithmetic_eq_neq, single_result_assign, bumpvec_with_capacity, FunctionFinder,
-    ControlExt, is_stack_address, is_global
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{
+    entry_of_until, EntryOfResult, EntryOf, FunctionFinder, find_strings_casei, find_address_refs,
+    find_bytes,
 };
 use crate::analysis_state::{
     AnalysisState, StateEnum, ScMainAnalyzerState, IsInitMapFromPathState, FindChooseSnpState,
     SinglePlayerStartState, MapEntryState, LoadImagesAnalysisState,
 };
 use crate::add_terms::collect_arith_add_terms;
-use crate::call_tracker::CallTracker;
+use crate::call_tracker::{self, CallTracker};
 use crate::switch::CompleteSwitch;
+use crate::util::{
+    ControlExt, OperandExt, OptionExt, is_global, is_stack_address,
+    bumpvec_with_capacity, single_result_assign,
+};
 use crate::vtables::Vtables;
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -180,10 +184,10 @@ pub(crate) fn play_smk<'e, E: ExecutionState<'e>>(
     // Find ref for char *smk_filenames[0x1c]; smk_filenames[0] == "smk\\blizzard.webm"
     let rdata = binary.section(b".rdata\0\0")?;
     let data = binary.section(b".data\0\0\0")?;
-    let str_ref_addrs = crate::find_strings_casei(bump, &rdata.data, b"smk\\blizzard.");
+    let str_ref_addrs = find_strings_casei(bump, &rdata.data, b"smk\\blizzard.");
 
     let data_rvas = str_ref_addrs.iter().flat_map(|&str_rva| {
-        crate::find_address_refs(bump, &data.data, rdata.virtual_address + str_rva.0)
+        find_address_refs(bump, &data.data, rdata.virtual_address + str_rva.0)
     });
     let data_rvas = BumpVec::from_iter_in(data_rvas, bump);
     let global_refs = data_rvas.iter().flat_map(|&rva| {
@@ -392,12 +396,10 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if state == ScMainAnalyzerState::SearchingEntryHook {
                         // BW does if options & 0x800 != 0 { play_smk(..); }
                         // at the hook point
-                        let ok = crate::if_arithmetic_eq_neq(condition)
+                        let ok = condition.if_arithmetic_eq_neq()
                             .map(|(l, r, _)| (l, r))
-                            .and_either(|x| x.if_arithmetic_and())
-                            .map(|x| x.0)
-                            .and_either_other(|x| x.if_constant().filter(|&c| c == 0x8))
-                            .and_then(|other| other.if_memory())
+                            .and_either(|x| x.if_arithmetic_and_const(8))
+                            .and_then(|(val, _other)| val.if_memory())
                             .is_some();
                         if ok {
                             self.result.mainmenu_entry_hook = Some(ctrl.address());
@@ -455,7 +457,7 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let bump = &analysis.bump;
     let rdata = analysis.binary_sections.rdata;
-    let mut chk_data = crate::find_bytes(bump, &rdata.data, &chk_validated_sections[0][..]);
+    let mut chk_data = find_bytes(bump, &rdata.data, &chk_validated_sections[0][..]);
     chk_data.retain(|&rva| {
         if rva.0 & 3 != 0 {
             return false;
@@ -478,7 +480,7 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
     });
     let section_refs = chk_data.into_iter().flat_map(|rva| {
         let address = rdata.virtual_address + rva.0;
-        crate::find_address_refs(bump, &rdata.data, address)
+        find_address_refs(bump, &rdata.data, address)
             .into_iter()
             .map(move |x| (rva, x))
     });
@@ -584,11 +586,10 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 state.jump_count += 1;
                 let cond = ctrl.resolve(condition);
                 let mut arg3_check = false;
-                if let Some((l, r, _)) = crate::if_arithmetic_eq_neq(cond) {
-                    if r.if_constant() == Some(0) {
-                        if self.arg_cache.on_entry(2) == Operand::and_masked(l).0 {
-                            arg3_check = true;
-                        }
+                let ctx = ctrl.ctx();
+                if let Some((l, _)) = cond.if_arithmetic_eq_neq_zero(ctx) {
+                    if self.arg_cache.on_entry(2) == Operand::and_masked(l).0 {
+                        arg3_check = true;
                     }
                 }
                 let state = ctrl.user_state().get::<IsInitMapFromPathState>();
@@ -746,9 +747,9 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             Operation::Jump { condition, .. } => {
                 let cond = ctrl.resolve(condition);
-                let provider_id = crate::if_arithmetic_eq_neq(cond)
-                    .map(|x| (x.0, x.1))
-                    .and_either_other(|x| x.if_constant().filter(|&c| c == ID_BNAU as u64));
+                let provider_id = cond.if_arithmetic_eq_neq()
+                    .filter(|x| x.1.if_constant() == Some(ID_BNAU as u64))
+                    .map(|x| x.0);
                 let state = ctrl.user_state().get::<FindChooseSnpState>();
                 state.provider_id_offset = provider_id;
             }
@@ -1092,8 +1093,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSelectMapEntr
                 } else {
                     let condition = ctrl.resolve(condition);
                     let ctx = ctrl.ctx();
-                    let mem_byte = crate::if_arithmetic_eq_neq(condition)
-                        .filter(|x| x.1 == ctx.const_0())
+                    let mem_byte = condition.if_arithmetic_eq_neq_zero(ctx)
                         .and_then(|x| x.0.if_mem8());
                     if let Some(mem) = mem_byte {
                         self.mem_byte_conds.push((ctrl.address(), mem.address_op(ctx)));
@@ -1302,9 +1302,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingR
                     }
                 } else {
                     let condition = ctrl.resolve(condition);
-                    let asset_scale = if_arithmetic_eq_neq(condition)
-                        .map(|(l, r, _)| (l, r))
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 4));
+                    let asset_scale = condition.if_arithmetic_eq_neq()
+                        .filter(|x| x.1.if_constant() == Some(4))
+                        .map(|x| x.0);
                     if let Some(scale) = asset_scale {
                         let funcs = &self.func_returns;
                         let ctx = ctrl.ctx();
@@ -1312,7 +1312,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingR
                         let scale = ctx.transform(scale, 8, |op| {
                             if let Some(idx) = op.if_custom() {
                                 let func = funcs[idx as usize];
-                                crate::call_tracker::analyze_func_return::<E>(func, ctx, binary)
+                                call_tracker::analyze_func_return::<E>(func, ctx, binary)
                             } else {
                                 None
                             }
@@ -1361,9 +1361,9 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindImagesLoade
                             .max_by_key(|x| x.0)
                             .map(|x| (x.1, x.2));
                         if let Some((cond, to)) = cond {
-                            let cond = if_arithmetic_eq_neq(cond)
-                                .map(|(l, r, _)| (l, r))
-                                .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
+                            let ctx = ctrl.ctx();
+                            let cond = cond.if_arithmetic_eq_neq_zero(ctx)
+                                .map(|x| x.0)
                                 .filter(|x| x.if_mem8().is_some());
                             if let Some(cond) = cond {
                                 self.result = EntryOf::Ok((cond, to));
@@ -1377,8 +1377,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindImagesLoade
                 }
             }
             Operation::Jump { condition, to } => {
-                let to = ctrl.resolve(to);
-                if let Some(to) = to.if_constant().map(E::VirtualAddress::from_u64) {
+                if let Some(to) = ctrl.resolve_va(to) {
                     self.conditions.push((ctrl.address(), ctrl.resolve(condition), to));
                 }
             }
@@ -1493,10 +1492,9 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheckLocalPlayerName<
         match *op {
             Operation::Jump { condition, .. } => {
                 let cond = ctrl.resolve(condition);
-                let mem = if_arithmetic_eq_neq(cond)
-                    .map(|(l, r, _)| (l, r))
-                    .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                    .and_then(|x| x.if_mem8());
+                let ctx = ctrl.ctx();
+                let mem = cond.if_arithmetic_eq_neq_zero(ctx)
+                    .and_then(|x| x.0.if_mem8());
                 if let Some(mem) = mem {
                     let ctx = ctrl.ctx();
                     self.result = Some(mem.address_op(ctx));
@@ -1558,8 +1556,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitGameNetwork<'
         match *op {
             Operation::Call(dest) => {
                 if !self.inlining {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         self.inlining = true;
                         // Assert-enabled builds have a lot of assertions at start
                         self.jump_limit = 10;
@@ -1575,10 +1572,9 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitGameNetwork<'
             Operation::Jump { condition, .. } => {
                 if self.inlining {
                     let condition = ctrl.resolve(condition);
-                    let ok = if_arithmetic_eq_neq(condition)
-                        .map(|(l, r, _)| (l, r))
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                        .filter(|&x| x == self.local_storm_player)
+                    let ctx = ctrl.ctx();
+                    let ok = condition.if_arithmetic_eq_neq_zero(ctx)
+                        .filter(|x| x.0 == self.local_storm_player)
                         .is_some();
                     if ok {
                         // Set properly in Call branch
@@ -1629,8 +1625,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLobbyState<'e, E>
         match *op {
             Operation::Call(dest) => {
                 if !self.inlining {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         self.jump_limit = 7;
                         self.inlining = true;
                         ctrl.analyze_with_current_state(self, dest);
@@ -1649,9 +1644,9 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLobbyState<'e, E>
                     }
                 } else {
                     let cond = ctrl.resolve(condition);
-                    let lobby_state = if_arithmetic_eq_neq(cond)
-                        .map(|(l, r, _)| (l, r))
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 8));
+                    let lobby_state = cond.if_arithmetic_eq_neq()
+                        .filter(|x| x.1.if_constant() == Some(8))
+                        .map(|x| x.0);
                     if let Some(lobby_state) = lobby_state {
                         self.result = Some(lobby_state.clone());
                         ctrl.end_analysis();
@@ -1884,8 +1879,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                             None => return,
                         };
                         let condition = ctrl.resolve(condition);
-                        let flag_bits = if_arithmetic_eq_neq(condition)
-                            .filter(|x| x.1 == ctx.const_0())
+                        let flag_bits = condition.if_arithmetic_eq_neq_zero(ctx)
                             .and_then(|x| {
                                 let (l, r) = x.0.if_arithmetic_and()?;
                                 let bits = r.if_constant()? as u8;
@@ -1894,7 +1888,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                                 if !self.is_map_entry(base) {
                                     return None;
                                 }
-                                Some((bits, offset, x.2))
+                                Some((bits, offset, x.1))
                             });
                         if let Some((flag_bits, offset, jump_if_clear)) = flag_bits {
                             match self.map_entry_flags_offset {
@@ -2159,8 +2153,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSnetInitProvi
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                     let arg5 = ctrl.resolve(self.arg_cache.on_call(4));
                     let ctx = ctrl.ctx();
@@ -2243,8 +2236,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindChkInitPlayer<'e,
             }
             Operation::Call(dest) => {
                 if !self.inlining {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         self.inlining = true;
                         ctrl.inline(self, dest);
                         self.inlining = false;
@@ -2830,7 +2822,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                 *op = ctx.transform(*op, 8, |op| {
                     if let Some(idx) = op.if_custom() {
                         let (func, _) = funcs[idx as usize];
-                        crate::call_tracker::analyze_func_return::<E>(func, ctx, binary)
+                        call_tracker::analyze_func_return::<E>(func, ctx, binary)
                     } else {
                         None
                     }
@@ -3276,12 +3268,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                         self.step_game_loop_first_cond_jump = false;
                         return;
                     }
-                    if let Some(jump_if_zero) = if_arithmetic_eq_neq(condition)
-                        .filter(|x| {
-                            x.1 == ctx.const_0() &&
-                                Operand::and_masked(x.0).0.if_custom() == Some(0)
-                        })
-                        .map(|x| x.2)
+                    if let Some(jump_if_zero) = condition.if_arithmetic_eq_neq_zero(ctx)
+                        .filter(|x| Operand::and_masked(x.0).0.if_custom() == Some(0))
+                        .map(|x| x.1)
                     {
                         self.state = GameLoopAnalysisState::StepGameLoopAfterContinue;
                         let addr = match jump_if_zero {
@@ -3353,13 +3342,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnaly
             StepGameLoopAnalysisState::NextGameStepTick => {
                 if let Operation::Jump { condition, to } = *op {
                     let condition = ctrl.resolve(condition);
-                    let result = if_arithmetic_eq_neq(condition)
-                        .filter(|x| x.1 == ctx.const_0())
+                    let result = condition.if_arithmetic_eq_neq_zero(ctx)
                         .and_then(|x| {
                             let (l, r) = x.0.if_arithmetic_and_const(0x8000_0000)?
                                 .if_arithmetic_sub()?;
                             l.if_custom()?;
-                            Some((r, x.2))
+                            Some((r, x.1))
                         });
                     if let Some((next_tick, jump_to_do_step)) = result {
                         self.result.next_game_step_tick = Some(next_tick);
@@ -3409,8 +3397,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnaly
                 } else if let Operation::Jump { condition, to } = *op {
                     let condition = ctrl.resolve(condition);
                     if self.result.anti_troll.is_none() {
-                        let anti_troll = if_arithmetic_eq_neq(condition)
-                            .filter(|x| x.1 == ctx.const_0())
+                        let anti_troll = condition.if_arithmetic_eq_neq_zero(ctx)
                             .and_then(|x| x.0.if_mem8())
                             .map(|x| ctx.mem_sub_const_op(x, 0x1a));
                         self.result.anti_troll = anti_troll;
@@ -3492,8 +3479,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepNetwork<'e, E> 
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     if !self.inlining {
                         self.inlining = true;
                         ctrl.inline(self, dest);
@@ -3507,7 +3493,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepNetwork<'e, E> 
                 // menu_screen_id == MENU_SCREEN_EXIT (0x21 currently,
                 // but allow matching higher constants, 1.16.1 had 0x19)
                 let condition = ctrl.resolve(condition);
-                let menu_screen_id = if_arithmetic_eq_neq(condition)
+                let menu_screen_id = condition.if_arithmetic_eq_neq()
                     .map(|(l, r, _)| (l, r))
                     .and_either_other(|x| x.if_constant().filter(|&c| c > 0x20 && c < 0x80))
                     .filter(|x| {
@@ -3868,7 +3854,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, '
             if self.state == JoinParamState::FindVariantType {
                 self.first_branch = false;
                 let condition = ctrl.resolve(condition);
-                let compare = if_arithmetic_eq_neq(condition)
+                let compare = condition.if_arithmetic_eq_neq()
                     .filter(|x| x.1.if_constant() == Some(4))
                     .map(|x| x.0)
                     .and_then(|x| ctrl.if_mem_word(x));
@@ -3944,7 +3930,7 @@ pub(crate) fn single_player_map_end<'e, E: ExecutionState<'e>>(
     }
     let arg_cache = &actx.arg_cache;
     for str_ref in &str_refs {
-        crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+        entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let mut analyzer = FindSpMapEnd::<E> {
                 run_dialog,
                 is_multiplayer,
@@ -4031,11 +4017,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSpMapEnd<'a, 
                 }
                 if let Operation::Jump { condition, to } = *op {
                     let condition = ctrl.resolve(condition);
-                    let eq_neq_zero = if_arithmetic_eq_neq(condition)
-                        .filter(|x| x.1 == ctx.const_0());
+                    let eq_neq_zero = condition.if_arithmetic_eq_neq_zero(ctx);
                     let result = eq_neq_zero
                         .filter(|x| x.0 == self.is_multiplayer)
-                        .map(|x| x.2);
+                        .map(|x| x.1);
                     let to = match ctrl.resolve_va(to) {
                         Some(s) => s,
                         None => return,
@@ -4053,7 +4038,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSpMapEnd<'a, 
                     } else {
                         // The codegen here may do `al == 0` check and
                         // from there on assume that al is 0.
-                        if let Some((val, _, is_eq)) = eq_neq_zero {
+                        if let Some((val, is_eq)) = eq_neq_zero {
                             let eax = ctrl.resolve(ctx.register(0));
                             let eax_update = if val == eax {
                                 Some(ctx.const_0())
@@ -4177,8 +4162,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeSpMapEnd<'
             SpMapEndState::IsCustomSinglePlayer => {
                 if let Operation::Jump { condition, .. } = *op {
                     let condition = ctrl.resolve(condition);
-                    let result = if_arithmetic_eq_neq(condition)
-                        .filter(|x| x.1 == ctx.const_0() && is_global(x.0))
+                    let result = condition.if_arithmetic_eq_neq_zero(ctx)
+                        .filter(|x| is_global(x.0))
                         .map(|x| x.0);
                     if let Some(val) = result {
                         self.result.is_custom_single_player = Some(val);
@@ -4315,9 +4300,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             InitMapFromPathState::ReplayCheck => {
                 if let Operation::Jump { condition, to } = *op {
                     let condition = ctrl.resolve(condition);
-                    let result = if_arithmetic_eq_neq(condition)
-                        .filter(|x| x.1 == ctx.const_0() && x.0 == self.is_replay)
-                        .map(|x| x.2);
+                    let result = condition.if_arithmetic_eq_neq_zero(ctx)
+                        .filter(|x| x.0 == self.is_replay)
+                        .map(|x| x.1);
                     if let Some(jump_if_not_replay) = result {
                         let jump_dest = match ctrl.resolve_va(to) {
                             Some(s) => s,
@@ -4558,10 +4543,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 } else if let Operation::Jump { condition, to } = *op {
                     let condition = ctrl.resolve(condition);
-                    if let Some((op, jump_if_zero)) = if_arithmetic_eq_neq(condition)
-                        .filter(|x| x.1 == ctx.const_0())
-                        .map(|x| (x.0, x.2))
-                    {
+                    if let Some((op, jump_if_zero)) = condition.if_arithmetic_eq_neq_zero(ctx) {
                         let zero_addr = match jump_if_zero {
                             true => match ctrl.resolve_va(to) {
                                 Some(s) => s,
@@ -4583,10 +4565,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> AnalyzeInitMapFromPath<'a, 'acx, 'e, E> {
     fn check_campaign_mission_cmp(&mut self, op: Operand<'e>) -> Option<bool> {
-       if_arithmetic_eq_neq(op)
-            .filter(|x| x.1 == self.ctx.const_0())
+       op.if_arithmetic_eq_neq_zero(self.ctx)
             .filter(|x| x.0.if_mem16_offset(0x154) == Some(self.game))
-            .map(|x| x.2)
+            .map(|x| x.1)
     }
 
     /// Only returns valid value once map_mpq is in result

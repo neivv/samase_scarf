@@ -5,14 +5,15 @@ use scarf::analysis::{self, FuncAnalysis, Cfg, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::OperandCtx;
 
-use crate::{
-    AnalysisCtx, entry_of_until, single_result_assign, EntryOf, ArgCache, OperandExt,
-    bumpvec_with_capacity, FunctionFinder, ControlExt, is_global, if_arithmetic_eq_neq,
-};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{entry_of_until, EntryOf, FunctionFinder};
 use crate::analysis_state::{AnalysisState, StateEnum, StepOrderState};
 use crate::call_tracker::CallTracker;
 use crate::inline_hook::{EspOffsetRegs, InlineHookState, inline_hook_state};
 use crate::struct_layouts;
+use crate::util::{
+    ControlExt, OperandExt, bumpvec_with_capacity, is_global, single_result_assign,
+};
 
 #[derive(Clone, Debug)]
 pub enum StepOrderHiddenHook<'e, Va: VirtualAddress> {
@@ -200,7 +201,7 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
                 if result == Some(self.unit) {
                     return true;
                 }
-                let result = if_arithmetic_eq_neq(val)
+                let result = val.if_arithmetic_eq_neq()
                     .filter(|x| x.1.if_constant() == Some(0x95))
                     .and_then(|x| {
                         x.0.if_mem8_offset(
@@ -367,7 +368,7 @@ impl<'acx, 'e: 'acx, F: ExecutionState<'e>> scarf::Analyzer<'e> for FindOrderFun
                     // If a func return value was used for jump
                     // (unit_is_disabled), then it is not the result.
                     if let Some(result) = self.result {
-                        if let Some(func_return) = if_arithmetic_eq_neq(condition)
+                        if let Some(func_return) = condition.if_arithmetic_eq_neq()
                             .and_then(|x| Operand::and_masked(x.0).0.if_custom())
                         {
                             if func_return == result.as_u64() as u32 {
@@ -1169,7 +1170,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepOrder<
                 if let Operation::Jump { condition, to } = *op {
                     let condition = ctrl.resolve(condition);
                     let unit_id = struct_layouts::unit_id::<E::VirtualAddress>();
-                    let ok = if_arithmetic_eq_neq(condition)
+                    let ok = condition.if_arithmetic_eq_neq()
                         .filter(|x| x.1.if_constant() == Some(0x49))
                         .and_then(|x| {
                             x.0.if_mem16_offset(unit_id).filter(|&x| x == ctx.register(1))?;
@@ -1525,7 +1526,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             OrderPlayerGuardState::VerifyGetTargetAcqRange => {
                 if let Operation::Jump { condition, .. } = *op {
                     let condition = ctrl.resolve(condition);
-                    let ok = if_arithmetic_eq_neq(condition)
+                    let ok = condition.if_arithmetic_eq_neq()
                         .filter(|x| x.1.if_constant() == Some(0x6b))
                         .and_then(|x| {
                             x.0.if_mem8_offset(struct_layouts::unit_order::<E::VirtualAddress>())

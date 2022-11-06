@@ -8,17 +8,18 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, MemAccessSize};
 use scarf::{BinaryFile, DestOperand, MemAccess, Operation, Operand, OperandCtx};
 
-use crate::{
-    AnalysisCtx, ArgCache, ControlExt, EntryOf, OperandExt, OptionExt, single_result_assign,
-    StringRefs, FunctionFinder, bumpvec_with_capacity, if_arithmetic_eq_neq, is_global,
-    is_stack_address,
-};
+use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_state::{
     AnalysisState, StateEnum, TooltipState, FindTooltipCtrlState, GluCmpgnState,
 };
+use crate::analysis_find::{EntryOf, StringRefs, FunctionFinder, entry_of_until};
 use crate::call_tracker::CallTracker;
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
+use crate::util::{
+    ControlExt, OperandExt, OptionExt, bumpvec_with_capacity, single_result_assign,
+    is_global, is_stack_address,
+};
 
 #[derive(Clone)]
 pub struct TooltipRelated<'e, Va: VirtualAddress> {
@@ -125,7 +126,7 @@ pub(crate) fn run_dialog<'e, E: ExecutionState<'e>>(
     }
     let args = &analysis.arg_cache;
     for str_ref in &str_refs {
-        crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+        entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let mut analyzer = RunDialogAnalyzer {
                 string_address: str_ref.string_address,
                 result: &mut result,
@@ -354,7 +355,7 @@ pub(crate) fn spawn_dialog<'e, E: ExecutionState<'e>>(
         glucmpgn_event_handler: None,
     };
     for str_ref in &str_refs {
-        crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+        entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let mut analyzer = RunDialogAnalyzer {
                 string_address: str_ref.string_address,
                 result: &mut result,
@@ -400,7 +401,7 @@ pub(crate) fn tooltip_related<'e, E: ExecutionState<'e>>(
         str_refs = functions.string_refs(analysis, b"stat_f10.ui");
     }
     for str_ref in &str_refs {
-        crate::entry_of_until(binary, funcs, str_ref.use_address, |entry| {
+        entry_of_until(binary, funcs, str_ref.use_address, |entry| {
             let arg_cache = &analysis.arg_cache;
             let exec_state = E::initial_state(ctx, binary);
             let state =
@@ -669,7 +670,7 @@ pub(crate) fn draw_graphic_layers<'e, E: ExecutionState<'e>>(
         call_offset,
     );
     for func in &global_refs {
-        let val = crate::entry_of_until(binary, &funcs, func.use_address, |entry| {
+        let val = entry_of_until(binary, &funcs, func.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             let mut analyzer = IsDrawGraphicLayers::<E> {
                 entry_of: EntryOf::Retry,
@@ -1024,7 +1025,7 @@ pub(crate) fn multi_wireframes<'e, E: ExecutionState<'e>>(
     let str_refs = functions.string_refs(analysis, b"unit\\wirefram\\tranwire");
     let arg_cache = &analysis.arg_cache;
     for str_ref in &str_refs {
-        let res = crate::entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+        let res = entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let mut analyzer = MultiWireframeAnalyzer {
                 result: &mut result,
                 arg_cache,
@@ -1453,7 +1454,7 @@ pub(crate) fn ui_event_handlers<'e, E: ExecutionState<'e>>(
     let funcs = functions.functions();
     let global_refs = functions.find_functions_using_global(actx, game_screen_rclick);
     for func in &global_refs {
-        let val = crate::entry_of_until(binary, &funcs, func.use_address, |entry| {
+        let val = entry_of_until(binary, &funcs, func.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             let mut analyzer = ResetUiEventHandlersAnalyzer::<E> {
                 entry_of: EntryOf::Retry,
@@ -1769,8 +1770,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindClampZoom<'a, 'e
                 }
             }
             let condition = ctrl.resolve(condition);
-            let ok = if_arithmetic_eq_neq(condition)
-                .filter(|x| x.1 == ctx.const_0())
+            let ok = condition.if_arithmetic_eq_neq_zero(ctx)
                 .filter(|&x| x.0 == self.is_multiplayer)
                 .is_some();
             if ok {
@@ -1944,8 +1944,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                     }
 
                     let cond = ctrl.resolve(condition);
-                    let ok = if_arithmetic_eq_neq(cond)
-                        .filter(|x| x.1 == ctx.const_0())
+                    let ok = cond.if_arithmetic_eq_neq_zero(ctx)
                         .map(|x| x.0)
                         .and_then(|x| {
                             x.if_arithmetic_and_const(0x20)
@@ -2074,7 +2073,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 } else if let Some(to) = to.if_constant() {
                     let to = E::VirtualAddress::from_u64(to);
                     let condition = ctrl.resolve(condition);
-                    let ext_param = if_arithmetic_eq_neq(condition)
+                    let ext_param = condition.if_arithmetic_eq_neq()
                         .and_then(|x| {
                             ctrl.if_mem_word_offset(x.0, 0)
                                 .filter(|&x| x == self.arg_cache.on_entry(1))?;

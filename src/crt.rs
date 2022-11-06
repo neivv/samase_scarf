@@ -1,7 +1,8 @@
 use byteorder::{ByteOrder, LittleEndian};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{AnalysisCtx, find_bytes};
+use crate::analysis::{AnalysisCtx};
+use crate::analysis_find::{find_bytes};
 
 pub(crate) fn fastfail<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,

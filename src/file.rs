@@ -5,10 +5,9 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{Operand};
 use scarf::{BinaryFile, BinarySection, DestOperand, Operation};
 
-use crate::{
-    AnalysisCtx, ArgCache, if_callable_const, FunctionFinder, single_result_assign,
-    is_global, ControlExt,
-};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{FunctionFinder};
+use crate::util::{if_callable_const, single_result_assign, is_global, ControlExt};
 
 pub(crate) struct OpenFile<Va: VirtualAddress> {
     pub file_exists: Option<Va>,

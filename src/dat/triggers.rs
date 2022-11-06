@@ -4,7 +4,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, Operation};
 
-use crate::{OperandExt};
+use crate::util::{OperandExt};
 use super::{DatPatchContext};
 
 /// Patches unit id checks in conditions / actions. They differ

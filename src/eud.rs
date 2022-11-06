@@ -8,8 +8,10 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType};
 
-use crate::{AnalysisCtx, ArgCache, ControlExt, EntryOf, bumpvec_with_capacity, FunctionFinder};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::analysis_state::{AnalysisState, StateEnum, EudState};
+use crate::util::{ControlExt, bumpvec_with_capacity};
 
 pub struct Eud<'e> {
     pub address: u32,
@@ -31,8 +33,11 @@ static EUD_ADDRS: &[u32] = &[
 fn if_arithmetic_add_or_sub_const<'e>(val: Operand<'e>) -> Option<(Operand<'e>, u64)> {
     match val.ty() {
         OperandType::Arithmetic(a) if a.ty == ArithOpType::Add => {
-            Operand::either(a.left, a.right, |x| x.if_constant())
-                .map(|(x, y)| (y, x))
+            if let Some(c) = a.right.if_constant() {
+                Some((a.left, c))
+            } else {
+                None
+            }
         }
         OperandType::Arithmetic(a) if a.ty == ArithOpType::Sub => {
             if let Some(c) = a.right.if_constant() {
@@ -180,8 +185,8 @@ fn find_init_eud_table_from_parent<'acx, 'e, E: ExecutionState<'e>>(
                 }
                 Operation::Call(to) => {
                     if ctrl.user_state().get::<EudState>().in_wanted_branch {
-                        if let Some(to) = ctrl.resolve(to).if_constant() {
-                            self.result = EntryOf::Ok(VirtualAddress::from_u64(to));
+                        if let Some(to) = ctrl.resolve_va(to) {
+                            self.result = EntryOf::Ok(to);
                             ctrl.end_analysis();
                         }
                     }
@@ -191,7 +196,7 @@ fn find_init_eud_table_from_parent<'acx, 'e, E: ExecutionState<'e>>(
         }
     }
 
-    crate::entry_of_until(binary, funcs, addr, |entry| {
+    entry_of_until(binary, funcs, addr, |entry| {
         let mut analyzer = Analyzer {
             result: EntryOf::Retry,
             phantom: Default::default(),
@@ -485,7 +490,7 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
         }
     }
 
-    crate::entry_of_until(binary, funcs, addr, |entry| {
+    entry_of_until(binary, funcs, addr, |entry| {
         let mut analyzer = Analyzer::<E> {
             result: EntryOf::Retry,
             phantom: Default::default(),

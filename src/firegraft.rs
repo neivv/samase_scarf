@@ -4,7 +4,8 @@ use scarf::analysis::{self, Control, FuncAnalysis, RelocValues};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{DestOperand, MemAccess, Operation, Operand, OperandType};
 
-use crate::{AnalysisCtx, entry_of_until, find_bytes, FunctionFinder, EntryOf};
+use crate::analysis::{AnalysisCtx};
+use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until, find_bytes};
 use crate::struct_layouts;
 use crate::util::{OperandExt, read_u32_at, bumpvec_with_capacity};
 

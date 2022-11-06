@@ -5,9 +5,8 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
 use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 
-use crate::{
-    AnalysisCtx, ArgCache, EntryOf, entry_of_until, find_bytes, FunctionFinder,
-};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until, find_bytes};
 use crate::analysis_state::{AnalysisState, StateEnum, IsReplayState, StepNetworkState};
 use crate::switch::CompleteSwitch;
 use crate::struct_layouts;

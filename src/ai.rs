@@ -9,14 +9,13 @@ use scarf::exec_state::{ExecutionState};
 
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
-use crate::{
-    ArgCache, OptionExt, OperandExt, single_result_assign, AnalysisCtx,
-    entry_of_until, EntryOf, ControlExt, FunctionFinder, if_arithmetic_eq_neq,
-};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::analysis_state::{self, AnalysisState, AiTownState, GiveAiState, TrainMilitaryState};
 use crate::hash_map::HashSet;
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
+use crate::util::{OptionExt, OperandExt, single_result_assign, ControlExt};
 
 pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
@@ -649,8 +648,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlayerAiAnalyzer<'e, 
         match *op {
             Operation::Call(dest) => {
                 if !self.inlining {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         self.inlining = true;
                         ctrl.analyze_with_current_state(self, dest);
                         self.inlining = false;
@@ -886,9 +884,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                     // Assume jumps checking Mem8[script.flags] & 1 (aiscript/bwscript)
                     // always be taken to avoid making switch index undefined
                     // (Doesn't matter whether it is aiscript or bwscript, just not both)
-                    let is_bwscript_check = crate::if_arithmetic_eq_neq(condition)
-                        .map(|(l, r, _)| (l, r))
-                        .and_if_either_other(|x| x.if_constant() == Some(0))
+                    let is_bwscript_check = condition.if_arithmetic_eq_neq_zero(ctx)
+                        .map(|x| x.0)
                         .unwrap_or(condition)
                         .if_arithmetic_and_const(1)
                         .and_then(|op| {
@@ -933,7 +930,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                 if self.result.players.is_none() {
                     // Check for players[global].type == 1
                     let condition = ctrl.resolve(condition);
-                    let players = if_arithmetic_eq_neq(condition)
+                    let players = condition.if_arithmetic_eq_neq()
                         .filter(|x| x.1 == ctx.const_1())
                         .and_then(|x| {
                             x.0.if_mem8_offset(8)?.if_arithmetic_add()
@@ -1108,8 +1105,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                     }
                     Operation::Call(dest) if self.inline_depth == 0 => {
-                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                            let dest = E::VirtualAddress::from_u64(dest);
+                        if let Some(dest) = ctrl.resolve_va(dest) {
                             self.inline_depth += 1;
                             ctrl.analyze_with_current_state(self, dest);
                             if self.result.is_some() {
@@ -1138,8 +1134,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
                 match *op {
                     Operation::Call(dest) => {
-                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                            let dest = E::VirtualAddress::from_u64(dest);
+                        if let Some(dest) = ctrl.resolve_va(dest) {
                             // Arg 1 = unit id (Mem16[arg1] + 18)
                             // Arg 2 = x ((location.left + location.right) sdiv 2)
                             // Arg 3 = y ((location.top + location.bottom) sdiv 2)
@@ -1166,8 +1161,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             GiveAiState::SearchingRaceCheck => {
                 match *op {
                     Operation::Call(dest) if self.inline_depth == 0 => {
-                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                            let dest = E::VirtualAddress::from_u64(dest);
+                        if let Some(dest) = ctrl.resolve_va(dest) {
                             self.inline_depth = 1;
                             self.stop_on_first_branch = true;
                             ctrl.inline(self, dest);
@@ -1178,7 +1172,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     Operation::Jump { condition, .. } => {
                         let condition = ctrl.resolve(condition);
                         // Mem8[units_dat_group_flags + unit.id] & flag == 0
-                        let ok = crate::if_arithmetic_eq_neq(condition)
+                        let ok = condition.if_arithmetic_eq_neq_zero(ctx)
                             .and_then(|x| x.0.if_arithmetic_and())
                             .filter(|x| x.1.if_constant().is_some())
                             .and_then(|x| x.0.if_mem8_offset(self.units_dat_group_flags.as_u64()))
@@ -1197,8 +1191,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             GiveAiState::RaceCheckSeen => {
                 match *op {
                     Operation::Call(dest) if self.inline_depth == 0 => {
-                        if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                            let dest = E::VirtualAddress::from_u64(dest);
+                        if let Some(dest) = ctrl.resolve_va(dest) {
                             self.inline_depth = 1;
                             ctrl.analyze_with_current_state(self, dest);
                             if self.result.is_some() {
@@ -1211,7 +1204,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     Operation::Jump { condition, .. } if self.inline_depth == 1 => {
                         // Recognize give_ai from it checking units_dat_ai_flags & 0x2
                         let condition = ctrl.resolve(condition);
-                        let ok = crate::if_arithmetic_eq_neq(condition)
+                        let ok = condition.if_arithmetic_eq_neq()
                             .and_then(|x| x.0.if_arithmetic_and_const(0x2))
                             .and_then(|x| x.if_mem8_offset(self.units_dat_ai_flags.as_u64()))
                             .is_some();
@@ -1285,13 +1278,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAna
                 }
                 // Check for this.ai == null or this.ai != null
                 let condition = ctrl.resolve(condition);
-                let jump_on_null = crate::if_arithmetic_eq_neq(condition)
-                    .filter(|x| x.1 == ctx.const_0())
+                let jump_on_null = condition.if_arithmetic_eq_neq_zero(ctx)
                     .and_then(|x| {
                         let unit_ai = struct_layouts::unit_ai::<E::VirtualAddress>();
                         ctrl.if_mem_word_offset(x.0, unit_ai)
                             .filter(|&x| x == ctx.register(1))?;
-                        Some(x.2)
+                        Some(x.1)
                     });
                 let jump_on_null = match jump_on_null {
                     Some(s) => s,
@@ -1343,8 +1335,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAna
                 if !ok {
                     return;
                 }
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     if self.inline_depth == 255 {
                         // First matching call on branch where this.ai != null
                         // is ai_prepare_moving_to
@@ -1445,8 +1436,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         .is_some();
                 }
                 if do_inline {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         self.inline_depth += 1;
                         ctrl.analyze_with_current_state(self, dest);
                         if self.result.is_some() {

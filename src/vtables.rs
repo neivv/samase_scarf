@@ -3,7 +3,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile};
 
-use crate::{AnalysisCtx};
+use crate::analysis::{AnalysisCtx};
 
 pub struct Vtable<'e, Va: VirtualAddress> {
     /// Contains the terminating 0 of C string, in order to allow

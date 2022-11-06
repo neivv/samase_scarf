@@ -2,11 +2,10 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{DestOperand, FlagArith, Operand, Operation};
 
-use crate::{
-    AnalysisCtx, ArgCache, entry_of_until, EntryOf,
-    single_result_assign, OperandExt, FunctionFinder,
-};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::switch::CompleteSwitch;
+use crate::util::{single_result_assign, OperandExt};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckUnitRequirements<'e, Va: VirtualAddress> {

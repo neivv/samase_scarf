@@ -85,17 +85,4 @@ pub use crate::iscript::StepIscriptHook;
 pub use crate::network::{SnpDefinitions};
 pub use crate::renderer::{PrismShaders};
 pub use crate::step_order::{SecondaryOrderHook, StepOrderHiddenHook};
-
-pub(crate) use analysis::{AnalysisCtx, ArgCache};
-pub(crate) use analysis_find::{
-    FunctionFinder, EntryOf, EntryOfResult, StringRefs, entry_of_until,
-    find_strings_casei, find_bytes, find_address_refs,
-};
-pub(crate) use util::{
-    ControlExt, OptionExt, OperandExt, if_callable_const, if_arithmetic_eq_neq, is_global,
-    is_stack_address, bumpvec_with_capacity, single_result_assign,
-};
-
-pub fn test_assertions() -> bool {
-    cfg!(feature = "test_assertions")
-}
+pub use crate::util::test_assertions;

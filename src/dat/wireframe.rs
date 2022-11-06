@@ -4,11 +4,10 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{OperandHashByAddress};
 use scarf::{DestOperand, Operand, Operation};
 
-use crate::{
-    entry_of_until, EntryOf, OptionExt, OperandExt, bumpvec_with_capacity,
-};
+use crate::analysis_find::{entry_of_until, EntryOf};
 use crate::hash_map::{HashMap, HashSet};
 use crate::unresolve::unresolve;
+use crate::util::{OptionExt, OperandExt, bumpvec_with_capacity};
 use super::{DatPatchContext, DatPatch, GrpTexturePatch, reloc_address_of_instruction};
 
 pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
@@ -184,10 +183,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     // delete_status_screen is a function we don't need to care about;
                     // it starts with a check for status_screen != 0
                     let condition = ctrl.resolve(condition);
-                    let checking_status_screen = crate::if_arithmetic_eq_neq(condition)
-                        .map(|x| (x.0, x.1))
-                        .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                        .filter(|&x| x == self.status_screen)
+                    let checking_status_screen = condition.if_arithmetic_eq_neq_zero(ctx)
+                        .filter(|x| x.0 == self.status_screen)
                         .is_some();
                     if checking_status_screen {
                         self.bad_functions.push(self.entry);

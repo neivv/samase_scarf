@@ -3,10 +3,9 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::add_terms::collect_arith_add_terms;
-use crate::{
-    ArgCache, AnalysisCtx, single_result_assign, entry_of_until, EntryOf, FunctionFinder,
-    bumpvec_with_capacity, OperandExt,
-};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
+use crate::util::{single_result_assign, bumpvec_with_capacity, OperandExt};
 
 #[derive(Clone)]
 pub struct SpriteSerialization<Va: VirtualAddress> {

@@ -1,7 +1,7 @@
 use scarf::exec_state::VirtualAddress;
 use scarf::{BinaryFile, Operand, MemAccessSize};
 
-use crate::{OperandExt};
+use crate::util::{OperandExt};
 
 pub fn sprite_first_overlay<Va: VirtualAddress>(sprite_size: u32) -> Option<u32> {
     match (sprite_size, Va::SIZE) {

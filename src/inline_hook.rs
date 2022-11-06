@@ -6,7 +6,7 @@ use scarf::operand::OperandHashByAddress;
 use scarf::{ArithOpType, BinaryFile, DestOperand, OperandCtx, Operand, OperandType, Operation};
 
 use crate::hash_map::HashSet;
-use crate::ControlExt;
+use crate::util::ControlExt;
 
 #[derive(Copy, Clone)]
 pub struct InlineHookState {

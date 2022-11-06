@@ -7,13 +7,12 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{MemAccess};
 
-use crate::{
-    ArgCache, AnalysisCtx, ControlExt, EntryOf, FunctionFinder, OperandExt, OptionExt,
-    entry_of_until, single_result_assign, bumpvec_with_capacity,
-};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::hash_map::HashMap;
 use crate::linked_list::DetectListAdd;
 use crate::struct_layouts;
+use crate::util::{ControlExt, OperandExt, OptionExt, single_result_assign, bumpvec_with_capacity};
 
 pub struct Sprites<'e, Va: VirtualAddress> {
     pub sprite_hlines: Option<Operand<'e>>,
@@ -807,8 +806,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                 if self.inline_depth >= 2 {
                     return;
                 }
-                if let Some(dest) = ctrl.resolve(to).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(to) {
                     match self.state {
                         FowSpritesState::InStepOrders => {
                             self.inline_depth += 1;
@@ -1015,6 +1013,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 }
             }
             Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+                if mem.size != E::WORD_SIZE {
+                    return;
+                }
                 let value = ctrl.resolve(value);
                 let dest = ctrl.resolve_mem(mem);
                 let ctx = ctrl.ctx();

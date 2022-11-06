@@ -2,12 +2,11 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{DestOperand, Operand, Operation};
 
-use crate::{
-    AnalysisCtx, ArgCache, ControlExt, EntryOf, entry_of_until, if_arithmetic_eq_neq, OperandExt,
-    OptionExt, Patch, bumpvec_with_capacity, FunctionFinder,
-};
+use crate::analysis::{AnalysisCtx, ArgCache, Patch};
+use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::analysis_state::{AnalysisState, StateEnum, ReplayVisionsState};
 use crate::struct_layouts;
+use crate::util::{ControlExt, OperandExt, OptionExt, bumpvec_with_capacity};
 
 pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
@@ -110,9 +109,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayFowAnalyzer<'a
             }
             match *op {
                 Operation::Call(dest) => {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         self.inlining = true;
-                        ctrl.inline(self, E::VirtualAddress::from_u64(dest));
+                        ctrl.inline(self, dest);
                         ctrl.skip_operation();
                         self.inlining = false;
                     }
@@ -124,13 +123,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayFowAnalyzer<'a
                 Operation::Jump { condition, .. } => {
                     let condition = ctrl.resolve(condition);
                     if self.fow_unit_id_checked {
-                        let result = if_arithmetic_eq_neq(condition)
-                            .and_then(|x| {
-                                Some((x.0, x.1))
-                                    .and_either_other(|x| x.if_constant().filter(|&c| c == 0))
-                                    .filter(|&x| x == self.is_replay)?;
-                                Some(x.2)
-                            });
+                        let result = condition.if_arithmetic_eq_neq_zero(ctx)
+                            .filter(|x| x.0 == self.is_replay)
+                            .map(|x| x.1);
                         if let Some(jump_if_replay_eq_zero) = result {
                             let address = ctrl.address();
                             let instruction_len = ctrl.current_instruction_end().as_u64()
@@ -357,8 +352,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     }
                 }
                 // The main check: first_player_unit[0].sprite.visibility_mask & replay_visions
-                let result = if_arithmetic_eq_neq(condition)
-                    .filter(|x| x.1 == ctx.const_0())
+                let result = condition.if_arithmetic_eq_neq_zero(ctx)
                     .and_then(|x| x.0.if_arithmetic_and())
                     .and_either(|x| {
                         let sprite_visibility_mask =
@@ -388,8 +382,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 // replay_show_entire_map check
                 if user_state.visibility_mask_comparision != 0 {
                     user_state.visibility_mask_comparision -= 1;
-                    let result = if_arithmetic_eq_neq(condition)
-                        .filter(|x| x.1 == ctx.const_0())
+                    let result = condition.if_arithmetic_eq_neq_zero(ctx)
                         .map(|x| x.0)
                         .filter(|x| x.if_memory().is_some());
                     if let Some(replay_show_entire_map) = result  {

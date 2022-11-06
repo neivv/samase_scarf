@@ -429,14 +429,8 @@ impl<'a, 'e, E: ExecutionState<'e>> UnitsAnalyzer<'a, 'e, E> {
         } else {
             0x1e8
         };
-        let arg3_ok = (
-            arg3.if_arithmetic_mul()
-                .and_then(|(l, r)| Operand::either(l, r, |x| x.if_constant()))
-                .map(|(c, _)| c == unit_size)
-                .unwrap_or(false)
-            ) || (
-                arg3.if_constant().map(|c| c == unit_size * 1700).unwrap_or(false)
-            );
+        let arg3_ok = arg3.if_arithmetic_mul_const(unit_size).is_some() ||
+            arg3.if_constant() == Some(unit_size * 1700);
         if arg3_ok {
             Some(ctrl.resolve(self.arg_cache.on_call(0)))
         } else {

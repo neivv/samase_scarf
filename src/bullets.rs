@@ -4,7 +4,7 @@ use scarf::{MemAccess, Operand, Operation, DestOperand, MemAccessSize};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
-use crate::{AnalysisCtx, ArgCache};
+use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_state::{AnalysisState, StateEnum, FindCreateBulletState};
 use crate::call_tracker::CallTracker;
 use crate::linked_list::DetectListAdd;

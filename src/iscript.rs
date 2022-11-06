@@ -5,9 +5,10 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::ExecutionState;
 use scarf::exec_state::VirtualAddress;
 
-use crate::{AnalysisCtx, ArgCache, ControlExt, OperandExt, single_result_assign};
+use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::struct_layouts::{self, if_unit_sprite};
 use crate::switch;
+use crate::util::{ControlExt, OperandExt, single_result_assign};
 
 pub(crate) struct StepIscript<'e, Va: VirtualAddress> {
     pub switch_table: Option<Va>,
@@ -102,7 +103,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FindStepIscript<'a, 'e, E> {
                 ctrl.resolve(arg_cache.on_thiscall_call(2)) == zero &&
                 arg1.if_arithmetic_add_const(
                     struct_layouts::image_iscript::<E::VirtualAddress>()
-                ).filter(|&x| x == this).is_some();
+                ) == Some(this);
             if ok {
                 self.result = Some(dest);
                 ctrl.end_analysis();

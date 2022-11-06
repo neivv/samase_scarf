@@ -2,9 +2,10 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operand, Operation, DestOperand};
 
-use crate::{AnalysisCtx, ArgCache, ControlExt, OperandExt, OptionExt, single_result_assign};
+use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::struct_layouts;
 use crate::switch::simple_switch_branch;
+use crate::util::{ControlExt, OperandExt, OptionExt, single_result_assign};
 
 #[derive(Clone, Debug)]
 pub struct RegionRelated<'e, Va: VirtualAddress> {

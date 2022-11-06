@@ -7,7 +7,7 @@ use scarf::analysis::{FuncCallPair, RelocValues};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, Rva};
 
-use crate::{AnalysisCtx};
+use crate::analysis::{AnalysisCtx};
 
 // Tries to return a func index to the address less or equal to `entry` that is definitely a
 // function entry. Has still a hard limit.

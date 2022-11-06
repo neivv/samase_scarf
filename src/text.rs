@@ -4,14 +4,13 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{DestOperand, Operand, BinaryFile, BinarySection, Operation};
 
-use crate::{
-    AnalysisCtx, ArgCache, entry_of_until, EntryOf, OptionExt, OperandExt, single_result_assign,
-    bumpvec_with_capacity, FunctionFinder, ControlExt,
-};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until, find_bytes};
 use crate::analysis_state::{
     AnalysisState, StateEnum, FindCacheRenderAsciiState, IsCacheRenderAsciiState,
 };
 use crate::struct_layouts;
+use crate::util::{OptionExt, OperandExt, single_result_assign, bumpvec_with_capacity, ControlExt};
 
 #[derive(Clone)]
 pub struct FontRender<Va: VirtualAddress> {
@@ -30,7 +29,7 @@ pub(crate) fn fonts<'e, E: ExecutionState<'e>>(
     let funcs = functions.functions();
 
     let rdata = analysis.binary_sections.rdata;
-    let font_string_rvas = crate::find_bytes(bump, &rdata.data, b"font16x");
+    let font_string_rvas = find_bytes(bump, &rdata.data, b"font16x");
 
     let candidates = font_string_rvas.iter().flat_map(|&font| {
         functions.find_functions_using_global(analysis, rdata.virtual_address + font.0)
@@ -174,7 +173,7 @@ pub(crate) fn font_render<'e, E: ExecutionState<'e>>(
     let funcs = functions.functions();
 
     let rdata = analysis.binary_sections.rdata;
-    let font_string_rvas = crate::find_bytes(bump, &rdata.data, b"shadowOffset");
+    let font_string_rvas = find_bytes(bump, &rdata.data, b"shadowOffset");
 
     let ttf_init_candidates = font_string_rvas.iter().flat_map(|&font| {
         functions.find_functions_using_global(analysis, rdata.virtual_address + font.0)
@@ -238,8 +237,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
         match *op {
             Operation::Call(dest) => {
                 if ctrl.user_state().get::<FindCacheRenderAsciiState>().shadow_offset_seen {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         let ctx = ctrl.ctx();
                         let ecx = ctrl.resolve(ctx.register(1));
                         let ok = ecx.if_arithmetic_add()
@@ -332,8 +330,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 }
             }
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     if self.ok_calls.iter().any(|&x| x == dest) {
                         ctrl.user_state().set(IsCacheRenderAsciiState {
                             last_ok_call: Some(dest.as_u64()),
@@ -369,8 +366,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TtfCacheCharacterAna
         match *op {
             Operation::Call(dest) => {
                 let ctx = ctrl.ctx();
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     let ecx = ctrl.resolve(ctx.register(1));
                     // Args 4, 5, 6 are hardcoded constants. Either
                     //  0xd, 0xb4, 13.84615 (newer)
@@ -476,8 +472,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindTtfMalloc<'a, 'e
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                     // Malloc is called with (a4 + right - left) * (a4 + bottom - top)
                     // (a4 is border width)

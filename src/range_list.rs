@@ -3,7 +3,7 @@
 
 use bumpalo::collections::Vec as BumpVec;
 
-use crate::bumpvec_with_capacity;
+use crate::util::bumpvec_with_capacity;
 
 // Val having Copy + Clone isn't necessary for this list's functionality,
 // but it is used to make sure that it doesn't have a destructor, as BumpVec

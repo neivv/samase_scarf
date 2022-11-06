@@ -2,7 +2,7 @@ use bumpalo::collections::Vec as BumpVec;
 use bumpalo::Bump;
 use scarf::operand::{OperandCtx, OperandType, Operand, ArithOpType};
 
-use crate::bumpvec_with_capacity;
+use crate::util::bumpvec_with_capacity;
 
 pub fn collect_arith_add_terms<'e, 'acx>(
     operand: Operand<'e>,

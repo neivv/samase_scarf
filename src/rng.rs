@@ -6,10 +6,9 @@ use scarf::analysis::{self, FuncAnalysis, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, Operation, Operand, OperandCtx, MemAccessSize, DestOperand};
 
-use crate::{
-    AnalysisCtx, ArgCache, single_result_assign,
-    if_callable_const, EntryOf, entry_of_until, FunctionFinder,
-};
+use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
+use crate::util::{single_result_assign, if_callable_const, OperandExt};
 
 #[derive(Clone, Debug)]
 pub struct Rng<'e> {
@@ -163,8 +162,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
 }
 
 fn is_rng_enable_condition<'e>(cond: Operand<'e>, ctx: OperandCtx<'e>) -> Option<Operand<'e>> {
-    crate::if_arithmetic_eq_neq(cond)
-        .filter(|x| x.1 == ctx.const_0())
+    cond.if_arithmetic_eq_neq_zero(ctx)
         .map(|x| x.0)
         .filter(|x| {
             x.if_mem32()

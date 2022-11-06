@@ -5,8 +5,9 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::OperandHashByAddress;
 use scarf::{BinaryFile, Operand, OperandCtx, Operation};
 
-use crate::{AnalysisCtx, ControlExt, bumpvec_with_capacity};
+use crate::analysis::{AnalysisCtx};
 use crate::hash_map::HashMap;
+use crate::util::{ControlExt, bumpvec_with_capacity};
 
 /// Converts return values of calls to Custom(x) representing the function,
 /// and allows converting the Custom(x) to inlined return value of the function.
