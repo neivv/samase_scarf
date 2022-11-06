@@ -2270,7 +2270,7 @@ PortData array patches:
 0a: VirtualAddress(0062cd1c):7 = (((((rax * 4) / 30) * c) + (((rax * 4) % 30) / 4)) * 4)
 0a: VirtualAddress(00658847):7 = ((rdx + (Mem16[rbx + 64] * c)) * 4)
 0b: VirtualAddress(006137da):6 = (rbx * 4)
-0b: VirtualAddress(00613b7a):7 = ((rax * 8) + (rbx * 4))
+0b: VirtualAddress(00613b7a):7 = ((rbx * 4) + (rax * 8))
 0b: VirtualAddress(00613b95):7 = (rbx * 4)
 0b: VirtualAddress(00613d46):7 = (rax * 8)
 0b: VirtualAddress(00613d56):7 = ((rax * 8) + 4)

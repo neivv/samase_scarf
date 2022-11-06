@@ -434,10 +434,10 @@ sfxdata.dat: None
 portdata.dat: ef5340 (entry size 16)
 mapdata.dat: f1e3c8 (entry size 32)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress(00575140), 2) })
-sprite_x: (((((((Mem16[f7a013] * 2) + (((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 3ae) & ffff)) << 10) ^ (Custom_0 & ffff)) ^ (((((((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 3ae) - Mem16[f7a737]) << 10) ^ (((Custom_0 * 2) - (Mem8[f7a015] << 9)) << 10)) ^ ((Custom_0 << 11) + 18000000)) & ffff0000)) ^ Mem32[Mem32[30] + 10]) ^ a1a603ae)
+sprite_x: (((((((Mem16[f7a013] * 2) + (((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 3ae) & ffff)) << 10) ^ (Custom_0 & ffff)) ^ ((((((Custom_0 * 2) - (Mem8[f7a015] << 9)) << 10) ^ ((((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 3ae) - Mem16[f7a737]) << 10)) ^ ((Custom_0 << 11) + 18000000)) & ffff0000)) ^ Mem32[Mem32[30] + 10]) ^ a1a603ae)
 sprite_x_offset: Some(14)
 sprite_x_size: Some(Mem32)
-sprite_y: (((((((Mem16[f7a013] * 2) + (((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 3ae) & ffff)) << 10) ^ (Custom_0 & ffff)) ^ (((((((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 3ae) - Mem16[f7a737]) << 10) ^ (((Custom_0 * 2) - (Mem8[f7a015] << 9)) << 10)) ^ ((Custom_0 << 11) + 18000000)) & ffff0000)) ^ Mem32[Mem32[30] + 10]) ^ a1a603ae)
+sprite_y: (((((((Mem16[f7a013] * 2) + (((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 3ae) & ffff)) << 10) ^ (Custom_0 & ffff)) ^ ((((((Custom_0 * 2) - (Mem8[f7a015] << 9)) << 10) ^ ((((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 3ae) - Mem16[f7a737]) << 10)) ^ ((Custom_0 << 11) + 18000000)) & ffff0000)) ^ Mem32[Mem32[30] + 10]) ^ a1a603ae)
 sprite_y_offset: Some(18)
 sprite_y_size: Some(Mem32)
 799 euds

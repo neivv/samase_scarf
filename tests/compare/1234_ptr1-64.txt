@@ -436,10 +436,10 @@ sfxdata.dat: None
 portdata.dat: 140d5e520 (entry size 24)
 mapdata.dat: 140d89a90 (entry size 48)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress(14019359e), 2) })
-sprite_x: ((((((((Custom_0 ^ (Custom_0 << 20)) ^ (((((Mem32[140dfda10] >> 3) | (Mem8[140dfda10] << 1d)) * 2) - ((Custom_0 ^ ((Mem64[Mem64[60] + 18] >> b) - 481b4884)) ^ 92815a40)) << 20)) ^ (Mem32[140dfe5e0] << 20)) ^ (Mem16[140dfda14] << 35)) ^ ((Mem32[140dfda14] << 15) & 1fffff00000000)) ^ (((Mem64[Mem64[60] + 18] >> b) | (Mem16[Mem64[60] + 18] << 35)) - 10c78ad9481b4884)) ^ (((Mem64[Mem64[60] + 18] << 15) & ffffffff00000000) - 481b488400000000)) ^ e8b5733f92815a40)
+sprite_x: ((((((((Custom_0 ^ (((((Mem32[140dfda10] >> 3) | (Mem8[140dfda10] << 1d)) * 2) - ((Custom_0 ^ ((Mem64[Mem64[60] + 18] >> b) - 481b4884)) ^ 92815a40)) << 20)) ^ (Mem32[140dfe5e0] << 20)) ^ (Mem16[140dfda14] << 35)) ^ (Custom_0 << 20)) ^ ((Mem32[140dfda14] << 15) & 1fffff00000000)) ^ (((Mem64[Mem64[60] + 18] >> b) | (Mem16[Mem64[60] + 18] << 35)) - 10c78ad9481b4884)) ^ (((Mem64[Mem64[60] + 18] << 15) & ffffffff00000000) - 481b488400000000)) ^ e8b5733f92815a40)
 sprite_x_offset: Some(20)
 sprite_x_size: Some(Mem64)
-sprite_y: ((((((((Custom_0 ^ (Custom_0 << 20)) ^ (((((Mem32[140dfda10] >> 3) | (Mem8[140dfda10] << 1d)) * 2) - ((Custom_0 ^ ((Mem64[Mem64[60] + 18] >> b) - 481b4884)) ^ 92815a40)) << 20)) ^ (Mem32[140dfe5e0] << 20)) ^ (Mem16[140dfda14] << 35)) ^ ((Mem32[140dfda14] << 15) & 1fffff00000000)) ^ (((Mem64[Mem64[60] + 18] >> b) | (Mem16[Mem64[60] + 18] << 35)) - 10c78ad9481b4884)) ^ (((Mem64[Mem64[60] + 18] << 15) & ffffffff00000000) - 481b488400000000)) ^ e8b5733f92815a40)
+sprite_y: ((((((((Custom_0 ^ (((((Mem32[140dfda10] >> 3) | (Mem8[140dfda10] << 1d)) * 2) - ((Custom_0 ^ ((Mem64[Mem64[60] + 18] >> b) - 481b4884)) ^ 92815a40)) << 20)) ^ (Mem32[140dfe5e0] << 20)) ^ (Mem16[140dfda14] << 35)) ^ (Custom_0 << 20)) ^ ((Mem32[140dfda14] << 15) & 1fffff00000000)) ^ (((Mem64[Mem64[60] + 18] >> b) | (Mem16[Mem64[60] + 18] << 35)) - 10c78ad9481b4884)) ^ (((Mem64[Mem64[60] + 18] << 15) & ffffffff00000000) - 481b488400000000)) ^ e8b5733f92815a40)
 sprite_y_offset: Some(28)
 sprite_y_size: Some(Mem64)
 799 euds

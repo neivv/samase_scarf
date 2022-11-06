@@ -434,10 +434,10 @@ sfxdata.dat: None
 portdata.dat: f2b340 (entry size 16)
 mapdata.dat: f54390 (entry size 32)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress(0057cc00), 2) })
-sprite_x: (((((Custom_0 << 10) ^ (((((((Custom_0 ^ ((Mem32[20] >> b) + 3e18)) ^ 9497) - Mem16[(((Mem16[20] * 1e8) & ff8) ^ d34) + fb2a9a]) << 10) ^ (((Mem16[((((Mem32[20] * 13783d) >> 9) ^ 616) & fff) + fb2a98] * 2) + Custom_0) << 10)) ^ (((Mem32[20] >> b) | ((Mem16[20] << 15) & ffe00000)) + 48643e18)) & ffff0000)) ^ ((((Mem32[20] >> b) + 3e18) ^ Custom_0) & ffff)) ^ (((((Custom_0 << 11) ^ ((((Mem32[20] >> b) | ((Mem16[20] << 15) & ffe00000)) << 11) + 90c87c300000)) ^ 1292e0000) & 1fffe0000) + fed6d2000000)) ^ ffff9497)
+sprite_x: (((((Custom_0 << 10) ^ (((((((Custom_0 ^ ((Mem32[20] >> b) + 3e18)) ^ 9497) - Mem16[(((Mem16[20] * 1e8) & ff8) ^ d34) + fb2a9a]) << 10) ^ (((Mem16[((((Mem32[20] * 13783d) >> 9) ^ 616) & fff) + fb2a98] * 2) + Custom_0) << 10)) ^ (((Mem32[20] >> b) | (Mem16[20] << 15)) + 48643e18)) & ffff0000)) ^ ((((Mem32[20] >> b) + 3e18) ^ Custom_0) & ffff)) ^ (((((Custom_0 << 11) ^ (((Mem32[20] << 6) & 1fffe0000) + 7c300000)) ^ 1292e0000) & 1fffe0000) + fed6d2000000)) ^ ffff9497)
 sprite_x_offset: Some(14)
 sprite_x_size: Some(Mem32)
-sprite_y: (((((Custom_0 << 10) ^ (((((((Custom_0 ^ ((Mem32[20] >> b) + 3e18)) ^ 9497) - Mem16[(((Mem16[20] * 1e8) & ff8) ^ d34) + fb2a9a]) << 10) ^ (((Mem16[((((Mem32[20] * 13783d) >> 9) ^ 616) & fff) + fb2a98] * 2) + Custom_0) << 10)) ^ (((Mem32[20] >> b) | ((Mem16[20] << 15) & ffe00000)) + 48643e18)) & ffff0000)) ^ ((((Mem32[20] >> b) + 3e18) ^ Custom_0) & ffff)) ^ (((((Custom_0 << 11) ^ ((((Mem32[20] >> b) | ((Mem16[20] << 15) & ffe00000)) << 11) + 90c87c300000)) ^ 1292e0000) & 1fffe0000) + fed6d2000000)) ^ ffff9497)
+sprite_y: (((((Custom_0 << 10) ^ (((((((Custom_0 ^ ((Mem32[20] >> b) + 3e18)) ^ 9497) - Mem16[(((Mem16[20] * 1e8) & ff8) ^ d34) + fb2a9a]) << 10) ^ (((Mem16[((((Mem32[20] * 13783d) >> 9) ^ 616) & fff) + fb2a98] * 2) + Custom_0) << 10)) ^ (((Mem32[20] >> b) | (Mem16[20] << 15)) + 48643e18)) & ffff0000)) ^ ((((Mem32[20] >> b) + 3e18) ^ Custom_0) & ffff)) ^ (((((Custom_0 << 11) ^ (((Mem32[20] << 6) & 1fffe0000) + 7c300000)) ^ 1292e0000) & 1fffe0000) + fed6d2000000)) ^ ffff9497)
 sprite_y_offset: Some(18)
 sprite_y_size: Some(Mem32)
 799 euds

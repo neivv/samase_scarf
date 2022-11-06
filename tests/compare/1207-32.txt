@@ -1191,7 +1191,7 @@ PortData array patches:
 0a: VirtualAddress(006fce94):7 = ((rdx + (Mem16[rbp + c] * c)) * 4)
 0a: VirtualAddress(0071a5e0):7 = ((rdx + (rsi * c)) * 4)
 0b: VirtualAddress(006e94ca):6 = (Mem32[rsp + c] * 4)
-0b: VirtualAddress(006e9598):7 = ((rdx * 8) + (rbx * 4))
+0b: VirtualAddress(006e9598):7 = ((rbx * 4) + (rdx * 8))
 0b: VirtualAddress(006e95b3):7 = (rbx * 4)
 0b: VirtualAddress(006e96d6):7 = (rax * 8)
 0b: VirtualAddress(006e96e6):7 = ((rax * 8) + 4)
