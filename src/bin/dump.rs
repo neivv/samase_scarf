@@ -425,7 +425,7 @@ fn dump_test_compares(
     dir: &str,
     is_64: bool,
     filter: Option<&str>,
-) -> Result<(), io::Error> {
+) -> Result<()> {
     if !is_64 && cfg!(feature = "binaries_32") == false {
         return Ok(());
     }
@@ -452,38 +452,60 @@ fn dump_test_compares(
         exes.push(path);
     }
     exes.into_par_iter().try_for_each(|path| {
-        let text;
-        let start = std::time::Instant::now();
-        if !is_64 {
-            #[cfg(feature = "binaries_32")]
-            {
-                let mut binary = scarf::parse(path.as_os_str()).unwrap();
-                let relocs =
-                    scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary).unwrap();
-                binary.set_relocs(relocs);
-                let ctx = &scarf::OperandContext::new();
-                let mut analysis = Analysis::<scarf::ExecutionStateX86<'_>>::new(&binary, ctx);
-                text = samase_scarf::dump::dump_all(&mut analysis);
+        let result = std::panic::catch_unwind(|| {
+            let text;
+            let start = std::time::Instant::now();
+            if !is_64 {
+                #[cfg(feature = "binaries_32")]
+                {
+                    let mut binary = scarf::parse(path.as_os_str()).unwrap();
+                    let relocs =
+                        scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary)
+                            .unwrap();
+                    binary.set_relocs(relocs);
+                    let ctx = &scarf::OperandContext::new();
+                    let mut analysis = Analysis::<scarf::ExecutionStateX86<'_>>::new(&binary, ctx);
+                    text = samase_scarf::dump::dump_all(&mut analysis);
+                }
+                #[cfg(not(feature = "binaries_32"))] unreachable!();
+            } else {
+                #[cfg(feature = "binaries_64")]
+                {
+                    let binary = scarf::parse_x86_64(path.as_os_str()).unwrap();
+                    let ctx = &scarf::OperandContext::new();
+                    let mut analysis =
+                        Analysis::<scarf::ExecutionStateX86_64<'_>>::new(&binary, ctx);
+                    text = samase_scarf::dump::dump_all(&mut analysis);
+                }
+                #[cfg(not(feature = "binaries_64"))] unreachable!();
             }
-            #[cfg(not(feature = "binaries_32"))] unreachable!();
-        } else {
-            #[cfg(feature = "binaries_64")]
-            {
-                let binary = scarf::parse_x86_64(path.as_os_str()).unwrap();
-                let ctx = &scarf::OperandContext::new();
-                let mut analysis = Analysis::<scarf::ExecutionStateX86_64<'_>>::new(&binary, ctx);
-                text = samase_scarf::dump::dump_all(&mut analysis);
-            }
-            #[cfg(not(feature = "binaries_64"))] unreachable!();
-        }
-        let suffix = if !is_64 { "32" } else { "64" };
-        let version = path.file_stem().unwrap().to_str().unwrap();
-        eprintln!("{}-{} done in {:?}", suffix, version, start.elapsed());
-        let out_path = format!(
-            "tests/compare/{}-{}.txt", version, suffix,
-        );
-        std::fs::write(out_path, text.as_bytes())?;
-        Result::<(), io::Error>::Ok(())
+            let suffix = if !is_64 { "32" } else { "64" };
+            let version = path.file_stem().unwrap().to_str().unwrap();
+            // Done like this to lock stderr only once, so that
+            // the message won't overlap with other threads printing.
+            // (Too lazy to do std::io::stderr().lock() etc)
+            eprint!("{}", format!("{}-{} done in {:?}\n", suffix, version, start.elapsed()));
+            let out_path = format!(
+                "tests/compare/{}-{}.txt", version, suffix,
+            );
+            std::fs::write(out_path, text.as_bytes())?;
+            Result::<(), io::Error>::Ok(())
+        });
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(anyhow::Error::from(e)),
+            Err(payload) => Err(error_from_panic(payload)),
+        }.with_context(|| format!("analysis for {} failed", path.display()))
     })?;
     Ok(())
+}
+
+fn error_from_panic(e: Box<dyn std::any::Any + Send + 'static>) -> anyhow::Error {
+    match e.downcast::<String>() {
+        Ok(s) => anyhow!("An error occured: {}", s),
+        Err(e) => match e.downcast::<&'static str>() {
+            Ok(s) => anyhow!("An error occured: {}", s),
+            _ => anyhow!("An error occured (No other information available)"),
+        }
+    }
 }
