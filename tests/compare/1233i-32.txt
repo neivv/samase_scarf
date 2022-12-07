@@ -434,10 +434,10 @@ sfxdata.dat: None
 portdata.dat: e48340 (entry size 16)
 mapdata.dat: e70b80 (entry size 32)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress(0057ce40), 2) })
-sprite_x: (((((Custom_0 ^ (Mem16[ec502f] << 10)) ^ ((Mem8[ec48d2] << d) & 1f0000)) ^ (82b8bdea - ((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)))) ^ 29290e96) & ffffffff)
+sprite_x: (((((Custom_0 ^ ((Mem8[ec48d2] & f8) << d)) ^ (Mem16[ec502f] << 10)) ^ (82b8bdea - ((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)))) ^ 29290e96) & ffffffff)
 sprite_x_offset: Some(14)
 sprite_x_size: Some(Mem32)
-sprite_y: (((((Custom_0 ^ (Mem16[ec502f] << 10)) ^ ((Mem8[ec48d2] << d) & 1f0000)) ^ (82b8bdea - ((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)))) ^ 29290e96) & ffffffff)
+sprite_y: (((((Custom_0 ^ ((Mem8[ec48d2] & f8) << d)) ^ (Mem16[ec502f] << 10)) ^ (82b8bdea - ((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)))) ^ 29290e96) & ffffffff)
 sprite_y_offset: Some(18)
 sprite_y_size: Some(Mem32)
 799 euds
@@ -1463,8 +1463,8 @@ order_bb: Some(VirtualAddress(005b1d70))
 WARN Can't widen instruction @ VirtualAddress(0079f9c6)
 WARN Unknown Upgrades dat offset @ VirtualAddress(00796905): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
 WARN Unknown Upgrades dat offset @ VirtualAddress(0079691a): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
-WARN Unknown Weapons dat offset @ VirtualAddress(0057dadc): Mem8[(Undefined_3 & ffffffff)]
-WARN Unknown Weapons dat offset @ VirtualAddress(0057dadc): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(0057dadc): Mem8[Undefined_3]
+WARN Unknown Weapons dat offset @ VirtualAddress(0057dadc): Mem8[Undefined_3]
 Units entry count patches: [e48608, e48618, e48628, e48638, e48648, e48658, e48668, e48678, e48688, e48698, e486a8, e486b8, e486c8, e486d8, e486e8, e486f8, e48708, e48718, e48728, e48738, e48748, e48758, e48768, e48778, e48788, e48798, e487a8, e487b8, e487c8, e487d8, e487e8, e487f8, e48808, e48818, e48828, e48838, e48848, e48858, e48868, e48878, e48888, e48898, e488a8, e488b8, e488c8, e488d8, e488e8, e488f8, e48908, e48918, e48928, e48938, e48948, e48958]
 Units array patches:
     00: [583268, 58e3ad, 5aed56, 5b275d, 5b27bd, 5b281e, 5cec00, 5d6cd8, 5dbc11, 5dd345, 763d55, 764b19, e48554, e48600]

@@ -320,7 +320,7 @@ map_history: None
 map_mpq: Mem32[ff43ec]
 map_tile_flags: Mem32[e22dfc]
 map_width_pixels: Mem16[e5d9c4]
-menu_screen_id: ((((Mem8[dfb512] >> 6) ^ ((Mem32[dfb50f] * 4) & fffffffc)) ^ Mem32[ff1ac4]) ^ bb807434)
+menu_screen_id: (((((Mem8[dfb512] >> 6) | (Mem32[dfb50f] * 4)) ^ Mem32[ff1ac4]) ^ bb807434) & ffffffff)
 minimap_cursor_type: Mem16[fef278]
 mouse_x: None
 mouse_y: None
@@ -1472,8 +1472,8 @@ WARN Unknown Weapons dat offset @ VirtualAddress(0073ffd5): Mem8[Mem32[Mem32[rsp
 WARN Unknown Weapons dat offset @ VirtualAddress(0073fffe): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(0074006c): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(007400dc): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
-WARN Unknown Weapons dat offset @ VirtualAddress(00567bb9): Mem8[(Undefined_3 & ffffffff)]
-WARN Unknown Weapons dat offset @ VirtualAddress(00567bb9): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(00567bb9): Mem8[Undefined_3]
+WARN Unknown Weapons dat offset @ VirtualAddress(00567bb9): Mem8[Undefined_3]
 Units entry count patches: [d86530, d86540, d86550, d86560, d86570, d86580, d86590, d865a0, d865b0, d865c0, d865d0, d865e0, d865f0, d86600, d86610, d86620, d86630, d86640, d86650, d86660, d86670, d86680, d86690, d866a0, d866b0, d866c0, d866d0, d866e0, d866f0, d86700, d86710, d86720, d86730, d86740, d86750, d86760, d86770, d86780, d86790, d867a0, d867b0, d867c0, d867d0, d867e0, d867f0, d86800, d86810, d86820, d86830, d86840, d86850, d86860, d86870, d86880]
 Units array patches:
     00: [56c358, 578147, 59a2d6, 59dbed, 59dc4d, 59dcae, 5b7330, 5c0aa8, 5c4059, 5c6f22, 70b0c5, 70bc59, d86528, d868c4]

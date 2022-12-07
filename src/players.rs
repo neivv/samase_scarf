@@ -194,11 +194,8 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
         fn base_mul<'e>(operand: Operand<'e>) -> Option<(Operand<'e>, u64, Operand<'e>)> {
             operand
                 .if_arithmetic_add()
-                .and_either(|x| {
-                    x.if_arithmetic_mul()
-                        .and_either(|x| x.if_constant())
-                })
-                .map(|((mul, other), base)| {
+                .and_either(|x| x.if_mul_with_const())
+                .map(|((other, mul), base)| {
                     (base, mul, other)
                 })
         }
@@ -213,8 +210,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
                 if seems_assertion_call(ctrl, self.arg_cache) {
                     return;
                 }
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     let mut analyzer = CollectReturnValues::<E>::new(self.bump);
                     ctrl.analyze_with_current_state(&mut analyzer, dest);
                     if !analyzer.return_values.is_empty() {

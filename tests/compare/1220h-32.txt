@@ -320,7 +320,7 @@ map_history: None
 map_mpq: Mem32[fc1cac]
 map_tile_flags: Mem32[df0f64]
 map_width_pixels: Mem16[e2a3b8]
-menu_screen_id: ((((Mem8[dcf1b5] >> 6) ^ ((Mem32[dcf1b2] * 4) & fffffffc)) ^ Mem32[fbec7c]) ^ 1866a2ff)
+menu_screen_id: (((((Mem8[dcf1b5] >> 6) | (Mem32[dcf1b2] * 4)) ^ Mem32[fbec7c]) ^ 1866a2ff) & ffffffff)
 minimap_cursor_type: Mem16[fbbe40]
 mouse_x: Mem16[d95774]
 mouse_y: Mem16[d95778]
@@ -1464,8 +1464,8 @@ WARN Unknown Weapons dat offset @ VirtualAddress(00706774): Mem8[Mem32[Mem32[rsp
 WARN Unknown Weapons dat offset @ VirtualAddress(0070677c): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(005678c4): Mem8[rbp + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(005678cd): Mem8[rbp + 8]
-WARN Unknown Weapons dat offset @ VirtualAddress(00548141): Mem8[(Undefined_3 & ffffffff)]
-WARN Unknown Weapons dat offset @ VirtualAddress(00548141): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(00548141): Mem8[Undefined_3]
+WARN Unknown Weapons dat offset @ VirtualAddress(00548141): Mem8[Undefined_3]
 WARN Unknown Weapons dat offset @ VirtualAddress(005639df): rcx
 WARN Unknown Weapons dat offset @ VirtualAddress(00706675): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(0070669e): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]

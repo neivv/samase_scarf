@@ -229,7 +229,7 @@ fn everything_1212() {
             ),
             ctx.mem32c(0xf25830),
         );
-        assert_eq!(players, val);
+        assert_eq!(ctx.normalize_32bit(players), ctx.normalize_32bit(val));
 
         let step_iscript = analysis.step_iscript().unwrap();
         let hook = analysis.step_iscript_hook().unwrap();

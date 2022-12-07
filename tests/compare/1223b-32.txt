@@ -340,7 +340,7 @@ player_skins: 1005db0
 player_turns: 1007808
 player_turns_size: 1007838
 player_unit_skins: None
-players: ((((Mem16[dee016] >> 6) ^ ((Mem32[dee014] << a) & fffffc00)) ^ Mem32[1007390]) ^ cb9c861c)
+players: (((((Mem16[dee016] >> 6) | (Mem32[dee014] << a)) ^ Mem32[1007390]) ^ cb9c861c) & ffffffff)
 pylon_auras_visible: Mem32[e0fbd0]
 pylon_refresh: Mem32[e0fbcc]
 renderer: Mem32[11a662c]
@@ -1470,8 +1470,8 @@ WARN Overlapping stable addresses (VirtualAddress(0056a0cd), VirtualAddress(0056
 WARN Unknown Upgrades dat offset @ VirtualAddress(00765cdf): Mem8[Mem32[Mem32[rsp + 8] + 28] + e]
 WARN Unknown Upgrades dat offset @ VirtualAddress(00765cf1): Mem8[Mem32[Mem32[rsp + 8] + 28] + e]
 WARN Unknown Weapons dat offset @ VirtualAddress(005688df): rcx
-WARN Unknown Weapons dat offset @ VirtualAddress(005446b0): Mem8[((Undefined_2 + 1) & ffffffff)]
-WARN Unknown Weapons dat offset @ VirtualAddress(005446b0): Mem8[(Undefined_160 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(005446b0): Mem8[Undefined_2 + 1]
+WARN Unknown Weapons dat offset @ VirtualAddress(005446b0): Mem8[Undefined_160]
 WARN Unknown Weapons dat offset @ VirtualAddress(0076a143): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(0076a143): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(0076a16c): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]

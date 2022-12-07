@@ -340,7 +340,7 @@ player_skins: eed3b8
 player_turns: eeedf4
 player_turns_size: eeee24
 player_unit_skins: None
-players: ((Mem32[ce1d53] + d5f89081) ^ Mem32[eee998])
+players: ((Mem32[ce1d53] - 2a076f7f) ^ Mem32[eee998])
 pylon_auras_visible: Mem32[d063a8]
 pylon_refresh: Mem32[d063a4]
 renderer: Mem32[109eb70]
@@ -1463,8 +1463,8 @@ WARN Unknown Weapons dat offset @ VirtualAddress(006e54a7): Mem8[Mem32[Mem32[rsp
 WARN Unknown Weapons dat offset @ VirtualAddress(006e54af): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(006e5512): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(006e551a): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
-WARN Unknown Weapons dat offset @ VirtualAddress(0053c40c): Mem8[((Undefined_2 + 1) & ffffffff)]
-WARN Unknown Weapons dat offset @ VirtualAddress(0053c40c): Mem8[(Undefined_a2 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(0053c40c): Mem8[Undefined_2 + 1]
+WARN Unknown Weapons dat offset @ VirtualAddress(0053c40c): Mem8[Undefined_a2]
 WARN Unknown Weapons dat offset @ VirtualAddress(0055d7ef): rcx
 WARN Unknown Weapons dat offset @ VirtualAddress(006e5405): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(006e5422): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]

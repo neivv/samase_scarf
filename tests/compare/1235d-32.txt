@@ -340,7 +340,7 @@ player_skins: 11b9c08
 player_turns: 11bb640
 player_turns_size: 11bb670
 player_unit_skins: 11ca180
-players: ((c3d113e0 - ((Mem32[f9a98c] >> 4) | ((Mem8[f9a98c] << 1c) & f0000000))) ^ Mem32[11bb1e8])
+players: (((c3d113e0 - ((Mem32[f9a98c] >> 4) | (Mem8[f9a98c] << 1c))) ^ Mem32[11bb1e8]) & ffffffff)
 pylon_auras_visible: Mem32[fbe02c]
 pylon_refresh: Mem32[fbe028]
 renderer: Mem32[137de58]
@@ -434,10 +434,10 @@ sfxdata.dat: None
 portdata.dat: f15340 (entry size 16)
 mapdata.dat: f3e3c8 (entry size 32)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress(005772e0), 2) })
-sprite_x: ((((((Mem16[f9a2a9] - (((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 6374) & ffff)) << 10) ^ (((((22b0 - Custom_0) << 10) ^ (((Mem16[f9a743] * 2) + ((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 6374)) << 10)) ^ ((Mem16[f9a2ab] - Custom_0) << 10)) & ffff0000)) ^ (Custom_0 & ffff)) ^ Mem32[Mem32[30] + 10]) ^ 1d126374)
+sprite_x: (((((((Custom_0 ^ ((22b0 - Custom_0) << 10)) ^ ((Mem16[f9a2a9] - ((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 6374)) << 10)) ^ (((Mem16[f9a743] * 2) + ((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 6374)) << 10)) ^ ((Mem16[f9a2ab] - Custom_0) << 10)) ^ Mem32[Mem32[30] + 10]) ^ 1d126374) & ffffffff)
 sprite_x_offset: Some(14)
 sprite_x_size: Some(Mem32)
-sprite_y: ((((((Mem16[f9a2a9] - (((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 6374) & ffff)) << 10) ^ (((((22b0 - Custom_0) << 10) ^ (((Mem16[f9a743] * 2) + ((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 6374)) << 10)) ^ ((Mem16[f9a2ab] - Custom_0) << 10)) & ffff0000)) ^ (Custom_0 & ffff)) ^ Mem32[Mem32[30] + 10]) ^ 1d126374)
+sprite_y: (((((((Custom_0 ^ ((22b0 - Custom_0) << 10)) ^ ((Mem16[f9a2a9] - ((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 6374)) << 10)) ^ (((Mem16[f9a743] * 2) + ((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 6374)) << 10)) ^ ((Mem16[f9a2ab] - Custom_0) << 10)) ^ Mem32[Mem32[30] + 10]) ^ 1d126374) & ffffffff)
 sprite_y_offset: Some(18)
 sprite_y_size: Some(Mem32)
 799 euds
@@ -1463,8 +1463,8 @@ order_bb: Some(VirtualAddress(005b71d0))
 WARN Can't widen instruction @ VirtualAddress(007afe26)
 WARN Unknown Upgrades dat offset @ VirtualAddress(007a6bc3): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
 WARN Unknown Upgrades dat offset @ VirtualAddress(007a6bd8): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
-WARN Unknown Weapons dat offset @ VirtualAddress(00577f7c): Mem8[(Undefined_3 & ffffffff)]
-WARN Unknown Weapons dat offset @ VirtualAddress(00577f7c): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(00577f7c): Mem8[Undefined_3]
+WARN Unknown Weapons dat offset @ VirtualAddress(00577f7c): Mem8[Undefined_3]
 WARN Overlapping stable addresses (VirtualAddress(006d1836), VirtualAddress(006d183c)) for jump VirtualAddress(006d1832) -> VirtualAddress(006d183b)
 Units entry count patches: [f15530, f15540, f15550, f15560, f15570, f15580, f15590, f155a0, f155b0, f155c0, f155d0, f155e0, f155f0, f15600, f15610, f15620, f15630, f15640, f15650, f15660, f15670, f15680, f15690, f156a0, f156b0, f156c0, f156d0, f156e0, f156f0, f15700, f15710, f15720, f15730, f15740, f15750, f15760, f15770, f15780, f15790, f157a0, f157b0, f157c0, f157d0, f157e0, f157f0, f15800, f15810, f15820, f15830, f15840, f15850, f15860, f15870, f15880]
 Units array patches:

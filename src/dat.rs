@@ -1889,7 +1889,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             match value.if_arithmetic_or() {
                 Some((l, r)) => {
                     let l = get_8bit_from_ors(l);
-                    let r = get_8bit_from_ors(r);
                     if l.relevant_bits().start >= 8 && r.relevant_bits().end <= 8 {
                         r
                     } else if r.relevant_bits().start >= 8 && l.relevant_bits().end <= 8 {
@@ -1901,8 +1900,27 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 None => value,
             }
         }
-        let value = get_8bit_from_ors(orig_value);
-        if value != orig_value || value.is_undefined() {
+        let value_no_word_mask = if E::VirtualAddress::SIZE == 4 {
+            match orig_value.if_and_with_const() {
+                Some((s, mask)) => {
+                    if (s.relevant_bits_mask() & !mask) as u32 == 0 {
+                        // Masks out only high half of u64, mask
+                        // should be removable for these purposes(?)
+                        // Or maybe should only remove such mask
+                        // when get_8bit_from_ors returns a 8bit value,
+                        // and keep the mask otherwise?
+                        s
+                    } else {
+                        orig_value
+                    }
+                }
+                None => orig_value,
+            }
+        } else {
+            orig_value
+        };
+        let value = get_8bit_from_ors(value_no_word_mask);
+        if value != value_no_word_mask || value.is_undefined() {
             self.needed_cfg_analysis.push((
                 self.current_branch,
                 ctrl.address(),

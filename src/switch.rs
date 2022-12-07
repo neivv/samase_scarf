@@ -70,6 +70,18 @@ fn divide_by_const<'e>(
                     let r = divide_by_const(ctx, arith.right, size)?;
                     Some(ctx.arithmetic(arith.ty, arith.left, r))
                 }
+                ArithOpType::Lsh => {
+                    let right = arith.right.if_constant()? as u8;
+                    if right >= shift {
+                        Some(ctx.lsh_const(arith.left, (right - shift) as u64))
+                    } else {
+                        None
+                    }
+                }
+                ArithOpType::Rsh => {
+                    let right = arith.right.if_constant()? as u8;
+                    Some(ctx.rsh_const(arith.left, (right + shift) as u64))
+                }
                 _ => None,
             }
         }
@@ -82,6 +94,32 @@ fn divide_by_const<'e>(
         }
         _ => None,
     }
+}
+
+#[test]
+fn test_divide_by_const() {
+    let ctx = &scarf::OperandContext::new();
+    let op = ctx.lsh_const(
+        ctx.register(0),
+        0x14,
+    );
+    let div = divide_by_const(ctx, op, MemAccessSize::Mem32);
+    let eq = ctx.lsh_const(
+        ctx.register(0),
+        0x12,
+    );
+    assert_eq!(div, Some(eq));
+
+    let op = ctx.rsh_const(
+        ctx.register(0),
+        0x14,
+    );
+    let div = divide_by_const(ctx, op, MemAccessSize::Mem32);
+    let eq = ctx.rsh_const(
+        ctx.register(0),
+        0x16,
+    );
+    assert_eq!(div, Some(eq));
 }
 
 impl<'e> CompleteSwitch<'e> {

@@ -340,7 +340,7 @@ player_skins: 11c4840
 player_turns: 11c6274
 player_turns_size: 11c62a4
 player_unit_skins: 11d4d40
-players: ((Mem32[fa4883] + faaa2429) ^ Mem32[11c5e20])
+players: ((Mem32[fa4883] - 555dbd7) ^ Mem32[11c5e20])
 pylon_auras_visible: Mem32[fc871c]
 pylon_refresh: Mem32[fc8718]
 renderer: Mem32[1383338]
@@ -434,10 +434,10 @@ sfxdata.dat: None
 portdata.dat: f26340 (entry size 16)
 mapdata.dat: f4f3a0 (entry size 32)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress(00573df0), 2) })
-sprite_x: ((((((((2e0 - Custom_0) << 10) ^ (((Custom_0 ^ 8df3) - Mem16[fa437f]) << 10)) ^ ((Mem16[fa4173] - Custom_0) << 10)) & ffff0000) ^ (Custom_0 & ffff)) ^ ((((Custom_0 << 11) ^ 11be60000) & 1fffe0000) + ff6e24000000)) ^ e20e8df3)
+sprite_x: ((((((Custom_0 ^ ((2e0 - Custom_0) << 10)) ^ (((Custom_0 ^ 8df3) - Mem16[fa437f]) << 10)) ^ ((Mem16[fa4173] - Custom_0) << 10)) ^ (((Custom_0 << 11) ^ 1be60000) + 24000000)) ^ e20e8df3) & ffffffff)
 sprite_x_offset: Some(14)
 sprite_x_size: Some(Mem32)
-sprite_y: ((((((((2e0 - Custom_0) << 10) ^ (((Custom_0 ^ 8df3) - Mem16[fa437f]) << 10)) ^ ((Mem16[fa4173] - Custom_0) << 10)) & ffff0000) ^ (Custom_0 & ffff)) ^ ((((Custom_0 << 11) ^ 11be60000) & 1fffe0000) + ff6e24000000)) ^ e20e8df3)
+sprite_y: ((((((Custom_0 ^ ((2e0 - Custom_0) << 10)) ^ (((Custom_0 ^ 8df3) - Mem16[fa437f]) << 10)) ^ ((Mem16[fa4173] - Custom_0) << 10)) ^ (((Custom_0 << 11) ^ 1be60000) + 24000000)) ^ e20e8df3) & ffffffff)
 sprite_y_offset: Some(18)
 sprite_y_size: Some(Mem32)
 799 euds
@@ -1463,8 +1463,8 @@ order_bb: Some(VirtualAddress(005a18e0))
 WARN Can't widen instruction @ VirtualAddress(0078a2b6)
 WARN Unknown Upgrades dat offset @ VirtualAddress(00780ce3): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
 WARN Unknown Upgrades dat offset @ VirtualAddress(00780cf8): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
-WARN Unknown Weapons dat offset @ VirtualAddress(00574a8c): Mem8[(Undefined_3 & ffffffff)]
-WARN Unknown Weapons dat offset @ VirtualAddress(00574a8c): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(00574a8c): Mem8[Undefined_3]
+WARN Unknown Weapons dat offset @ VirtualAddress(00574a8c): Mem8[Undefined_3]
 Units entry count patches: [f26530, f26540, f26550, f26560, f26570, f26580, f26590, f265a0, f265b0, f265c0, f265d0, f265e0, f265f0, f26600, f26610, f26620, f26630, f26640, f26650, f26660, f26670, f26680, f26690, f266a0, f266b0, f266c0, f266d0, f266e0, f266f0, f26700, f26710, f26720, f26730, f26740, f26750, f26760, f26770, f26780, f26790, f267a0, f267b0, f267c0, f267d0, f267e0, f267f0, f26800, f26810, f26820, f26830, f26840, f26850, f26860, f26870, f26880]
 Units array patches:
     00: [57a7e8, 580f38, 59e7f6, 5a22cd, 5a232d, 5a238e, 5c1d90, 5c66de, 5cab7d, 5cc065, 74d355, 74e109, f26528, f268c4]

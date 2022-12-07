@@ -893,7 +893,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> SetLimitsAnalyzer<'a, 'acx, 'e, E> {
                     .or_else(|| {
                         val.if_arithmetic_mul()
                             .and_then(|(l, r)| {
-                                r.if_constant().map(|c| (l, 0, c as u32))
+                                r.if_constant().map(|c| (Operand::and_masked(l).0, 0, c as u32))
                             })
                     })
                     .unwrap_or_else(|| (val, 0, 0))

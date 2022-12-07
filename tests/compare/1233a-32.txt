@@ -340,7 +340,7 @@ player_skins: 10e27f8
 player_turns: 10e4228
 player_turns_size: 10e4258
 player_unit_skins: 10f2d58
-players: ((Mem32[ec32b4] + 9df02541) ^ Mem32[10e3dd8])
+players: ((Mem32[ec32b4] - 620fdabf) ^ Mem32[10e3dd8])
 pylon_auras_visible: Mem32[ee6e60]
 pylon_refresh: Mem32[ee6e5c]
 renderer: Mem32[12a8a68]
@@ -1463,8 +1463,8 @@ order_bb: Some(VirtualAddress(005a6c90))
 WARN Can't widen instruction @ VirtualAddress(00797ca6)
 WARN Unknown Upgrades dat offset @ VirtualAddress(0078e310): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
 WARN Unknown Upgrades dat offset @ VirtualAddress(0078e322): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
-WARN Unknown Weapons dat offset @ VirtualAddress(0056fc49): Mem8[(Undefined_3 & ffffffff)]
-WARN Unknown Weapons dat offset @ VirtualAddress(0056fc49): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(0056fc49): Mem8[Undefined_3]
+WARN Unknown Weapons dat offset @ VirtualAddress(0056fc49): Mem8[Undefined_3]
 WARN Unknown Weapons dat offset @ VirtualAddress(0058dc4f): rcx
 Units entry count patches: [e47530, e47540, e47550, e47560, e47570, e47580, e47590, e475a0, e475b0, e475c0, e475d0, e475e0, e475f0, e47600, e47610, e47620, e47630, e47640, e47650, e47660, e47670, e47680, e47690, e476a0, e476b0, e476c0, e476d0, e476e0, e476f0, e47700, e47710, e47720, e47730, e47740, e47750, e47760, e47770, e47780, e47790, e477a0, e477b0, e477c0, e477d0, e477e0, e477f0, e47800, e47810, e47820, e47830, e47840, e47850, e47860, e47870, e47880]
 Units array patches:

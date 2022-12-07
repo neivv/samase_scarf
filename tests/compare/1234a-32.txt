@@ -320,7 +320,7 @@ map_history: Mem32[f34060]
 map_mpq: Mem32[10e66b4]
 map_tile_flags: Mem32[f13914]
 map_width_pixels: Mem16[f4f8b0]
-menu_screen_id: ((((Mem8[ee9d35] >> 6) ^ ((Mem32[ee9d32] * 4) & fffffffc)) ^ Mem32[10e3bf4]) ^ d607579f)
+menu_screen_id: (((((Mem8[ee9d35] >> 6) | (Mem32[ee9d32] * 4)) ^ Mem32[10e3bf4]) ^ d607579f) & ffffffff)
 minimap_cursor_type: Mem16[10e1248]
 mouse_x: None
 mouse_y: None
@@ -340,7 +340,7 @@ player_skins: 1109738
 player_turns: 110b168
 player_turns_size: 110b198
 player_unit_skins: 1119ca8
-players: ((((Mem8[ee8f1d] >> 6) ^ ((Mem32[ee8f1a] * 4) & fffffffc)) ^ Mem32[110ad18]) ^ 16fb4b05)
+players: (((((Mem8[ee8f1d] >> 6) | (Mem32[ee8f1a] * 4)) ^ Mem32[110ad18]) ^ 16fb4b05) & ffffffff)
 pylon_auras_visible: Mem32[f0db64]
 pylon_refresh: Mem32[f0db60]
 renderer: Mem32[12cd978]
@@ -434,10 +434,10 @@ sfxdata.dat: None
 portdata.dat: e6c340 (entry size 16)
 mapdata.dat: e95268 (entry size 32)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress(00577790), 2) })
-sprite_x: ((((((((Mem16[Mem32[30] + 10] << 10) ^ (((((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 2e53) & ffff) - Mem16[ee9164]) << 10)) ^ (Mem16[ee9ba9] << 10)) ^ (Mem16[ee9166] << 10)) ^ (Custom_0 & ffff)) ^ (((Custom_0 << 10) + 6000000) & ffff0000)) ^ Mem32[Mem32[30] + 10]) ^ eb4a2e53)
+sprite_x: ((((((((Custom_0 ^ (Mem16[Mem32[30] + 10] << 10)) ^ ((((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 2e53) - Mem16[ee9164]) << 10)) ^ (Mem16[ee9ba9] << 10)) ^ (Mem16[ee9166] << 10)) ^ ((Custom_0 << 10) + 6000000)) ^ Mem32[Mem32[30] + 10]) ^ eb4a2e53) & ffffffff)
 sprite_x_offset: Some(14)
 sprite_x_size: Some(Mem32)
-sprite_y: ((((((((Mem16[Mem32[30] + 10] << 10) ^ (((((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 2e53) & ffff) - Mem16[ee9164]) << 10)) ^ (Mem16[ee9ba9] << 10)) ^ (Mem16[ee9166] << 10)) ^ (Custom_0 & ffff)) ^ (((Custom_0 << 10) + 6000000) & ffff0000)) ^ Mem32[Mem32[30] + 10]) ^ eb4a2e53)
+sprite_y: ((((((((Custom_0 ^ (Mem16[Mem32[30] + 10] << 10)) ^ ((((Custom_0 ^ Mem16[Mem32[30] + 10]) ^ 2e53) - Mem16[ee9164]) << 10)) ^ (Mem16[ee9ba9] << 10)) ^ (Mem16[ee9166] << 10)) ^ ((Custom_0 << 10) + 6000000)) ^ Mem32[Mem32[30] + 10]) ^ eb4a2e53) & ffffffff)
 sprite_y_offset: Some(18)
 sprite_y_size: Some(Mem32)
 799 euds
@@ -1463,8 +1463,8 @@ order_bb: Some(VirtualAddress(005afef0))
 WARN Can't widen instruction @ VirtualAddress(007a0e76)
 WARN Unknown Upgrades dat offset @ VirtualAddress(00797bd3): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
 WARN Unknown Upgrades dat offset @ VirtualAddress(00797be8): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
-WARN Unknown Weapons dat offset @ VirtualAddress(0057842c): Mem8[(Undefined_3 & ffffffff)]
-WARN Unknown Weapons dat offset @ VirtualAddress(0057842c): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(0057842c): Mem8[Undefined_3]
+WARN Unknown Weapons dat offset @ VirtualAddress(0057842c): Mem8[Undefined_3]
 Units entry count patches: [e6c530, e6c540, e6c550, e6c560, e6c570, e6c580, e6c590, e6c5a0, e6c5b0, e6c5c0, e6c5d0, e6c5e0, e6c5f0, e6c600, e6c610, e6c620, e6c630, e6c640, e6c650, e6c660, e6c670, e6c680, e6c690, e6c6a0, e6c6b0, e6c6c0, e6c6d0, e6c6e0, e6c6f0, e6c700, e6c710, e6c720, e6c730, e6c740, e6c750, e6c760, e6c770, e6c780, e6c790, e6c7a0, e6c7b0, e6c7c0, e6c7d0, e6c7e0, e6c7f0, e6c800, e6c810, e6c820, e6c830, e6c840, e6c850, e6c860, e6c870, e6c880]
 Units array patches:
     00: [57fe88, 5921a9, 5aca56, 5b08dd, 5b093d, 5b099e, 5cd3c0, 5d424e, 5d8981, 5d9f65, 761e15, 762bc9, e6c528, e6c8c4]

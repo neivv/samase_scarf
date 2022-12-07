@@ -340,7 +340,7 @@ player_skins: 110f9f0
 player_turns: 11111e8
 player_turns_size: 1111218
 player_unit_skins: None
-players: ((((Mem32[dec880] >> 4) ^ ((Mem8[dec880] << 1c) & f0000000)) ^ Mem32[1110fd0]) ^ 33b3b791)
+players: (((((Mem32[dec880] >> 4) | (Mem8[dec880] << 1c)) ^ Mem32[1110fd0]) ^ 33b3b791) & ffffffff)
 pylon_auras_visible: Mem32[f24154]
 pylon_refresh: Mem32[f24150]
 renderer: Mem32[12b73f0]
@@ -666,8 +666,8 @@ WARN Unknown Weapons dat offset @ VirtualAddress(008249a2): Mem8[Mem32[Mem32[rsp
 WARN Unknown Weapons dat offset @ VirtualAddress(008249fa): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(00824a49): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(0069393f): rcx
-WARN Unknown Weapons dat offset @ VirtualAddress(0066b40a): Mem8[((Undefined_1 + 1) & ffffffff)]
-WARN Unknown Weapons dat offset @ VirtualAddress(0066b40a): Mem8[(Undefined_9d & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(0066b40a): Mem8[Undefined_1 + 1]
+WARN Unknown Weapons dat offset @ VirtualAddress(0066b40a): Mem8[Undefined_9d]
 WARN Reached jump @ set_buttons VirtualAddress(0081fa95)
 Units entry count patches: [db4398, db43a4, db43b0, db43bc, db43c8, db43d4, db43e0, db43ec, db43f8, db4404, db4410, db441c, db4428, db4434, db4440, db444c, db4458, db4464, db4470, db447c, db4488, db4494, db44a0, db44ac, db44b8, db44c4, db44d0, db44dc, db44e8, db44f4, db4500, db450c, db4518, db4524, db4530, db453c, db4548, db4554, db4560, db456c, db4578, db4584, db4590, db459c, db45a8, db45b4, db45c0, db45cc, db45d8, db45e4, db45f0, db45fc, db4608, db4614]
 Units array patches:

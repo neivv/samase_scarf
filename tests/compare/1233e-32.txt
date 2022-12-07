@@ -434,10 +434,10 @@ sfxdata.dat: None
 portdata.dat: e03340 (entry size 16)
 mapdata.dat: e2bb50 (entry size 32)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress(00568120), 2) })
-sprite_x: (((((((((((Custom_0 ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)) + 5d84)) ^ 710) & ffff) - Mem16[e7f541]) << 10) ^ (Mem16[e7f543] << 10)) ^ (Mem16[e7f203] << 10)) ^ ((((Custom_0 << 10) + e200000) ^ ((((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)) << 10) + 5d840000)) & ffff0000)) ^ (Custom_0 & ffff)) ^ ((((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)) + 8315d84) & ffffffff)) ^ 36870710)
+sprite_x: ((((((((Custom_0 ^ (Mem16[e7f543] << 10)) ^ (Mem16[e7f203] << 10)) ^ ((((Custom_0 ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)) + 5d84)) ^ 710) - Mem16[e7f541]) << 10)) ^ ((Custom_0 << 10) + e200000)) ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)) + 8315d84)) ^ ((((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)) << 10) + 5d840000)) ^ 36870710) & ffffffff)
 sprite_x_offset: Some(14)
 sprite_x_size: Some(Mem32)
-sprite_y: (((((((((((Custom_0 ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)) + 5d84)) ^ 710) & ffff) - Mem16[e7f541]) << 10) ^ (Mem16[e7f543] << 10)) ^ (Mem16[e7f203] << 10)) ^ ((((Custom_0 << 10) + e200000) ^ ((((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)) << 10) + 5d840000)) & ffff0000)) ^ (Custom_0 & ffff)) ^ ((((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)) + 8315d84) & ffffffff)) ^ 36870710)
+sprite_y: ((((((((Custom_0 ^ (Mem16[e7f543] << 10)) ^ (Mem16[e7f203] << 10)) ^ ((((Custom_0 ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)) + 5d84)) ^ 710) - Mem16[e7f541]) << 10)) ^ ((Custom_0 << 10) + e200000)) ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)) + 8315d84)) ^ ((((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)) << 10) + 5d840000)) ^ 36870710) & ffffffff)
 sprite_y_offset: Some(18)
 sprite_y_size: Some(Mem32)
 799 euds
@@ -1461,8 +1461,8 @@ order_bb: Some(VirtualAddress(005a0120))
 
 -- Dat patches --
 WARN Can't widen instruction @ VirtualAddress(00762666)
-WARN Unknown Weapons dat offset @ VirtualAddress(00568dae): Mem8[(Undefined_3 & ffffffff)]
-WARN Unknown Weapons dat offset @ VirtualAddress(00568dae): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(00568dae): Mem8[Undefined_3]
+WARN Unknown Weapons dat offset @ VirtualAddress(00568dae): Mem8[Undefined_3]
 WARN Unknown Upgrades dat offset @ VirtualAddress(00759480): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
 WARN Unknown Upgrades dat offset @ VirtualAddress(00759492): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
 WARN Unknown Weapons dat offset @ VirtualAddress(00591f0f): rcx

@@ -340,7 +340,7 @@ player_skins: ff45b0
 player_turns: ff5fe0
 player_turns_size: ff6010
 player_unit_skins: 1004af8
-players: ((Mem32[dd8bfa] + bb74f55c) ^ Mem32[ff5b90])
+players: ((Mem32[dd8bfa] - 448b0aa4) ^ Mem32[ff5b90])
 pylon_auras_visible: Mem32[dfa1e4]
 pylon_refresh: Mem32[dfa1e0]
 renderer: Mem32[1191bb8]
@@ -1467,8 +1467,8 @@ WARN Unknown Weapons dat offset @ VirtualAddress(00734c9b): Mem8[Mem32[Mem32[rsp
 WARN Unknown Weapons dat offset @ VirtualAddress(00734d03): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(00734d0b): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Can't widen instruction @ VirtualAddress(00737e16)
-WARN Unknown Weapons dat offset @ VirtualAddress(0055c5a9): Mem8[(Undefined_3 & ffffffff)]
-WARN Unknown Weapons dat offset @ VirtualAddress(0055c5a9): Mem8[(Undefined_3 & ffffffff)]
+WARN Unknown Weapons dat offset @ VirtualAddress(0055c5a9): Mem8[Undefined_3]
+WARN Unknown Weapons dat offset @ VirtualAddress(0055c5a9): Mem8[Undefined_3]
 WARN Unknown Weapons dat offset @ VirtualAddress(0058460f): rcx
 WARN Unknown Weapons dat offset @ VirtualAddress(00734be5): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(00734c0e): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
