@@ -11,10 +11,11 @@ use scarf::{
 use crate::analysis::{ArgCache, AnalysisCtx};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::call_tracker::CallTracker;
+use crate::linked_list::DetectListAdd;
 use crate::struct_layouts;
 use crate::util::{
     ControlExt, OperandExt, OptionExt, bumpvec_with_capacity, if_arithmetic_eq_neq,
-    if_callable_const, single_result_assign, is_stack_address,
+    if_callable_const, single_result_assign, is_stack_address, is_global,
 };
 
 #[derive(Clone)]
@@ -60,6 +61,12 @@ pub(crate) struct StepObjectsAnalysis<'e, Va: VirtualAddress> {
     pub creep_modify_state: Option<Va>,
     pub for_each_surrounding_tile: Option<Va>,
     pub creep_update_border_for_tile: Option<Va>,
+    pub dcreep_unit_next_update: Option<Operand<'e>>,
+    pub unit_count: Option<Operand<'e>>,
+    pub last_dying_unit: Option<Operand<'e>>,
+    pub first_free_unit: Option<Operand<'e>>,
+    pub last_free_unit: Option<Operand<'e>>,
+    pub get_creep_spread_area: Option<Va>,
 }
 
 pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
@@ -954,6 +961,12 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         creep_modify_state: None,
         for_each_surrounding_tile: None,
         creep_update_border_for_tile: None,
+        dcreep_unit_next_update: None,
+        unit_count: None,
+        last_dying_unit: None,
+        first_free_unit: None,
+        last_free_unit: None,
+        get_creep_spread_area: None,
     };
 
     let ctx = actx.ctx;
@@ -966,6 +979,8 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         inline_depth: 0,
         max_inline_depth: 0,
         inline_limit: 0,
+        step_units_depth: 0,
+        step_dying_unit_depth: 0,
         needs_inline_verify: false,
         game,
         first_active_unit,
@@ -982,6 +997,9 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         cloak_state_checked: false,
         func_entry: step_objects,
         text: actx.binary_sections.text,
+        dcreep_next_update_candidate: None,
+        unit_count_candidate: None,
+        list_add_tracker: DetectListAdd::new(None),
     };
     loop {
         analysis.analyze(&mut analyzer);
@@ -1002,6 +1020,8 @@ struct StepObjectsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     inline_depth: u8,
     max_inline_depth: u8,
     inline_limit: u8,
+    step_units_depth: u8,
+    step_dying_unit_depth: u8,
     needs_inline_verify: bool,
     game: Operand<'e>,
     first_active_unit: Operand<'e>,
@@ -1021,6 +1041,9 @@ struct StepObjectsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     cloak_state_checked: bool,
     func_entry: E::VirtualAddress,
     text: &'e BinarySection<E::VirtualAddress>,
+    dcreep_next_update_candidate: Option<Operand<'e>>,
+    unit_count_candidate: Option<Operand<'e>>,
+    list_add_tracker: DetectListAdd<'e, E>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -1051,6 +1074,24 @@ enum StepObjectsAnalysisState {
     // as completed_unit_count(0xb, 0x69) (Pl12 Dweb)
     // Assume first_dying_unit to be first write to active_iscript_unit.
     FirstDyingUnit,
+    // Find check for first_dying_unit.flags & 0x4000, continue at nonzero branch
+    DcreepCheck,
+    // Inline to step_dying_unit(first_dying_unit) {
+    //      step_unit_dcreep(first_dying_unit)
+    // }
+    // Find write of 3 to global that was just before checked to be 0
+    DcreepUnitNextUpdate,
+    // Find get_creep_spread_area(
+    //      first_dying.unit_id, first_dying.flingy_x, flingy_y, &rect, first_dying.flags & 1
+    // )
+    // Stop inlining step_unit_dcreep afterwards
+    GetCreepSpreadArea,
+    // Find check for first_dying_unit.sprite == 0, continue at zero branch
+    DyingUnitNoSpriteCheck,
+    // Inline to delete_dying_unit(first_dying_unit), find removal from dying_units
+    LastDyingUnit,
+    // May have to inline to release_unit(first_dying_unit), find list addition to free units
+    FreeUnits,
     // First call where active_iscript_unit is set to first_active_unit and ecx is that too
     StepActiveUnitFrame,
     // Same as first_dying_unit, write something new to active_iscript_unit.
@@ -1238,7 +1279,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     if mem.size == MemAccessSize::Mem8 {
                         let value = ctrl.resolve(value);
-                        if value.if_constant() == Some(0) {
+                        if value == ctx.const_0() {
                             let mem = ctrl.resolve_mem(mem);
                             if !is_stack_address(mem.address().0) {
                                 self.result.vision_updated = Some(ctx.memory(&mem));
@@ -1254,7 +1295,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         Operation::Move(DestOperand::Memory(mem), value, None) => {
                             if mem.size == MemAccessSize::Mem32 {
                                 let value = ctrl.resolve(value);
-                                if value.if_constant() == Some(0) {
+                                if value == ctx.const_0() {
                                     let addr = ctrl.resolve(mem.address().0);
                                     if !is_stack_address(addr) {
                                         self.needs_inline_verify = false;
@@ -1310,17 +1351,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 } else if let Operation::Jump { condition, to } = *op {
                     let condition = ctrl.resolve(condition);
-                    if let Some((cmp, eq_zero)) = if_arithmetic_eq_neq(condition)
-                        .filter(|x| x.1 == ctx.const_0())
-                        .map(|x| (x.0, x.2))
-                    {
+                    if let Some((cmp, eq_zero)) = condition.if_arithmetic_eq_neq_zero(ctx) {
                         let assume_zero = cmp == self.first_active_unit ||
-                            cmp.if_mem32()
-                                .filter(|&x| {
-                                    let (base, offset) = x.address();
-                                    base == self.game && offset == 0x70d0
-                                })
-                                .is_some();
+                            cmp.if_mem32_offset(0x70d0) == Some(self.game);
                         if assume_zero {
                             let dest = match eq_zero {
                                 true => match ctrl.resolve_va(to) {
@@ -1344,19 +1377,230 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 if let Some((val2, dest2)) = self.active_iscript_flingy_candidate {
                                     if val2 == value {
                                         self.result.active_iscript_flingy = Some(dest2);
-                                        self.state = StepObjectsAnalysisState::StepActiveUnitFrame;
+                                        self.step_units_depth = self.inline_depth;
+                                        self.max_inline_depth = self.inline_depth.wrapping_add(1);
+                                        self.state = StepObjectsAnalysisState::DcreepCheck;
                                     }
                                 }
                             } else {
                                 if self.result.first_dying_unit == Some(value) {
                                     self.result.active_iscript_flingy = Some(dest_op);
-                                    self.state = StepObjectsAnalysisState::StepActiveUnitFrame;
+                                    self.step_units_depth = self.inline_depth;
+                                    self.max_inline_depth = self.inline_depth.wrapping_add(1);
+                                    self.state = StepObjectsAnalysisState::DcreepCheck;
                                 } else {
                                     self.active_iscript_flingy_candidate = Some((value, dest_op));
                                 }
                             }
                         }
                     }
+                }
+            }
+            StepObjectsAnalysisState::DcreepCheck |
+                StepObjectsAnalysisState::DyingUnitNoSpriteCheck =>
+            {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.simulate_func(ctrl, dest) {
+                            return;
+                        }
+                        if self.inline_depth != self.max_inline_depth {
+                            let this = ctrl.resolve(ctx.register(1));
+                            if Some(this) == self.result.first_dying_unit {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((inner, eq_zero)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                        let ok = if self.state == StepObjectsAnalysisState::DcreepCheck {
+                            inner.if_arithmetic_and_const(0x40)
+                                .and_then(|x| {
+                                    let flags_offset =
+                                        struct_layouts::unit_flags::<E::VirtualAddress>();
+                                    x.if_mem8_offset(flags_offset + 1)
+                                })
+                                .filter(|&x| Some(x) == self.result.first_dying_unit)
+                                .is_some()
+                        } else {
+                            let sprite_offset = struct_layouts::unit_sprite::<E::VirtualAddress>();
+                            ctrl.if_mem_word_offset(inner, sprite_offset)
+                                .filter(|&x| Some(x) == self.result.first_dying_unit)
+                                .is_some()
+                        };
+                        if ok {
+                            let continue_on_zero;
+                            if self.state == StepObjectsAnalysisState::DcreepCheck {
+                                self.state = StepObjectsAnalysisState::DcreepUnitNextUpdate;
+                                self.step_dying_unit_depth = self.inline_depth;
+                                self.max_inline_depth = self.inline_depth.wrapping_add(1);
+                                continue_on_zero = false;
+                            } else {
+                                self.state = StepObjectsAnalysisState::LastDyingUnit;
+                                self.max_inline_depth = self.inline_depth.wrapping_add(2);
+                                continue_on_zero = true;
+                            }
+                            let dest = match continue_on_zero ^ eq_zero {
+                                false => match ctrl.resolve_va(to) {
+                                    Some(s) => s,
+                                    None => return,
+                                },
+                                true => ctrl.current_instruction_end(),
+                            };
+                            ctrl.continue_at_address(dest);
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), _, None) = *op {
+                    // Block moves to first_dying_unit.sprite so that it can be
+                    // matched later on.
+                    let mem = ctrl.resolve_mem(mem);
+                    let (base, offset) = mem.address();
+                    if offset == struct_layouts::unit_sprite::<E::VirtualAddress>() &&
+                        Some(base) == self.result.first_dying_unit
+                    {
+                        ctrl.skip_operation();
+                    }
+                }
+            }
+            StepObjectsAnalysisState::DcreepUnitNextUpdate => {
+                if let Operation::Call(dest) = *op {
+                    if self.inline_depth < self.max_inline_depth {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            if Some(arg1) == self.result.first_dying_unit {
+                                let old_inline_limit = self.inline_limit;
+                                self.inline_limit = 5;
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                self.inline_limit = old_inline_limit;
+                                if self.state != StepObjectsAnalysisState::DcreepUnitNextUpdate {
+                                    self.state = StepObjectsAnalysisState::DyingUnitNoSpriteCheck;
+                                    self.max_inline_depth = self.step_dying_unit_depth;
+                                }
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { condition, .. } = *op {
+                    if self.inline_limit != 0 {
+                        if self.inline_limit == 1 {
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        self.inline_limit -= 1;
+                    }
+                    let condition = ctrl.resolve(condition);
+                    if let Some((x, _eq)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                        if is_global(x) {
+                            self.dcreep_next_update_candidate = Some(x);
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if ctrl.resolve(value).if_constant() == Some(3) {
+                        let mem = ctrl.resolve_mem(mem);
+                        if let Some(cand) = self.dcreep_next_update_candidate {
+                            if let Some(mem2) = cand.if_memory() {
+                                if mem == *mem2 {
+                                    self.result.dcreep_unit_next_update = Some(cand);
+                                    self.state = StepObjectsAnalysisState::GetCreepSpreadArea;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            StepObjectsAnalysisState::GetCreepSpreadArea => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let first_dying = match self.result.first_dying_unit {
+                            Some(s) => s,
+                            None => return,
+                        };
+                        let unit_id_offset = struct_layouts::unit_id::<E::VirtualAddress>();
+                        let x_offset = struct_layouts::flingy_pos::<E::VirtualAddress>();
+                        let y_offset = x_offset + 2;
+
+                        let ok = ctrl.resolve(self.arg_cache.on_call(0))
+                                .if_mem16_offset(unit_id_offset) == Some(first_dying) &&
+                            ctrl.resolve(self.arg_cache.on_call(1))
+                                .unwrap_sext()
+                                .if_mem16_offset(x_offset) == Some(first_dying) &&
+                            ctrl.resolve(self.arg_cache.on_call(2))
+                                .unwrap_sext()
+                                .if_mem16_offset(y_offset) == Some(first_dying);
+                        if ok {
+                            self.result.get_creep_spread_area = Some(dest);
+                            self.state = StepObjectsAnalysisState::DyingUnitNoSpriteCheck;
+                            self.max_inline_depth = self.step_dying_unit_depth;
+                            if self.inline_depth > self.step_dying_unit_depth {
+                                ctrl.end_analysis();
+                            }
+                            return;
+                        }
+                        self.simulate_func(ctrl, dest);
+                    }
+                }
+            }
+            StepObjectsAnalysisState::LastDyingUnit | StepObjectsAnalysisState::FreeUnits => {
+                if let Operation::Call(dest) = *op {
+                    if self.inline_depth < self.max_inline_depth {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let this = ctrl.resolve(ctx.register(1));
+                            if Some(this) == self.result.first_dying_unit {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.state == StepObjectsAnalysisState::StepActiveUnitFrame {
+                                    if self.inline_depth != self.step_units_depth {
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if self.state == StepObjectsAnalysisState::LastDyingUnit {
+                        let value = ctrl.resolve(value);
+                        let ok = ctrl.if_mem_word_offset(value, 0)
+                            .filter(|&x| Some(x) == self.result.first_dying_unit)
+                            .is_some();
+                        if ok {
+                            let mem = ctrl.resolve_mem(mem);
+                            self.result.last_dying_unit = Some(ctx.memory(&mem));
+                            self.result.unit_count = self.unit_count_candidate;
+                            self.state = StepObjectsAnalysisState::FreeUnits;
+                            if let Some(dying) = self.result.first_dying_unit {
+                                self.list_add_tracker.reset(dying);
+                            }
+                            if self.inline_depth == self.max_inline_depth {
+                                ctrl.end_analysis();
+                            }
+                            self.max_inline_depth = self.max_inline_depth.wrapping_add(1);
+                            return;
+                        }
+                        // Check for unit_count -= 1
+                        //println!("Move {} @ {:?}", value, ctrl.address());
+                        if mem.size == MemAccessSize::Mem32 {
+                            let unit_count = Operand::and_masked(value).0
+                                .if_arithmetic_sub_const(1);
+                            if let Some(unit_count) = unit_count {
+                                if is_global(unit_count) {
+                                    if let Some(mem2) = unit_count.if_memory() {
+                                        let mem = ctrl.resolve_mem(mem);
+                                        if *mem2 == mem {
+                                            self.unit_count_candidate = Some(unit_count);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if self.state == StepObjectsAnalysisState::FreeUnits {
+                    self.list_add_tracker.operation(ctrl, op);
                 }
             }
             StepObjectsAnalysisState::StepActiveUnitFrame |
@@ -1585,6 +1829,26 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if self.inline_depth == 2 {
                         ctrl.end_analysis();
                     }
+                }
+            }
+        }
+    }
+
+    fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if self.state == StepObjectsAnalysisState::FreeUnits {
+            self.list_add_tracker.branch_start(ctrl);
+        }
+    }
+
+    fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if self.state == StepObjectsAnalysisState::FreeUnits {
+            let ctx = ctrl.ctx();
+            if let Some(result) = self.list_add_tracker.result(ctx) {
+                self.result.first_free_unit = Some(result.head);
+                self.result.last_free_unit = Some(result.tail);
+                self.state = StepObjectsAnalysisState::StepActiveUnitFrame;
+                if self.inline_depth != self.step_units_depth {
+                    ctrl.end_analysis();
                 }
             }
         }

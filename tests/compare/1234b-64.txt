@@ -70,6 +70,7 @@ game_loop: 140355260
 game_screen_lclick: 140410ef0
 game_screen_rclick: 1403afae0
 get_attack_range: 1401b6430
+get_creep_spread_area: 14062cf20
 get_mouse_x: 1402f5780
 get_mouse_y: 1402f57a0
 get_region: 1403ba530
@@ -243,6 +244,7 @@ dcreep_list_begin: 140f69180
 dcreep_list_size: 140f691d0
 dcreep_lookup: 140f67180
 dcreep_next_update: Mem32[140f691e4]
+dcreep_unit_next_update: Mem32[140f691e8]
 dialog_return_code: Mem32[140f86ae8]
 draw_commands: 140fbb7c0
 draw_cursor_marker: Mem8[140d30651]
@@ -258,6 +260,7 @@ first_free_lone_sprite: Mem64[140d30670]
 first_free_order: Mem64[140d2f170]
 first_free_selection_circle: Mem64[140d1c888]
 first_free_sprite: Mem64[140d2f1b0]
+first_free_unit: Mem64[140d30870]
 first_guard_ai: 140d85a80
 first_hidden_unit: Mem64[140d30878]
 first_invisible_unit: Mem64[140d30d20]
@@ -299,6 +302,7 @@ is_targeting: Mem8[140f5d052]
 iscript_bin: Mem64[140d1a440]
 last_active_bullet: Mem64[140d17f00]
 last_bullet_spawner: Mem64[140d17f08]
+last_dying_unit: Mem64[140d30860]
 last_fow_sprite: Mem64[140d306a8]
 last_free_bullet: Mem64[140d17ea0]
 last_free_fow_sprite: Mem64[140d30698]
@@ -306,6 +310,7 @@ last_free_lone_sprite: Mem64[140d30678]
 last_free_order: Mem64[140d2f178]
 last_free_selection_circle: Mem64[140d1e410]
 last_free_sprite: Mem64[140d2f1b8]
+last_free_unit: Mem64[140d30868]
 last_lone_sprite: Mem64[140d30688]
 loaded_save: Mem64[140c92d40]
 lobby_state: Mem8[140f48a81]
@@ -382,6 +387,7 @@ tranwire_ddsgrp: 140f5be20
 tranwire_grp: Mem64[140f5bdf0]
 trigger_current_player: Mem32[140f69314]
 unique_command_user: Mem32[140c91984]
+unit_count: Mem32[140d30888]
 unit_should_reveal_area: Mem32[140d30954]
 unit_skin_map: 140c68b08
 unit_strength: 140d6aca0

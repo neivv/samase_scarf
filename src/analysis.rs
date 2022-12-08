@@ -228,6 +228,7 @@ results! {
         CreepModifyState => "creep_modify_state",
         ForEachSurroundingile => "for_each_surrounding_tile",
         CreepUpdateBorderForTile => "creep_update_border_for_tile",
+        GetCreepSpreadArea => "get_creep_spread_area",
         RevealUnitArea => "reveal_unit_area",
         UpdateUnitVisibility => "update_unit_visibility",
         UpdateCloakState => "update_cloak_state",
@@ -463,6 +464,11 @@ results! {
         DcreepListBegin => "dcreep_list_begin",
         DcreepLookup => "dcreep_lookup",
         CreepFuncs => "creep_funcs",
+        DcreepUnitNextUpdate => "dcreep_unit_next_update",
+        UnitCount => "unit_count",
+        LastDyingUnit => "last_dying_unit",
+        FirstFreeUnit => "first_free_unit",
+        LastFreeUnit => "last_free_unit",
         UnitShouldRevealArea => "unit_should_reveal_area",
         MenuScreenId => "menu_screen_id",
         NetPlayerFlags => "net_player_flags",
@@ -953,6 +959,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             CreepModifyState => self.creep_modify_state(),
             ForEachSurroundingile => self.for_each_surrounding_tile(),
             CreepUpdateBorderForTile => self.creep_update_border_for_tile(),
+            GetCreepSpreadArea => self.get_creep_spread_area(),
             RevealUnitArea => self.reveal_unit_area(),
             UpdateUnitVisibility => self.update_unit_visibility(),
             UpdateCloakState => self.update_cloak_state(),
@@ -1175,6 +1182,11 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             DcreepListBegin => self.dcreep_list_begin(),
             DcreepLookup => self.dcreep_lookup(),
             CreepFuncs => self.creep_funcs(),
+            DcreepUnitNextUpdate => self.dcreep_unit_next_update(),
+            UnitCount => self.unit_count(),
+            LastDyingUnit => self.last_dying_unit(),
+            FirstFreeUnit => self.first_free_unit(),
+            LastFreeUnit => self.last_free_unit(),
             UnitShouldRevealArea => self.unit_should_reveal_area(),
             MenuScreenId => self.menu_screen_id(),
             NetPlayerFlags => self.net_player_flags(),
@@ -2651,6 +2663,13 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         )
     }
 
+    pub fn get_creep_spread_area(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::GetCreepSpreadArea,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
     pub fn reveal_unit_area(&mut self) -> Option<E::VirtualAddress> {
         self.analyze_many_addr(AddressAnalysis::RevealUnitArea, AnalysisCache::cache_step_objects)
     }
@@ -2726,6 +2745,41 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     pub fn creep_funcs(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(
             OperandAnalysis::CreepFuncs,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn dcreep_unit_next_update(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::DcreepUnitNextUpdate,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn unit_count(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::UnitCount,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn last_dying_unit(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::LastDyingUnit,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn first_free_unit(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::FirstFreeUnit,
+            AnalysisCache::cache_step_objects,
+        )
+    }
+
+    pub fn last_free_unit(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::LastFreeUnit,
             AnalysisCache::cache_step_objects,
         )
     }
@@ -5737,11 +5791,12 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_many(&[
             StepActiveUnitFrame, StepHiddenUnitFrame, StepBulletFrame, RevealUnitArea,
             UpdateUnitVisibility, UpdateCloakState, StepBullets, CreepModifyState,
-            ForEachSurroundingile, CreepUpdateBorderForTile,
+            ForEachSurroundingile, CreepUpdateBorderForTile, GetCreepSpreadArea,
         ], &[
             VisionUpdateCounter, VisionUpdated, FirstDyingUnit, FirstRevealer, FirstInvisibleUnit,
             ActiveIscriptFlingy, ActiveIscriptBullet, DcreepNextUpdate, DcreepListSize,
-            DcreepListBegin, DcreepLookup, CreepFuncs,
+            DcreepListBegin, DcreepLookup, CreepFuncs, DcreepUnitNextUpdate, UnitCount,
+            LastDyingUnit, FirstFreeUnit, LastFreeUnit,
         ], |s| {
             let step_objects = s.step_objects(actx)?;
             let game = s.game(actx)?;
@@ -5762,12 +5817,14 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 result.step_active_frame, result.step_hidden_frame, result.step_bullet_frame,
                 result.reveal_area, result.update_unit_visibility, result.update_cloak_state,
                 result.step_bullets, result.creep_modify_state, result.for_each_surrounding_tile,
-                result.creep_update_border_for_tile,
+                result.creep_update_border_for_tile, result.get_creep_spread_area,
             ], [
                 result.vision_update_counter, result.vision_updated, result.first_dying_unit,
                 result.first_revealer, result.first_invisible_unit, result.active_iscript_flingy,
                 result.active_iscript_bullet, result.dcreep_next_update, result.dcreep_list_size,
                 result.dcreep_list_begin, result.dcreep_lookup, result.creep_funcs,
+                result.dcreep_unit_next_update, result.unit_count, result.last_dying_unit,
+                result.first_free_unit, result.last_free_unit,
             ]))
         })
     }

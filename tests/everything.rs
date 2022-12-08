@@ -1657,7 +1657,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 ZoomActionCompletion | FlingyFlagsTmp | FlingyXOld | FlingyYOld | FlingyXNew |
                 FlingyYNew | FlingyExactXNew | FlingyExactYNew | FlingyFlagsNew |
                 FlingyShowStartWalkAnim | FlingyShowEndWalkAnim | FlingySpeedUsedForMove |
-                MapWidthPixels | MapHeightPixels | DcreepNextUpdate =>
+                MapWidthPixels | MapHeightPixels | DcreepNextUpdate | DcreepUnitNextUpdate |
+                LastDyingUnit | UnitCount | FirstFreeUnit | LastFreeUnit =>
             {
                 check_global_opt(result, binary, op.name());
             }
