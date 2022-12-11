@@ -1784,6 +1784,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindClampZoom<'a, 'e
 impl<'a, 'e, E: ExecutionState<'e>> FindClampZoom<'a, 'e, E> {
     /// Returns (should_inline, is_clamp_zoom_candidate)
     fn check_inline(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) -> (bool, bool) {
+        if self.inline_depth > 5 {
+            return (false, false);
+        }
         let ctx = ctrl.ctx();
         let arg1 = match E::VirtualAddress::SIZE == 4 {
             true => ctrl.resolve(self.arg_cache.on_call(0)),
