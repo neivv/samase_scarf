@@ -330,17 +330,17 @@ impl<'acx, 'e: 'acx, F: ExecutionState<'e>> scarf::Analyzer<'e> for FindOrderFun
     type Exec = F;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
-            Operation::Jump { condition, to } => {
+            Operation::Jump { condition: condition_unresolved, to } => {
                 let ctx = ctrl.ctx();
-                let condition = ctrl.resolve(condition);
+                let condition = ctrl.resolve(condition_unresolved);
                 if let Some(c) = condition.if_constant() {
-                    if let Some(dest) = ctrl.resolve(to).if_constant() {
+                    if let Some(dest) = ctrl.resolve_va(to) {
                         let state = *ctrl.user_state().get::<StepOrderState>();
                         if state == StepOrderState::HasSwitchJumped && c == 1 {
-                            let seems_tail_call = (dest < self.start.as_u64()) ||
+                            let seems_tail_call = (dest < self.start) ||
                                 (
-                                    dest > ctrl.address().as_u64() + 0x400 &&
-                                    dest > self.start.as_u64() + 0x800
+                                    dest > ctrl.address() + 0x400 &&
+                                    dest > self.start + 0x800
                                 );
 
                             if seems_tail_call {
@@ -348,7 +348,7 @@ impl<'acx, 'e: 'acx, F: ExecutionState<'e>> scarf::Analyzer<'e> for FindOrderFun
                                 let esp = ctx.register(4);
                                 // Tail call needs to have this == orig this
                                 if ctrl.resolve(ecx) == ecx && ctrl.resolve(esp) == esp {
-                                    self.result = Some(VirtualAddress::from_u64(dest));
+                                    self.result = Some(dest);
                                     ctrl.end_analysis();
                                 }
                             }
@@ -358,7 +358,9 @@ impl<'acx, 'e: 'acx, F: ExecutionState<'e>> scarf::Analyzer<'e> for FindOrderFun
                             // a switch table but just chained comparisions.
                             // Also assume it be switch jump if condition is false
                             // but order is 0x95 (secondary order hallucination)
-                            if c == 1 || self.order == 0x95 {
+                            if (condition_unresolved != ctx.const_1() && c == 1) ||
+                                self.order == 0x95
+                            {
                                 ctrl.user_state().set(StepOrderState::HasSwitchJumped);
                                 return;
                             }
