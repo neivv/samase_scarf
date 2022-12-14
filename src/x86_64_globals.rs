@@ -71,11 +71,48 @@ pub fn x86_64_globals<Va: VirtualAddress>(binary: &BinaryFile<Va>) -> Vec<RelocV
         // This also lets through ModR/M & c7 == 85, but the amount of false
         // positives it has is low enough (1% of total results) that going
         // to leave them as they are.
+        //
+        // Considering 3 conditions that must pass:
+        // A = (CHECKED_OPCODES[win[1] as usize])
+        // B = (b.wrapping_sub(4) < 2) != 0
+        // C = ((b == 5) | (win[3] & 7 == 5) | (modrm & 0x80 != 0))
+        // Data from ~50 sample exes shows these rates of condition not passing
+        // for a single iteration of the loop:
+        // A: 61.1%-61.9%
+        // B: 88.8%-89.4%
+        // C: 51.6%-52.4%
+        // A & B: 96.6%-96.9%
+        // A & C: 82.3%-82.9%
+        // B & C: 92.6%-93.2%
+        // A & B & C: 97.2%-97.5%
+        // So checking for A & B first gives already very good accuracy; only
+        // about 0.5% of iterations will pass that but fail at condition C.
+        // A & B are also less work to calculate than C, and C also can be
+        // reduced a bit since definition of `value` depends on whether `b == 5`
+        // or not, and `b == 5` is one of the subconditions of C.
+        //
+        // For future considerations using simd, rate of 16-byte blocks having
+        // no byte for which condition does pass:
+        // A: 0.931%-1.07%
+        // B: 19.8%-21.6%
+        // C: 0.525%-0.613%
+        // A & B: 62.2%-65.0%
+        // A & C: 7.95%-8.62%
+        // B & C: 36.8%-39.0%
+        // A & B & C: 67.6%-70.4%
+        // So about one in three 16-byte blocks needs to be examined further.
+        // Evaluating A with simd is not possible without gather instructions
+        // (On x86 requires AVX512, and even then there's just i32/i64 sized gathers),
+        // so choices are pretty much just checking B, skipping 20% of blocks,
+        // or B & C for 40% skip rate. Seems pretty bad for branch predictor,
+        // but reduction in instruction counts should still make it worth it?
+        // Checking for either variation of `value >= global_min && value < global_max`
+        // has ~88% rate of not passing, ~69% if done at 4 values at once.
+        // Maybe 4 values at once combined with B / C would be a fine alternative too?
         let modrm = win[2];
         let b = modrm & 0x47;
         let ok = (CHECKED_OPCODES[win[1] as usize]) &
-            (b.wrapping_sub(4) < 2) as u8 &
-            ((b == 5) | (win[3] & 7 == 5) | (modrm & 0x80 != 0)) as u8;
+            (b.wrapping_sub(4) < 2) as u8;
         if ok != 0 {
             let offset_pos;
             let value = if b == 5 {
@@ -86,6 +123,11 @@ pub fn x86_64_globals<Va: VirtualAddress>(binary: &BinaryFile<Va>) -> Vec<RelocV
                     .wrapping_add(IMM_SIZE[win[1] as usize].into());
                 text.virtual_address + end_pos.wrapping_add(offset)
             } else {
+                if ((win[3] & 7 == 5) | (modrm & 0x80 != 0)) == false {
+                    // condition C didn't pass.
+                    text_pos = text_pos.wrapping_add(1);
+                    continue;
+                }
                 // SIB offset, assuming that one of registers contains binary base
                 let offset = LittleEndian::read_u32(&win[4..]);
                 offset_pos = 4;
