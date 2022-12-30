@@ -340,7 +340,7 @@ player_skins: 11b75d0
 player_turns: 11b9008
 player_turns_size: 11b9038
 player_unit_skins: 11c7b50
-players: (((((Mem32[f9725a] >> c) | (Mem16[f9725a] << 14)) ^ Mem32[11b8bb0]) ^ 1daf2eab) & ffffffff)
+players: (((((Mem16[f9725a] << 14) | ((Mem32[f9725b] >> 4) & fffff)) ^ Mem32[11b8bb0]) ^ 1daf2eab) & ffffffff)
 pylon_auras_visible: Mem32[fbb2ac]
 pylon_refresh: Mem32[fbb2a8]
 renderer: Mem32[1376520]

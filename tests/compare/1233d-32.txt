@@ -320,7 +320,7 @@ map_history: Mem32[ef7108]
 map_mpq: Mem32[10a953c]
 map_tile_flags: Mem32[ed65a4]
 map_width_pixels: Mem16[f12904]
-menu_screen_id: (((((Mem32[eada5c] >> c) | (Mem16[eada5c] << 14)) - 46c3c6d6) ^ Mem32[10a6aec]) & ffffffff)
+menu_screen_id: (((((Mem16[eada5c] << 14) | ((Mem32[eada5d] >> 4) & fffff)) - 46c3c6d6) ^ Mem32[10a6aec]) & ffffffff)
 minimap_cursor_type: Mem16[10a4230]
 mouse_x: None
 mouse_y: None

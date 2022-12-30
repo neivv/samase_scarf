@@ -299,13 +299,20 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     }
 
     fn if_arithmetic_eq_neq(self) -> Option<(Operand<'e>, Operand<'e>, bool)> {
-        self.if_arithmetic_eq()
-            .map(|(l, r)| {
-                Operand::either(l, r, |x| x.if_constant().filter(|&c| c == 0))
+        let arith = self.if_arithmetic_any()?;
+        if arith.ty == ArithOpType::Equal {
+            Some(
+                Operand::either(arith.left, arith.right, |x| x.if_constant().filter(|&c| c == 0))
                     .and_then(|(_, other)| other.if_arithmetic_eq())
                     .map(|(l, r)| (l, r, false))
-                    .unwrap_or_else(|| (l, r, true))
-            })
+                    .unwrap_or_else(|| (arith.left, arith.right, true))
+            )
+        } else if arith.ty == ArithOpType::Xor && self.relevant_bits().end == 1 {
+            // 1bit x ^ y is x != y
+            Some((arith.left, arith.right, false))
+        } else {
+            None
+        }
     }
 
     fn if_arithmetic_eq_neq_zero(self, ctx: OperandCtx<'e>) -> Option<(Operand<'e>, bool)> {
