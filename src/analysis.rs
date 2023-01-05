@@ -380,6 +380,10 @@ results! {
         CheatFlags => "cheat_flags",
         UnitStrength => "unit_strength",
         SpriteIncludeInVisionSync => "sprite_include_in_vision_sync",
+        // This is just offset 0x7d on GameData, would not have to be a variable.
+        // Not removed for now since CreateTeamGameStartingUnits and CreateStartingUnits analysis
+        // still ends up needing to know where team game jump is, and keeping those working
+        // would be additional work.
         TeamGameTeams => "team_game_teams",
         WireframDdsgrp => "wirefram_ddsgrp",
         ChkInitPlayers => "chk_init_players",
