@@ -1671,7 +1671,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 CmdBtnsDdsGrp | SyncData | PaletteSet | MainPalette | TfontGam |
                 UnitSkinMap | SpriteSkinMap | GrpWireDdsGrp | TranWireDdsGrp |
                 SpriteIncludeInVisionSync | DrawCommands | CreepFuncs | DcreepLookup |
-                DcreepListBegin | DcreepListSize =>
+                DcreepListBegin | DcreepListSize | ReplayHeader =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }

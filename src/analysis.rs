@@ -354,6 +354,7 @@ results! {
         ShowShieldOverlay => "show_shield_overlay",
         UnitUpdateStrength => "unit_update_strength",
         UnitCalculateStrength => "unit_calculate_strength",
+        ReplayEnd => "replay_end",
     }
 }
 
@@ -546,6 +547,7 @@ results! {
         FlingySpeedUsedForMove => "flingy_speed_used_for_move",
         MapWidthPixels => "map_width_pixels",
         MapHeightPixels => "map_height_pixels",
+        ReplayHeader => "replay_header",
     }
 }
 
@@ -1064,6 +1066,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             ShowShieldOverlay => self.show_shield_overlay(),
             UnitUpdateStrength => self.unit_update_strength(),
             UnitCalculateStrength => self.unit_calculate_strength(),
+            ReplayEnd => self.replay_end(),
         }
     }
 
@@ -1249,6 +1252,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             FlingySpeedUsedForMove => self.flingy_speed_used_for_move(),
             MapWidthPixels => self.map_width_pixels(),
             MapHeightPixels => self.map_height_pixels(),
+            ReplayHeader => self.replay_header(),
         }
     }
 
@@ -3701,6 +3705,20 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.analyze_many_addr(
             AddressAnalysis::UnitCalculateStrength,
             AnalysisCache::cache_do_weapon_damage,
+        )
+    }
+
+    pub fn replay_end(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::ReplayEnd,
+            AnalysisCache::cache_step_replay_commands,
+        )
+    }
+
+    pub fn replay_header(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ReplayHeader,
+            AnalysisCache::cache_step_replay_commands,
         )
     }
 
@@ -6301,6 +6319,19 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let r = bullets::analyze_do_weapon_damage(actx, do_dmg);
                 Some(([r.damage_unit, r.show_shield_overlay_for_direction, r.show_shield_overlay,
                     r.unit_update_strength, r.unit_calculate_strength], []))
+            })
+    }
+
+    fn cache_step_replay_commands(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[ReplayEnd],
+            &[ReplayHeader],
+            |s| {
+                let do_dmg = s.step_replay_commands(actx)?;
+                let r = commands::analyze_step_replay_commands(actx, do_dmg);
+                Some(([r.replay_end], [r.replay_header]))
             })
     }
 }

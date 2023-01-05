@@ -33,6 +33,11 @@ pub struct StepNetwork<'e, Va: VirtualAddressTrait> {
     pub storm_command_user: Option<Operand<'e>>,
 }
 
+pub(crate) struct StepReplayCommands<'e, Va: VirtualAddressTrait> {
+    pub replay_end: Option<Va>,
+    pub replay_header: Option<Operand<'e>>,
+}
+
 pub(crate) struct PrintText<Va: VirtualAddressTrait> {
     pub print_text: Option<Va>,
     pub add_to_replay_data: Option<Va>,
@@ -1025,6 +1030,100 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindReplayData<'a
                 }
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) fn analyze_step_replay_commands<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    step_replay_commands: E::VirtualAddress,
+) -> StepReplayCommands<'e, E::VirtualAddress> {
+    let mut result = StepReplayCommands {
+        replay_end: None,
+        replay_header: None,
+    };
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let mut analysis = FuncAnalysis::new(binary, ctx, step_replay_commands);
+    let mut analyzer = AnalyzeStepReplayCommands::<E> {
+        result: &mut result,
+        inlining: false,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzeStepReplayCommands<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut StepReplayCommands<'e, E::VirtualAddress>,
+    inlining: bool,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    AnalyzeStepReplayCommands<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.inlining {
+            match *op {
+                Operation::Jump { .. } | Operation::Call(..) => {
+                    ctrl.end_analysis();
+                    return;
+                }
+                _ => (),
+            }
+            return;
+        }
+        if self.result.replay_header.is_none() {
+            match *op {
+                Operation::Jump { condition, .. } => {
+                    let condition = ctrl.resolve(condition);
+                    // Signed gt
+                    let result = condition.if_arithmetic_gt()
+                        .and_then(|(l, _)| {
+                            l.if_arithmetic_and_const(0xffff_ffff)?
+                                .if_arithmetic_add_const(0x8000_0000)?
+                                .if_mem32()
+                        });
+                    if let Some(result) = result {
+                        if is_global(result.address().0) {
+                            // End frame is at offset +1 of replay header
+                            let ctx = ctrl.ctx();
+                            self.result.replay_header =
+                                Some(result.with_offset(0u64.wrapping_sub(1)).address_op(ctx));
+                            let end_branch = ctrl.current_instruction_end();
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_address(end_branch);
+                        }
+                    }
+                }
+                Operation::Call(dest) => {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.inlining = true;
+                        ctrl.inline(self, dest);
+                        ctrl.skip_operation();
+                        self.inlining = false;
+                    }
+                }
+                _ => (),
+            }
+        } else {
+            match *op {
+                Operation::Call(dest) => {
+                    // Assuming that the only call after replay header frame count check
+                    // is replay_end. If there's second then make result None and end.
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.result.replay_end.is_none() {
+                            self.result.replay_end = Some(dest);
+                        } else {
+                            self.result.replay_end = None;
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+                _ => (),
+            }
         }
     }
 }
