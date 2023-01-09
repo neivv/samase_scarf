@@ -194,6 +194,12 @@ fn add_warning_tls(file: &'static str, line: u32, msg: String) {
     WARNINGS.with(|w| w.borrow_mut().push(file, line, msg));
 }
 
+#[cfg(not(any(debug_assertions, feature = "test_assertions", feature = "binaries")))]
+#[inline(always)]
+fn format_stable_undef(_: Operand<'_>) -> String {
+    String::new()
+}
+
 /// Replaces Undefined_num with just Undefined to make test compare outputs be stable.
 /// (There is no guarantee that repeated runs result in same Undefined ids during memory
 /// merge, as it iterates hashmaps using memory address as a hash key)
