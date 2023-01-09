@@ -194,6 +194,29 @@ fn add_warning_tls(file: &'static str, line: u32, msg: String) {
     WARNINGS.with(|w| w.borrow_mut().push(file, line, msg));
 }
 
+/// Replaces Undefined_num with just Undefined to make test compare outputs be stable.
+/// (There is no guarantee that repeated runs result in same Undefined ids during memory
+/// merge, as it iterates hashmaps using memory address as a hash key)
+#[cfg(any(debug_assertions, feature = "test_assertions", feature = "binaries"))]
+fn format_stable_undef(op: Operand<'_>) -> String {
+    let mut text = op.to_string();
+    if op.contains_undefined() {
+        let mut pos = 0;
+        let match_string = "Undefined";
+        while let Some(undef_pos) = text[pos..].find(match_string) {
+            let undef_pos = pos + undef_pos;
+            let remove_start = undef_pos + match_string.len();
+            let mut remove_end = remove_start + 1;
+            while text[remove_end..].starts_with(|c: char| c.is_digit(16)) {
+                remove_end += 1;
+            }
+            text.replace_range(remove_start..remove_end, "");
+            pos = remove_start;
+        }
+    }
+    text
+}
+
 impl<'e, Va: VirtualAddress> DatPatches<'e, Va> {
     fn empty() -> DatPatches<'e, Va> {
         DatPatches {
@@ -1951,7 +1974,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             Ok(o) => o,
             Err(()) => {
                 dat_warn!(
-                    self, "Unknown {:?} dat offset @ {:?}: {}", dat, ctrl.address(), value,
+                    self, "Unknown {:?} dat offset @ {:?}: {}",
+                    dat, ctrl.address(), format_stable_undef(value),
                 );
                 None
             }
