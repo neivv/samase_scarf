@@ -543,10 +543,17 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     rdtsc_custom: Operand<'e>,
 }
 
+/// Selects handling of memory accesses in widen_instruction()
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum WidenInstruction {
+    /// Instruction's R/M memory access is assumed to be something that is
+    /// a struct field or global; not replacing u8 -> u32
     Default,
+    /// Memory access is assumed to be stack variable, replace with u32 stack variable
+    /// (Possibly increasing stack allocation to gain more space to use)
     StackAccess,
+    /// Memory access is assumed to be index to dat arrays, replace u8 index with u32 index.
+    ArrayIndex,
 }
 
 pub(crate) struct RequiredStableAddressesMap<'acx, Va: VirtualAddress> {
@@ -1750,8 +1757,16 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             };
             if array_itself_needs_widen {
                 let code_bytes_before = self.dat_ctx.result.code_bytes.len();
-                let widen_mode = Self::select_widen_mode(ctrl, dest_unresolved, value_unresolved);
-                self.widen_instruction(ctrl.address(), true, widen_mode);
+                // This instruction can be array indexed read (the usual case; Default),
+                // but also case where the indexed variable was spilled to stack and
+                // read back (StackAccess)
+                let widen_mode = match
+                    Self::select_widen_mode(ctrl, dest_unresolved, value_unresolved)
+                {
+                    WidenInstruction::Default => WidenInstruction::ArrayIndex,
+                    x => x,
+                };
+                self.widen_instruction(ctrl.address(), widen_mode);
                 // If this instruction had the array address immediate, mark is at something
                 // that needs to be fixed in result.code_bytes
                 let result = &mut self.dat_ctx.result;
@@ -2337,7 +2352,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             for rva in u8_instruction_lists.iter(U8Operand::Arg(i as u8)) {
                 let (rva, widen_mode) = unpack_widen_instruction_from_rva(rva);
                 let address = binary.base + rva.0;
-                self.widen_instruction(address, false, widen_mode);
+                self.widen_instruction(address, widen_mode);
             }
         }
         for &custom_id in needed_func_results.iter() {
@@ -2345,7 +2360,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             for rva in u8_instruction_lists.iter(U8Operand::Return(custom_id)) {
                 let (rva, widen_mode) = unpack_widen_instruction_from_rva(rva);
                 let address = binary.base + rva.0;
-                self.widen_instruction(address, false, widen_mode);
+                self.widen_instruction(address, widen_mode);
             }
         }
         self.state.u8_instruction_lists = u8_instruction_lists;
@@ -2483,9 +2498,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         self.add_patch(address, &nops[..ins_len as usize], ins_len);
     }
 
-    fn widen_instruction(&mut self, address: E::VirtualAddress, widen_index_size: bool, mode: WidenInstruction) {
+    fn widen_instruction(&mut self, address: E::VirtualAddress, mode: WidenInstruction) {
         let is_struct_field_rm = |bytes: &[u8]| -> bool {
-            mode != WidenInstruction::StackAccess &&
+            mode == WidenInstruction::Default &&
                 bytes[1] & 0xc0 != 0xc0
         };
 
@@ -2529,7 +2544,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         match *bytes {
             // movzx to mov
             [0x0f, 0xb6, ..] => {
-                if widen_index_size || !is_struct_field_rm(&bytes[1..]) {
+                if !is_struct_field_rm(&bytes[1..]) {
                     if rex_off == 0 {
                         full_bytes[1] = 0x8b;
                     } else {
@@ -2550,14 +2565,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         rex_off + 1,
                         ins_len,
                         ins_len,
-                        widen_index_size,
                         mode,
                     );
                 }
             }
             // add rm8, r8; cmp r8, rm8; cmp rm8, r8
             [0x00, ..] | [0x3a, ..] | [0x38, ..] => {
-                if widen_index_size || !is_struct_field_rm(&bytes) {
+                if !is_struct_field_rm(&bytes) {
                     bytes[0] += 1;
                     self.add_rm_patch(
                         address,
@@ -2565,7 +2579,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         rex_off,
                         ins_len,
                         ins_len,
-                        widen_index_size,
                         mode,
                     );
                 }
@@ -2591,7 +2604,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                     rex_off,
                     ins_len + 3,
                     ins_len,
-                    widen_index_size,
                     mode,
                 );
             }
@@ -2605,7 +2617,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
             // mov r8, rm8, to mov r32, rm32
             [0x8a, ..] => {
-                if !widen_index_size && is_struct_field_rm(&bytes) {
+                if is_struct_field_rm(&bytes) {
                     // Convert to movzx r32, rm8
                     full_bytes.copy_within(rex_off..15, rex_off + 1);
                     full_bytes[rex_off + 0] = 0x0f;
@@ -2619,14 +2631,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         rex_off,
                         ins_len,
                         ins_len,
-                        widen_index_size,
                         mode,
                     );
                 }
             }
             // mov rm8, r8
             [0x88, ..] => {
-                if widen_index_size || !is_struct_field_rm(&bytes) {
+                if !is_struct_field_rm(&bytes) {
                     bytes[0] = 0x89;
                     self.add_rm_patch(
                         address,
@@ -2634,14 +2645,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         rex_off,
                         ins_len,
                         ins_len,
-                        widen_index_size,
                         mode,
                     );
                 }
             }
             // mov rm8, const8
             [0xc6, ..] => {
-                if widen_index_size || !is_struct_field_rm(&bytes) {
+                if !is_struct_field_rm(&bytes) {
                     bytes[0] = 0xc7;
                     for i in ins_len..(ins_len + 3) {
                         full_bytes[i as usize] = 0x00;
@@ -2652,7 +2662,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         rex_off,
                         ins_len + 3,
                         ins_len,
-                        widen_index_size,
                         mode,
                     );
                 }
@@ -2680,14 +2689,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 // add_rm_patch_if_stack_relocated assumes rm instruction start 0 atm
                 // Also not sure if the ebp relocation is useful in 64bit so leaving this
                 // only for non-rex opcodes for now.
-                if !widen_index_size && rex_off == 0 {
-                    self.add_rm_patch_if_stack_relocated(address, &full_bytes[..(ins_len as usize)], mode);
+                if mode == WidenInstruction::StackAccess && rex_off == 0 {
+                    self.add_rm_patch_if_stack_relocated(address, &full_bytes[..(ins_len as usize)]);
                 }
             }
             // Push any
             [0xff, x, ..] if (x >> 3) & 7 == 6 => {
-                if !widen_index_size && rex_off == 0 {
-                    self.add_rm_patch_if_stack_relocated(address, &full_bytes[..(ins_len as usize)], mode);
+                if mode == WidenInstruction::StackAccess && rex_off == 0 {
+                    self.add_rm_patch_if_stack_relocated(address, &full_bytes[..(ins_len as usize)]);
                 }
             }
             // Movzx from u16
@@ -2701,7 +2710,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     // For instructions which read from rm but are already u32 wide.
     // They still may use an address that should be relocated, so relocate
     // them by calling add_rm_patch if it's using [ebp - x].
-    fn add_rm_patch_if_stack_relocated(&mut self, address: E::VirtualAddress, patch: &[u8], mode: WidenInstruction) {
+    //
+    // (Mode is implicitly considered to be WidenInstruction::StackAccess)
+    fn add_rm_patch_if_stack_relocated(&mut self, address: E::VirtualAddress, patch: &[u8]) {
         let rm_byte = match patch.get(1) {
             Some(&s) => s,
             None => return,
@@ -2709,7 +2720,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         let base = rm_byte & 0x7;
         let variant = rm_byte >> 6;
         // TODO non ebp offsets
-        if (variant == 1 || variant == 2) && base == 5 && mode != WidenInstruction::Default {
+        if (variant == 1 || variant == 2) && base == 5 {
             let offset = if variant == 1 {
                 patch[2] as i8 as i32
             } else {
@@ -2725,7 +2736,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             for i in 0..patch.len().min(16) {
                 copy[i] = patch[i];
             }
-            self.add_rm_patch(address, &mut copy, 0, patch.len() as u8, patch.len() as u8, false, mode);
+            let mode = WidenInstruction::StackAccess;
+            self.add_rm_patch(address, &mut copy, 0, patch.len() as u8, patch.len() as u8, mode);
         }
     }
 
@@ -2736,7 +2748,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         start: usize,
         patch_len: u8,
         ins_len: u8,
-        widen_index_size: bool,
         mode: WidenInstruction,
     ) {
         if start > 8 || patch_len >= 16 {
@@ -2745,9 +2756,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         let idx_1 = start.wrapping_add(1);
         let idx_2 = start.wrapping_add(2);
         let idx_3 = start.wrapping_add(3);
-        let widen = widen_index_size &&
+        let widen_array = mode == WidenInstruction::ArrayIndex &&
             matches!(patch[idx_1] & 0xc7, 0x80 | 0x81 | 0x82 | 0x83 | 0x85 | 0x86 | 0x87);
-        if !widen {
+        if !widen_array {
             let base = patch[idx_1] & 0x7;
             let variant = (patch[idx_1] & 0xc0) >> 6;
             let mut patch = patch;
@@ -3156,7 +3167,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
             } else {
                 WidenInstruction::Default
             };
-            self.parent.widen_instruction(address, false, mode);
+            self.parent.widen_instruction(address, mode);
         }
         if let Some(s) = self.rerun_branch.take() {
             self.add_unchecked_branch(s.0, s.1, s.2);
@@ -3215,7 +3226,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
                 true => WidenInstruction::StackAccess,
                 false => read_widen_mode,
             };
-            self.parent.widen_instruction(address, false, widen_mode);
+            self.parent.widen_instruction(address, widen_mode);
         }
         if let Some(own_branch_link) = self.cfg.get_link(self.branch) {
             for link in self.predecessors.predecessors(self.cfg, &own_branch_link) {
