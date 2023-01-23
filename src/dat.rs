@@ -47,7 +47,7 @@ use scarf::analysis::{self, Cfg, Control, FuncAnalysis, RelocValues};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, MemAccessSize, OperandType, OperandHashByAddress};
 use scarf::{
-    BinaryFile, BinarySection, DestOperand, FlagArith, FlagUpdate, Operand,
+    BinaryFile, BinarySection, DestOperand, FlagArith, FlagUpdate, Operand, OperandCtx,
     MemAccess, Operation, Rva
 };
 
@@ -541,6 +541,13 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     update_status_screen_tooltip: E::VirtualAddress,
     required_stable_addresses: RequiredStableAddressesMap<'acx, E::VirtualAddress>,
     rdtsc_custom: Operand<'e>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum WidenInstruction {
+    Default,
+    StackAccess,
+    Legacy,
 }
 
 pub(crate) struct RequiredStableAddressesMap<'acx, Va: VirtualAddress> {
@@ -1736,7 +1743,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             };
             if array_itself_needs_widen {
                 let code_bytes_before = self.dat_ctx.result.code_bytes.len();
-                self.widen_instruction(ctrl.address(), true);
+                self.widen_instruction(ctrl.address(), true, WidenInstruction::Legacy);
                 // If this instruction had the array address immediate, mark is at something
                 // that needs to be fixed in result.code_bytes
                 let result = &mut self.dat_ctx.result;
@@ -2243,7 +2250,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 if !checked_addresses.contains(&key) {
                     checked_addresses.push(key);
                     self.do_cfg_analysis(
-                        &cfg,
+                        &mut cfg,
                         &predecessors,
                         entry,
                         branch_start,
@@ -2277,14 +2284,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             self.dat_ctx.add_func_arg_widening_request(self.entry, i as u8, dat);
             for rva in u8_instruction_lists.iter(U8Operand::Arg(i as u8)) {
                 let address = binary.base + rva.0;
-                self.widen_instruction(address, false);
+                self.widen_instruction(address, false, WidenInstruction::Legacy);
             }
         }
         for &custom_id in needed_func_results.iter() {
             // Func args may be added for extension unnecessarily
             for rva in u8_instruction_lists.iter(U8Operand::Return(custom_id)) {
                 let address = binary.base + rva.0;
-                self.widen_instruction(address, false);
+                self.widen_instruction(address, false, WidenInstruction::Legacy);
             }
         }
         self.state.u8_instruction_lists = u8_instruction_lists;
@@ -2292,7 +2299,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
 
     fn do_cfg_analysis(
         &mut self,
-        cfg: &Cfg<'e, E, analysis::DefaultState>,
+        cfg: &mut Cfg<'e, E, analysis::DefaultState>,
         predecessors: &scarf::cfg::Predecessors,
         entry: E::VirtualAddress,
         branch: E::VirtualAddress,
@@ -2326,10 +2333,11 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             },
             cfg,
             predecessors,
-            assigning_instruction: None,
+            assign_instruction_widen_request: None,
             rerun_branch: None,
             ending: false,
             dat,
+            ctx,
         };
         let orig_branch = branch;
         let orig_final = final_address;
@@ -2421,12 +2429,17 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         self.add_patch(address, &nops[..ins_len as usize], ins_len);
     }
 
-    fn widen_instruction(&mut self, address: E::VirtualAddress, widen_index_size: bool) {
-        fn is_struct_field_rm(bytes: &[u8]) -> bool {
-            // Just checking if the base register != ebp but still a memory access
-            let base = bytes[1] & 0x7;
-            base != 5 && bytes[1] & 0xc0 != 0xc0
-        }
+    fn widen_instruction(&mut self, address: E::VirtualAddress, widen_index_size: bool, mode: WidenInstruction) {
+        let is_struct_field_rm = |bytes: &[u8]| -> bool {
+            if mode == WidenInstruction::Legacy {
+                // Just checking if the base register != ebp but still a memory access
+                let base = bytes[1] & 0x7;
+                base != 5 && bytes[1] & 0xc0 != 0xc0
+            } else {
+                mode != WidenInstruction::StackAccess &&
+                    bytes[1] & 0xc0 != 0xc0
+            }
+        };
 
         if !self.dat_ctx.patched_addresses.insert(address) {
             return;
@@ -2490,6 +2503,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         ins_len,
                         ins_len,
                         widen_index_size,
+                        mode,
                     );
                 }
             }
@@ -2504,6 +2518,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         ins_len,
                         ins_len,
                         widen_index_size,
+                        mode,
                     );
                 }
             }
@@ -2529,6 +2544,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                     ins_len + 3,
                     ins_len,
                     widen_index_size,
+                    mode,
                 );
             }
             // test rm8, r8
@@ -2556,6 +2572,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         ins_len,
                         ins_len,
                         widen_index_size,
+                        mode,
                     );
                 }
             }
@@ -2570,6 +2587,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         ins_len,
                         ins_len,
                         widen_index_size,
+                        mode,
                     );
                 }
             }
@@ -2587,6 +2605,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         ins_len + 3,
                         ins_len,
                         widen_index_size,
+                        mode,
                     );
                 }
             }
@@ -2614,13 +2633,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 // Also not sure if the ebp relocation is useful in 64bit so leaving this
                 // only for non-rex opcodes for now.
                 if !widen_index_size && rex_off == 0 {
-                    self.add_rm_patch_if_stack_relocated(address, &full_bytes[..(ins_len as usize)]);
+                    self.add_rm_patch_if_stack_relocated(address, &full_bytes[..(ins_len as usize)], mode);
                 }
             }
             // Push any
             [0xff, x, ..] if (x >> 3) & 7 == 6 => {
                 if !widen_index_size && rex_off == 0 {
-                    self.add_rm_patch_if_stack_relocated(address, &full_bytes[..(ins_len as usize)]);
+                    self.add_rm_patch_if_stack_relocated(address, &full_bytes[..(ins_len as usize)], mode);
                 }
             }
             // Movzx from u16
@@ -2634,14 +2653,15 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     // For instructions which read from rm but are already u32 wide.
     // They still may use an address that should be relocated, so relocate
     // them by calling add_rm_patch if it's using [ebp - x].
-    fn add_rm_patch_if_stack_relocated(&mut self, address: E::VirtualAddress, patch: &[u8]) {
+    fn add_rm_patch_if_stack_relocated(&mut self, address: E::VirtualAddress, patch: &[u8], mode: WidenInstruction) {
         let rm_byte = match patch.get(1) {
             Some(&s) => s,
             None => return,
         };
         let base = rm_byte & 0x7;
         let variant = rm_byte >> 6;
-        if (variant == 1 || variant == 2) && base == 5 {
+        // TODO non ebp offsets
+        if (variant == 1 || variant == 2) && base == 5 && mode != WidenInstruction::Default {
             let offset = if variant == 1 {
                 patch[2] as i8 as i32
             } else {
@@ -2657,7 +2677,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             for i in 0..patch.len().min(16) {
                 copy[i] = patch[i];
             }
-            self.add_rm_patch(address, &mut copy, 0, patch.len() as u8, patch.len() as u8, false);
+            self.add_rm_patch(address, &mut copy, 0, patch.len() as u8, patch.len() as u8, false, mode);
         }
     }
 
@@ -2669,6 +2689,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         patch_len: u8,
         ins_len: u8,
         widen_index_size: bool,
+        mode: WidenInstruction,
     ) {
         if start > 8 || patch_len >= 16 {
             return;
@@ -2685,7 +2706,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             let mut patch_len = patch_len;
             let mut buffer = [0u8; 16];
             // Fix u8 [ebp - x] offset to a newly allocated u32
-            if (variant == 1 || variant == 2) && base == 5 {
+            // TODO non-ebp offsets
+            if (variant == 1 || variant == 2) && base == 5 && mode != WidenInstruction::Default {
                 let offset = if variant == 1 {
                     patch[idx_2] as i8 as i32 as u32
                 } else {
@@ -2811,6 +2833,7 @@ struct CfgAnalyzer<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> {
     // Only used for the first branch when needed_operand is None
     final_address: E::VirtualAddress,
     func_entry: E::VirtualAddress,
+    ctx: OperandCtx<'e>,
     // Used if doing CFG analysis for function argument instead of array index
     // Causes analyzer to determine what is the value of this unresolved operand
     // at end of the branch. (This is resolved when being added from succeeding branch,
@@ -2822,10 +2845,15 @@ struct CfgAnalyzer<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> {
     added_unchecked_branches:
         HashSet<(E::VirtualAddress, OperandHashByAddress<'e>, E::VirtualAddress)>,
     parent: &'a mut DatReferringFuncAnalysis<'b, 'c, 'acx, 'e, E>,
-    cfg: &'a Cfg<'e, E, analysis::DefaultState>,
+    cfg: &'a mut Cfg<'e, E, analysis::DefaultState>,
     predecessors: &'a scarf::cfg::Predecessors,
+    // High bit of rva here is used to tell if instruction writes to stack memory.
+    // (Not bothering to making InstructionLists generic over value)
     instruction_lists: InstructionLists<'acx, OperandHashByAddress<'e>>,
-    assigning_instruction: Option<E::VirtualAddress>,
+    // Instruction which assigns to `needed_operand`.
+    // Bool is true if it reads from stack memory (Requiring the stack variable
+    // to be grown to 4 bytes as well)
+    assign_instruction_widen_request: Option<(E::VirtualAddress, bool)>,
     // Tells if the current branch needs to be reanalyzed with a different operand & end
     rerun_branch: Option<(E::VirtualAddress, Operand<'e>, E::VirtualAddress)>,
     dat: DatType,
@@ -2846,7 +2874,11 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         match *op {
             Operation::Move(ref dest, val, None) => {
                 let resolved = ctrl.resolve(val);
-                self.check_u8_instruction(ctrl, resolved, val);
+                let mem_write = match dest {
+                    DestOperand::Memory(mem) => Some(mem),
+                    _ => None,
+                };
+                self.check_u8_instruction(ctrl, mem_write, resolved, val);
                 match *dest {
                     DestOperand::Register32(r) | DestOperand::Register64(r) => {
                         if let Some(op) = self.needed_operand {
@@ -2859,44 +2891,44 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 // But saving this as an assigning instruction that needs widening
                                 // catches an edge case where [ebp - xx] needs to be relocated.
                                 // Specifically `mov r32, [ebp - xx]`
-                                self.assigning_instruction = Some(address);
+                                self.set_assigning_instruction(ctrl, dest, val, address);
                             }
                         }
                     }
-                    _ => (),
-                }
-                if let DestOperand::Register8Low(r) = *dest {
-                    // We want to also patch assignment like mov al, 82,
-                    // but that isn't caught by check_u8_instruction
-                    if let Some(op) = self.needed_operand {
-                        if Operand::and_masked(op).0.if_register()
-                            .filter(|&x| x == r)
-                            .is_some()
-                        {
+                    DestOperand::Register8Low(r) => {
+                        // We want to also patch assignment like mov al, 82,
+                        // but that isn't caught by check_u8_instruction
+                        if let Some(op) = self.needed_operand {
+                            if Operand::and_masked(op).0.if_register()
+                                .filter(|&x| x == r)
+                                .is_some()
+                            {
+                                self.set_assigning_instruction(ctrl, dest, val, address);
+                                self.instruction_lists.clear();
+                                // Ask the branch to be rerun with
+                                // self.final_address set to this instruction
+                                // This operand should be unresolved, pretty sure..
+                                self.rerun_branch = Some((self.branch, val, address));
+                            }
+                        }
+                    }
+                    DestOperand::Memory(ref mem) => {
+                        let matches = if let Some(resolved_dest) = self.resolved_dest_address {
+                            resolved_dest.address() == ctrl.resolve_mem(mem).address()
+                        } else {
+                            self.needed_operand
+                                .and_then(|x| x.if_memory())
+                                .filter(|x| x.address() == mem.address())
+                                .is_some()
+                        };
+                        // Same for mov byte [esp - 4], al and such
+                        if matches {
+                            self.set_assigning_instruction(ctrl, dest, val, address);
                             self.instruction_lists.clear();
-                            self.assigning_instruction = Some(address);
-                            // Ask the branch to be rerun with
-                            // self.final_address set to this instruction
-                            // This operand should be unresolved, pretty sure..
                             self.rerun_branch = Some((self.branch, val, address));
                         }
                     }
-                }
-                if let DestOperand::Memory(ref mem) = *dest {
-                    let matches = if let Some(resolved_dest) = self.resolved_dest_address {
-                        resolved_dest.address() == ctrl.resolve_mem(mem).address()
-                    } else {
-                        self.needed_operand
-                            .and_then(|x| x.if_memory())
-                            .filter(|x| x.address() == mem.address())
-                            .is_some()
-                    };
-                    // Same for mov byte [esp - 4], al and such
-                    if matches {
-                        self.instruction_lists.clear();
-                        self.assigning_instruction = Some(address);
-                        self.rerun_branch = Some((self.branch, val, address));
-                    }
+                    _ => (),
                 }
                 if address == self.final_address {
                     if self.needed_operand.is_none() {
@@ -2907,8 +2939,8 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::SetFlags(ref arith) => {
                 let left = ctrl.resolve(arith.left);
                 let right = ctrl.resolve(arith.right);
-                self.check_u8_instruction(ctrl, left, arith.left);
-                self.check_u8_instruction(ctrl, right, arith.right);
+                self.check_u8_instruction(ctrl, None, left, arith.left);
+                self.check_u8_instruction(ctrl, None, right, arith.right);
                 if address == self.final_address {
                     if self.needed_operand.is_none() {
                         self.check_final_op(ctrl, left);
@@ -2939,6 +2971,65 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 }
 
 impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 'e, E> {
+    fn set_assigning_instruction(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        dest_unres: &DestOperand<'e>,
+        unresolved: Operand<'e>,
+        address: E::VirtualAddress,
+    ) {
+        // Don't widen assigning instruction if its memory access is to non-stack memory.
+        let mut widen_stack_variable = false;
+        for i in 0..2 {
+            // Iteration 0: Value if memory, 1: Dest if memory
+            // Assuming that if both are memory value takes priority.
+            // Usually on x86 they're same, though `push dword[x]` will
+            // write to [esp - 4] and read from [x], and we care about the
+            // read.
+            // (Is it fine that `push ecx` would be detected as widen req to [esp - 4]`?
+            // Think it's fine and will be just no-op)
+            let unres = if i == 0 {
+                match unresolved.if_memory() {
+                    Some(s) => s,
+                    None => continue,
+                }
+            } else {
+                match dest_unres {
+                    DestOperand::Memory(mem) => mem,
+                    _ => continue,
+                }
+            };
+            let branch_start_resolved = ctrl.resolve_mem(unres);
+            widen_stack_variable = self.is_stack_relative_memory(&branch_start_resolved);
+            // One memory was processed, can just break here even if i == 0
+            break;
+        }
+        self.assign_instruction_widen_request = Some((address, widen_stack_variable));
+    }
+
+    /// Mem must be resolved (to start of analysis, that is, to start of self.branch).
+    ///
+    /// This function will resolve it to start of function and check if it is referring to stack.
+    fn is_stack_relative_memory(&mut self, mem: &MemAccess<'e>) -> bool {
+        let branch_start_base = mem.address().0;
+        let branch_addr = self.branch;
+        if let Some(state) = self.cfg.get_state(branch_addr) {
+            // TODO Scarf should add state.exec_state_mut()
+            let func_start_resolved = state.exec_state().clone().resolve(branch_start_base);
+            let ctx = self.ctx;
+            let esp = ctx.register(4);
+            let is_stack_mem = func_start_resolved == esp ||
+                func_start_resolved.if_arithmetic_any()
+                    .filter(|x| matches!(x.ty, ArithOpType::Add | ArithOpType::Sub))
+                    .filter(|x| x.left == esp)
+                    .is_some();
+            is_stack_mem
+        } else {
+            dat_warn!(self, "No cfg node for {branch_addr:?}");
+            false
+        }
+    }
+
     fn end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         ctrl.end_analysis();
         if let Some(op) = self.needed_operand {
@@ -2998,8 +3089,13 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
     /// `op` should be the resolved dat array index/other value that is being tracked for
     /// this current analyze() run.
     fn finishing_branch(&mut self, op: Operand<'e>) {
-        if let Some(address) = self.assigning_instruction.take() {
-            self.parent.widen_instruction(address, false);
+        if let Some((address, is_stack)) = self.assign_instruction_widen_request.take() {
+            let mode = if is_stack {
+                WidenInstruction::StackAccess
+            } else {
+                WidenInstruction::Default
+            };
+            self.parent.widen_instruction(address, false, mode);
         }
         if let Some(s) = self.rerun_branch.take() {
             self.add_unchecked_branch(s.0, s.1, s.2);
@@ -3043,13 +3139,32 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
             }
         };
 
+        // Is this fully correct logic for determining widen_mode?
+        let is_stack_relative_mem = op.if_memory()
+            .filter(|x| self.is_stack_relative_memory(x))
+            .is_some();
+        let read_widen_mode = match is_stack_relative_mem {
+            true => WidenInstruction::StackAccess,
+            false => WidenInstruction::Default,
+        };
         for rva in self.instruction_lists.iter(op.hash_by_address()) {
+            let (rva, is_stack_write) = (Rva(rva.0 & 0x7fff_ffff), rva.0 & 0x8000_0000 != 0);
             let address = self.parent.binary.base + rva.0;
-            self.parent.widen_instruction(address, false);
+            let widen_mode = match is_stack_write {
+                true => WidenInstruction::StackAccess,
+                false => read_widen_mode,
+            };
+            self.parent.widen_instruction(address, false, widen_mode);
         }
         if let Some(own_branch_link) = self.cfg.get_link(self.branch) {
             for link in self.predecessors.predecessors(self.cfg, &own_branch_link) {
-                self.add_unchecked_branch(link.address(), op, E::VirtualAddress::from_u64(0));
+                Self::add_unchecked_branch_(
+                    &mut self.added_unchecked_branches,
+                    &mut self.unchecked_branches,
+                    link.address(),
+                    op,
+                    E::VirtualAddress::from_u64(0),
+                );
             }
         } else {
             error!("Broken cfg? Branch {:?} not found", self.branch);
@@ -3062,8 +3177,26 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
         op: Operand<'e>,
         final_address: E::VirtualAddress,
     ) {
-        if self.added_unchecked_branches.insert((address, op.hash_by_address(), final_address)) {
-            self.unchecked_branches.push((address, op, final_address, None));
+        Self::add_unchecked_branch_(
+            &mut self.added_unchecked_branches,
+            &mut self.unchecked_branches,
+            address,
+            op,
+            final_address,
+        )
+    }
+
+    fn add_unchecked_branch_(
+        added_unchecked_branches:
+            &mut HashSet<(E::VirtualAddress, OperandHashByAddress<'e>, E::VirtualAddress)>,
+        unchecked_branches:
+            &mut BumpVec<'acx, (E::VirtualAddress, Operand<'e>, E::VirtualAddress, Option<MemAccess<'e>>)>,
+        address: E::VirtualAddress,
+        op: Operand<'e>,
+        final_address: E::VirtualAddress,
+    ) {
+        if added_unchecked_branches.insert((address, op.hash_by_address(), final_address)) {
+            unchecked_branches.push((address, op, final_address, None));
         }
     }
 
@@ -3081,6 +3214,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
     fn check_u8_instruction(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
+        mem_write_unres: Option<&MemAccess<'e>>,
         op: Operand<'e>,
         unresolved: Operand<'e>,
     ) {
@@ -3091,8 +3225,16 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
         }
         let binary = self.parent.binary;
         let rva = Rva((ctrl.address().as_u64() - binary.base.as_u64()) as u32);
+        let is_stack_mem_write = match mem_write_unres {
+            Some(s) => {
+                let res = ctrl.resolve_mem(s);
+                self.is_stack_relative_memory(&res)
+            }
+            None => false,
+        };
         for part in op.iter_no_mem_addr() {
-            self.instruction_lists.add(part.hash_by_address(), rva);
+            let value = Rva(rva.0 | if is_stack_mem_write { 0x8000_0000 } else { 0 });
+            self.instruction_lists.add(part.hash_by_address(), value);
         }
     }
 }
