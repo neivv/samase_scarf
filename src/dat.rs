@@ -547,7 +547,6 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
 enum WidenInstruction {
     Default,
     StackAccess,
-    Legacy,
 }
 
 pub(crate) struct RequiredStableAddressesMap<'acx, Va: VirtualAddress> {
@@ -1282,6 +1281,7 @@ struct DatFuncAnalysisState<'acx, 'e, E: ExecutionState<'e>> {
     calls: BumpVec<'acx, Rva>,
     calls_reverse_lookup: HashMap<Rva, u32>,
     next_cfg_custom_id: u32,
+    /// Bit 0x8000_0000 on rva is set if stack access
     u8_instruction_lists: InstructionLists<'acx, U8Operand>,
     stack_size_tracker: stack_analysis::StackSizeTracker<'acx, 'e, E>,
     /// Buffer hooks after all other patches to be sure that we don't add a longjump
@@ -1437,11 +1437,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         // This shares quite a lot of code with flags below..
                         let left = ctrl.resolve(arith.left);
                         let right = ctrl.resolve(arith.right);
-                        self.check_u8_instruction(ctrl, left, arith.left);
-                        self.check_u8_instruction(ctrl, right, arith.right);
+                        self.check_u8_instruction(ctrl, Some(dest), left, arith.left);
+                        self.check_u8_instruction(ctrl, Some(dest), right, arith.right);
                         if self.mode == DatFuncAnalysisMode::ArrayIndex {
-                            let new_left = self.check_memory_read(ctrl, left);
-                            let new_right = self.check_memory_read(ctrl, right);
+                            let new_left =
+                                self.check_memory_read(ctrl, Some(dest), arith.left, left);
+                            let new_right =
+                                self.check_memory_read(ctrl, Some(dest), arith.right, right);
                             if new_left.is_some() || new_right.is_some() {
                                 let left = new_left.unwrap_or(left);
                                 let right = new_right.unwrap_or(right);
@@ -1454,9 +1456,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                     _ => {
                         let resolved = ctrl.resolve(val);
-                        self.check_u8_instruction(ctrl, resolved, val);
+                        self.check_u8_instruction(ctrl, Some(dest), resolved, val);
                         if self.mode == DatFuncAnalysisMode::ArrayIndex {
-                            let new = self.check_memory_read(ctrl, resolved);
+                            let new = self.check_memory_read(ctrl, Some(dest), val, resolved);
                             if let Some(new) = new {
                                 ctrl.skip_operation();
                                 let state = ctrl.exec_state();
@@ -1471,12 +1473,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             {
                 let left = ctrl.resolve(arith.left);
                 let right = ctrl.resolve(arith.right);
-                self.check_u8_instruction(ctrl, left, arith.left);
-                self.check_u8_instruction(ctrl, right, arith.right);
+                self.check_u8_instruction(ctrl, None, left, arith.left);
+                self.check_u8_instruction(ctrl, None, right, arith.right);
 
                 if self.mode == DatFuncAnalysisMode::ArrayIndex {
-                    let new_left = self.check_memory_read(ctrl, left);
-                    let new_right = self.check_memory_read(ctrl, right);
+                    let new_left = self.check_memory_read(ctrl, None, arith.left, left);
+                    let new_right = self.check_memory_read(ctrl, None, arith.right, right);
                     if new_left.is_some() || new_right.is_some() {
                         let left = new_left.unwrap_or(left);
                         let right = new_right.unwrap_or(right);
@@ -1706,6 +1708,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     fn check_memory_read(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
+        dest_unresolved: Option<&DestOperand<'e>>,
+        value_unresolved: Operand<'e>,
         value: Operand<'e>,
     ) -> Option<Operand<'e>> {
         let mem = match value.if_memory() {
@@ -1743,7 +1747,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             };
             if array_itself_needs_widen {
                 let code_bytes_before = self.dat_ctx.result.code_bytes.len();
-                self.widen_instruction(ctrl.address(), true, WidenInstruction::Legacy);
+                let widen_mode = Self::select_widen_mode(ctrl, dest_unresolved, value_unresolved);
+                self.widen_instruction(ctrl.address(), true, widen_mode);
                 // If this instruction had the array address immediate, mark is at something
                 // that needs to be fixed in result.code_bytes
                 let result = &mut self.dat_ctx.result;
@@ -1775,6 +1780,50 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
         }
         None
+    }
+
+    /// Both write and read value have to be unresolved.
+    /// If these refer to stack memory, return WidenInstruction::StackAccess
+    ///
+    /// Similar to CfgAnalyzer::set_assigning_instruction, other than only needing
+    /// one layer of resolving.
+    fn select_widen_mode(
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        write: Option<&DestOperand<'e>>,
+        read: Operand<'e>,
+    ) -> WidenInstruction {
+        for i in 0..2 {
+            // Iteration 0: Value if memory, 1: Dest if memory
+            // Assuming that if both are memory value takes priority.
+            // Usually on x86 they're same, though `push dword[x]` will
+            // write to [esp - 4] and read from [x], and we care about the
+            // read.
+            // (Is it fine that `push ecx` would be detected as widen req to [esp - 4]`?
+            // Think it's fine and will be just no-op)
+            let unres = if i == 0 {
+                match read.if_memory() {
+                    Some(s) => s,
+                    None => continue,
+                }
+            } else {
+                match write {
+                    Some(DestOperand::Memory(mem)) => mem,
+                    _ => continue,
+                }
+            };
+            let resolved = ctrl.resolve_mem(unres);
+            let ctx = ctrl.ctx();
+            let esp = ctx.register(4);
+            // Assuming that if first iteration gives memory address, checking
+            // the second value isn't necessary.
+            let mode = if resolved.address().0 == esp {
+                WidenInstruction::StackAccess
+            } else {
+                WidenInstruction::Default
+            };
+            return mode;
+        }
+        WidenInstruction::Default
     }
 
     /// If this is jump on `rdtsc mod C`, assume it to be unconditional, patch it to
@@ -2283,15 +2332,17 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         {
             self.dat_ctx.add_func_arg_widening_request(self.entry, i as u8, dat);
             for rva in u8_instruction_lists.iter(U8Operand::Arg(i as u8)) {
+                let (rva, widen_mode) = unpack_widen_instruction_from_rva(rva);
                 let address = binary.base + rva.0;
-                self.widen_instruction(address, false, WidenInstruction::Legacy);
+                self.widen_instruction(address, false, widen_mode);
             }
         }
         for &custom_id in needed_func_results.iter() {
             // Func args may be added for extension unnecessarily
             for rva in u8_instruction_lists.iter(U8Operand::Return(custom_id)) {
+                let (rva, widen_mode) = unpack_widen_instruction_from_rva(rva);
                 let address = binary.base + rva.0;
-                self.widen_instruction(address, false, WidenInstruction::Legacy);
+                self.widen_instruction(address, false, widen_mode);
             }
         }
         self.state.u8_instruction_lists = u8_instruction_lists;
@@ -2431,14 +2482,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
 
     fn widen_instruction(&mut self, address: E::VirtualAddress, widen_index_size: bool, mode: WidenInstruction) {
         let is_struct_field_rm = |bytes: &[u8]| -> bool {
-            if mode == WidenInstruction::Legacy {
-                // Just checking if the base register != ebp but still a memory access
-                let base = bytes[1] & 0x7;
-                base != 5 && bytes[1] & 0xc0 != 0xc0
-            } else {
-                mode != WidenInstruction::StackAccess &&
-                    bytes[1] & 0xc0 != 0xc0
-            }
+            mode != WidenInstruction::StackAccess &&
+                bytes[1] & 0xc0 != 0xc0
         };
 
         if !self.dat_ctx.patched_addresses.insert(address) {
@@ -2803,6 +2848,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     fn check_u8_instruction(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
+        dest_unresolved: Option<&DestOperand<'e>>,
         op: Operand<'e>,
         unresolved: Operand<'e>,
     ) {
@@ -2810,7 +2856,16 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             return;
         }
         if let Some(u8_op) = self.dat_ctx.contains_u8_operand(op) {
-            let rva = Rva((ctrl.address().as_u64() - self.binary.base.as_u64()) as u32);
+            let stack_access_bit =
+                match Self::select_widen_mode(ctrl, dest_unresolved, unresolved)
+            {
+                WidenInstruction::StackAccess => 0x8000_0000,
+                _ => 0,
+            };
+            let rva = Rva(
+                (ctrl.address().as_u64() - self.binary.base.as_u64()) as u32 |
+                stack_access_bit,
+            );
             self.state.u8_instruction_lists.add_check_used_address(u8_op, rva);
         }
     }
@@ -2979,6 +3034,9 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
         address: E::VirtualAddress,
     ) {
         // Don't widen assigning instruction if its memory access is to non-stack memory.
+        // Similar to what DatReferringFuncAnalysis::select_widen_mode does, but
+        // adapted to CfgAnalyzer having ctrl resolving to start of branch, having
+        // to do separate resolve for start of function.
         let mut widen_stack_variable = false;
         for i in 0..2 {
             // Iteration 0: Value if memory, 1: Dest if memory
@@ -3671,4 +3729,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'acx, 'e, E> {
     ) -> Result<(), (E::VirtualAddress, E::VirtualAddress)> {
         self.required_stable_addresses.try_add_for_patch(self.binary, start, end)
     }
+}
+
+fn unpack_widen_instruction_from_rva(rva: Rva) -> (Rva, WidenInstruction) {
+    let mode = match rva.0 & 0x8000_0000 == 0 {
+        true => WidenInstruction::Default,
+        false => WidenInstruction::StackAccess,
+    };
+    (Rva(rva.0 & 0x7fff_ffff), mode)
 }
