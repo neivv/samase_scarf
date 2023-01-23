@@ -7,6 +7,8 @@ use scarf::analysis::{self, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, Operation, Operand};
 
+use crate::util::ControlExt;
+
 pub struct StackSizeTracker<'acx, 'e, E: ExecutionState<'e>> {
     stack_allocs: BumpVec<'acx, (i32, E::VirtualAddress)>,
     entry: E::VirtualAddress,
@@ -16,6 +18,7 @@ pub struct StackSizeTracker<'acx, 'e, E: ExecutionState<'e>> {
     init_esp: Option<Operand<'e>>,
     // Negative ebp offset -> alloc_size - index * 4
     remaps: BumpVec<'acx, u32>,
+    first_branch_call: bool,
 }
 
 impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
@@ -31,6 +34,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
             alloc_size: 0,
             init_esp: None,
             remaps: BumpVec::new_in(bump),
+            first_branch_call: true,
         }
     }
 
@@ -45,23 +49,44 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
             alloc_size: 0,
             init_esp: None,
             remaps: BumpVec::new_in(bump),
+            first_branch_call: true,
         }
     }
 
-    pub fn operation<A>(&mut self, ctrl: &mut Control<'e, '_, '_, A>, op: &Operation<'e>)
+    pub fn reset(&mut self) {
+        self.stack_allocs.clear();
+        self.alloc_size = 0;
+        self.init_esp = None;
+        self.first_branch_call = true;
+    }
+
+    /// Return true if operation was skipped (Due to it being large stack alloc call)
+    pub fn operation<A>(&mut self, ctrl: &mut Control<'e, '_, '_, A>, op: &Operation<'e>) -> bool
     where A: analysis::Analyzer<'e, Exec=E>,
     {
+        if self.first_branch_call {
+            match *op {
+                Operation::Jump { .. } => {
+                    self.first_branch_call = false;
+                }
+                Operation::Call(..) => {
+                    self.first_branch_call = false;
+                    return ctrl.check_stack_probe();
+                }
+                _ => (),
+            }
+        }
         match *op {
             Operation::Move(ref dest, val, None) => {
                 let ctx = ctrl.ctx();
                 if matches!(dest, DestOperand::Register64(4)) {
-                    let constant = val.if_arithmetic_add()
+                    let constant = val.if_add_with_const()
                         .filter(|x| x.0 == ctx.register(4))
-                        .and_then(|x| i32::try_from(x.1.if_constant()?).ok())
+                        .and_then(|x| i32::try_from(x.1).ok())
                         .or_else(|| {
-                            val.if_arithmetic_sub()
+                            val.if_sub_with_const()
                                 .filter(|x| x.0 == ctx.register(4))
-                                .and_then(|x| i32::try_from(x.1.if_constant()?).ok())
+                                .and_then(|x| i32::try_from(x.1).ok())
                                 .map(|x| 0i32.wrapping_sub(x))
                         });
                     if let Some(c) = constant {
@@ -94,7 +119,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                                 // stack allocation.
                                 if let Some(init_esp) = self.init_esp {
                                     if ctrl.resolve(ctx.register(4)) != init_esp {
-                                        return;
+                                        return false;
                                     }
                                 }
                             }
@@ -104,8 +129,9 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                         }
                     }
                 }
+                false
             }
-            _ => (),
+            _ => false,
         }
     }
 

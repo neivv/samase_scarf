@@ -1007,6 +1007,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 DatReferringFuncAnalysis::new(self, self.text, &mut rsa, entry, ref_address, mode)
             }
         };
+        analyzer.state.stack_size_tracker.reset();
         analysis.analyze(&mut analyzer);
         analyzer.generate_needed_patches(analysis, entry);
         let result = analyzer.result;
@@ -1365,7 +1366,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             return;
         }
 
-        self.state.stack_size_tracker.operation(ctrl, op);
+        if self.state.stack_size_tracker.operation(ctrl, op) {
+            return;
+        }
         let ctx = ctrl.ctx();
         if self.is_update_status_screen_tooltip {
             match *op {

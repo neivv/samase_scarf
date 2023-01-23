@@ -503,8 +503,8 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
 
     fn check_stack_probe(&mut self) -> bool {
         if A::Exec::WORD_SIZE == MemAccessSize::Mem64 {
-            let ctx = self.ctx();
-            if let Some(c) = self.resolve(ctx.register(0)).if_constant() {
+            let state = self.exec_state();
+            if let Some(c) = state.resolve_register(0).if_constant() {
                 if c >= 0x4000 {
                     self.skip_operation();
                     return true;
