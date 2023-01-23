@@ -2239,8 +2239,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             let mut checked_addresses = bumpvec_with_capacity(needed_cfg_analysis.len(), bump);
             let predecessors = cfg.predecessors();
             for (branch_start, address, op, dat) in needed_cfg_analysis {
-                if !checked_addresses.contains(&address) {
-                    checked_addresses.push(address);
+                let key = (address, branch_start, op);
+                if !checked_addresses.contains(&key) {
+                    checked_addresses.push(key);
                     self.do_cfg_analysis(
                         &cfg,
                         &predecessors,
