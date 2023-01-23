@@ -2719,7 +2719,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         };
         let base = rm_byte & 0x7;
         let variant = rm_byte >> 6;
-        // TODO non ebp offsets
         if (variant == 1 || variant == 2) && base == 5 {
             let offset = if variant == 1 {
                 patch[2] as i8 as i32
@@ -2738,6 +2737,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
             let mode = WidenInstruction::StackAccess;
             self.add_rm_patch(address, &mut copy, 0, patch.len() as u8, patch.len() as u8, mode);
+        } else if variant < 3 {
+            // TODO non ebp offsets / ebp with no offset
+            dat_warn!(self, "Unimplemented stack rm patch at {address:?}, base {base:x}");
         }
     }
 
@@ -2756,16 +2758,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         let idx_1 = start.wrapping_add(1);
         let idx_2 = start.wrapping_add(2);
         let idx_3 = start.wrapping_add(3);
-        let widen_array = mode == WidenInstruction::ArrayIndex &&
-            matches!(patch[idx_1] & 0xc7, 0x80 | 0x81 | 0x82 | 0x83 | 0x85 | 0x86 | 0x87);
-        if !widen_array {
-            let base = patch[idx_1] & 0x7;
-            let variant = (patch[idx_1] & 0xc0) >> 6;
+        let base = patch[idx_1] & 0x7;
+        let variant = (patch[idx_1] & 0xc0) >> 6;
+        if mode != WidenInstruction::ArrayIndex || variant == 3 {
             let mut patch = patch;
             let mut patch_len = patch_len;
             let mut buffer = [0u8; 16];
             // Fix u8 [ebp - x] offset to a newly allocated u32
-            // TODO non-ebp offsets
             if (variant == 1 || variant == 2) && base == 5 && mode != WidenInstruction::Default {
                 let offset = if variant == 1 {
                     patch[idx_2] as i8 as i32 as u32
@@ -2799,6 +2798,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         }
                     }
                 }
+            } else if variant < 3 && mode != WidenInstruction::Default {
+                // TODO non ebp offsets / ebp with no offset
+                dat_warn!(self, "Unimplemented rm patch at {address:?}, base {base:x}");
             }
             if ins_len == patch_len {
                 self.add_patch(address, &patch[..], ins_len);
@@ -2806,19 +2808,23 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 self.add_hook(address, ins_len, &patch[..(patch_len as usize)]);
             }
         } else {
-            // Widen [reg + base] to [reg * 4 + base]
-            let index_reg = patch[idx_1] & 0x7;
-            let other = patch[idx_1] & 0x38;
-            let mut buf = [0; 16];
-            for i in 0..(idx_1) {
-                buf[i as usize] = patch[i as usize];
+            if matches!(patch[idx_1] & 0xc7, 0x80 | 0x81 | 0x82 | 0x83 | 0x85 | 0x86 | 0x87) {
+                // Widen [reg + base] to [reg * 4 + base]
+                let index_reg = patch[idx_1] & 0x7;
+                let other = patch[idx_1] & 0x38;
+                let mut buf = [0; 16];
+                for i in 0..(idx_1) {
+                    buf[i as usize] = patch[i as usize];
+                }
+                buf[idx_1] = 0x4 | other;
+                buf[idx_2] = 0x85 | (index_reg << 3);
+                for i in idx_3..(patch_len as usize + 1) {
+                    buf[i] = patch[i - 1];
+                }
+                self.add_hook(address, ins_len, &buf[..(patch_len as usize + 1)]);
+            } else {
+                dat_warn!(self, "Don't know how to widen array index @ {address:?}");
             }
-            buf[idx_1] = 0x4 | other;
-            buf[idx_2] = 0x85 | (index_reg << 3);
-            for i in idx_3..(patch_len as usize + 1) {
-                buf[i] = patch[i - 1];
-            }
-            self.add_hook(address, ins_len, &buf[..(patch_len as usize + 1)]);
         }
     }
 

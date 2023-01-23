@@ -1470,7 +1470,78 @@ order_bb: Some(VirtualAddress(1401ca3c0))
 190913d8:4 = 14107c26c (00000000)
 
 -- Dat patches --
+WARN Don't know how to widen array index @ VirtualAddress(1401ccc9b)
+WARN Don't know how to widen array index @ VirtualAddress(1401b1a01)
+WARN Don't know how to widen array index @ VirtualAddress(1401b1a20)
+WARN Don't know how to widen array index @ VirtualAddress(1404363e7)
+WARN Don't know how to widen array index @ VirtualAddress(140436402)
+WARN Don't know how to widen array index @ VirtualAddress(1401cafc1)
+WARN Don't know how to widen array index @ VirtualAddress(1401cb031)
+WARN Don't know how to widen array index @ VirtualAddress(1401bd250)
+WARN Don't know how to widen array index @ VirtualAddress(1401853d4)
+WARN Don't know how to widen array index @ VirtualAddress(1401f3a8d)
+WARN Don't know how to widen array index @ VirtualAddress(1401c64b6)
+WARN Don't know how to widen array index @ VirtualAddress(1401c64d6)
+WARN Don't know how to widen array index @ VirtualAddress(1401e4b84)
+WARN Don't know how to widen array index @ VirtualAddress(1401e4d2b)
+WARN Don't know how to widen array index @ VirtualAddress(1401e4d61)
+WARN Don't know how to widen array index @ VirtualAddress(1401f4040)
+WARN Don't know how to widen array index @ VirtualAddress(1401e7f35)
+WARN Don't know how to widen array index @ VirtualAddress(1401e805d)
+WARN Don't know how to widen array index @ VirtualAddress(140200ba4)
+WARN Don't know how to widen array index @ VirtualAddress(140288b37)
+WARN Don't know how to widen array index @ VirtualAddress(140288ba3)
+WARN Don't know how to widen array index @ VirtualAddress(1401b1734)
+WARN Don't know how to widen array index @ VirtualAddress(1401b174d)
+WARN Don't know how to widen array index @ VirtualAddress(1401b17ae)
+WARN Don't know how to widen array index @ VirtualAddress(1401a706c)
+WARN Don't know how to widen array index @ VirtualAddress(140376c19)
+WARN Don't know how to widen array index @ VirtualAddress(140376c4e)
+WARN Don't know how to widen array index @ VirtualAddress(1401b9144)
+WARN Don't know how to widen array index @ VirtualAddress(1401b917e)
+WARN Don't know how to widen array index @ VirtualAddress(14019b140)
 WARN Unknown Flingy dat offset @ VirtualAddress(14019b144): Mem8[Undefined]
+WARN Don't know how to widen array index @ VirtualAddress(1401c6bb9)
+WARN Don't know how to widen array index @ VirtualAddress(1401fccec)
+WARN Unimplemented rm patch at VirtualAddress(1401b5f35), base 4
+WARN Don't know how to widen array index @ VirtualAddress(1401b9092)
+WARN Don't know how to widen array index @ VirtualAddress(1401b90a4)
+WARN Don't know how to widen array index @ VirtualAddress(140376a39)
+WARN Don't know how to widen array index @ VirtualAddress(140376a6e)
+WARN Don't know how to widen array index @ VirtualAddress(1401b978f)
+WARN Don't know how to widen array index @ VirtualAddress(1401b97bc)
+WARN Don't know how to widen array index @ VirtualAddress(140412514)
+WARN Don't know how to widen array index @ VirtualAddress(1401ab447)
+WARN Don't know how to widen array index @ VirtualAddress(1401bbdbd)
+WARN Don't know how to widen array index @ VirtualAddress(140204332)
+WARN Don't know how to widen array index @ VirtualAddress(1401b9887)
+WARN Don't know how to widen array index @ VirtualAddress(1401b98b4)
+WARN Don't know how to widen array index @ VirtualAddress(1403f8a80)
+WARN Unimplemented rm patch at VirtualAddress(14025b302), base 4
+WARN Don't know how to widen array index @ VirtualAddress(1401bcd6e)
+WARN Don't know how to widen array index @ VirtualAddress(1401bcd85)
+WARN Don't know how to widen array index @ VirtualAddress(1401e0baa)
+WARN Don't know how to widen array index @ VirtualAddress(1401f27a1)
+WARN Don't know how to widen array index @ VirtualAddress(1403ce254)
+WARN Don't know how to widen array index @ VirtualAddress(140415052)
+WARN Don't know how to widen array index @ VirtualAddress(14028a094)
+WARN Don't know how to widen array index @ VirtualAddress(1401cb0a2)
+WARN Don't know how to widen array index @ VirtualAddress(1403cf1af)
+WARN Don't know how to widen array index @ VirtualAddress(1401bd048)
+WARN Don't know how to widen array index @ VirtualAddress(1401bd07d)
+WARN Don't know how to widen array index @ VirtualAddress(1401e500c)
+WARN Don't know how to widen array index @ VirtualAddress(140412ef3)
+WARN Don't know how to widen array index @ VirtualAddress(140412f21)
+WARN Don't know how to widen array index @ VirtualAddress(1401bd11c)
+WARN Don't know how to widen array index @ VirtualAddress(1401bd14a)
+WARN Don't know how to widen array index @ VirtualAddress(1401fc648)
+WARN Don't know how to widen array index @ VirtualAddress(1401fc69c)
+WARN Don't know how to widen array index @ VirtualAddress(1401b1939)
+WARN Don't know how to widen array index @ VirtualAddress(1401b98f8)
+WARN Don't know how to widen array index @ VirtualAddress(1401c7e3a)
+WARN Don't know how to widen array index @ VirtualAddress(1401ccf1e)
+WARN Don't know how to widen array index @ VirtualAddress(1401bd9c8)
+WARN Unimplemented rm patch at VirtualAddress(14025b323), base 4
 WARN Unknown Upgrades dat offset @ VirtualAddress(14040b752): Mem8[Mem64[rdx + 58] + 1a]
 WARN Unknown Upgrades dat offset @ VirtualAddress(14040b769): Mem8[Mem64[rdx + 58] + 1a]
 WARN Unknown Weapons dat offset @ VirtualAddress(14019454c): Mem8[Undefined]
@@ -1652,14 +1723,11 @@ PortData array patches:
 14014bf42 = [75, 1c]
 14014c0eb = [75, 14]
 14014c145 = [74, 0c]
-1401853d4 = [90, 42, 8b, 94, 30, d0, 8a, e7, 00]
 1401862b4 = [90, e9, 6c, 1e, 00, 00]
 140189c30 = [90, 8b, c1]
 1401944fb = [0f, 84, 99, f7, ff, ff]
 140194528 = [90, 8b, d0]
 14019457a = [90, 8b, c0]
-14019b140 = [90, 41, 8b, 09]
-1401a706c = [90, 8b, 84, 08, 20, 2c, e7, 00]
 1401a7bd8 = [90, 8b, c0]
 1401a7ed8 = [90, 8b, c0]
 1401a8524 = [75, 18]
@@ -1668,7 +1736,6 @@ PortData array patches:
 1401a86e2 = [90, 8b, f2]
 1401a8773 = [90, 90, 8b, d6]
 1401a87a4 = [90, 90, 8b, ce]
-1401ab447 = [90, 8b, 84, 08, c0, 43, e7, 00]
 1401b19a5 = [0f, 84, 8f, 00, 00, 00]
 1401b1a62 = [90, 8b, fa]
 1401b1a6b = [0f, 84, e8, 00, 00, 00]
@@ -1690,17 +1757,9 @@ PortData array patches:
 1401b5ff7 = [90, 41, 8b, d4]
 1401b6119 = [90, e9, bb, 2e, 00, 00]
 1401b8fdf = [90, 41, 8b, d4]
-1401b9092 = [90, 8b, bc, 30, c0, 43, e7, 00]
-1401b90a4 = [90, 8b, bc, 30, a0, 45, e7, 00]
 1401b90ac = [90, 90, 8b, d7]
 1401b90b8 = [90, 90, 8b, c7]
-1401b9144 = [90, 44, 8b, 84, 08, a0, 45, e7, 00]
-1401b917e = [90, 44, 8b, 84, 08, c0, 43, e7, 00]
-1401b97bc = [90, 8b, 04, 38]
 1401b97e2 = [90, 8b, f2]
-1401b98b4 = [90, 8b, 04, 38]
-1401b98f8 = [90, 8b, 04, 08]
-1401bbdbd = [90, 8b, b4, 18, c0, 43, e7, 00]
 1401bbdcd = [90, 90, 8b, d6]
 1401bc070 = [90, 44, 8b, f2]
 1401bc0c1 = [90, 41, 8b, c6]
@@ -1709,13 +1768,7 @@ PortData array patches:
 1401bc15a = [90, 90, 8b, d7]
 1401bc23f = [90, 44, 8b, f2]
 1401bc3b5 = [90, 41, 8b, ce]
-1401bcd85 = [90, 8b, 8c, 30, c0, 43, e7, 00]
 1401bcfb8 = [75, 03]
-1401bd048 = [90, 8b, 94, 08, a0, 45, e7, 00]
-1401bd07d = [90, 8b, 94, 08, c0, 43, e7, 00]
-1401bd11c = [90, 8b, 8c, 18, a0, 45, e7, 00]
-1401bd14a = [90, 8b, 8c, 18, c0, 43, e7, 00]
-1401bd250 = [90, 44, 8b, bc, 38, a0, 45, e7, 00]
 1401bd265 = [90, 44, 8b, f8]
 1401bd2bf = [90, 45, 8b, ef]
 1401bd64a = [90, 8b, f2]
@@ -1723,29 +1776,21 @@ PortData array patches:
 1401bd75c = [90, 8b, ea]
 1401bd853 = [90, 90, 8b, c5]
 1401bd85c = [75, 5c]
-1401bd9c8 = [90, 42, 8b, b4, 30, a0, 45, e7, 00]
 1401bd9d8 = [90, 8b, f0]
 1401bd9df = [74, 3a]
 1401c4dfd = [90, 90, 90, 90, 90, 90]
-1401c64b6 = [90, 8b, 84, 18, c0, 43, e7, 00]
 1401c64c0 = [74, 14]
 1401c64c2 = [90, 8b, c0]
-1401c64d6 = [90, 41, 8b, 84, 19, a0, 45, e7, 00]
 1401c64e1 = [74, 14]
 1401c64e3 = [90, 8b, c0]
 1401c661a = [90, 90, 90, 90, 90, 90, 90, 90]
 1401c662d = [0f, 85, 6d, fe, ff, ff]
-1401c6bb9 = [90, 42, 8b, 94, 3f, 20, 2c, e7, 00]
 1401c766a = [0f, 84, 36, 04, 00, 00]
 1401c7778 = [eb, 4a]
 1401c79f1 = [90, 90, 90, 90, 90, 90]
-1401c7e3a = [90, 8b, 8c, 10, 70, eb, e6, 00]
 1401c7e45 = [74, 10]
 1401c7e47 = [90, 8b, c1]
 1401cac9f = [74, 1a]
-1401cafc1 = [90, 8b, 84, 08, 20, 2c, e7, 00]
-1401cb031 = [90, 8b, 84, 08, 20, 2c, e7, 00]
-1401cb0a2 = [90, 41, 8b, 84, 09, 20, 2c, e7, 00]
 1401cb166 = [75, 37]
 1401cb572 = [74, 0a]
 1401cb68d = [90, 90]
@@ -1759,39 +1804,24 @@ PortData array patches:
 1401cc1ff = [74, 10]
 1401cc7df = [75, 03]
 1401cca0f = [74, 13]
-1401ccc9b = [90, 8b, 04, 08]
 1401ccf14 = [90, 8b, c2]
-1401ccf1e = [90, 8b, 14, 10]
 1401cebfb = [90, e9, 92, 1e, 00, 00]
 1401dffe8 = [90, 8b, d8]
 1401dfff8 = [90, 8b, cb]
 1401e0006 = [90, 8b, c0]
 1401e0021 = [90, 8b, c0]
-1401e0baa = [90, 42, 8b, 94, 22, c0, 43, e7, 00]
 1401e2f93 = [90, 8b, c0]
 1401e2fcb = [90, 8b, c0]
-1401e4b84 = [90, 44, 8b, bc, 1f, b0, ea, e6, 00]
-1401e4d2b = [90, 8b, 94, 38, b0, ea, e6, 00]
-1401e4d61 = [90, 8b, 94, 01, b0, ea, e6, 00]
 1401e4e19 = [90, 41, 8b, d7]
 1401e4e68 = [90, 41, 8b, cf]
 1401e4eeb = [90, 41, 8b, d7]
-1401e500c = [90, 8b, 14, 08]
-1401e7f35 = [90, 42, 8b, ac, 26, b0, ea, e6, 00]
 1401e804f = [90, 90, 8b, d5]
-1401e805d = [90, 42, 8b, 84, 26, 70, eb, e6, 00]
 1401e8068 = [74, 32]
 1401e8081 = [90, 8b, d0]
-1401f27a1 = [90, 42, 8b, 84, 3d, 20, 2c, e7, 00]
 1401f3a71 = [90, 8b, c8]
 1401f3a7c = [90, 8b, d1]
-1401f3a8d = [90, 8b, 94, 30, a0, 45, e7, 00]
 1401f4025 = [90, 8b, c0]
 1401f402f = [90, 8b, d0]
-1401f4040 = [90, 8b, 94, 30, a0, 45, e7, 00]
-1401fc648 = [90, 8b, 14, 08]
-1401fc69c = [90, 8b, 14, 08]
-1401fccec = [90, 8b, 84, 08, 20, 2c, e7, 00]
 1401fd94a = [90, 8b, da]
 1401fd953 = [74, 73]
 1401fd96f = [90, 8b, c3]
@@ -1805,8 +1835,6 @@ PortData array patches:
 1401fde26 = [90, 8b, da]
 1401fde66 = [90, 8b, da]
 1402006ae = [90, 90]
-140200ba4 = [90, 8b, 84, 08, 20, 2c, e7, 00]
-140204332 = [90, 8b, 84, 08, 20, 2c, e7, 00]
 14025b302 = [89, 44, 24, 71]
 14025b30e = [90, 8b, c0]
 14025b323 = [89, 44, 24, 72]
@@ -1842,10 +1870,7 @@ PortData array patches:
 140278743 = [90, 8b, c8]
 14028816f = [90, 44, 8b, da]
 1402881a3 = [90, 41, 8b, c3]
-140288b37 = [90, 42, 8b, 94, 20, a0, 45, e7, 00]
-140288ba3 = [90, 42, 8b, 94, 20, c0, 43, e7, 00]
 140288bf8 = [0f, 85, f6, fe, ff, ff]
-14028a094 = [90, 8b, 04, 08]
 14028c256 = [0f, 85, 5d, 01, 00, 00]
 14028eda9 = [90, 8b, c8]
 14028f1aa = [74, 20]
@@ -1864,13 +1889,9 @@ PortData array patches:
 1402bf534 = [90, 8b, d3]
 140341126 = [90, 90]
 1403440de = [90, 90]
-140376a39 = [90, 41, 8b, 8c, 1b, c0, 43, e7, 00]
 140376a47 = [90, 8b, c9]
-140376a6e = [90, 41, 8b, 8c, 1b, a0, 45, e7, 00]
 140376a7c = [90, 8b, c9]
-140376c19 = [90, 41, 8b, 8c, 1b, c0, 43, e7, 00]
 140376c27 = [90, 8b, c9]
-140376c4e = [90, 41, 8b, 8c, 1b, a0, 45, e7, 00]
 140376c5c = [90, 8b, c9]
 14037a335 = [90, 8b, c8]
 140398db6 = [90, 90]
@@ -1878,15 +1899,10 @@ PortData array patches:
 1403993be = [90, 8b, c8]
 1403c86cf = [90, 8b, c1]
 1403c88e2 = [90, 8b, c0]
-1403ce254 = [90, 8b, 84, 33, 20, 2c, e7, 00]
-1403cf1af = [90, 43, 8b, 84, 3c, 20, 2c, e7, 00]
-1403f8a80 = [90, 8b, 01]
 1403f8a90 = [90, 8b, c8]
 1404045f0 = [90, 8b, c8]
 140404680 = [90, 8b, c8]
 14040b452 = [8b, c1, 90]
-140412ef3 = [90, 42, 8b, 8c, 38, e0, 4d, e7, 00]
-140412f21 = [90, 42, 8b, 84, 38, e0, 4d, e7, 00]
 140414520 = [90, 8b, c0]
 140414596 = [90, 8b, c8]
 1404145bb = [90, 8b, c0]
@@ -1899,9 +1915,7 @@ PortData array patches:
 140415f3f = [90, 8b, c0]
 140416047 = [90, 41, 8b, e8]
 140416051 = [90, 90, 8b, d5]
-1404363e7 = [90, 42, 8b, b4, 33, b0, ea, e6, 00]
 1404363f0 = [40, 89, 75, cc]
-140436402 = [90, 42, 8b, 84, 33, 70, eb, e6, 00]
 14043640b = [89, 45, d0]
 140436465 = [90, 8b, 45, cc]
 140436538 = [90, 8b, 75, cc]
@@ -1912,21 +1926,14 @@ PortData array patches:
 1404366ab = [90, 8b, 75, cc]
 1404366b5 = [90, 90, 8b, c6]
 --- Hooks ---
-1401b1734:8 = [81, bc, 38, c0, 43, e7, 00, 82, 00, 00, 00]
-1401b174d:8 = [81, bc, 38, a0, 45, e7, 00, 82, 00, 00, 00]
 1401b179f:2 = [3d, 82, 00, 00, 00]
-1401b17ae:8 = [81, bc, 38, a0, 45, e7, 00, 82, 00, 00, 00]
-1401b1939:4 = [81, 3c, 10, 82, 00, 00, 00]
 1401b1959:2 = [3d, 82, 00, 00, 00]
-1401b1a01:8 = [81, bc, 38, c0, 43, e7, 00, 82, 00, 00, 00]
-1401b1a20:8 = [81, bc, 38, c0, 43, e7, 00, 82, 00, 00, 00]
 1401b20f1:4 = [41, 81, fd, 22, 00, 00, 00]
 1401b290b:4 = [40, 81, fe, 22, 00, 00, 00]
 1401b291b:4 = [40, 81, fe, 22, 00, 00, 00]
 1401b5f71:4 = [41, 81, f8, 82, 00, 00, 00]
 1401b9167:3 = [41, b8, 82, 00, 00, 00]
 1401bbdad:3 = [40, be, 82, 00, 00, 00]
-1401bcd6e:8 = [81, bc, 30, c0, 43, e7, 00, 82, 00, 00, 00]
 1401bd085:3 = [81, fa, 82, 00, 00, 00]
 1401bd152:3 = [81, f9, 82, 00, 00, 00]
 1401bd815:4 = [40, 81, fd, 08, 00, 00, 00]
@@ -1965,9 +1972,7 @@ PortData array patches:
 140376a77:3 = [81, f9, 82, 00, 00, 00]
 140376c22:3 = [81, f9, 82, 00, 00, 00]
 140376c57:3 = [81, f9, 82, 00, 00, 00]
-140412514:4 = [81, 3c, 08, 82, 00, 00, 00]
 140412526:2 = [3d, 82, 00, 00, 00]
-140415052:8 = [81, bc, 30, e0, 4d, e7, 00, 3c, 00, 00, 00]
 140415095:2 = [3d, 82, 00, 00, 00]
 1404150c6:2 = [3d, 82, 00, 00, 00]
 140436469:2 = [3d, 82, 00, 00, 00]

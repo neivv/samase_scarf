@@ -1474,6 +1474,8 @@ WARN Unknown Weapons dat offset @ VirtualAddress(0072e723): Mem8[Mem32[Mem32[rsp
 WARN Unknown Weapons dat offset @ VirtualAddress(0072e72b): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(0072e793): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(0072e79b): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Don't know how to widen array index @ VirtualAddress(005a6ab6)
+WARN Don't know how to widen array index @ VirtualAddress(005a6add)
 WARN Can't widen instruction @ VirtualAddress(007318b6)
 WARN Unknown Upgrades dat offset @ VirtualAddress(0072b35d): Mem8[Mem32[Mem32[rsp + 8] + 28] + e]
 WARN Unknown Upgrades dat offset @ VirtualAddress(0072b36f): Mem8[Mem32[Mem32[rsp + 8] + 28] + e]
@@ -1756,8 +1758,6 @@ PortData array patches:
 005a69a8 = [ff, 75, d8]
 005a69bc = [74, 4a]
 005a69c8 = [90, 8b, c0]
-005a6ab6 = [90, 8b, 00]
-005a6add = [90, 8b, 08]
 005a6b85 = [8b, 5d, dc]
 005a6bc6 = [90, 8b, cb]
 005a92a3 = [83, ec, 0c]

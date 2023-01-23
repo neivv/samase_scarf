@@ -1474,6 +1474,9 @@ WARN Unknown Weapons dat offset @ VirtualAddress(007754b1): Mem8[Mem32[Mem32[rsp
 WARN Unknown Weapons dat offset @ VirtualAddress(007754b9): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(00775521): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(00775529): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Don't know how to widen array index @ VirtualAddress(0057b0d4)
+WARN Don't know how to widen array index @ VirtualAddress(005af760)
+WARN Don't know how to widen array index @ VirtualAddress(005af787)
 WARN Unknown Weapons dat offset @ VirtualAddress(0055a230): Mem8[Undefined + 1]
 WARN Unknown Weapons dat offset @ VirtualAddress(0055a230): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(0055a230): Mem8[Undefined]
@@ -1706,7 +1709,6 @@ PortData array patches:
 0057aad4 = [90, 8b, f8]
 0057abe6 = [90, e9, d3, 03, 00, 00]
 0057b0c3 = [89, 5d, 08]
-0057b0d4 = [8b, 18]
 0057b0d6 = [89, 5d, 08]
 0057b0dc = [75, 2c]
 0057b10a = [90, 8b, db]
@@ -1870,8 +1872,6 @@ PortData array patches:
 005af5d3 = [74, 23]
 005af5df = [90, 8b, c0]
 005af70f = [75, 2c]
-005af760 = [90, 8b, 00]
-005af787 = [90, 8b, 08]
 005afcc0 = [0f, 84, 86, 00, 00, 00]
 005afe3a = [74, 0c]
 005b0907 = [74, 79]

@@ -1468,12 +1468,15 @@ order_bb: Some(VirtualAddress(005864f0))
 190913d8:4 = fa847c (00000000)
 
 -- Dat patches --
+WARN Don't know how to widen array index @ VirtualAddress(005753b4)
 WARN Unknown Weapons dat offset @ VirtualAddress(007622c3): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(007622cb): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(00762331): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(00762339): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(007623a1): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
 WARN Unknown Weapons dat offset @ VirtualAddress(007623a9): Mem8[Mem32[Mem32[rsp + 4] + 28] + 8]
+WARN Don't know how to widen array index @ VirtualAddress(0059e560)
+WARN Don't know how to widen array index @ VirtualAddress(0059e587)
 WARN Unknown Upgrades dat offset @ VirtualAddress(0075daff): Mem8[Mem32[Mem32[rsp + 8] + 28] + e]
 WARN Unknown Upgrades dat offset @ VirtualAddress(0075db11): Mem8[Mem32[Mem32[rsp + 8] + 28] + e]
 WARN Unknown Weapons dat offset @ VirtualAddress(005501c0): Mem8[Undefined + 1]
@@ -1708,7 +1711,6 @@ PortData array patches:
 0057513b = [75, 2c]
 00575194 = [90, 8b, f8]
 005753a3 = [89, 5d, 08]
-005753b4 = [8b, 18]
 005753b6 = [89, 5d, 08]
 005753bc = [75, 2c]
 005753ea = [90, 8b, db]
@@ -1874,8 +1876,6 @@ PortData array patches:
 0059e3d3 = [74, 23]
 0059e3df = [90, 8b, c0]
 0059e50f = [75, 2c]
-0059e560 = [90, 8b, 00]
-0059e587 = [90, 8b, 08]
 005a0690 = [0f, 84, 86, 00, 00, 00]
 005a080a = [74, 0c]
 005a12d7 = [74, 79]
