@@ -1482,7 +1482,14 @@ WARN Don't know how to widen array index @ VirtualAddress(1401ab30e)
 WARN Don't know how to widen array index @ VirtualAddress(14017f784)
 WARN Don't know how to widen array index @ VirtualAddress(1401fba44)
 WARN Don't know how to widen array index @ VirtualAddress(140417a67)
+WARN Unable to remap stack pointer offset @ VirtualAddress(140417a70)
 WARN Don't know how to widen array index @ VirtualAddress(140417a82)
+WARN Unable to remap stack pointer offset @ VirtualAddress(140417a8b)
+WARN Unable to remap stack pointer offset @ VirtualAddress(140417ae5)
+WARN Unable to remap stack pointer offset @ VirtualAddress(140417c49)
+WARN Unable to remap stack pointer offset @ VirtualAddress(140417bb8)
+WARN Unable to remap stack pointer offset @ VirtualAddress(140417cff)
+WARN Unable to remap stack pointer offset @ VirtualAddress(140417d2b)
 WARN Don't know how to widen array index @ VirtualAddress(1401ae524)
 WARN Don't know how to widen array index @ VirtualAddress(1401ae55e)
 WARN Don't know how to widen array index @ VirtualAddress(1401fd072)
@@ -1535,12 +1542,12 @@ WARN Don't know how to widen array index @ VirtualAddress(1401ab499)
 WARN Don't know how to widen array index @ VirtualAddress(1401f5028)
 WARN Don't know how to widen array index @ VirtualAddress(1401f507c)
 WARN Don't know how to widen array index @ VirtualAddress(1403f5b54)
-WARN Unimplemented rm patch at VirtualAddress(140258dd2), base 4
+WARN Unimplemented rm patch at VirtualAddress(140258dd2), base 4 fffffc28
 WARN Don't know how to widen array index @ VirtualAddress(1401e06fc)
 WARN Don't know how to widen array index @ VirtualAddress(1401ec1bd)
 WARN Don't know how to widen array index @ VirtualAddress(1403f8692)
 WARN Don't know how to widen array index @ VirtualAddress(1401aecd8)
-WARN Unimplemented rm patch at VirtualAddress(140258df3), base 4
+WARN Unimplemented rm patch at VirtualAddress(140258df3), base 4 fffffc28
 WARN Unknown Weapons dat offset @ VirtualAddress(14018d93c): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(14018d93c): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(14018d93c): Mem8[Undefined]
@@ -1911,15 +1918,8 @@ PortData array patches:
 1403f959f = [90, 8b, c0]
 1403f96a7 = [90, 41, 8b, e8]
 1403f96b1 = [90, 90, 8b, d5]
-140417a70 = [40, 89, 75, cc]
-140417a8b = [89, 45, d0]
-140417ae5 = [90, 8b, 45, cc]
-140417bb8 = [90, 8b, 75, cc]
 140417c09 = [90, 8b, d0]
-140417c49 = [90, 8b, 45, d0]
 140417c51 = [90, 8b, d0]
-140417cff = [90, 8b, 75, cc]
-140417d2b = [90, 8b, 75, cc]
 140417d35 = [90, 90, 8b, c6]
 --- Hooks ---
 1401ab2ff:2 = [3d, 82, 00, 00, 00]

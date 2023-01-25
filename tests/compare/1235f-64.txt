@@ -1486,7 +1486,14 @@ WARN Don't know how to widen array index @ VirtualAddress(1401d6891)
 WARN Don't know how to widen array index @ VirtualAddress(1401acfb4)
 WARN Don't know how to widen array index @ VirtualAddress(1401acfee)
 WARN Don't know how to widen array index @ VirtualAddress(14041fba7)
+WARN Unable to remap stack pointer offset @ VirtualAddress(14041fbb0)
 WARN Don't know how to widen array index @ VirtualAddress(14041fbc2)
+WARN Unable to remap stack pointer offset @ VirtualAddress(14041fbcb)
+WARN Unable to remap stack pointer offset @ VirtualAddress(14041fc25)
+WARN Unable to remap stack pointer offset @ VirtualAddress(14041fd89)
+WARN Unable to remap stack pointer offset @ VirtualAddress(14041fcf8)
+WARN Unable to remap stack pointer offset @ VirtualAddress(14041fe3f)
+WARN Unable to remap stack pointer offset @ VirtualAddress(14041fe6b)
 WARN Don't know how to widen array index @ VirtualAddress(1401acf02)
 WARN Don't know how to widen array index @ VirtualAddress(1401acf14)
 WARN Don't know how to widen array index @ VirtualAddress(14018fe90)
@@ -1538,9 +1545,9 @@ WARN Don't know how to widen array index @ VirtualAddress(1403fd0b1)
 WARN Don't know how to widen array index @ VirtualAddress(1403e5430)
 WARN Don't know how to widen array index @ VirtualAddress(1401e6348)
 WARN Don't know how to widen array index @ VirtualAddress(1401e639c)
-WARN Unimplemented rm patch at VirtualAddress(140247152), base 4
+WARN Unimplemented rm patch at VirtualAddress(140247152), base 4 fffffc28
 WARN Don't know how to widen array index @ VirtualAddress(1401d6b3c)
-WARN Unimplemented rm patch at VirtualAddress(140247173), base 4
+WARN Unimplemented rm patch at VirtualAddress(140247173), base 4 fffffc28
 WARN Unknown Upgrades dat offset @ VirtualAddress(1403f6262): Mem8[Mem64[rdx + 58] + 1a]
 WARN Unknown Upgrades dat offset @ VirtualAddress(1403f6279): Mem8[Mem64[rdx + 58] + 1a]
 WARN Unknown Weapons dat offset @ VirtualAddress(14018955c): Mem8[Undefined]
@@ -1912,15 +1919,8 @@ PortData array patches:
 1404000cf = [90, 8b, c0]
 1404001d7 = [90, 41, 8b, e8]
 1404001e1 = [90, 90, 8b, d5]
-14041fbb0 = [40, 89, 75, cc]
-14041fbcb = [89, 45, d0]
-14041fc25 = [90, 8b, 45, cc]
-14041fcf8 = [90, 8b, 75, cc]
 14041fd49 = [90, 8b, d0]
-14041fd89 = [90, 8b, 45, d0]
 14041fd91 = [90, 8b, d0]
-14041fe3f = [90, 8b, 75, cc]
-14041fe6b = [90, 8b, 75, cc]
 14041fe75 = [90, 90, 8b, c6]
 --- Hooks ---
 1401a907f:2 = [3d, 82, 00, 00, 00]

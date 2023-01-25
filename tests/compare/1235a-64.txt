@@ -1478,7 +1478,14 @@ WARN Don't know how to widen array index @ VirtualAddress(1401d8e6d)
 WARN Don't know how to widen array index @ VirtualAddress(1401b1ff8)
 WARN Don't know how to widen array index @ VirtualAddress(14017b374)
 WARN Don't know how to widen array index @ VirtualAddress(1404034c7)
+WARN Unable to remap stack pointer offset @ VirtualAddress(1404034d0)
 WARN Don't know how to widen array index @ VirtualAddress(1404034e2)
+WARN Unable to remap stack pointer offset @ VirtualAddress(1404034eb)
+WARN Unable to remap stack pointer offset @ VirtualAddress(140403545)
+WARN Unable to remap stack pointer offset @ VirtualAddress(1404036a9)
+WARN Unable to remap stack pointer offset @ VirtualAddress(140403618)
+WARN Unable to remap stack pointer offset @ VirtualAddress(14040375f)
+WARN Unable to remap stack pointer offset @ VirtualAddress(14040378b)
 WARN Don't know how to widen array index @ VirtualAddress(1401bbea9)
 WARN Don't know how to widen array index @ VirtualAddress(1401b16f8)
 WARN Don't know how to widen array index @ VirtualAddress(1401b172d)
@@ -1513,10 +1520,10 @@ WARN Don't know how to widen array index @ VirtualAddress(1401b02b8)
 WARN Don't know how to widen array index @ VirtualAddress(1401eeff2)
 WARN Don't know how to widen array index @ VirtualAddress(1403c8100)
 WARN Don't know how to widen array index @ VirtualAddress(1403e25a2)
-WARN Unimplemented rm patch at VirtualAddress(140247db2), base 4
+WARN Unimplemented rm patch at VirtualAddress(140247db2), base 4 fffffc28
 WARN Don't know how to widen array index @ VirtualAddress(14019ec7c)
-WARN Unimplemented rm patch at VirtualAddress(1401af98a), base 4
-WARN Unimplemented rm patch at VirtualAddress(1401ae7b5), base 4
+WARN Unimplemented rm patch at VirtualAddress(1401af98a), base 4 fffffec8
+WARN Unimplemented rm patch at VirtualAddress(1401ae7b5), base 4 0
 WARN Don't know how to widen array index @ VirtualAddress(1401d836c)
 WARN Don't know how to widen array index @ VirtualAddress(1401a9b69)
 WARN Don't know how to widen array index @ VirtualAddress(1401afb04)
@@ -1542,7 +1549,7 @@ WARN Don't know how to widen array index @ VirtualAddress(1401e203d)
 WARN Don't know how to widen array index @ VirtualAddress(1401b0247)
 WARN Don't know how to widen array index @ VirtualAddress(1401b0274)
 WARN Don't know how to widen array index @ VirtualAddress(1401d219a)
-WARN Unimplemented rm patch at VirtualAddress(140247dd3), base 4
+WARN Unimplemented rm patch at VirtualAddress(140247dd3), base 4 fffffc28
 WARN Unknown Weapons dat offset @ VirtualAddress(1401888cc): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(1401888cc): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(1401888cc): Mem8[Undefined]
@@ -1916,15 +1923,8 @@ PortData array patches:
 1403e348f = [90, 8b, c0]
 1403e3597 = [90, 41, 8b, e8]
 1403e35a1 = [90, 90, 8b, d5]
-1404034d0 = [40, 89, 75, cc]
-1404034eb = [89, 45, d0]
-140403545 = [90, 8b, 45, cc]
-140403618 = [90, 8b, 75, cc]
 140403669 = [90, 8b, d0]
-1404036a9 = [90, 8b, 45, d0]
 1404036b1 = [90, 8b, d0]
-14040375f = [90, 8b, 75, cc]
-14040378b = [90, 8b, 75, cc]
 140403795 = [90, 90, 8b, c6]
 --- Hooks ---
 1401a99cf:2 = [3d, 82, 00, 00, 00]

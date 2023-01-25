@@ -169,6 +169,8 @@ pub trait OperandExt<'e> {
     /// and may be 0.
     /// If the offset is known `op.if_arithmetic_add_const(offset)` is better.
     fn struct_offset(self) -> (Operand<'e>, u32);
+    /// Returns `(x, const_off)` if `self` is `x +/- const_off`, else returns `(self, 0)`
+    fn add_sub_offset(self) -> (Operand<'e>, u64);
     /// If `self` is SignExtend(x), returns `x`. Otherwise resturns `self`
     fn unwrap_sext(self) -> Operand<'e>;
     fn if_constant_or_read_binary<Va: VirtualAddress>(
@@ -277,6 +279,24 @@ impl<'e> OperandExt<'e> for Operand<'e> {
                 Some((x.0, off))
             })
             .unwrap_or((self, 0))
+    }
+
+    fn add_sub_offset(self) -> (Operand<'e>, u64) {
+        match self.if_arithmetic_any() {
+            Some(x) if matches!(x.ty, ArithOpType::Add | ArithOpType::Sub) => {
+                if let Some(c) = x.right.if_constant() {
+                    let c = if x.ty == ArithOpType::Add {
+                        c
+                    } else {
+                        0u64.wrapping_sub(c)
+                    };
+                    (x.left, c)
+                } else {
+                    (self, 0)
+                }
+            }
+            _ => (self, 0),
+        }
     }
 
     fn unwrap_sext(self) -> Operand<'e> {
