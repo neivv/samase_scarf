@@ -2793,18 +2793,26 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             let mut buffer = [0u8; 16];
             // Fix u8 [ebp - x] offset to a newly allocated u32
             if let WidenInstruction::StackAccess(reg_offset) = mode {
-                if (variant == 1 || variant == 2) && base == 5 {
+                if variant == 1 || variant == 2 {
+                    let const_off = if base == 4 { &patch[idx_3..] } else { &patch[idx_2..] };
                     let offset = if variant == 1 {
-                        patch[idx_2] as i8 as i32
+                        const_off[0] as i8 as i32
                     } else {
-                        LittleEndian::read_i32(&patch[idx_2..])
+                        LittleEndian::read_i32(&const_off)
                     };
-                    if offset > 0 {
-                        // Don't reallocate [ebp + x] arguments, but still align them to 4
+                    let entry_rel_offset = offset.wrapping_add(reg_offset);
+                    if entry_rel_offset >= 0 {
+                        // Don't reallocate func arguments, but still align them to 4
                         // The argument slots may be used for temps later, but assuming
                         // that conflicts there are rare enough to not be relevant.
                         patch[idx_2] &= 0xfc;
                     } else {
+                        if base == 4 {
+                            dat_warn!(
+                                self, "Unimplemented rm patch at {address:?}, base {base:x} {reg_offset:x}"
+                            );
+                            return;
+                        }
                         let new_offset = match
                             self.state.stack_size_tracker.remap_ebp_offset(offset, reg_offset)
                         {
@@ -2839,6 +2847,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 } else if variant < 3 {
                     // TODO non ebp offsets / ebp with no offset
                     dat_warn!(self, "Unimplemented rm patch at {address:?}, base {base:x} {reg_offset:x}");
+                    return;
                 }
             }
             if ins_len == patch_len {

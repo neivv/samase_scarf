@@ -1504,8 +1504,6 @@ WARN Don't know how to widen array index @ VirtualAddress(140399860)
 WARN Don't know how to widen array index @ VirtualAddress(1401d9829)
 WARN Don't know how to widen array index @ VirtualAddress(1401af53b)
 WARN Don't know how to widen array index @ VirtualAddress(14018e067)
-WARN Unimplemented rm patch at VirtualAddress(140197c6c), base 4 fffffe78
-WARN Unimplemented rm patch at VirtualAddress(1401968f5), base 4 0
 WARN Don't know how to widen array index @ VirtualAddress(1401c5e5c)
 WARN Unknown Weapons dat offset @ VirtualAddress(1403ae6f4): Mem8[Mem64[rcx + 34] + c]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403ae756): Mem8[Mem64[rcx + 34] + c]
@@ -1926,15 +1924,8 @@ PortData array patches:
 1403b101a = [90, 44, 8b, c0]
 1403b1958 = [90, 45, 8b, f0]
 1403b1969 = [90, 41, 8b, d6]
-1403c1420 = [40, 89, 74, 24, 41]
-1403c1445 = [89, 44, 24, 44]
-1403c1495 = [90, 8b, 44, 24, 41]
-1403c156c = [90, 8b, 74, 24, 41]
 1403c15be = [90, 8b, d0]
-1403c15fe = [90, 8b, 44, 24, 44]
 1403c1607 = [90, 8b, d0]
-1403c16b6 = [90, 8b, 74, 24, 41]
-1403c16e5 = [90, 8b, 74, 24, 41]
 1403c16f0 = [90, 90, 8b, c6]
 --- Hooks ---
 14018fbbf:2 = [3d, 82, 00, 00, 00]

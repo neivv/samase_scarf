@@ -1504,7 +1504,6 @@ WARN Don't know how to widen array index @ VirtualAddress(1401b4101)
 WARN Don't know how to widen array index @ VirtualAddress(14016fcb4)
 WARN Don't know how to widen array index @ VirtualAddress(1401a0432)
 WARN Don't know how to widen array index @ VirtualAddress(1401a0444)
-WARN Unimplemented rm patch at VirtualAddress(14019dd4a), base 4 0
 WARN Don't know how to widen array index @ VirtualAddress(1401dd13c)
 WARN Don't know how to widen array index @ VirtualAddress(1401b4171)
 WARN Don't know how to widen array index @ VirtualAddress(1401b41e2)
@@ -1926,15 +1925,8 @@ PortData array patches:
 1403d0eea = [90, 44, 8b, c0]
 1403d1828 = [90, 45, 8b, f0]
 1403d1839 = [90, 41, 8b, d6]
-1403e1280 = [40, 89, 74, 24, 41]
-1403e12a5 = [89, 44, 24, 44]
-1403e12f5 = [90, 8b, 44, 24, 41]
-1403e13cc = [90, 8b, 74, 24, 41]
 1403e141e = [90, 8b, d0]
-1403e145e = [90, 8b, 44, 24, 44]
 1403e1467 = [90, 8b, d0]
-1403e1516 = [90, 8b, 74, 24, 41]
-1403e1545 = [90, 8b, 74, 24, 41]
 1403e1550 = [90, 90, 8b, c6]
 --- Hooks ---
 14019848f:2 = [3d, 82, 00, 00, 00]

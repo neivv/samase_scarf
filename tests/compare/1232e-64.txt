@@ -1502,7 +1502,6 @@ WARN Don't know how to widen array index @ VirtualAddress(1401eddfa)
 WARN Don't know how to widen array index @ VirtualAddress(14018cef0)
 WARN Unknown Flingy dat offset @ VirtualAddress(14018cef4): Mem8[Undefined]
 WARN Don't know how to widen array index @ VirtualAddress(1403d5b04)
-WARN Unimplemented rm patch at VirtualAddress(1401aa5fa), base 4 0
 WARN Unknown Weapons dat offset @ VirtualAddress(1403d4c34): Mem8[Mem64[rcx + 34] + c]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403d4c96): Mem8[Mem64[rcx + 34] + c]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403d4ce1): Mem8[Mem64[rcx + 34] + c]
@@ -1848,9 +1847,7 @@ PortData array patches:
 1401e9506 = [90, 8b, da]
 1401e9546 = [90, 8b, da]
 1401ebdce = [90, 90]
-14024158a = [89, 44, 24, 51]
 140241596 = [90, 8b, c0]
-1402415ab = [89, 44, 24, 52]
 1402415bb = [90, 8b, d0]
 140253ebd = [90, 8b, c0]
 140253f11 = [90, 8b, c0]
@@ -1928,15 +1925,8 @@ PortData array patches:
 1403d755a = [90, 44, 8b, c0]
 1403d7ea8 = [90, 45, 8b, f0]
 1403d7eb9 = [90, 41, 8b, d6]
-1403e86a0 = [40, 89, 74, 24, 41]
-1403e86c5 = [89, 44, 24, 44]
-1403e8715 = [90, 8b, 44, 24, 41]
-1403e87ec = [90, 8b, 74, 24, 41]
 1403e883e = [90, 8b, d0]
-1403e887e = [90, 8b, 44, 24, 44]
 1403e8887 = [90, 8b, d0]
-1403e8936 = [90, 8b, 74, 24, 41]
-1403e8965 = [90, 8b, 74, 24, 41]
 1403e8970 = [90, 90, 8b, c6]
 --- Hooks ---
 1401a5c2f:2 = [3d, 82, 00, 00, 00]
