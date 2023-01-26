@@ -214,7 +214,9 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                 return;
             }
         };
-        let extra_alloc = self.remaps.len() as u32 * 4;
+        // Align to 16 bytes to not break SSE alignment assumptions if function
+        // happens to have any. And of course 64-bit has to always have 16-aligned stack.
+        let extra_alloc = align16(self.remaps.len() as u32 * 4);
         match *bytes {
             // sub esp, imm32
             [0x81, 0xec, ..] => {
@@ -258,4 +260,8 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
             add_result(address, &patch, skip);
         }
     }
+}
+
+fn align16(val: u32) -> u32 {
+    (val.wrapping_sub(1) | 0xf).wrapping_add(1)
 }
