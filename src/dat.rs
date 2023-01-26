@@ -2015,6 +2015,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 None => value,
             }
         }
+
+        fn is_non_global_mem8<'e>(value: Operand<'e>) -> bool {
+            match value.if_mem8() {
+                Some(s) => s.if_constant_address().is_none(),
+                None => false,
+            }
+        }
+
         let value_no_word_mask = if E::VirtualAddress::SIZE == 4 {
             match orig_value.if_and_with_const() {
                 Some((s, mask)) => {
@@ -2035,7 +2043,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             orig_value
         };
         let value = get_8bit_from_ors(value_no_word_mask);
-        if value != value_no_word_mask || value.is_undefined() {
+        if value != value_no_word_mask || value.is_undefined() || is_non_global_mem8(value) {
             self.needed_cfg_analysis.push((
                 self.current_branch,
                 ctrl.address(),
