@@ -25,6 +25,7 @@ macro_rules! dat_warn {
 
 mod cmdbtns;
 mod game;
+mod partial_register_moves;
 mod units;
 mod stack_analysis;
 mod sprites;
@@ -61,6 +62,8 @@ use crate::util::{
     bumpvec_with_capacity, single_result_assign, if_callable_const, ControlExt, OperandExt,
     OptionExt,
 };
+
+use partial_register_moves::PartialRegisterMoves;
 
 static UNIT_ARRAY_WIDTHS: &[u8] = &[
     1, 2, 2, 2, 4, 1, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1,
@@ -105,6 +108,8 @@ static PORTDATA_ARRAY_WIDTHS_64: &[u8] = &[
 ];
 
 const RDTSC_CUSTOM: u32 = 0x2000_0000;
+// One for each register 0x2000_0010 .. 0x2000_0020
+const PARTIAL_REGISTER_CLEAR_CUSTOM: u32 = 0x2000_0010;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DatTablePtr<'e> {
@@ -1264,6 +1269,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
 struct DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
     state: Box<DatFuncAnalysisState<'acx, 'e, E>>,
+    partial_register_moves: PartialRegisterMoves,
     ref_address: E::VirtualAddress,
     needed_func_params: [Option<DatType>; 16],
     needed_func_results: HashSet<u32>,
@@ -1432,11 +1438,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         match *op {
             Operation::Move(ref dest, val, None) => {
                 if val.is_undefined() {
-                    let address = ctrl.address();
                     let binary = ctrl.binary();
                     // Special case rdtsc to move Custom() that will be checked
                     // later on in jumps.
-                    if let Ok(slice) = binary.slice_from_address(address, 2) {
+                    if let Ok(slice) = binary.slice_from_address(ins_address, 2) {
                         if slice == &[0x0f, 0x31] {
                             ctrl.move_resolved(dest, self.dat_ctx.rdtsc_custom);
                             ctrl.skip_operation();
@@ -1453,6 +1458,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 // Check l/r separately if the instruction has two operands
                 // Ignore ands since they're likely low registers and not
                 // real 2-operand instructions
+                let mut did_skip = false;
                 match *val.ty() {
                     OperandType::Arithmetic(ref arith) if arith.ty != ArithOpType::And => {
                         // This shares quite a lot of code with flags below..
@@ -1469,6 +1475,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 let left = new_left.unwrap_or(left);
                                 let right = new_right.unwrap_or(right);
                                 ctrl.skip_operation();
+                                did_skip = true;
                                 let state = ctrl.exec_state();
                                 let new = ctx.arithmetic(arith.ty, left, right);
                                 state.move_resolved(dest, new);
@@ -1482,12 +1489,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             let new = self.check_memory_read(ctrl, Some(dest), val, resolved);
                             if let Some(new) = new {
                                 ctrl.skip_operation();
+                                did_skip = true;
                                 let state = ctrl.exec_state();
                                 state.move_resolved(dest, new);
                             }
                         }
                     }
                 }
+                self.partial_register_moves.operation_move(ctrl, dest, val, did_skip);
             }
             Operation::SetFlags(arith)
                 if arith.ty == FlagArith::Sub || arith.ty == FlagArith::And =>
@@ -1598,6 +1607,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             switch_table: E::VirtualAddress::from_u64(0),
             mode,
             required_stable_addresses,
+            partial_register_moves: PartialRegisterMoves::new(),
             state: Box::new(DatFuncAnalysisState {
                 calls: bumpvec_with_capacity(64, bump),
                 calls_reverse_lookup:
@@ -1645,6 +1655,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             state,
             mode,
             required_stable_addresses,
+            partial_register_moves: PartialRegisterMoves::new(),
         }
     }
 

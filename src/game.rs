@@ -1582,7 +1582,6 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             return;
                         }
                         // Check for unit_count -= 1
-                        //println!("Move {} @ {:?}", value, ctrl.address());
                         if mem.size == MemAccessSize::Mem32 {
                             let unit_count = Operand::and_masked(value).0
                                 .if_arithmetic_sub_const(1);

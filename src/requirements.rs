@@ -32,7 +32,16 @@ pub(crate) fn check_unit_requirements<'e, E: ExecutionState<'e>>(
     let functions = functions.functions();
     for global_ref in globals {
         let val = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
-            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            // Move nonzero ptr to arg3 (unit) to avoid assertion checks
+            // failing and causing analysis to break.
+            let mut state = E::initial_state(ctx, binary);
+            let arg3_loc = arg_cache.on_entry(2);
+            state.move_resolved(
+                &DestOperand::from_oper(arg3_loc),
+                ctx.constant(0x1000_0000),
+            );
+
+            let mut analysis = FuncAnalysis::with_state(binary, ctx, entry, state);
             let mut analyzer = UnitReqsAnalyzer::<E> {
                 result: EntryOf::Retry,
                 global_address: global_ref.use_address,

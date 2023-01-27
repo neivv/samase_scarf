@@ -253,6 +253,37 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                         }
                     }
                 }
+                Operation::Jump { condition, to } => {
+                    // Always assume that Comparison of Mem8[x] < 0x18 or 0x3c is true
+                    // to not get confused from assertion of action / condition id
+                    let condition = ctrl.resolve(condition);
+                    let should_assume_unconditional = condition.if_arithmetic_gt()
+                        .and_then(|(l, r)| {
+                            // Could check the offsets too like at call?
+                            if let Some(c) = r.if_constant() {
+                                if c == 0x17 || c == 0x3b {
+                                    l.if_mem8()?;
+                                    return Some(false);
+                                }
+                            } else if let Some(c) = l.if_constant() {
+                                if c == 0x18 || c == 0x3c {
+                                    r.if_mem8()?;
+                                    return Some(true);
+                                }
+                            }
+                            None
+                        });
+                    if let Some(always_jump) = should_assume_unconditional {
+                        let dest = match always_jump {
+                            true => match ctrl.resolve_va(to) {
+                                Some(s) => s,
+                                None => return,
+                            },
+                            false => ctrl.current_instruction_end(),
+                        };
+                        ctrl.continue_at_address(dest);
+                    }
+                }
                 _ => (),
             }
             return;
