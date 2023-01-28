@@ -3157,11 +3157,11 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
         &mut self,
         branch_start_base: Operand<'e>,
     ) -> WidenInstruction {
-        let branch_addr = self.branch;
-        if let Some(state) = self.cfg.get_state(branch_addr) {
-            // TODO Scarf should add state.exec_state_mut()
+        let state = self.parent.binary.try_rva_32(self.branch)
+            .and_then(|rva| self.cfg.get_state(Rva(rva)));
+        if let Some(state) = state {
             let (base1, offset1) = branch_start_base.add_sub_offset();
-            let func_start_resolved = state.exec_state().clone().resolve(base1);
+            let func_start_resolved = state.exec_state_mut().resolve(base1);
             let (base, offset) = func_start_resolved.add_sub_offset();
             let ctx = self.ctx;
             let esp = ctx.register(4);
@@ -3173,7 +3173,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
             }
             WidenInstruction::Default
         } else {
-            dat_warn!(self, "No cfg node for {branch_addr:?}");
+            dat_warn!(self, "No cfg node for {:?}", self.branch);
             WidenInstruction::Default
         }
     }
@@ -3282,16 +3282,20 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
             }
         };
 
+        let binary = self.parent.binary;
+        let base = binary.base();
         for (rva, widen_mode) in self.instruction_lists.iter(op.hash_by_address()) {
-            let address = self.parent.binary.base + rva.0;
+            let address = base + rva.0;
             self.parent.widen_instruction(address, widen_mode);
         }
-        if let Some(own_branch_link) = self.cfg.get_link(self.branch) {
+        let branch_rva = Rva(binary.rva_32(self.branch));
+        if let Some(own_branch_link) = self.cfg.get_link(branch_rva) {
             for link in self.predecessors.predecessors(self.cfg, &own_branch_link) {
+                let address = base + link.address().0;
                 Self::add_unchecked_branch_(
                     &mut self.added_unchecked_branches,
                     &mut self.unchecked_branches,
-                    link.address(),
+                    address,
                     op,
                     E::VirtualAddress::from_u64(0),
                 );

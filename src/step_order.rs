@@ -222,9 +222,10 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
     }
 
     cfg.calculate_node_indices();
+    let jump_rva = scarf::Rva(binary.rva_32(jump_addr));
     let node = cfg.nodes()
-        .find(|n| n.address < jump_addr && n.node.end_address >= jump_addr)?;
-    let addr = node.address;
+        .find(|n| n.address < jump_rva && n.node.end_address >= jump_rva)?;
+    let addr = binary.base() + node.address.0;
     if addr == func_entry {
         // Can't hook it inline since a separate func tail calls the orders.
         Some(SecondaryOrderHook::Separate(addr))
@@ -233,14 +234,15 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
         let (entry, unit_at_hook, esp_offsets) =
             find_secondary_order_access::<E>(binary, ctx, addr, resolved)?;
         let end = cfg.immediate_postdominator(node.index)?;
-        let mut state = inline_hook_state::<E>(binary, ctx, entry, end.address, esp_offsets)?;
+        let end_address = binary.base() + end.address.0;
+        let mut state = inline_hook_state::<E>(binary, ctx, entry, end_address, esp_offsets)?;
         if let Some(reg) = unit_at_hook.if_register() {
             state.remove_entry_register(reg);
         }
 
         Some(SecondaryOrderHook::Inlined {
             entry,
-            exit: end.address,
+            exit: end_address,
             unit: unit_at_hook,
             state,
         })
@@ -454,22 +456,24 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
 
     let (jump_addr, unit_at_hook, esp_offsets) = analyzer.result?;
     cfg.calculate_node_indices();
+    let jump_rva = scarf::Rva(binary.rva_32(jump_addr));
     let node = cfg.nodes()
-        .find(|n| n.address < jump_addr && n.node.end_address >= jump_addr)?;
-    let addr = node.address;
+        .find(|n| n.address < jump_rva && n.node.end_address >= jump_rva)?;
+    let addr = binary.base() + node.address.0;
     if addr == func_entry {
         Some(StepOrderHiddenHook::Separate(addr))
     } else {
         let end = cfg.immediate_postdominator(node.index)?;
+        let end_address = binary.base() + end.address.0;
         let entry = skip_past_calls::<E>(addr, ctx, binary);
-        let mut state = inline_hook_state::<E>(binary, ctx, entry, end.address, esp_offsets)?;
+        let mut state = inline_hook_state::<E>(binary, ctx, entry, end_address, esp_offsets)?;
         if let Some(reg) = unit_at_hook.if_register() {
             state.remove_entry_register(reg);
         }
 
         Some(StepOrderHiddenHook::Inlined {
             entry,
-            exit: end.address,
+            exit: end_address,
             unit: unit_at_hook,
             state,
         })
