@@ -30,6 +30,7 @@ mod units;
 mod stack_analysis;
 mod sprites;
 mod triggers;
+mod util;
 mod wireframe;
 
 use std::cmp::Ordering;
@@ -438,6 +439,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         let address = table.address.if_constant().map(|x| E::VirtualAddress::from_u64(x))?;
         dat_ctx.add_dat(dat, address, table.entry_size).ok()?;
     }
+    dat_ctx.unchecked_refs.build_lookup();
 
     dat_ctx.add_patches_from_code_refs();
     // Always analyze step_ai_script as it has checks for unit ids in every opcode,
@@ -505,7 +507,7 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     binary: &'e BinaryFile<E::VirtualAddress>,
     text: &'e BinarySection<E::VirtualAddress>,
     result: DatPatches<'e, E::VirtualAddress>,
-    unchecked_refs: HashSet<Rva>,
+    unchecked_refs: util::UncheckedRefs<'acx>,
     // Funcs that seem to possibly only return in al need to be patched to widen
     // the return value to entirety of eax.
     // That's preferred over patching callers to widen the retval on their own side, as
@@ -732,7 +734,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 HashSet::with_capacity_and_hasher(16, Default::default()),
             u8_funcs: bumpvec_with_capacity(16, bump),
             u8_funcs_pos: 0,
-            unchecked_refs: HashSet::with_capacity_and_hasher(1024, Default::default()),
+            unchecked_refs: util::UncheckedRefs::new(bump),
             units: dat_table(0x36),
             weapons: dat_table(0x18),
             flingy: dat_table(0x7),
@@ -930,7 +932,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             // offset 0 addresses.
             if add_unchecked_ref_analysis && offset_bytes == 0 {
                 if address >= text.virtual_address && address < text_end {
-                    self.unchecked_refs.insert(rva);
+                    self.unchecked_refs.push(rva);
                 }
             }
         }
@@ -987,11 +989,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         let functions = self.cache.functions();
         let binary = self.binary;
         loop {
-            let rva = match self.unchecked_refs.iter().next() {
-                Some(&s) => s,
+            let rva = match self.unchecked_refs.pop() {
+                Some(s) => s,
                 None => break,
             };
-            self.unchecked_refs.remove(&rva);
             let address = binary.base + rva.0;
             entry_of_until(binary, &functions, address, |entry| {
                 if entry == self.update_status_screen_tooltip {
@@ -2318,7 +2319,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     ) {
         if let Some(imm_addr) = reloc_address_of_instruction(ctrl, self.binary, array_addr) {
             let rva = Rva((imm_addr.as_u64() - self.binary.base.as_u64()) as u32);
-            self.dat_ctx.unchecked_refs.remove(&rva);
+            self.dat_ctx.unchecked_refs.remove(rva);
         }
     }
 

@@ -142,6 +142,8 @@ pub fn x86_64_globals<Va: VirtualAddress>(binary: &BinaryFile<Va>) -> Vec<RelocV
         }
         text_pos = text_pos.wrapping_add(1);
     }
+    // Note: Even if the globals_with_values list is sorted again at analysis.rs, sorting
+    // here ends up reducing the time spent to sort the full global list a lot.
     out.sort_unstable_by_key(|x| x.value);
     out
 }

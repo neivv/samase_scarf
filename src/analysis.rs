@@ -3938,6 +3938,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     result.extend_from_slice(&text_globals);
                     result.sort_unstable_by_key(|x| x.value);
                 }
+                // Would be nice to sort by address for reliable order,
+                // but it ends up being quite expensive.
+                // Will have to just have users accept complexity from
+                // unreliable ordering of same value for now..
                 result
             }
             false => Vec::new(),

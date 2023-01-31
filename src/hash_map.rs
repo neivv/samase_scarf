@@ -13,6 +13,10 @@ impl<K: Hash + Eq, V> HashMap<K, V> {
         HashMap(FxHashMap::with_capacity_and_hasher(cap, hasher))
     }
 
+    pub fn reserve(&mut self, size: usize) {
+        self.0.reserve(size)
+    }
+
     pub fn get<Q: ?Sized>(&self, k: &Q) -> Option<&V>
     where K: std::borrow::Borrow<Q>,
           Q: Hash + Eq,
