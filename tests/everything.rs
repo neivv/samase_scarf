@@ -1613,7 +1613,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
             JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins | StepGameLoop |
                 GetMouseX | GetMouseY | NetFormatTurnRate | ReadWholeMpqFile |
                 ReadWholeMpqFile2 | StepBulletFrame | FlingyUpdateTargetDir |
-                LookupSoundId => continue,
+                LookupSoundId | SFileOpenFileEx | SFileReadFileEx | SFileCloseFile => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -1629,7 +1629,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         match op {
             // special handling
             Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg |
-                AntiTroll | MouseX | MouseY | NetUserLatency | MapHistory => {
+                AntiTroll | MouseX | MouseY | NetUserLatency | MapHistory | MpqLocale => {
                 continue;
             }
             Game | Players | MenuScreenId | BnetController => {
@@ -2197,12 +2197,24 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     // Before 1.23.0 map file accessing seemed to go through same abstraction as game files
     let read_whole_mpq_file = analysis.read_whole_mpq_file();
     let read_whole_mpq_file2 = analysis.read_whole_mpq_file2();
+    let sfile_open_file_ex = analysis.sfile_open_file_ex();
+    let sfile_read_file_ex = analysis.sfile_read_file_ex();
+    let sfile_close_file = analysis.sfile_close_file();
+    let mpq_locale = analysis.mpq_locale();
     if minor_version >= 23 {
         assert!(read_whole_mpq_file.is_some());
         assert!(read_whole_mpq_file2.is_some());
+        assert!(sfile_open_file_ex.is_some());
+        assert!(sfile_read_file_ex.is_some());
+        assert!(sfile_close_file.is_some());
+        check_global_opt(mpq_locale, binary, "mpq_locale");
     } else {
         assert!(read_whole_mpq_file.is_none());
         assert!(read_whole_mpq_file2.is_none());
+        assert!(sfile_open_file_ex.is_none());
+        assert!(sfile_read_file_ex.is_none());
+        assert!(sfile_close_file.is_none());
+        assert!(mpq_locale.is_none());
     }
     // map_history was added in 1.23.3c (Or at least it wasn't used in map loading before that)
     let map_history = analysis.map_history();

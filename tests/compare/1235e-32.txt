@@ -153,6 +153,9 @@ set_music: 0078b500
 set_scmain_state: 00713800
 set_unit_player: 005b5930
 sfile_close_archive: 009525f0
+sfile_close_file: 009527b0
+sfile_open_file_ex: 00953ad0
+sfile_read_file_ex: 00953ed0
 show_mission_glue: 0069a400
 show_shield_overlay: 00579bf0
 show_shield_overlay_for_direction: 005a8310
@@ -330,6 +333,7 @@ menu_screen_id: ((((Mem32[f86c12] * 2) - 112c2a4b) ^ Mem32[11800bc]) & ffffffff)
 minimap_cursor_type: Mem16[117d714]
 mouse_x: None
 mouse_y: None
+mpq_locale: Mem16[f37720]
 net_player_flags: 11a5b04
 net_player_to_game: 11a5ac0
 net_player_to_unique: 11a5a90

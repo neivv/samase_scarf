@@ -50,6 +50,7 @@ mod rng;
 mod save;
 mod sound;
 mod step_order;
+mod storm;
 mod struct_layouts;
 mod sprites;
 mod switch;

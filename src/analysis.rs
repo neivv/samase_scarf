@@ -34,6 +34,7 @@ use crate::save;
 use crate::sound;
 use crate::step_order::{self, SecondaryOrderHook, StepOrderHiddenHook};
 use crate::sprites;
+use crate::storm;
 use crate::switch::{CompleteSwitch};
 use crate::text;
 use crate::units;
@@ -356,6 +357,9 @@ results! {
         UnitUpdateStrength => "unit_update_strength",
         UnitCalculateStrength => "unit_calculate_strength",
         ReplayEnd => "replay_end",
+        SFileOpenFileEx => "sfile_open_file_ex",
+        SFileReadFileEx => "sfile_read_file_ex",
+        SFileCloseFile => "sfile_close_file",
     }
 }
 
@@ -558,6 +562,8 @@ results! {
         MapWidthPixels => "map_width_pixels",
         MapHeightPixels => "map_height_pixels",
         ReplayHeader => "replay_header",
+        // What locale is used when reading from mpq files
+        MpqLocale => "mpq_locale",
     }
 }
 
@@ -1078,6 +1084,9 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             UnitUpdateStrength => self.unit_update_strength(),
             UnitCalculateStrength => self.unit_calculate_strength(),
             ReplayEnd => self.replay_end(),
+            SFileOpenFileEx => self.sfile_open_file_ex(),
+            SFileReadFileEx => self.sfile_read_file_ex(),
+            SFileCloseFile => self.sfile_close_file(),
         }
     }
 
@@ -1269,6 +1278,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             MapWidthPixels => self.map_width_pixels(),
             MapHeightPixels => self.map_height_pixels(),
             ReplayHeader => self.replay_header(),
+            MpqLocale => self.mpq_locale(),
         }
     }
 
@@ -3780,6 +3790,34 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         )
     }
 
+    pub fn sfile_open_file_ex(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::SFileOpenFileEx,
+            AnalysisCache::cache_read_mpq_file,
+        )
+    }
+
+    pub fn sfile_read_file_ex(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::SFileReadFileEx,
+            AnalysisCache::cache_read_mpq_file,
+        )
+    }
+
+    pub fn sfile_close_file(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::SFileCloseFile,
+            AnalysisCache::cache_read_mpq_file,
+        )
+    }
+
+    pub fn mpq_locale(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::MpqLocale,
+            AnalysisCache::cache_read_mpq_file,
+        )
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -6062,6 +6100,18 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    fn read_whole_mpq_file(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::ReadWholeMpqFile2,
+            |s| s.cache_init_map_from_path(actx),
+        ).or_else(|| {
+            self.cache_many_addr(
+                AddressAnalysis::ReadWholeMpqFile,
+                |s| s.cache_init_map_from_path(actx),
+            )
+        })
+    }
+
     fn cache_start_targeting(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
@@ -6397,6 +6447,20 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let do_dmg = s.step_replay_commands(actx)?;
                 let r = commands::analyze_step_replay_commands(actx, do_dmg);
                 Some(([r.replay_end], [r.replay_header]))
+            })
+    }
+
+    fn cache_read_mpq_file(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[SFileOpenFileEx, SFileReadFileEx, SFileCloseFile],
+            &[MpqLocale],
+            |s| {
+                let read = s.read_whole_mpq_file(actx)?;
+                let r = storm::analyze_read_whole_mpq_file(actx, read);
+                Some(([r.sfile_open_file_ex, r.sfile_read_file_ex, r.sfile_close_file],
+                    [r.mpq_locale]))
             })
     }
 }
