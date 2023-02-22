@@ -85,7 +85,9 @@ pub(crate) struct RunMenus<Va: VirtualAddress> {
 
 pub(crate) struct RunDialog<Va: VirtualAddress> {
     pub run_dialog: Option<Va>,
-    pub glucmpgn_event_handler: Option<Va>,
+    pub event_handler: Option<Va>,
+    /// Function calling run_dialog
+    pub parent_function: Option<Va>,
 }
 
 pub(crate) struct GluCmpgnEvents<'e, Va: VirtualAddress> {
@@ -112,21 +114,31 @@ pub(crate) fn run_dialog<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     functions: &FunctionFinder<'_, 'e, E>,
 ) -> RunDialog<E::VirtualAddress> {
+    run_dialog_analysis(analysis, functions, b"rez\\glucmpgn", b"glucmpgn.ui")
+}
+
+fn run_dialog_analysis<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+    old_string_ref: &[u8],
+    new_string_ref: &[u8],
+) -> RunDialog<E::VirtualAddress> {
     let mut result = RunDialog {
         run_dialog: None,
-        glucmpgn_event_handler: None,
+        event_handler: None,
+        parent_function: None,
     };
     let ctx = analysis.ctx;
 
     let binary = analysis.binary;
     let funcs = functions.functions();
-    let mut str_refs = functions.string_refs(analysis, b"rez\\glucmpgn");
+    let mut str_refs = functions.string_refs(analysis, old_string_ref);
     if str_refs.is_empty() {
-        str_refs = functions.string_refs(analysis, b"glucmpgn.ui");
+        str_refs = functions.string_refs(analysis, new_string_ref);
     }
     let args = &analysis.arg_cache;
     for str_ref in &str_refs {
-        entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+        let entry_of_result = entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let mut analyzer = RunDialogAnalyzer {
                 string_address: str_ref.string_address,
                 result: &mut result,
@@ -141,8 +153,9 @@ pub(crate) fn run_dialog<'e, E: ExecutionState<'e>>(
             } else {
                 EntryOf::Retry
             }
-        });
-        if result.run_dialog.is_some() {
+        }).into_option_with_entry();
+        if let Some((addr, ())) = entry_of_result {
+            result.parent_function = Some(addr);
             break;
         }
     }
@@ -180,7 +193,7 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
                                 if single_result_assign(Some(to), &mut self.result.run_dialog) {
                                     ctrl.end_analysis();
                                 }
-                                self.result.glucmpgn_event_handler =
+                                self.result.event_handler =
                                     Some(E::VirtualAddress::from_u64(arg3));
                                 return;
                             }
@@ -337,45 +350,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
 pub(crate) fn spawn_dialog<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     functions: &FunctionFinder<'_, 'e, E>,
-) -> Option<E::VirtualAddress> {
-    // This is currently just copypasted from run_dialog, it ends up working fine as the
+) -> RunDialog<E::VirtualAddress> {
+    // This is currently just sharing code from run_dialog, it ends up working fine as the
     // signature and dialog init patterns are same between run (blocking) and spawn (nonblocking).
     // If it won't in future then this should be refactored to have its own Analyzer
-    let ctx = analysis.ctx;
-
-    let binary = analysis.binary;
-    let funcs = functions.functions();
-    let mut str_refs = functions.string_refs(analysis, b"rez\\statlb");
-    if str_refs.is_empty() {
-        str_refs = functions.string_refs(analysis, b"statlb.ui");
-    }
-    let args = &analysis.arg_cache;
-    let mut result = RunDialog {
-        run_dialog: None,
-        glucmpgn_event_handler: None,
-    };
-    for str_ref in &str_refs {
-        entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
-            let mut analyzer = RunDialogAnalyzer {
-                string_address: str_ref.string_address,
-                result: &mut result,
-                args,
-                func_entry: entry,
-            };
-
-            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
-            analysis.analyze(&mut analyzer);
-            if result.run_dialog.is_some() {
-                EntryOf::Ok(())
-            } else {
-                EntryOf::Retry
-            }
-        });
-        if result.run_dialog.is_some() {
-            break;
-        }
-    }
-    result.run_dialog
+    run_dialog_analysis(analysis, functions, b"rez\\statlb", b"statlb.ui")
 }
 
 pub(crate) fn tooltip_related<'e, E: ExecutionState<'e>>(

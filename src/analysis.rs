@@ -149,6 +149,7 @@ results! {
         LoadImages => "load_images",
         InitGameNetwork => "init_game_network",
         SpawnDialog => "spawn_dialog",
+        InitStatLb => "init_statlb",
         TtfMalloc => "ttf_malloc",
         DrawGraphicLayers => "draw_graphic_layers",
         AiAttackPrepare => "ai_attack_prepare",
@@ -883,6 +884,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             LoadImages => self.load_images(),
             InitGameNetwork => self.init_game_network(),
             SpawnDialog => self.spawn_dialog(),
+            InitStatLb => self.init_statlb(),
             TtfMalloc => self.ttf_malloc(),
             DrawGraphicLayers => self.draw_graphic_layers(),
             AiAttackPrepare => self.ai_attack_prepare(),
@@ -1960,7 +1962,17 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     }
 
     pub fn spawn_dialog(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(|x, s| x.spawn_dialog(s))
+        self.analyze_many_addr(
+            AddressAnalysis::SpawnDialog,
+            AnalysisCache::cache_spawn_dialog,
+        )
+    }
+
+    pub fn init_statlb(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::InitStatLb,
+            AnalysisCache::cache_spawn_dialog,
+        )
     }
 
     pub fn create_unit(&mut self) -> Option<E::VirtualAddress> {
@@ -4954,7 +4966,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use AddressAnalysis::*;
         self.cache_many(&[RunDialog, GluCmpgnEventHandler], &[], |s| {
             let result = dialog::run_dialog(actx, &s.function_finder());
-            Some(([result.run_dialog, result.glucmpgn_event_handler], []))
+            Some(([result.run_dialog, result.event_handler], []))
         })
     }
 
@@ -5019,10 +5031,16 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_many_op(OperandAnalysis::FirstFreeFowSprite, |s| s.cache_fow_sprites(actx))
     }
 
-    fn spawn_dialog(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.cache_single_address(AddressAnalysis::SpawnDialog, |s| {
-            dialog::spawn_dialog(actx, &s.function_finder())
+    fn cache_spawn_dialog(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[SpawnDialog, InitStatLb], &[], |s| {
+            let result = dialog::spawn_dialog(actx, &s.function_finder());
+            Some(([result.run_dialog, result.parent_function], []))
         })
+    }
+
+    fn spawn_dialog(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::SpawnDialog, |s| s.cache_spawn_dialog(actx))
     }
 
     fn cache_unit_creation(&mut self, actx: &AnalysisCtx<'e, E>) {
