@@ -361,6 +361,10 @@ results! {
         SFileOpenFileEx => "sfile_open_file_ex",
         SFileReadFileEx => "sfile_read_file_ex",
         SFileCloseFile => "sfile_close_file",
+        InitIngameUi => "init_ingame_ui",
+        InitObsUi => "init_obs_ui",
+        LoadConsoles => "load_consoles",
+        InitConsoles => "init_consoles",
     }
 }
 
@@ -565,6 +569,9 @@ results! {
         ReplayHeader => "replay_header",
         // What locale is used when reading from mpq files
         MpqLocale => "mpq_locale",
+        // HashTable u32 -> Console *
+        UiConsoles => "ui_consoles",
+        ObserverUi => "observer_ui",
     }
 }
 
@@ -1089,6 +1096,10 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             SFileOpenFileEx => self.sfile_open_file_ex(),
             SFileReadFileEx => self.sfile_read_file_ex(),
             SFileCloseFile => self.sfile_close_file(),
+            InitIngameUi => self.init_ingame_ui(),
+            InitObsUi => self.init_obs_ui(),
+            LoadConsoles => self.load_consoles(),
+            InitConsoles => self.init_consoles(),
         }
     }
 
@@ -1281,6 +1292,8 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             MapHeightPixels => self.map_height_pixels(),
             ReplayHeader => self.replay_header(),
             MpqLocale => self.mpq_locale(),
+            UiConsoles => self.ui_consoles(),
+            ObserverUi => self.observer_ui(),
         }
     }
 
@@ -3830,6 +3843,48 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         )
     }
 
+    pub fn init_ingame_ui(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::InitIngameUi,
+            AnalysisCache::cache_init_ingame_ui,
+        )
+    }
+
+    pub fn init_obs_ui(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::InitObsUi,
+            AnalysisCache::cache_init_ingame_ui,
+        )
+    }
+
+    pub fn load_consoles(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::LoadConsoles,
+            AnalysisCache::cache_init_ingame_ui,
+        )
+    }
+
+    pub fn init_consoles(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::InitConsoles,
+            AnalysisCache::cache_init_ingame_ui,
+        )
+    }
+
+    pub fn ui_consoles(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::UiConsoles,
+            AnalysisCache::cache_init_ingame_ui,
+        )
+    }
+
+    pub fn observer_ui(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::ObserverUi,
+            AnalysisCache::cache_init_ingame_ui,
+        )
+    }
+
     /// Mainly for tests/dump
     pub fn dat_patches_debug_data(
         &mut self,
@@ -5041,6 +5096,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
 
     fn spawn_dialog(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::SpawnDialog, |s| s.cache_spawn_dialog(actx))
+    }
+
+    fn init_statlb(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::InitStatLb, |s| s.cache_spawn_dialog(actx))
     }
 
     fn cache_unit_creation(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -6479,6 +6538,22 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let r = storm::analyze_read_whole_mpq_file(actx, read);
                 Some(([r.sfile_open_file_ex, r.sfile_read_file_ex, r.sfile_close_file],
                     [r.mpq_locale]))
+            })
+    }
+
+    fn cache_init_ingame_ui(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[InitIngameUi, InitObsUi, LoadConsoles, InitConsoles],
+            &[UiConsoles, ObserverUi],
+            |s| {
+                let init_statlb = s.init_statlb(actx)?;
+                let is_replay = s.is_replay(actx)?;
+                let funcs = s.function_finder();
+                let r = clientside::init_ingame_ui(actx, &funcs, init_statlb, is_replay);
+                Some(([r.init_ingame_ui, r.init_obs_ui, r.load_consoles, r.init_consoles],
+                    [r.ui_consoles, r.observer_ui]))
             })
     }
 }

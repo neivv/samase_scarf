@@ -1613,7 +1613,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
             JoinGame | UnitUpdateSpeed | StartUdpServer | InitSkins | StepGameLoop |
                 GetMouseX | GetMouseY | NetFormatTurnRate | ReadWholeMpqFile |
                 ReadWholeMpqFile2 | StepBulletFrame | FlingyUpdateTargetDir |
-                LookupSoundId | SFileOpenFileEx | SFileReadFileEx | SFileCloseFile => continue,
+                LookupSoundId | SFileOpenFileEx | SFileReadFileEx | SFileCloseFile |
+                LoadConsoles | InitConsoles => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -1664,7 +1665,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 FlingyYNew | FlingyExactXNew | FlingyExactYNew | FlingyFlagsNew |
                 FlingyShowStartWalkAnim | FlingyShowEndWalkAnim | FlingySpeedUsedForMove |
                 MapWidthPixels | MapHeightPixels | DcreepNextUpdate | DcreepUnitNextUpdate |
-                LastDyingUnit | UnitCount | FirstFreeUnit | LastFreeUnit =>
+                LastDyingUnit | UnitCount | FirstFreeUnit | LastFreeUnit | ObserverUi =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -2254,6 +2255,20 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(lookup_sound_id.is_none());
     } else {
         assert!(lookup_sound_id.is_some());
+    }
+
+    // Console structs changed in 1.23.0
+    let load_consoles = analysis.load_consoles();
+    let init_consoles = analysis.init_consoles();
+    let ui_consoles = analysis.ui_consoles();
+    if minor_version < 23 {
+        assert!(load_consoles.is_none());
+        assert!(init_consoles.is_none());
+        assert!(ui_consoles.is_none());
+    } else {
+        assert!(load_consoles.is_some());
+        assert!(init_consoles.is_some());
+        check_global_struct_opt(ui_consoles, binary, "ui_consoles");
     }
 
     let dump_text = samase_scarf::dump::dump_all(analysis);

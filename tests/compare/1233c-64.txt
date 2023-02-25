@@ -83,11 +83,14 @@ glucmpgn_event_handler: 140335180
 hallucination_hit: 1401a9720
 handle_targeted_click: 14041fe10
 hit_unit: 1401a9670
+init_consoles: 1402c0dc0
 init_game: 1402fba40
 init_game_before_map_load_hook: 1402fbab6
 init_game_network: 14038fbb0
+init_ingame_ui: 1404076d0
 init_map_from_path: 14035cac0
 init_net_player: 1403a1c10
+init_obs_ui: 140247e80
 init_real_time_lighting: 140188a40
 init_skins: 1402700b0
 init_sprites: 1401910a0
@@ -99,6 +102,7 @@ is_outside_game_screen: 1402c96b0
 join_game: None
 kill_unit: 1401c4630
 layout_draw_text: 14060bf20
+load_consoles: 1402bc9d0
 load_dat: 140302eb0
 load_images: 140188b00
 load_pcx: 140303150
@@ -342,6 +346,7 @@ net_players: 140f47ae0
 net_user_latency: Mem32[140f46ddc]
 network_ready: Mem8[140f45139]
 next_game_step_tick: Mem32[140f1c664]
+observer_ui: Mem64[140d34cc8]
 original_chk_player_types: 140f450a0
 palette_set: 140f837f0
 pathing: Mem64[140f4c0f0]
@@ -391,6 +396,7 @@ tooltip_draw_func: Mem64[140d2d6c8]
 tranwire_ddsgrp: 140f582f0
 tranwire_grp: Mem64[140f582c0]
 trigger_current_player: Mem32[140f65768]
+ui_consoles: 140f58f80
 unique_command_user: Mem32[140c900d4]
 unit_count: Mem32[140d2d178]
 unit_should_reveal_area: Mem32[140d2d244]

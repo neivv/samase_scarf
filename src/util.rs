@@ -420,6 +420,15 @@ pub trait ControlExt<'e, E: ExecutionState<'e>> {
         to: Operand<'e>,
     );
     fn instruction_contains_address(&mut self, address: E::VirtualAddress) -> bool;
+    /// Calls self.continue_at_address()
+    /// for either jump_dest if eq_zero is false
+    /// or self.current_instruction_end() if eq_zero is true.
+    ///
+    /// eq_zero is same bool as returned from if_arithmetic_eq_neq_zero.
+    fn continue_at_nonzero_address(&mut self, eq_zero: bool, jump_dest: Operand<'e>);
+    fn continue_at_zero_address(&mut self, eq_zero: bool, jump_dest: Operand<'e>) {
+        self.continue_at_nonzero_address(!eq_zero, jump_dest);
+    }
 }
 
 impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
@@ -609,6 +618,17 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
         addr: <A::Exec as ExecutionState<'e>>::VirtualAddress,
     ) -> bool {
         self.address() <= addr && self.current_instruction_end() > addr
+    }
+
+    fn continue_at_nonzero_address(&mut self, eq_zero: bool, jump_dest: Operand<'e>) {
+        let dest = match eq_zero {
+            true => self.current_instruction_end(),
+            false => match self.resolve_va(jump_dest) {
+                Some(s) => s,
+                None => return,
+            }
+        };
+        self.continue_at_address(dest);
     }
 }
 

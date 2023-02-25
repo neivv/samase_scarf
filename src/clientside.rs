@@ -2,7 +2,7 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, DestOperand, MemAccessSize, Operand, Operation, Rva};
+use scarf::{BinaryFile, BinarySection, DestOperand, MemAccessSize, Operand, Operation, Rva};
 use scarf::operand::{OperandCtx};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
@@ -15,6 +15,7 @@ use crate::hash_map::HashMap;
 use crate::struct_layouts;
 use crate::util::{
     ControlExt, OperandExt, OptionExt, single_result_assign, if_arithmetic_eq_neq, is_global,
+    bumpvec_with_capacity,
 };
 use crate::vtables::Vtables;
 
@@ -70,6 +71,15 @@ pub(crate) struct CenterViewAction<'e, Va: VirtualAddress> {
     pub trigger_current_player: Option<Operand<'e>>,
     pub game_screen_width_bwpx: Option<Operand<'e>>,
     pub game_screen_height_bwpx: Option<Operand<'e>>,
+}
+
+pub(crate) struct InitIngameUi<'e, Va: VirtualAddress> {
+    pub init_ingame_ui: Option<Va>,
+    pub init_obs_ui: Option<Va>,
+    pub load_consoles: Option<Va>,
+    pub init_consoles: Option<Va>,
+    pub ui_consoles: Option<Operand<'e>>,
+    pub observer_ui: Option<Operand<'e>>,
 }
 
 // Candidates are either a global ref with Some(global), or a call with None
@@ -1330,5 +1340,423 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> CenterViewActionAnalyzer<'e, 'ac
             .if_arithmetic_rsh_const(1)?;
         let (l, _) = x.if_arithmetic_sub()?;
         Some(self.call_tracker.resolve_calls(l))
+    }
+}
+
+pub(crate) fn init_ingame_ui<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+    init_statlb: E::VirtualAddress,
+    is_replay: Operand<'e>,
+) -> InitIngameUi<'e, E::VirtualAddress> {
+    let mut result = InitIngameUi {
+        init_ingame_ui: None,
+        init_obs_ui: None,
+        load_consoles: None,
+        init_consoles: None,
+        ui_consoles: None,
+        observer_ui: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let bump = &actx.bump;
+
+    let callers = functions.find_callers(actx, init_statlb);
+    let funcs = functions.functions();
+    for caller in callers {
+        let entry_of_result = entry_of_until(binary, funcs, caller, |entry| {
+            let mut analyzer = InitIngameUiAnalyzer {
+                result: &mut result,
+                arg_cache: &actx.arg_cache,
+                rdata: actx.binary_sections.rdata,
+                init_statlb,
+                is_replay,
+                state: InitIngameUiState::IsReplayJump,
+                call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+                console_func_candidates: bumpvec_with_capacity(0x8, bump),
+                ui_consoles_state: None,
+                entry_of: EntryOf::Retry,
+                verify_limit: 0,
+                was_replay_func: false,
+                was_obs_ui_alloc: false,
+                last_call: None,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.entry_of
+        });
+        match entry_of_result {
+            EntryOfResult::Ok(func, ()) | EntryOfResult::Entry(func) => {
+                result.init_ingame_ui = Some(func);
+                break;
+            }
+            EntryOfResult::None => (),
+        }
+    }
+
+    result
+}
+
+#[allow(bad_style)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum InitIngameUiState {
+    /// Follow jump is_replay == true
+    /// (Though keep false path for later)
+    IsReplayJump,
+    /// Check for subfunction is_replay_or_local_player_obs
+    CheckReplayJumpFunc,
+    /// Should be first call after is_replay == true
+    InitObsUi,
+    /// Similar to IsReplayJump, init_obs_ui should also check for
+    /// is_replay_or_local_player_obs first
+    VerifyInitObsUi_ReplayJump,
+    /// Verify from finding large malloc call (0x500+ bytes) which gets stored to
+    /// observer_ui global
+    VerifyInitObsUi,
+    /// Check for the large malloc call if it wasn't inlined in init_obs_ui, and
+    /// the child function should return that.
+    VerifyInitObsUi_AllocChild,
+    /// Take the is_replay == false path and
+    /// find load_consoles(this = ui_consoles) followed by init_consoles(this = ui_consoles)
+    /// Stop if reaching init_obs_ui call
+    UiConsoles,
+}
+
+struct InitIngameUiAnalyzer<'e, 'acx, 'a, E: ExecutionState<'e>> {
+    result: &'a mut InitIngameUi<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    rdata: &'e BinarySection<E::VirtualAddress>,
+    is_replay: Operand<'e>,
+    init_statlb: E::VirtualAddress,
+    entry_of: EntryOf<()>,
+    state: InitIngameUiState,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    console_func_candidates: BumpVec<'acx, (Operand<'e>, E::VirtualAddress)>,
+    ui_consoles_state: Option<(E, E::VirtualAddress)>,
+    verify_limit: u8,
+    was_replay_func: bool,
+    was_obs_ui_alloc: bool,
+    last_call: Option<E::VirtualAddress>,
+}
+
+impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    InitIngameUiAnalyzer<'e, 'acx, 'a, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                if dest == self.init_statlb {
+                    self.entry_of = EntryOf::Stop;
+                    ctrl.end_analysis();
+                }
+            }
+        }
+        if self.verify_limit != 0 {
+            match *op {
+                Operation::Call(..) | Operation::Jump { .. } => {
+                    self.verify_limit -= 1;
+                    if self.verify_limit == 0 {
+                        ctrl.end_analysis();
+                        return;
+                    }
+                }
+                _ => (),
+            }
+        }
+        match self.state {
+            InitIngameUiState::IsReplayJump | InitIngameUiState::VerifyInitObsUi_ReplayJump => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.state == InitIngameUiState::IsReplayJump {
+                            // Check for obs ui here too since the console func is not always
+                            // inlined.
+                            // If this results in obs ui being found then assume that previous
+                            // call was init_consoles and go back to it.
+                            if self.check_obs_ui_verify(ctrl, dest) {
+                                if let Some(last) = self.last_call {
+                                    self.state = InitIngameUiState::UiConsoles;
+                                    ctrl.analyze_with_current_state(self, last);
+                                }
+                                ctrl.end_analysis();
+                                return;
+                            } else {
+                                self.state = InitIngameUiState::IsReplayJump;
+                            }
+                            self.last_call = Some(dest);
+                        }
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let jump_if_replay = condition.if_arithmetic_eq_neq_zero(ctx)
+                        .and_then(|(op, eq_zero)| {
+                            let op = Operand::and_masked(op).0;
+                            if op == self.is_replay {
+                                Some(!eq_zero)
+                            } else if let Some(custom) = op.if_custom() {
+                                if self.check_is_replay_func(ctrl, custom) {
+                                    Some(!eq_zero)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        });
+                    if let Some(jump_if_replay) = jump_if_replay {
+                        if let Some(to) = ctrl.resolve_va(to) {
+                            let (replay_branch, other) = match jump_if_replay {
+                                true => (to, ctrl.current_instruction_end()),
+                                false => (ctrl.current_instruction_end(), to),
+                            };
+                            if self.state == InitIngameUiState::IsReplayJump {
+                                let state = ctrl.exec_state();
+                                self.ui_consoles_state = Some((state.clone(), other));
+                                self.state = InitIngameUiState::InitObsUi;
+                            } else {
+                                self.state = InitIngameUiState::VerifyInitObsUi;
+                            }
+                            ctrl.continue_at_address(replay_branch);
+                        }
+                    }
+                }
+            }
+            InitIngameUiState::CheckReplayJumpFunc => {
+                if let Operation::Call(..) = *op {
+                    ctrl.end_analysis();
+                } else if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((op, eq_zero)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                        if op == self.is_replay {
+                            self.was_replay_func = true;
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_nonzero_address(eq_zero, to);
+                        }
+                    }
+                } else if let Operation::Return(..) = *op {
+                    if self.was_replay_func {
+                        let ret = ctrl.resolve(ctx.register(0));
+                        if ctx.and_const(ret, 0xff) != ctx.const_1() {
+                            self.was_replay_func = false;
+                        }
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            InitIngameUiState::InitObsUi => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.check_obs_ui_verify(ctrl, dest) {
+                            ctrl.clear_unchecked_branches();
+                            ctrl.end_branch();
+                            if let Some((exec, addr)) = self.ui_consoles_state.take() {
+                                ctrl.add_branch_with_state(addr, exec, Default::default());
+                                self.state = InitIngameUiState::UiConsoles;
+                            }
+                        } else {
+                            self.state = InitIngameUiState::InitObsUi;
+                        }
+                    }
+                }
+            }
+            InitIngameUiState::VerifyInitObsUi => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.seems_obs_ui_alloc_call(ctrl) {
+                            ctrl.clear_unchecked_branches();
+                            ctrl.do_call_with_result(ctx.custom(0));
+                            return;
+                        } else {
+                            let this = ctrl.resolve(ctx.register(1));
+                            if this.if_custom() == Some(0) {
+                                // Assume to be constructor call returning this
+                                ctrl.do_call_with_result(this);
+                                return;
+                            }
+                        }
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size == E::WORD_SIZE {
+                        let value = ctrl.resolve(value);
+                        let mem = ctrl.resolve_mem(mem);
+                        let (mem_base, mem_offset) = mem.address();
+                        if let Some(custom) = value.if_custom() {
+                            if is_global(mem_base) {
+                                if custom == 0 {
+                                    self.result.observer_ui = Some(ctx.memory(&mem));
+                                    ctrl.end_analysis();
+                                } else {
+                                    // Memory allocation / construction may be in a child
+                                    // func, check that
+                                    if self.check_obs_ui_alloc_child(ctrl, custom) {
+                                        self.result.observer_ui = Some(ctx.memory(&mem));
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+                        } else if let Some(custom) = ctrl.if_mem_word_offset(value, 0)
+                            .and_then(|x| x.if_custom())
+                        {
+                            // Also accept child function returning ObserverUi **
+                            if self.check_obs_ui_alloc_child(ctrl, custom) {
+                                self.result.observer_ui = Some(ctx.memory(&mem));
+                                ctrl.end_analysis();
+                            }
+                        } else if mem_base.if_custom() == Some(0) && mem_offset == 0 {
+                            if let Some(c) = value.if_constant() {
+                                if self.rdata.contains(E::VirtualAddress::from_u64(c)) {
+                                    // Assuming inlined constructor which moves vtable
+                                    // to observer_ui
+                                    // (Could check the value to actually be vtable too though)
+                                    self.verify_limit = 0;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            InitIngameUiState::VerifyInitObsUi_AllocChild => {
+                if let Operation::Call(..) = *op {
+                    if self.seems_obs_ui_alloc_call(ctrl) {
+                        ctrl.do_call_with_result(ctx.custom(1));
+                        self.verify_limit = 0;
+                    } else {
+                        let this = ctrl.resolve(ctx.register(1));
+                        if this.if_custom() == Some(1) {
+                            // Assume to be constructor call returning this
+                            ctrl.do_call_with_result(this);
+                        }
+                    }
+                } else if let Operation::Return(..) = *op {
+                    // This child function does not return pointer to
+                    // obs ui, but writes it to arg1 ObserverUi ** and returns that.
+                    // Probably just unique_ptr ABI limitation, so check for both
+                    // ObserverUi ** and ObserverUi * in case it ever changes.
+                    let ret = ctrl.resolve(ctx.register(0));
+                    self.was_obs_ui_alloc = ret.if_custom() == Some(1) ||
+                        ctrl.read_memory(&ctx.mem_access(ret, 0, E::WORD_SIZE))
+                            .if_custom() == Some(1);
+                    if self.was_obs_ui_alloc {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            InitIngameUiState::UiConsoles => {
+                let check_end = if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if Some(dest) == self.result.init_obs_ui {
+                            true
+                        } else {
+                            let this = ctrl.resolve(ctx.register(1));
+                            self.console_func_candidates.push((this, dest));
+                            self.call_tracker.add_call(ctrl, dest);
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else if let Operation::Return(..) = *op {
+                    true
+                } else {
+                    false
+                };
+                if check_end {
+                    // console_func_candidates should contain
+                    // two different function calls with same `this`.
+                    for (i, &(this, func)) in
+                        self.console_func_candidates.iter().enumerate()
+                    {
+                        if this.if_custom().is_some() || is_global(this) {
+                            if let Some(&(_, other)) =
+                                self.console_func_candidates[i + 1..].iter()
+                                .find(|x| x.0 == this && x.1 != func)
+                            {
+                                self.result.load_consoles = Some(func);
+                                self.result.init_consoles = Some(other);
+                                self.result.ui_consoles =
+                                    Some(self.call_tracker.resolve_calls(this));
+                            }
+                        }
+                    }
+                    ctrl.end_analysis();
+                    return;
+                }
+            }
+        }
+    }
+}
+
+impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> InitIngameUiAnalyzer<'e, 'acx, 'a, E> {
+    /// Returns true if this is a function returning nonzero constant when
+    /// is_replay is set. (In effect called for is_replay_or_local_user_obs though)
+    fn check_is_replay_func(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, custom: u32) -> bool {
+        self.call_tracker.custom_id_to_func(custom)
+            .and_then(|func| {
+                let old_state = self.state;
+                self.state = InitIngameUiState::CheckReplayJumpFunc;
+                let old_verify_limit = self.verify_limit;
+                self.verify_limit = 4;
+                self.was_replay_func = false;
+                ctrl.analyze_with_current_state(self, func);
+                self.state = old_state;
+                self.verify_limit = old_verify_limit;
+                Some(self.was_replay_func)
+            })
+            .unwrap_or(false)
+    }
+
+    fn check_obs_ui_verify(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        dest: E::VirtualAddress,
+    ) -> bool {
+        self.state = InitIngameUiState::VerifyInitObsUi_ReplayJump;
+        let old_verify_limit = self.verify_limit;
+        self.verify_limit = 10;
+        ctrl.analyze_with_current_state(self, dest);
+        self.verify_limit = old_verify_limit;
+        if self.result.observer_ui.is_some() {
+            self.result.init_obs_ui = Some(dest);
+            self.entry_of = EntryOf::Ok(());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns true if `custom` is calling a function that seems like allocating obs ui
+    /// and returning it
+    fn check_obs_ui_alloc_child(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        custom: u32,
+    ) -> bool {
+        self.call_tracker.custom_id_to_func(custom)
+            .and_then(|func| {
+                let old_state = self.state;
+                self.was_obs_ui_alloc = false;
+                self.state = InitIngameUiState::VerifyInitObsUi_AllocChild;
+                let old_verify_limit = self.verify_limit;
+                self.verify_limit = 4;
+                ctrl.analyze_with_current_state(self, func);
+                self.state = old_state;
+                self.verify_limit = old_verify_limit;
+                Some(self.was_obs_ui_alloc)
+            })
+            .unwrap_or(false)
+    }
+
+    fn seems_obs_ui_alloc_call(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) -> bool {
+        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+        if let Some(c) = arg1.if_constant() {
+            c > 0x400 && c < 0x1000
+        } else {
+            false
+        }
     }
 }
