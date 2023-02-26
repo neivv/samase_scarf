@@ -1630,7 +1630,9 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         match op {
             // special handling
             Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg |
-                AntiTroll | MouseX | MouseY | NetUserLatency | MapHistory | MpqLocale => {
+                AntiTroll | MouseX | MouseY | NetUserLatency | MapHistory | MpqLocale |
+                UiConsoles =>
+            {
                 continue;
             }
             Game | Players | MenuScreenId | BnetController => {
