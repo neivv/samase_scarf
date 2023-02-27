@@ -436,9 +436,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindVertexBuffer<'a,
                             .if_mem_word_offset(dest, 0xa * word_size as u64)
                             .is_some();
                         if is_vtable_fn_28 {
-                            let arg2 = ctrl.resolve(self.arg_cache.on_entry(1));
-                            // Arg2 is Mem32[vertex_buf + 4]
-                            let vertex_buf = ctrl.if_mem_word(arg2)
+                            let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
+                            // Arg3 is Mem32[vertex_buf + 4] (Mem32 even on 64bit too)
+                            let vertex_buf = arg3.if_mem32()
                                 .map(|x| ctx.mem_sub_const_op(x, word_size as u64));
                             if let Some(vertex_buf) = vertex_buf {
                                 self.result = Some(vertex_buf);
