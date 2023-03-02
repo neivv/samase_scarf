@@ -1614,7 +1614,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 GetMouseX | GetMouseY | NetFormatTurnRate | ReadWholeMpqFile |
                 ReadWholeMpqFile2 | StepBulletFrame | FlingyUpdateTargetDir |
                 LookupSoundId | SFileOpenFileEx | SFileReadFileEx | SFileCloseFile |
-                LoadConsoles | InitConsoles => continue,
+                LoadConsoles | InitConsoles | GetUiConsoles => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -2262,14 +2262,17 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     // Console structs changed in 1.23.0
     let load_consoles = analysis.load_consoles();
     let init_consoles = analysis.init_consoles();
+    let get_ui_consoles = analysis.get_ui_consoles();
     let ui_consoles = analysis.ui_consoles();
     if minor_version < 23 {
         assert!(load_consoles.is_none());
         assert!(init_consoles.is_none());
+        assert!(get_ui_consoles.is_none());
         assert!(ui_consoles.is_none());
     } else {
         assert!(load_consoles.is_some());
         assert!(init_consoles.is_some());
+        assert!(get_ui_consoles.is_some());
         check_global_struct_opt(ui_consoles, binary, "ui_consoles");
     }
 

@@ -78,6 +78,7 @@ pub(crate) struct InitIngameUi<'e, Va: VirtualAddress> {
     pub init_obs_ui: Option<Va>,
     pub load_consoles: Option<Va>,
     pub init_consoles: Option<Va>,
+    pub get_ui_consoles: Option<Va>,
     pub ui_consoles: Option<Operand<'e>>,
     pub observer_ui: Option<Operand<'e>>,
 }
@@ -1354,6 +1355,7 @@ pub(crate) fn init_ingame_ui<'e, E: ExecutionState<'e>>(
         init_obs_ui: None,
         load_consoles: None,
         init_consoles: None,
+        get_ui_consoles: None,
         ui_consoles: None,
         observer_ui: None,
     };
@@ -1680,6 +1682,11 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                                 self.result.init_consoles = Some(other);
                                 self.result.ui_consoles =
                                     Some(self.call_tracker.resolve_calls(this));
+                                if let Some(c) = this.if_custom() {
+                                    if let Some(func) = self.call_tracker.custom_id_to_func(c) {
+                                        self.result.get_ui_consoles = Some(func);
+                                    }
+                                }
                             }
                         }
                     }

@@ -365,6 +365,9 @@ results! {
         InitObsUi => "init_obs_ui",
         LoadConsoles => "load_consoles",
         InitConsoles => "init_consoles",
+        // Returns ui_consoles, but may end up initializing the global
+        // if it hasn't been called yet.
+        GetUiConsoles => "get_ui_consoles",
     }
 }
 
@@ -1100,6 +1103,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             InitObsUi => self.init_obs_ui(),
             LoadConsoles => self.load_consoles(),
             InitConsoles => self.init_consoles(),
+            GetUiConsoles => self.get_ui_consoles(),
         }
     }
 
@@ -3871,6 +3875,13 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         )
     }
 
+    pub fn get_ui_consoles(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::GetUiConsoles,
+            AnalysisCache::cache_init_ingame_ui,
+        )
+    }
+
     pub fn ui_consoles(&mut self) -> Option<Operand<'e>> {
         self.analyze_many_op(
             OperandAnalysis::UiConsoles,
@@ -6545,14 +6556,15 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
         self.cache_many(
-            &[InitIngameUi, InitObsUi, LoadConsoles, InitConsoles],
+            &[InitIngameUi, InitObsUi, LoadConsoles, InitConsoles, GetUiConsoles],
             &[UiConsoles, ObserverUi],
             |s| {
                 let init_statlb = s.init_statlb(actx)?;
                 let is_replay = s.is_replay(actx)?;
                 let funcs = s.function_finder();
                 let r = clientside::init_ingame_ui(actx, &funcs, init_statlb, is_replay);
-                Some(([r.init_ingame_ui, r.init_obs_ui, r.load_consoles, r.init_consoles],
+                Some(([r.init_ingame_ui, r.init_obs_ui, r.load_consoles, r.init_consoles,
+                    r.get_ui_consoles],
                     [r.ui_consoles, r.observer_ui]))
             })
     }
