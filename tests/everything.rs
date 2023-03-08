@@ -1529,6 +1529,12 @@ fn everything_12310d() {
     });
 }
 
+#[test]
+fn everything_12310e() {
+    test_with_extra_checks_32_64(Path::new("12310e.exe"), |_ctx, _analysis| {
+    });
+}
+
 fn test(path: &Path) {
     test_with_extra_checks(path, |_, _| {});
 }
