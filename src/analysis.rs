@@ -150,6 +150,8 @@ results! {
         InitGameNetwork => "init_game_network",
         SpawnDialog => "spawn_dialog",
         InitStatLb => "init_statlb",
+        InitStatRes => "init_statres",
+        GetStatResIconsDdsGrp => "get_statres_icons_ddsgrp",
         TtfMalloc => "ttf_malloc",
         DrawGraphicLayers => "draw_graphic_layers",
         AiAttackPrepare => "ai_attack_prepare",
@@ -575,6 +577,7 @@ results! {
         // HashTable u32 -> Console *
         UiConsoles => "ui_consoles",
         ObserverUi => "observer_ui",
+        StatResIconsDdsGrp => "statres_icons_ddsgrp",
     }
 }
 
@@ -895,6 +898,8 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             InitGameNetwork => self.init_game_network(),
             SpawnDialog => self.spawn_dialog(),
             InitStatLb => self.init_statlb(),
+            InitStatRes => self.init_statres(),
+            GetStatResIconsDdsGrp => self.get_statres_icons_ddsgrp(),
             TtfMalloc => self.ttf_malloc(),
             DrawGraphicLayers => self.draw_graphic_layers(),
             AiAttackPrepare => self.ai_attack_prepare(),
@@ -1298,6 +1303,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             MpqLocale => self.mpq_locale(),
             UiConsoles => self.ui_consoles(),
             ObserverUi => self.observer_ui(),
+            StatResIconsDdsGrp => self.statres_icons_ddsgrp(),
         }
     }
 
@@ -1989,6 +1995,27 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.analyze_many_addr(
             AddressAnalysis::InitStatLb,
             AnalysisCache::cache_spawn_dialog,
+        )
+    }
+
+    pub fn init_statres(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::InitStatRes,
+            AnalysisCache::cache_init_statres,
+        )
+    }
+
+    pub fn get_statres_icons_ddsgrp(&mut self) -> Option<E::VirtualAddress> {
+        self.analyze_many_addr(
+            AddressAnalysis::GetStatResIconsDdsGrp,
+            AnalysisCache::cache_init_statres,
+        )
+    }
+
+    pub fn statres_icons_ddsgrp(&mut self) -> Option<Operand<'e>> {
+        self.analyze_many_op(
+            OperandAnalysis::StatResIconsDdsGrp,
+            AnalysisCache::cache_init_statres,
         )
     }
 
@@ -5111,6 +5138,22 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
 
     fn init_statlb(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::InitStatLb, |s| s.cache_spawn_dialog(actx))
+    }
+
+    fn cache_init_statres(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[InitStatRes, GetStatResIconsDdsGrp], &[StatResIconsDdsGrp], |s| {
+            let statres = dialog::init_statres(actx, &s.function_finder());
+            let mut ddsgrp = None;
+            let mut get_ddsgrp = None;
+            if let Some(func) = statres.parent_function {
+                let result = dialog::analyze_init_statres(actx, func);
+                ddsgrp = result.statres_icons_ddsgrp;
+                get_ddsgrp = result.get_statres_icons_ddsgrp;
+            }
+            Some(([statres.parent_function, get_ddsgrp], [ddsgrp]))
+        })
     }
 
     fn cache_unit_creation(&mut self, actx: &AnalysisCtx<'e, E>) {

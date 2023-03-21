@@ -1620,7 +1620,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 GetMouseX | GetMouseY | NetFormatTurnRate | ReadWholeMpqFile |
                 ReadWholeMpqFile2 | StepBulletFrame | FlingyUpdateTargetDir |
                 LookupSoundId | SFileOpenFileEx | SFileReadFileEx | SFileCloseFile |
-                LoadConsoles | InitConsoles | GetUiConsoles => continue,
+                LoadConsoles | InitConsoles | GetUiConsoles | GetStatResIconsDdsGrp => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -1637,7 +1637,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
             // special handling
             Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg |
                 AntiTroll | MouseX | MouseY | NetUserLatency | MapHistory | MpqLocale |
-                UiConsoles =>
+                UiConsoles | StatResIconsDdsGrp =>
             {
                 continue;
             }
@@ -2280,6 +2280,18 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(init_consoles.is_some());
         assert!(get_ui_consoles.is_some());
         check_global_struct_opt(ui_consoles, binary, "ui_consoles");
+    }
+
+    // Statres icon grps were converted to a new kind of set in 1.23.0
+    // (Maybe 1.23.0 introduced structs containing grp + all ddsgrp variants + settings?)
+    let get_statres_icons_ddsgrp = analysis.get_statres_icons_ddsgrp();
+    let statres_icons_ddsgrp = analysis.statres_icons_ddsgrp();
+    if minor_version < 23 {
+        assert!(get_statres_icons_ddsgrp.is_none());
+        assert!(statres_icons_ddsgrp.is_none());
+    } else {
+        assert!(get_statres_icons_ddsgrp.is_some());
+        check_global_struct_opt(statres_icons_ddsgrp, binary, "statres_icons_ddsgrp");
     }
 
     let dump_text = samase_scarf::dump::dump_all(analysis);

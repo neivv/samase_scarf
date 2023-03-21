@@ -96,6 +96,11 @@ pub(crate) struct GluCmpgnEvents<'e, Va: VirtualAddress> {
     pub dialog_return_code: Option<Operand<'e>>,
 }
 
+pub(crate) struct InitStatRes<'e, Va: VirtualAddress> {
+    pub statres_icons_ddsgrp: Option<Operand<'e>>,
+    pub get_statres_icons_ddsgrp: Option<Va>,
+}
+
 impl<'e, Va: VirtualAddress> Default for MultiWireframes<'e, Va> {
     fn default() -> Self {
         MultiWireframes {
@@ -355,6 +360,13 @@ pub(crate) fn spawn_dialog<'e, E: ExecutionState<'e>>(
     // signature and dialog init patterns are same between run (blocking) and spawn (nonblocking).
     // If it won't in future then this should be refactored to have its own Analyzer
     run_dialog_analysis(analysis, functions, b"rez\\statlb", b"statlb.ui")
+}
+
+pub(crate) fn init_statres<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> RunDialog<E::VirtualAddress> {
+    run_dialog_analysis(analysis, functions, b"rez\\statres", b"statres.ui")
 }
 
 pub(crate) fn tooltip_related<'e, E: ExecutionState<'e>>(
@@ -2142,6 +2154,64 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         self.result.dialog_return_code = Some(ctx.memory(mem));
                         ctrl.user_state().get::<GluCmpgnState>().dialog_return_stored = true;
                     }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+pub(crate) fn analyze_init_statres<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    init_statres: E::VirtualAddress,
+) -> InitStatRes<'e, E::VirtualAddress> {
+    let mut result = InitStatRes {
+        statres_icons_ddsgrp: None,
+        get_statres_icons_ddsgrp: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, init_statres);
+    let mut analyzer = InitStatResAnalyzer::<E> {
+        result: &mut result,
+        call_tracker: CallTracker::with_capacity(actx, 0, 0x20),
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct InitStatResAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut InitStatRes<'e, E::VirtualAddress>,
+    call_tracker: CallTracker<'acx, 'e, E>,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    InitStatResAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let ctx = ctrl.ctx();
+                    let this = ctrl.resolve(ctx.register(1));
+                    // Assuming that the first call with this from a function
+                    // return is for statres icons.
+                    // The call should be (depending on inlining?) either
+                    // load_statres_icons(this = statres_icons)
+                    // or load_ddsgrp_set(this = statres_icons, a1_5 = make_path_function)
+                    if let Some(c) = this.if_custom() {
+                        let val = self.call_tracker.resolve_calls(this);
+                        if is_global(val) {
+                            self.result.statres_icons_ddsgrp = Some(val);
+                            self.result.get_statres_icons_ddsgrp =
+                                self.call_tracker.custom_id_to_func(c);
+                            ctrl.end_analysis();
+                            return;
+                        }
+                    }
+                    self.call_tracker.add_call(ctrl, dest);
                 }
             }
             _ => (),
