@@ -149,7 +149,7 @@ fn everything_1210() {
 #[test]
 fn everything_1210b() {
     test_with_extra_checks(Path::new("1210b.exe"), |ctx, analysis| {
-        let net_players = analysis.net_players();
+        let net_players = analysis.net_players_size();
         let init_net_player = analysis.init_net_player();
         assert_eq!(init_net_player.unwrap().0, 0x006F28E0);
         assert_eq!(net_players.as_ref().unwrap().0, ctx.constant(0x00F31988));
@@ -693,7 +693,7 @@ fn everything_1224c() {
         assert_eq!(create_bullet.unwrap().0, 0x531f00);
         assert_eq!(active_iscript_unit.unwrap(), ctx.mem32c(0xde7190));
 
-        let net_players = analysis.net_players();
+        let net_players = analysis.net_players_size();
         let init_net_player = analysis.init_net_player();
         assert_eq!(init_net_player.unwrap().0, 0x00721680);
         assert_eq!(net_players.unwrap().0, ctx.constant(0x00FED8D8));
@@ -1957,7 +1957,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert_eq!(vtables.len(), 2);
     }
 
-    let (_, size) = analysis.net_players().unwrap();
+    let (_, size) = analysis.net_players_size().unwrap();
     assert_eq!(size, 0x68, "sizeof NetPlayer");
 
     let spawn_dialog = analysis.spawn_dialog();
