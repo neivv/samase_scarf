@@ -257,6 +257,7 @@ dcreep_lookup: ef8298
 dcreep_next_update: Mem32[ef92d4]
 dcreep_unit_next_update: Mem32[ef92d8]
 dialog_return_code: Mem32[f133ec]
+disable_color_choice: None
 draw_commands: f183a0
 draw_cursor_marker: Mem8[ced1c9]
 fire_overlay_max: cdf7c8
@@ -293,6 +294,7 @@ flingy_y_old: Mem16[cdf738]
 fonts: f10ba8
 game: (Mem32[c8c880] ^ f83720d4)
 game_data: ed5990
+game_lobby: None
 game_screen_height_bwpx: Mem32[c8bbdc]
 game_screen_lclick_callback: Mem32[eaabd0]
 game_screen_rclick_callback: Mem32[eaabd4]
@@ -304,6 +306,7 @@ grpwire_grp: Mem32[ef243c]
 image_grps: cdfbb0
 image_overlays: ce0b70
 images_loaded: Mem8[eb12ca]
+in_lobby_or_game: None
 is_custom_single_player: Mem32[ef9348]
 is_multiplayer: Mem8[ed4228]
 is_paused: Mem32[cee850]
@@ -372,6 +375,7 @@ replay_scenario_chk_size: Mem32[ed9010]
 replay_seek_frame: Mem32[ed9024]
 replay_show_entire_map: Mem32[ed902c]
 replay_visions: Mem8[ed9028]
+rgb_colors: None
 rng_enable: Mem32[ed7378]
 rng_seed: Mem32[ed6f68]
 scmain_state: Mem32[eb12cc]
@@ -407,6 +411,8 @@ unit_should_reveal_area: Mem32[ced328]
 unit_skin_map: c8b538
 unit_strength: d0e808
 units: Mem32[ced2f8]
+use_map_set_rgb_color: None
+use_rgb_colors: None
 vertex_buffer: c9c4f8
 vision_update_counter: Mem32[eaabf0]
 vision_updated: Mem8[eaabf8]

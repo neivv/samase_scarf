@@ -1637,7 +1637,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
             // special handling
             Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg |
                 AntiTroll | MouseX | MouseY | NetUserLatency | MapHistory | MpqLocale |
-                UiConsoles | StatResIconsDdsGrp =>
+                UiConsoles | StatResIconsDdsGrp | UseRgbColors | InLobbyOrGame | GameLobby |
+                RgbColors | DisableColorChoice | UseMapSetRgbColor =>
             {
                 continue;
             }
@@ -2292,6 +2293,29 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     } else {
         assert!(get_statres_icons_ddsgrp.is_some());
         check_global_struct_opt(statres_icons_ddsgrp, binary, "statres_icons_ddsgrp");
+    }
+
+    // Custom colors were added in 1.23.1
+    let use_rgb_colors = analysis.use_rgb_colors();
+    let rgb_colors = analysis.rgb_colors();
+    let disable_color_choice = analysis.disable_color_choice();
+    let use_map_set_rgb_color = analysis.use_map_set_rgb_color();
+    let game_lobby = analysis.game_lobby();
+    let in_lobby_or_game = analysis.in_lobby_or_game();
+    if minor_version < 23 || (minor_version == 23 && patch_version < 1) {
+        assert!(use_rgb_colors.is_none());
+        assert!(game_lobby.is_none());
+        assert!(in_lobby_or_game.is_none());
+        assert!(rgb_colors.is_none());
+        assert!(disable_color_choice.is_none());
+        assert!(use_map_set_rgb_color.is_none());
+    } else {
+        check_global_opt(use_rgb_colors, binary, "use_rgb_colors");
+        check_global_opt(game_lobby, binary, "game_lobby");
+        check_global_opt(in_lobby_or_game, binary, "in_lobby_or_game");
+        check_global_struct_opt(rgb_colors, binary, "rgb_colors");
+        check_global_struct_opt(disable_color_choice, binary, "disable_color_choice");
+        check_global_struct_opt(use_map_set_rgb_color, binary, "use_map_set_rgb_color");
     }
 
     let dump_text = samase_scarf::dump::dump_all(analysis);

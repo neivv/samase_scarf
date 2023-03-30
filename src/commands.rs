@@ -8,6 +8,7 @@ use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until, find_bytes};
 use crate::analysis_state::{AnalysisState, StateEnum, IsReplayState, StepNetworkState};
+use crate::call_tracker::{CallTracker};
 use crate::switch::CompleteSwitch;
 use crate::struct_layouts;
 use crate::util::{
@@ -41,6 +42,15 @@ pub(crate) struct StepReplayCommands<'e, Va: VirtualAddressTrait> {
 pub(crate) struct PrintText<Va: VirtualAddressTrait> {
     pub print_text: Option<Va>,
     pub add_to_replay_data: Option<Va>,
+}
+
+pub(crate) struct Colors<'e> {
+    pub use_rgb: Option<Operand<'e>>,
+    pub rgb_colors: Option<Operand<'e>>,
+    pub disable_choice: Option<Operand<'e>>,
+    pub use_map_set_rgb: Option<Operand<'e>>,
+    pub game_lobby: Option<Operand<'e>>,
+    pub in_lobby_or_game: Option<Operand<'e>>,
 }
 
 pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
@@ -1124,6 +1134,228 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
                 _ => (),
             }
+        }
+    }
+}
+
+pub(crate) fn player_colors<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    process_lobby_commands_switch: &CompleteSwitch<'e>,
+) -> Colors<'e> {
+    let mut result = Colors {
+        use_rgb: None,
+        rgb_colors: None,
+        disable_choice: None,
+        use_map_set_rgb: None,
+        game_lobby: None,
+        in_lobby_or_game: None,
+    };
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let bump = &actx.bump;
+
+    let branch = match process_lobby_commands_switch.branch(binary, ctx, 0x69) {
+        Some(s) => s,
+        None => return result,
+    };
+
+    let arg_cache = &actx.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, branch);
+    let mut analyzer = AnalyzePlayerColors::<E> {
+        result: &mut result,
+        inline_depth: 0,
+        arg_cache,
+        state: PlayerColorState::First,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+        jump_conditions: bumpvec_with_capacity(10, bump),
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzePlayerColors<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut Colors<'e>,
+    inline_depth: u8,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: PlayerColorState,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    // (branch_start, preceding condition),
+    jump_conditions: BumpVec<'acx, (E::VirtualAddress, Operand<'e>)>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum PlayerColorState {
+    // Find write to any of the player color vars from command bytes
+    // Keep track of the last branch condition to determine in_lobby_or_game
+    First,
+    // Handle rest of the color vars
+    Rest,
+    // Find vtable jump/call
+    GameLobby,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    AnalyzePlayerColors<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            PlayerColorState::First | PlayerColorState::Rest => {
+                if self.check_color_write(ctrl, op) {
+                    ctrl.clear_unchecked_branches();
+                    if self.state == PlayerColorState::First {
+                        let branch_start = ctrl.branch_start();
+                        if let Some(&(_, condition)) = self.jump_conditions.iter()
+                            .find(|x| x.0 == branch_start)
+                        {
+                            let condition = self.call_tracker.resolve_calls(condition);
+                            self.result.in_lobby_or_game = condition.if_arithmetic_eq_neq_zero(ctx)
+                                .map(|x| x.0)
+                                .filter(|&x| is_global(x));
+                        }
+                        self.state = PlayerColorState::Rest;
+                    } else {
+                        let all_done = self.result.use_rgb.is_some() &&
+                            self.result.rgb_colors.is_some() &&
+                            self.result.disable_choice.is_some() &&
+                            self.result.use_map_set_rgb.is_some();
+                        if all_done {
+                            self.state = PlayerColorState::GameLobby;
+                        }
+                    }
+                } else {
+                    if let Operation::Call(dest) = *op {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            if self.inline_depth == 0 {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.result.use_rgb.is_some() {
+                                    ctrl.end_analysis();
+                                    return;
+                                }
+                            }
+                            self.call_tracker.add_call(ctrl, dest);
+                        }
+                    } else if let Operation::Jump { condition, to } = *op {
+                        if self.state == PlayerColorState::First {
+                            let condition = ctrl.resolve(condition);
+                            if condition.if_constant().is_none() {
+                                self.jump_conditions.push(
+                                    (ctrl.current_instruction_end(), condition),
+                                );
+                                if let Some(to) = ctrl.resolve_va(to) {
+                                    self.jump_conditions.push((to, condition));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            PlayerColorState::GameLobby => {
+                let dest = match *op {
+                    Operation::Jump { to, condition } => {
+                        if to.if_constant().is_none() && condition == ctx.const_1() {
+                            Some(to)
+                        } else {
+                            None
+                        }
+                    }
+                    Operation::Call(dest) => Some(dest),
+                    _ => None,
+                };
+                if let Some(dest) = dest {
+                    let dest = ctrl.resolve(dest);
+                    if let Some(dest) = dest.if_constant() {
+                        let dest = E::VirtualAddress::from_u64(dest);
+                        if matches!(*op, Operation::Call(..)) {
+                            if self.inline_depth < 2 {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.result.game_lobby.is_some() {
+                                    ctrl.end_analysis();
+                                    return;
+                                }
+                            }
+                            self.call_tracker.add_call(ctrl, dest);
+                        }
+                    } else {
+                        if let Some(mem) = ctrl.if_mem_word(dest) {
+                            let (base, _) = mem.address();
+                            let this = ctrl.resolve(ctx.register(1));
+                            if ctrl.if_mem_word(base).map(|x| x.address()) == Some((this, 0)) {
+                                let resolved = self.call_tracker.resolve_calls(this);
+                                if is_global(resolved) {
+                                    self.result.game_lobby = Some(resolved);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Operation::Jump { to, .. } = *op {
+            if to.if_constant().is_none() {
+                // Assuming switch jump
+                ctrl.end_branch();
+            }
+        }
+    }
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> AnalyzePlayerColors<'a, 'acx, 'e, E> {
+    fn check_color_write(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        op: &Operation<'e>,
+    ) -> bool {
+        match *op {
+            Operation::Call(..) => {
+                // check memcpy calls
+                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                if let Some(len) = arg3.if_constant() {
+                    if len == 8 || len == 0x80 {
+                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let arg2_offset = arg2.if_arithmetic_add()
+                            .and_then(|(_l, r)| r.if_constant());
+                        if let Some(off) = arg2_offset {
+                            let out = if off == 0x2 && len == 8 {
+                                &mut self.result.use_map_set_rgb
+                            } else if off == 0xa && len == 8 {
+                                &mut self.result.disable_choice
+                            } else if off == 0x1a && len == 0x80 {
+                                &mut self.result.rgb_colors
+                            } else {
+                                return false;
+                            };
+                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            if is_global(arg1) {
+                                *out = Some(arg1);
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            Operation::Move(DestOperand::Memory(ref dest), value, None)
+                if dest.size == MemAccessSize::Mem8 =>
+            {
+                let value = ctrl.resolve(value);
+                if value.if_mem8_offset(1).is_some() {
+                    let dest = ctrl.resolve_mem(dest);
+                    if is_global(dest.address().0) {
+                        let ctx = ctrl.ctx();
+                        self.result.use_rgb = Some(ctx.memory(&dest));
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
         }
     }
 }

@@ -630,6 +630,17 @@ results! {
         UiConsoles => ui_consoles => cache_init_ingame_ui,
         ObserverUi => observer_ui => cache_init_ingame_ui,
         StatResIconsDdsGrp => statres_icons_ddsgrp => cache_init_statres,
+        UseRgbColors => use_rgb_colors => cache_player_colors,
+        // Array of [f32; 4], used if use_rgb_colors != 0
+        RgbColors => rgb_colors => cache_player_colors,
+        DisableColorChoice => disable_color_choice => cache_player_colors,
+        // Relevant only before game start, specifies which slots in rgb_colors
+        // should not be overwritten with color constants.
+        UseMapSetRgbColor => use_map_set_rgb_color => cache_player_colors,
+        // Some SC:R virtual lobby object
+        GameLobby => game_lobby => cache_player_colors,
+        // "In a game", but not necessarily in a started game.
+        InLobbyOrGame => in_lobby_or_game => cache_player_colors,
     }
 }
 
@@ -4050,6 +4061,20 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some(([r.init_ingame_ui, r.init_obs_ui, r.load_consoles, r.init_consoles,
                     r.get_ui_consoles],
                     [r.ui_consoles, r.observer_ui]))
+            })
+    }
+
+    fn cache_player_colors(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[],
+            &[UseRgbColors, RgbColors, DisableColorChoice, UseMapSetRgbColor, GameLobby,
+                InLobbyOrGame],
+            |s| {
+                let switch = &s.process_lobby_commands_switch(actx)?;
+                let r = commands::player_colors(actx, &switch);
+                Some(([], [r.use_rgb, r.rgb_colors, r.disable_choice, r.use_map_set_rgb,
+                    r.game_lobby, r.in_lobby_or_game]))
             })
     }
 }
