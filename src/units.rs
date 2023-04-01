@@ -12,7 +12,7 @@ use crate::call_tracker::CallTracker;
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
 use crate::util::{
-    ControlExt, OptionExt, OperandExt, single_result_assign, bumpvec_with_capacity,
+    ControlExt, MemAccessExt, OptionExt, OperandExt, single_result_assign, bumpvec_with_capacity,
     is_global, if_arithmetic_eq_neq, seems_assertion_call,
 };
 
@@ -831,7 +831,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StrengthAnalyzer<
                     if mem.size == MemAccessSize::Mem32 {
                         let dest = ctrl.resolve_mem(mem);
                         let ctx = ctrl.ctx();
-                        if is_global(dest.address().0) {
+                        if dest.is_global() {
                             if let Some(old) = self.candidate {
                                 // Ground strength is guaranteed to be 0xe4 * 4 bytes after air
                                 let (old_base, old_offset) = old.address();
@@ -2249,7 +2249,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PylonInitAnalyzer
                 if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     if ctrl.resolve(value) == ctx.const_1() {
                         let mem = ctrl.resolve_mem(mem);
-                        if is_global(mem.address().0) {
+                        if mem.is_global() {
                             let dest = ctx.memory(&mem);
                             if self.state == PylonInitState::PylonAurasVisible {
                                 self.result.pylon_auras_visible = Some(dest);
@@ -2472,7 +2472,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let value = ctrl.resolve(value);
                     let dest = ctrl.resolve_mem(mem);
                     let (dest_base, dest_off) = dest.address();
-                    if value == self.selection_circle_image && is_global(dest_base) {
+                    if value == self.selection_circle_image && dest.is_global() {
                         if dest_off == E::VirtualAddress::SIZE.into() {
                             // Move image = [free_head].next
                             let result = dest_base;

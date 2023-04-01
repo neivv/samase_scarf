@@ -17,7 +17,7 @@ use crate::call_tracker::CallTracker;
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
 use crate::util::{
-    ControlExt, OperandExt, OptionExt, bumpvec_with_capacity, single_result_assign,
+    ControlExt, MemAccessExt, OperandExt, OptionExt, bumpvec_with_capacity, single_result_assign,
     is_global, is_stack_address,
 };
 
@@ -560,7 +560,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'acx, 'e, E>
             }
             Operation::Move(DestOperand::Memory(ref mem), value, None) => {
                 let mem = ctrl.resolve_mem(mem);
-                if !is_global(mem.address().0) {
+                if !mem.is_global() {
                     return;
                 }
                 let value = ctrl.resolve(value);
@@ -1204,7 +1204,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyz
                         .filter(|&a4| is_stack_address(a4))
                         .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
                         .and_then(|a1| ctrl.if_mem_word(a1))
-                        .filter(|&a1| is_global(a1.address().0));
+                        .filter(|a1| a1.is_global());
                     if let Some(result) = result {
                         self.result = Some(result.address_op(ctx));
                         ctrl.end_analysis();
@@ -1521,8 +1521,8 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     if let Some(c) = val.if_constant() {
                         let val = E::VirtualAddress::from_u64(c);
                         let mem = ctrl.resolve_mem(&mem);
-                        let (base, offset) = mem.address();
-                        if is_global(base) {
+                        if mem.is_global() {
+                            let (base, offset) = mem.address();
                             self.stores.insert((base.hash_by_address(), offset), val);
                             if self.stores.len() >= 0xc {
                                 self.try_finish();
@@ -1572,7 +1572,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     if index < 3 {
                         if let Some(value) = ctrl.resolve_va(value) {
                             let mem = ctrl.resolve_mem(mem);
-                            if is_global(mem.address().0) {
+                            if mem.is_global() {
                                 self.click_stores[index].push((mem, value));
                             }
                         }

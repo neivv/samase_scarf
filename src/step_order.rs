@@ -12,7 +12,7 @@ use crate::call_tracker::CallTracker;
 use crate::inline_hook::{EspOffsetRegs, InlineHookState, inline_hook_state};
 use crate::struct_layouts;
 use crate::util::{
-    ControlExt, OperandExt, bumpvec_with_capacity, is_global, single_result_assign,
+    ControlExt, MemAccessExt, OperandExt, bumpvec_with_capacity, single_result_assign,
 };
 
 #[derive(Clone, Debug)]
@@ -961,7 +961,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
                         if mem.size == E::WORD_SIZE {
                             let dest = ctrl.resolve_mem(mem);
                             let val = ctrl.resolve(val);
-                            if val == ctx.const_0() && is_global(dest.address().0) {
+                            if val == ctx.const_0() && dest.is_global() {
                                 let ctx = ctrl.ctx();
                                 self.last_bullet_spawner = Some(ctx.memory(&dest));
                                 self.state = DoAttackState::DoAttackMain;
@@ -1348,7 +1348,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderTrain
                 } else if let Operation::Move(DestOperand::Memory(ref mem), _, None) = *op {
                     if self.result.cancel_queued_unit.is_some() {
                         let mem = ctrl.resolve_mem(mem);
-                        if is_global(mem.address().0) {
+                        if mem.is_global() {
                             // refresh_ui got inlined, cannot find it
                             ctrl.end_analysis();
                         }

@@ -10,7 +10,7 @@ fn unresolve_add_chain_part<'e>(
     unresolved: Operand<'e>,
 ) -> Option<(Operand<'e>, UnresolvedAddChainComplexity)> {
     let (l, r) = resolved.if_arithmetic_add()?;
-    if l == op && is_global(r) {
+    if l == op && (r.if_constant().is_some() || is_global(r)) {
         let complexity = if r.if_constant().is_some() {
             UnresolvedAddChainComplexity::Constant
         } else {
@@ -22,7 +22,7 @@ fn unresolve_add_chain_part<'e>(
         return Some((ctx.sub(unresolved, l), complexity));
     }
     let result = unresolve_add_chain_part(ctx, op, l, unresolved)?.0;
-    if is_global(r) {
+    if r.if_constant().is_some() || is_global(r) {
         Some((ctx.sub(result, r), UnresolvedAddChainComplexity::Complex))
     } else {
         None

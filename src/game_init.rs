@@ -22,7 +22,7 @@ use crate::add_terms::collect_arith_add_terms;
 use crate::call_tracker::{self, CallTracker};
 use crate::switch::CompleteSwitch;
 use crate::util::{
-    ControlExt, OperandExt, OptionExt, is_global, is_stack_address,
+    ControlExt, OperandExt, OptionExt, MemAccessExt, is_global, is_stack_address,
     bumpvec_with_capacity, single_result_assign,
 };
 use crate::vtables::Vtables;
@@ -3371,7 +3371,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnaly
                     // Skip stores that may be to next_game_step_tick
                     let value = ctrl.resolve(value);
                     if Operand::and_masked(value).0.if_custom().is_some() &&
-                        is_global(ctrl.resolve_mem(mem).address().0)
+                        ctrl.resolve_mem(mem).is_global()
                     {
                         ctrl.skip_operation();
                     }
@@ -3997,7 +3997,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSpMapEnd<'a, 
                     // Skip moves to globals, some versions write initial value to
                     // local_game_result here.
                     let dest = ctrl.resolve_mem(dest);
-                    if is_global(dest.address().0) {
+                    if dest.is_global() {
                         ctrl.skip_operation();
                     }
                 }
@@ -4078,9 +4078,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSpMapEnd<'a, 
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let result = arg1.if_arithmetic_eq()
-                            .filter(|x| x.1 == ctx.const_1() && is_global(x.0))
-                            .map(|x| x.0);
+                        let result = arg1.if_arithmetic_eq_const(1)
+                            .filter(|&x| is_global(x));
                         if let Some(result) = result {
                             self.result.single_player_map_end = Some(dest);
                             self.result.local_game_result = Some(result);
@@ -4186,7 +4185,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeSpMapEnd<'
                 } else if let Operation::Move(DestOperand::Memory(ref dest), val, None) = *op {
                     if dest.size == E::WORD_SIZE {
                         let dest = ctrl.resolve_mem(dest);
-                        if is_global(dest.address().0) {
+                        if dest.is_global() {
                             self.last_global_store = Some((dest, ctrl.resolve(val)));
                         }
                     }

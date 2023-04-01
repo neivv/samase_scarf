@@ -350,6 +350,20 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     }
 }
 
+pub trait MemAccessExt {
+    fn is_global(&self) -> bool;
+}
+
+impl<'e> MemAccessExt for scarf::MemAccess<'e> {
+    fn is_global(&self) -> bool {
+        if let Some(c) = self.if_constant_address() {
+            c > 0x1000
+        } else {
+            is_global_rec(self.address().0)
+        }
+    }
+}
+
 // This is slightly better for binary size than BumpVec::with_capcity_in,
 // as bumpalo is otherwise pretty bad with monomorphizing
 pub fn bumpvec_with_capacity<T>(cap: usize, bump: &Bump) -> BumpVec<'_, T> {
@@ -359,16 +373,33 @@ pub fn bumpvec_with_capacity<T>(cap: usize, bump: &Bump) -> BumpVec<'_, T> {
 }
 
 /// Return true if all parts of operand are constants/arith
+/// And op is not a single small constant
 pub fn is_global(op: Operand<'_>) -> bool {
-    if op.if_constant().is_some() {
-        true
-    } else if let OperandType::Arithmetic(arith) = op.ty() {
-        // Nicer for tail calls to check right first as it doesn't recurse in operand chains
-        is_global(arith.right) && is_global(arith.left)
-    } else if let OperandType::Memory(ref mem) = op.ty() {
-        is_global(mem.address().0)
+    if let Some(c) = op.if_constant() {
+        c > 0x1000
     } else {
-        false
+        is_global_rec(op)
+    }
+}
+
+fn is_global_rec(op: Operand<'_>) -> bool {
+    let mut op = op;
+    loop {
+        if let OperandType::Arithmetic(arith) = op.ty() {
+            // Nicer for tail calls to check right first as it doesn't recurse in operand chains
+            if !is_global_rec(arith.right) {
+                return false;
+            }
+            op = arith.left;
+            continue;
+        } else if let OperandType::Memory(ref mem) = op.ty() {
+            op = mem.address().0;
+            continue;
+        } else if op.if_constant().is_some() {
+            return true;
+        } else {
+            return false;
+        }
     }
 }
 

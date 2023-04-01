@@ -12,8 +12,8 @@ use crate::call_tracker::{CallTracker};
 use crate::switch::CompleteSwitch;
 use crate::struct_layouts;
 use crate::util::{
-    ControlExt, OptionExt, OperandExt, if_callable_const, read_u32_at, if_arithmetic_eq_neq,
-    is_global, bumpvec_with_capacity, single_result_assign,
+    ControlExt, MemAccessExt, OptionExt, OperandExt, if_callable_const, read_u32_at,
+    if_arithmetic_eq_neq, is_global, bumpvec_with_capacity, single_result_assign,
 };
 
 #[derive(Clone, Debug)]
@@ -856,7 +856,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                             if ctrl.resolve(value).if_constant() == Some(7) {
                                 let dest = ctrl.resolve_mem(mem);
-                                if is_global(dest.address().0) {
+                                if dest.is_global() {
                                     self.storm_command_user_candidate = Some(ctx.memory(&dest));
                                 }
                             }
@@ -1097,7 +1097,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 .if_mem32()
                         });
                     if let Some(result) = result {
-                        if is_global(result.address().0) {
+                        if result.is_global() {
                             // End frame is at offset +1 of replay header
                             let ctx = ctrl.ctx();
                             self.result.replay_header =
@@ -1347,7 +1347,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> AnalyzePlayerColors<'a, 'acx, 'e, E> {
                 let value = ctrl.resolve(value);
                 if value.if_mem8_offset(1).is_some() {
                     let dest = ctrl.resolve_mem(dest);
-                    if is_global(dest.address().0) {
+                    if dest.is_global() {
                         let ctx = ctrl.ctx();
                         self.result.use_rgb = Some(ctx.memory(&dest));
                         return true;

@@ -11,7 +11,8 @@ use crate::linked_list::DetectListAdd;
 use crate::switch::{self, CompleteSwitch};
 use crate::struct_layouts;
 use crate::util::{
-    bumpvec_with_capacity, ControlExt, OptionExt, OperandExt, is_global, seems_assertion_call,
+    bumpvec_with_capacity, ControlExt, MemAccessExt, OptionExt, OperandExt, is_global,
+    seems_assertion_call,
 };
 
 pub(crate) struct BulletCreation<'e, Va: VirtualAddress> {
@@ -536,7 +537,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
                         let value = ctrl.resolve(value);
                         if value.if_mem8_offset(flingy_flags_offset) == Some(ecx) {
                             let mem = ctrl.resolve_mem(mem);
-                            if is_global(mem.address().0) {
+                            if mem.is_global() {
                                 self.result.flingy_flags_tmp = Some(ctx.memory(&mem));
                                 self.state = StepMovingState::FlingyFuncs;
                             }
@@ -627,7 +628,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
                             if value.if_mem32_offset(speed_offset) == Some(ecx) {
                                 self.result.step_flingy_position = Some(self.current_func);
                                 let mem = ctrl.resolve_mem(&mem);
-                                if is_global(mem.address().0) {
+                                if mem.is_global() {
                                     self.result.flingy_speed_used_for_move =
                                         Some(ctx.memory(&mem));
                                 }
@@ -643,7 +644,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
                 if let Operation::Move(DestOperand::Memory(ref mem), _, None) = *op {
                     if mem.size == MemAccessSize::Mem8 {
                         let mem = ctrl.resolve_mem(mem);
-                        if is_global(mem.address().0) {
+                        if mem.is_global() {
                             let val = ctx.memory(&mem);
                             if self.result.flingy_show_start_walk_anim != Some(val) {
                                 self.start_end_candidate = Some(ctx.memory(&mem));
@@ -688,7 +689,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
                     } else if let Some(mem) = value.if_memory() {
                         if mem.address().0 == ecx {
                             let offset = mem.address().1;
-                            if is_global(dest.address().0) {
+                            if dest.is_global() {
                                 let dest_op = ctx.memory(&dest);
                                 if offset == flingy_flags_offset {
                                     self.result.flingy_flags_new = Some(dest_op);

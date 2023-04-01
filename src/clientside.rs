@@ -14,8 +14,8 @@ use crate::call_tracker::CallTracker;
 use crate::hash_map::HashMap;
 use crate::struct_layouts;
 use crate::util::{
-    ControlExt, OperandExt, OptionExt, single_result_assign, if_arithmetic_eq_neq, is_global,
-    bumpvec_with_capacity,
+    ControlExt, MemAccessExt, OperandExt, OptionExt, single_result_assign, if_arithmetic_eq_neq,
+    is_global, bumpvec_with_capacity,
 };
 use crate::vtables::Vtables;
 
@@ -896,7 +896,7 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for StartTargetingAnalyz
         } else {
             if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                 let mem = ctrl.resolve_mem(mem);
-                if is_global(mem.address().0) {
+                if mem.is_global() {
                     let ctx = ctrl.ctx();
                     let value = ctx.and_const(ctrl.resolve(value), 0xff);
                     let result = &mut self.result;
@@ -1588,7 +1588,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         let mem = ctrl.resolve_mem(mem);
                         let (mem_base, mem_offset) = mem.address();
                         if let Some(custom) = value.if_custom() {
-                            if is_global(mem_base) {
+                            if mem.is_global() {
                                 if custom == 0 {
                                     self.result.observer_ui = Some(ctx.memory(&mem));
                                     ctrl.end_analysis();
