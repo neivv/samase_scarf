@@ -98,6 +98,11 @@ pub(crate) struct GameScreenLClick<'e, Va: VirtualAddress> {
     pub is_selecting: Option<Operand<'e>>,
 }
 
+pub(crate) struct SelectMouseUp<Va: VirtualAddress> {
+    pub decide_cursor_type: Option<Va>,
+    pub set_current_cursor_type: Option<Va>,
+}
+
 // Candidates are either a global ref with Some(global), or a call with None
 fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
     analysis: &'acx AnalysisCtx<'e, E>,
@@ -2135,5 +2140,83 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> GameScreenLClickAnalyzer<'e, 'ac
         ctrl.analyze_with_current_state(self, dest);
         self.state = old_state;
         self.result.is_selecting.is_some()
+    }
+}
+
+pub(crate) fn analyze_select_mouse_up<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    reset_ui_event_handlers: E::VirtualAddress,
+    game_screen_lclick: E::VirtualAddress,
+) -> SelectMouseUp<E::VirtualAddress> {
+    let mut result = SelectMouseUp {
+        decide_cursor_type: None,
+        set_current_cursor_type: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut analyzer = SelectMouseUpAnalyzer {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        reset_ui_event_handlers,
+        state: SelectMouseUpState::ResetUiEventHandlers,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_lclick);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum SelectMouseUpState {
+    /// select_mouse_up should just do
+    /// ..
+    /// reset_ui_event_handlers();
+    /// set_current_cursor_type(decide_cursor_type(), 0u8);
+    /// just taking first call which takes another call as an argument
+    /// ..
+    ResetUiEventHandlers,
+    SetCurrentCursorType,
+}
+
+struct SelectMouseUpAnalyzer<'e, 'acx, 'a, E: ExecutionState<'e>> {
+    result: &'a mut SelectMouseUp<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    reset_ui_event_handlers: E::VirtualAddress,
+    state: SelectMouseUpState,
+    call_tracker: CallTracker<'acx, 'e, E>,
+}
+
+impl<'e, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    SelectMouseUpAnalyzer<'e, 'acx, 'a, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                match self.state {
+                    SelectMouseUpState::ResetUiEventHandlers => {
+                        if dest == self.reset_ui_event_handlers {
+                            self.state = SelectMouseUpState::SetCurrentCursorType;
+                            ctrl.clear_unchecked_branches();
+                        }
+                    }
+                    SelectMouseUpState::SetCurrentCursorType => {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        if let Some(c) = Operand::and_masked(arg1).0.if_custom() {
+                            if let Some(func) = self.call_tracker.custom_id_to_func(c) {
+                                self.result.decide_cursor_type = Some(func);
+                                self.result.set_current_cursor_type = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                        }
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                }
+            }
+        }
     }
 }
