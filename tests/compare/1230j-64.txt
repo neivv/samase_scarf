@@ -32,6 +32,7 @@ choose_snp: 14036fd10
 clamp_zoom: 140222a00
 clear_build_queue: 1401965a0
 clear_render_target: 14061d3f0
+clip_cursor: 14035f3a0
 config_vsync_value: 1403ec770
 create_bullet: 1401754b0
 create_fow_sprite: 14018e980
@@ -129,6 +130,7 @@ open_map_mpq: 140576400
 order_init_arbiter: 1401c93e0
 pick_auto_target: 1401cd5e0
 pick_random_target: 1401cdda0
+place_building: 1403962c0
 play_smk: 140397ae0
 play_sound: 1403c6680
 play_sound_at_unit: 1403212c0
@@ -154,6 +156,8 @@ run_dialog: 1405ea9c0
 run_menus: 140332ef0
 sc_main: 140346590
 select_map_entry: 140226950
+select_mouse_move: 1403e42b0
+select_mouse_up: 1403e41b0
 send_command: 140376a50
 serialize_sprites: 14018a540
 set_briefing_music: 14032dd00
@@ -197,6 +201,7 @@ step_order: 1401e0e30
 step_replay_commands: 140376310
 step_train: 1401925a0
 step_unit_movement: 1401c43d0
+stop_targeting: 1403dd3f0
 targeting_lclick: 1402246c0
 targeting_rclick: 1402ef370
 ttf_cache_character: 1405de820
@@ -298,6 +303,7 @@ game_lobby: None
 game_screen_height_bwpx: Mem32[140bdbb94]
 game_screen_lclick_callback: Mem64[140e84770]
 game_screen_rclick_callback: Mem64[140e84778]
+game_screen_rect_winpx: 140c9c370
 game_screen_width_bwpx: Mem32[140bdbb90]
 global_event_handlers: 140e83fe0
 graphic_layers: 140eed510
@@ -312,6 +318,7 @@ is_multiplayer: Mem8[140eacfbc]
 is_paused: Mem32[140c9d9c0]
 is_placing_building: Mem32[140eb1f6c]
 is_replay: Mem32[140eb2038]
+is_selecting: Mem8[140ecd110]
 is_targeting: Mem8[140ec0ed6]
 iscript_bin: Mem64[140c7faf0]
 last_active_bullet: Mem64[140c7d5b0]
@@ -353,6 +360,7 @@ net_user_latency: Mem32[140eaec5c]
 network_ready: Mem8[140eacfbd]
 next_game_step_tick: Mem32[140e847e0]
 observer_ui: Mem64[140c9d9a8]
+on_clip_cursor_end: Mem64[140e840a8]
 original_chk_player_types: 140eacf20
 palette_set: 140eee010
 pathing: Mem64[140eb3f70]
@@ -381,6 +389,8 @@ rng_seed: Mem32[140eafe50]
 scmain_state: Mem32[140e89e8c]
 screen_x: Mem32[140cf08ac]
 screen_y: Mem32[140cf08b0]
+select_start_x: Mem16[140ecd114]
+select_start_y: Mem16[140ecd116]
 selections: 140ebe360
 skins: 140c04324
 sprite_hlines: 140c94ba0

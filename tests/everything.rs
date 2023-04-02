@@ -1674,7 +1674,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 FlingyYNew | FlingyExactXNew | FlingyExactYNew | FlingyFlagsNew |
                 FlingyShowStartWalkAnim | FlingyShowEndWalkAnim | FlingySpeedUsedForMove |
                 MapWidthPixels | MapHeightPixels | DcreepNextUpdate | DcreepUnitNextUpdate |
-                LastDyingUnit | UnitCount | FirstFreeUnit | LastFreeUnit | ObserverUi =>
+                LastDyingUnit | UnitCount | FirstFreeUnit | LastFreeUnit | ObserverUi |
+                OnClipCursorEnd | SelectStartX | SelectStartY | IsSelecting =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1688,7 +1689,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 CmdBtnsDdsGrp | SyncData | PaletteSet | MainPalette | TfontGam |
                 UnitSkinMap | SpriteSkinMap | GrpWireDdsGrp | TranWireDdsGrp |
                 SpriteIncludeInVisionSync | DrawCommands | CreepFuncs | DcreepLookup |
-                DcreepListBegin | DcreepListSize | ReplayHeader =>
+                DcreepListBegin | DcreepListSize | ReplayHeader | GameScreenRectWinPx =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }

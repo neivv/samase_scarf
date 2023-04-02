@@ -456,9 +456,9 @@ pub trait ControlExt<'e, E: ExecutionState<'e>> {
     /// or self.current_instruction_end() if eq_zero is true.
     ///
     /// eq_zero is same bool as returned from if_arithmetic_eq_neq_zero.
-    fn continue_at_nonzero_address(&mut self, eq_zero: bool, jump_dest: Operand<'e>);
-    fn continue_at_zero_address(&mut self, eq_zero: bool, jump_dest: Operand<'e>) {
-        self.continue_at_nonzero_address(!eq_zero, jump_dest);
+    fn continue_at_neq_address(&mut self, eq_zero: bool, jump_dest: Operand<'e>);
+    fn continue_at_eq_address(&mut self, eq_zero: bool, jump_dest: Operand<'e>) {
+        self.continue_at_neq_address(!eq_zero, jump_dest);
     }
 }
 
@@ -651,7 +651,7 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
         self.address() <= addr && self.current_instruction_end() > addr
     }
 
-    fn continue_at_nonzero_address(&mut self, eq_zero: bool, jump_dest: Operand<'e>) {
+    fn continue_at_neq_address(&mut self, eq_zero: bool, jump_dest: Operand<'e>) {
         let dest = match eq_zero {
             true => self.current_instruction_end(),
             false => match self.resolve_va(jump_dest) {

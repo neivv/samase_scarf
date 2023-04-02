@@ -420,6 +420,11 @@ results! {
         // Returns ui_consoles, but may end up initializing the global
         // if it hasn't been called yet.
         GetUiConsoles => get_ui_consoles => cache_init_ingame_ui,
+        StopTargeting => stop_targeting => cache_game_screen_lclick,
+        PlaceBuilding => place_building => cache_game_screen_lclick,
+        SelectMouseUp => select_mouse_up => cache_game_screen_lclick,
+        SelectMouseMove => select_mouse_move => cache_game_screen_lclick,
+        ClipCursor => clip_cursor => cache_game_screen_lclick,
     }
 }
 
@@ -641,6 +646,11 @@ results! {
         GameLobby => game_lobby => cache_player_colors,
         // "In a game", but not necessarily in a started game.
         InLobbyOrGame => in_lobby_or_game => cache_player_colors,
+        GameScreenRectWinPx => game_screen_rect_winpx => cache_game_screen_lclick,
+        OnClipCursorEnd => on_clip_cursor_end => cache_game_screen_lclick,
+        SelectStartX => select_start_x => cache_game_screen_lclick,
+        SelectStartY => select_start_y => cache_game_screen_lclick,
+        IsSelecting => is_selecting => cache_game_screen_lclick,
     }
 }
 
@@ -1948,7 +1958,8 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn renderer_vtables(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Vec<E::VirtualAddress>> { if let Some(cached) = self.renderer_vtables.cached() {
+    fn renderer_vtables(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Vec<E::VirtualAddress>> {
+        if let Some(cached) = self.renderer_vtables.cached() {
             return cached;
         }
         let vtables = self.vtables(actx);
@@ -3253,6 +3264,20 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         )
     }
 
+    fn game_screen_lclick(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::GameScreenLClick,
+            |s| s.cache_ui_event_handlers(actx),
+        )
+    }
+
+    fn global_event_handlers(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(
+            OperandAnalysis::GlobalEventHandlers,
+            |s| s.cache_ui_event_handlers(actx),
+        )
+    }
+
     fn targeting_lclick(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(
             AddressAnalysis::TargetingLClick,
@@ -4075,6 +4100,30 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let r = commands::player_colors(actx, &switch);
                 Some(([], [r.use_rgb, r.rgb_colors, r.disable_choice, r.use_map_set_rgb,
                     r.game_lobby, r.in_lobby_or_game]))
+            })
+    }
+
+    fn cache_game_screen_lclick(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[StopTargeting, PlaceBuilding, SelectMouseUp, SelectMouseMove, ClipCursor],
+            &[GameScreenRectWinPx, OnClipCursorEnd, SelectStartX, SelectStartY, IsSelecting],
+            |s| {
+                let lclick = s.game_screen_lclick(actx)?;
+                let is_targeting = s.is_targeting(actx)?;
+                let is_placing_building = s.is_placing_building(actx)?;
+                let global_event_handlers = s.global_event_handlers(actx)?;
+                let r = clientside::analyze_game_screen_lclick(
+                    actx,
+                    is_targeting,
+                    is_placing_building,
+                    global_event_handlers,
+                    lclick,
+                );
+                Some(([r.stop_targeting, r.place_building, r.select_mouse_up, r.select_mouse_move,
+                    r.clip_cursor], [r.game_screen_rect_winpx, r.on_clip_cursor_end,
+                    r.select_start_x, r.select_start_y, r.is_selecting]))
             })
     }
 }

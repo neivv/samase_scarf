@@ -2,8 +2,10 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, BinarySection, DestOperand, MemAccessSize, Operand, Operation, Rva};
-use scarf::operand::{OperandCtx};
+use scarf::{
+    BinaryFile, BinarySection, DestOperand, MemAccess, MemAccessSize, Operand, OperandCtx,
+    Operation, Rva,
+};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, EntryOfResult, FunctionFinder, entry_of_until};
@@ -81,6 +83,19 @@ pub(crate) struct InitIngameUi<'e, Va: VirtualAddress> {
     pub get_ui_consoles: Option<Va>,
     pub ui_consoles: Option<Operand<'e>>,
     pub observer_ui: Option<Operand<'e>>,
+}
+
+pub(crate) struct GameScreenLClick<'e, Va: VirtualAddress> {
+    pub stop_targeting: Option<Va>,
+    pub place_building: Option<Va>,
+    pub select_mouse_up: Option<Va>,
+    pub select_mouse_move: Option<Va>,
+    pub clip_cursor: Option<Va>,
+    pub game_screen_rect_winpx: Option<Operand<'e>>,
+    pub on_clip_cursor_end: Option<Operand<'e>>,
+    pub select_start_x: Option<Operand<'e>>,
+    pub select_start_y: Option<Operand<'e>>,
+    pub is_selecting: Option<Operand<'e>>,
 }
 
 // Candidates are either a global ref with Some(global), or a call with None
@@ -1536,7 +1551,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         if op == self.is_replay {
                             self.was_replay_func = true;
                             ctrl.clear_unchecked_branches();
-                            ctrl.continue_at_nonzero_address(eq_zero, to);
+                            ctrl.continue_at_neq_address(eq_zero, to);
                         }
                     }
                 } else if let Operation::Return(..) = *op {
@@ -1765,5 +1780,360 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> InitIngameUiAnalyzer<'e, 'acx, '
         } else {
             false
         }
+    }
+}
+
+pub(crate) fn analyze_game_screen_lclick<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    is_targeting: Operand<'e>,
+    is_placing_building: Operand<'e>,
+    global_event_handlers: Operand<'e>,
+    game_screen_lclick: E::VirtualAddress,
+) -> GameScreenLClick<'e, E::VirtualAddress> {
+    let mut result = GameScreenLClick {
+        stop_targeting: None,
+        place_building: None,
+        select_mouse_up: None,
+        select_mouse_move: None,
+        clip_cursor: None,
+        game_screen_rect_winpx: None,
+        on_clip_cursor_end: None,
+        select_start_x: None,
+        select_start_y: None,
+        is_selecting: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut analyzer = GameScreenLClickAnalyzer {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        is_targeting,
+        is_placing_building,
+        global_event_handlers_first: ctx.mem_access(global_event_handlers, 0, E::WORD_SIZE),
+        state: GameScreenLClickState::IsTargetingJump,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+        stop_targeting_entry: E::VirtualAddress::from_u64(0),
+        stop_targeting_inline_depth: 0,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_lclick);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+#[allow(bad_style)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum GameScreenLClickState {
+    /// Check for is_targeting jump, follow true branch
+    IsTargetingJump,
+    /// Should be the first branch afterwards
+    StopTargeting,
+    /// stop_targeting should write `is_targeting = 0` at start
+    VerifyStopTargeting,
+    /// Same but for is_placing_building
+    IsPlacingBuildingJump,
+    /// place_building(0, 0, 1)
+    PlaceBuilding,
+    /// Next call, should have clip_cursor(game_screen_rect_winpx)
+    ClipCursor,
+    /// Writes to global variables:
+    /// clip_end_callback = func
+    ///     func should just write is_selecting = 0
+    /// global_event_handlers[5] = select_mouse_up
+    /// global_event_handlers[3] = select_mouse_move
+    /// select_start_x = arg1.x12
+    /// select_start_y = arg1.x14
+    GlobalWrites,
+    VerifyClipEndCallback,
+}
+
+struct GameScreenLClickAnalyzer<'e, 'acx, 'a, E: ExecutionState<'e>> {
+    result: &'a mut GameScreenLClick<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    is_targeting: Operand<'e>,
+    is_placing_building: Operand<'e>,
+    global_event_handlers_first: MemAccess<'e>,
+    state: GameScreenLClickState,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    /// stop_targeting may be just jump to another instruction, register
+    /// the jump target as real stop_targeting.
+    stop_targeting_entry: E::VirtualAddress,
+    stop_targeting_inline_depth: u8,
+}
+
+impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    GameScreenLClickAnalyzer<'e, 'acx, 'a, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            GameScreenLClickState::IsTargetingJump |
+                GameScreenLClickState::IsPlacingBuildingJump =>
+            {
+                match *op {
+                    Operation::Call(dest) => {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.call_tracker.add_call(ctrl, dest);
+                        }
+                    }
+                    Operation::Jump { condition, to } => {
+                        let condition = self.call_tracker.resolve_calls(ctrl.resolve(condition));
+                        let compare = if self.state == GameScreenLClickState::IsTargetingJump {
+                            self.is_targeting
+                        } else {
+                            self.is_placing_building
+                        };
+                        let ok = condition.if_arithmetic_eq_neq_zero(ctx)
+                            .filter(|x| x.0 == compare)
+                            .map(|x| x.1);
+                        if let Some(jump_if_zero) = ok {
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_neq_address(jump_if_zero, to);
+                            if self.state == GameScreenLClickState::IsTargetingJump {
+                                self.state = GameScreenLClickState::StopTargeting;
+                            } else {
+                                self.state = GameScreenLClickState::PlaceBuilding;
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            GameScreenLClickState::StopTargeting | GameScreenLClickState::PlaceBuilding => {
+                match *op {
+                    Operation::Call(dest) => {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let ok = if self.state == GameScreenLClickState::StopTargeting {
+                                self.verify_stop_targeting(ctrl, dest)
+                            } else {
+                                Some(dest).filter(|_| {
+                                    let zero = ctx.const_0();
+                                    let one = ctx.const_1();
+                                    [zero, zero, one]
+                                        .iter().enumerate()
+                                        .all(|(i, &expected)| {
+                                            let arg =
+                                                ctrl.resolve(self.arg_cache.on_call(i as u8));
+                                            ctx.and_const(arg, 0xff) == expected
+                                        })
+                                })
+                            };
+                            if let Some(dest) = ok {
+                                if self.state == GameScreenLClickState::StopTargeting {
+                                    self.result.stop_targeting = Some(dest);
+                                    self.state = GameScreenLClickState::IsPlacingBuildingJump;
+                                } else {
+                                    self.result.place_building = Some(dest);
+                                    self.state = GameScreenLClickState::ClipCursor;
+                                }
+                            }
+                            self.call_tracker.add_call(ctrl, dest);
+                        }
+                    }
+                    Operation::Jump { .. } => {
+                        // Go back
+                        self.state = if self.state == GameScreenLClickState::StopTargeting {
+                            GameScreenLClickState::IsTargetingJump
+                        } else {
+                            GameScreenLClickState::IsPlacingBuildingJump
+                        };
+                        self.operation(ctrl, op);
+                    }
+                    _ => (),
+                }
+            }
+            GameScreenLClickState::VerifyStopTargeting => {
+                match *op {
+                    Operation::Call(..) | Operation::Return(..) => {
+                        // Sometimes depending on inlining, this calls
+                        // stop_targeting_inner1(0), where arg1 selects
+                        // whether to return targeted_order_ground or _unit
+                        // But it is only caller and discards the value.
+                        // And then stop_targeting_inner1 can even call stop_targeting_inner2..
+                        if self.stop_targeting_inline_depth < 2 {
+                            if let Operation::Call(dest) = *op {
+                                if let Some(dest) = ctrl.resolve_va(dest) {
+                                    let this_func = self.stop_targeting_entry;
+                                    self.stop_targeting_inline_depth += 1;
+                                    let ok = self.verify_stop_targeting(ctrl, dest).is_some();
+                                    self.stop_targeting_inline_depth -= 1;
+                                    if ok {
+                                        self.stop_targeting_entry = this_func;
+                                        ctrl.end_analysis();
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                        self.stop_targeting_entry = E::VirtualAddress::from_u64(0);
+                        ctrl.end_analysis();
+                    }
+                    Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+                        let value = ctrl.resolve(value);
+                        if value == ctx.const_0() {
+                            let mem = ctrl.resolve_mem(mem);
+                            if Some(&mem) == self.is_targeting.if_memory() {
+                                // Ok; not zeroing stop_targeting_entry
+                                // signals to caller that this was success.
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                    Operation::Jump { condition, to } => {
+                        if ctrl.address() == self.stop_targeting_entry &&
+                            condition == ctx.const_1()
+                        {
+                            if let Some(to) = ctrl.resolve_va(to) {
+                                // Func just redirects to another, consider
+                                // the redirected-to function the real stop_targeting
+                                self.stop_targeting_entry = to;
+                                return;
+                            }
+                        }
+                        // Other kind of jump; fail analysis unless it is assertion
+                        // `is_targeting != 0` or `command_user == unique_player_id`
+                        let condition = ctrl.resolve(condition);
+                        let seems_assert = condition.if_arithmetic_eq_neq()
+                            .and_then(|(l, r, eq)| {
+                                if r == ctx.const_0() && l == self.is_targeting {
+                                    Some(!eq)
+                                } else if l.if_mem32().is_some() &&
+                                    r.if_mem32().is_some() &&
+                                    is_global(l) && is_global(r)
+                                {
+                                    Some(eq)
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(eq) = seems_assert {
+                            ctrl.continue_at_eq_address(eq, to);
+                        } else {
+                            self.stop_targeting_entry = E::VirtualAddress::from_u64(0);
+                            ctrl.end_analysis();
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            GameScreenLClickState::ClipCursor => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        if is_global(arg1) {
+                            self.result.game_screen_rect_winpx = Some(arg1);
+                            self.result.clip_cursor = Some(dest);
+                            self.state = GameScreenLClickState::GlobalWrites;
+                        }
+                    }
+                }
+            }
+            GameScreenLClickState::GlobalWrites => {
+                if let Operation::Move(DestOperand::Memory(ref dest), value, None) = *op {
+                    let mut result_changed = false;
+                    let dest = ctrl.resolve_mem(dest);
+                    let value = ctrl.resolve(value);
+                    if dest.size == E::WORD_SIZE {
+                        if let Some(value) = value.if_constant() {
+                            let value = E::VirtualAddress::from_u64(value);
+                            if dest == self.global_event_handlers_first.with_offset(
+                                E::VirtualAddress::SIZE as u64 * 3
+                            ) {
+                                self.result.select_mouse_move = Some(value);
+                                result_changed = true;
+                            } else if dest == self.global_event_handlers_first.with_offset(
+                                E::VirtualAddress::SIZE as u64 * 5
+                            ) {
+                                self.result.select_mouse_up = Some(value);
+                                result_changed = true;
+                            } else if self.result.is_selecting.is_none() {
+                                if self.verify_clip_end_callback(ctrl, value) {
+                                    self.result.on_clip_cursor_end = Some(ctx.memory(&dest));
+                                    result_changed = true;
+                                }
+                            }
+                        }
+                    }
+                    if !result_changed {
+                        if let Some(mem) = value.if_mem16() {
+                            let (base, offset) = mem.address();
+                            if base == self.arg_cache.on_entry(0) && dest.is_global() {
+                                let xy_offset =
+                                    struct_layouts::event_mouse_xy::<E::VirtualAddress>();
+                                if offset == xy_offset {
+                                    self.result.select_start_x = Some(ctx.memory(&dest));
+                                    result_changed = true;
+                                } else if offset == xy_offset + 2 {
+                                    self.result.select_start_y = Some(ctx.memory(&dest));
+                                    result_changed = true;
+                                }
+                            }
+                        }
+                    }
+                    if result_changed {
+                        let done = self.result.select_mouse_up.is_some() &&
+                            self.result.select_mouse_move.is_some() &&
+                            self.result.select_start_x.is_some() &&
+                            self.result.select_start_y.is_some() &&
+                            self.result.is_selecting.is_some();
+                        if done {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            GameScreenLClickState::VerifyClipEndCallback => {
+                match *op {
+                    Operation::Call(..) | Operation::Jump { .. } => {
+                        self.result.is_selecting = None;
+                        ctrl.end_analysis();
+                    }
+                    Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+                        let value = ctrl.resolve(value);
+                        if value == ctx.const_0() {
+                            if self.result.is_selecting.is_some() {
+                                self.result.is_selecting = None;
+                                ctrl.end_analysis();
+                            } else {
+                                self.result.is_selecting =
+                                    Some(ctx.memory(&ctrl.resolve_mem(mem)));
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
+}
+
+impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> GameScreenLClickAnalyzer<'e, 'acx, 'a, E> {
+    fn verify_stop_targeting(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        dest: E::VirtualAddress,
+    ) -> Option<E::VirtualAddress> {
+        let old_state = self.state;
+        self.state = GameScreenLClickState::VerifyStopTargeting;
+        self.stop_targeting_entry = dest;
+        ctrl.analyze_with_current_state(self, dest);
+        self.state = old_state;
+        Some(self.stop_targeting_entry).filter(|x| x.as_u64() != 0)
+    }
+
+    fn verify_clip_end_callback(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        dest: E::VirtualAddress,
+    ) -> bool {
+        let old_state = self.state;
+        self.state = GameScreenLClickState::VerifyClipEndCallback;
+        ctrl.analyze_with_current_state(self, dest);
+        self.state = old_state;
+        self.result.is_selecting.is_some()
     }
 }

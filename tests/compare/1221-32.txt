@@ -32,6 +32,7 @@ choose_snp: 006fef60
 clamp_zoom: 005e3360
 clear_build_queue: 00562950
 clear_render_target: 00984bf0
+clip_cursor: 006e9960
 config_vsync_value: 007843c0
 create_bullet: 00541b70
 create_fow_sprite: 0055bd30
@@ -129,6 +130,7 @@ open_map_mpq: 008f26c0
 order_init_arbiter: 00596970
 pick_auto_target: 0059a1e0
 pick_random_target: 0059a070
+place_building: 00726d00
 play_smk: 00728360
 play_sound: 0075bbd0
 play_sound_at_unit: 006aed50
@@ -154,6 +156,8 @@ run_dialog: 009573c0
 run_menus: 006c15c0
 sc_main: 006d4a20
 select_map_entry: 005e7350
+select_mouse_move: 0077c880
+select_mouse_up: 0077c640
 send_command: 0070a1a0
 serialize_sprites: 00553b10
 set_briefing_music: 006bbf20
@@ -197,6 +201,7 @@ step_order: 005adac0
 step_replay_commands: 00709b90
 step_train: 0055f2e0
 step_unit_movement: 00590c10
+stop_targeting: 00775740
 targeting_lclick: 005e5210
 targeting_rclick: 006942e0
 ttf_cache_character: 0094b7c0
@@ -298,6 +303,7 @@ game_lobby: None
 game_screen_height_bwpx: Mem32[e4ce4c]
 game_screen_lclick_callback: Mem32[107c194]
 game_screen_rclick_callback: Mem32[107c198]
+game_screen_rect_winpx: eb0e44
 game_screen_width_bwpx: Mem32[e4ce48]
 global_event_handlers: 107b9e8
 graphic_layers: 10d5368
@@ -312,6 +318,7 @@ is_multiplayer: Mem8[10a5138]
 is_paused: Mem32[eb1f8c]
 is_placing_building: Mem32[10a9fd4]
 is_replay: Mem32[10aa0b0]
+is_selecting: Mem8[10bdba0]
 is_targeting: Mem8[10b79c5]
 iscript_bin: Mem32[ea2f5c]
 last_active_bullet: Mem32[ea1a60]
@@ -353,6 +360,7 @@ net_user_latency: Mem32[10a6cfc]
 network_ready: Mem8[10a5139]
 next_game_step_tick: Mem32[107c208]
 observer_ui: Mem32[eb1f58]
+on_clip_cursor_end: Mem32[107b9e0]
 original_chk_player_types: 10a5094
 palette_set: 10d5df0
 pathing: Mem32[10abf74]
@@ -381,6 +389,8 @@ rng_seed: Mem32[10a7ee0]
 scmain_state: Mem32[10820e4]
 screen_x: Mem32[eea508]
 screen_y: Mem32[eea50c]
+select_start_x: Mem16[10bdba4]
+select_start_y: Mem16[10bdba6]
 selections: 10b55f8
 skins: e55158
 sprite_hlines: eafc80
