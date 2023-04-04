@@ -101,6 +101,7 @@ pub(crate) struct GameScreenLClick<'e, Va: VirtualAddress> {
 pub(crate) struct SelectMouseUp<Va: VirtualAddress> {
     pub decide_cursor_type: Option<Va>,
     pub set_current_cursor_type: Option<Va>,
+    pub select_units: Option<Va>,
 }
 
 // Candidates are either a global ref with Some(global), or a call with None
@@ -2151,10 +2152,12 @@ pub(crate) fn analyze_select_mouse_up<'e, E: ExecutionState<'e>>(
     let mut result = SelectMouseUp {
         decide_cursor_type: None,
         set_current_cursor_type: None,
+        select_units: None,
     };
 
     let binary = actx.binary;
     let ctx = actx.ctx;
+    let bump = &actx.bump;
 
     let mut analyzer = SelectMouseUpAnalyzer {
         result: &mut result,
@@ -2162,6 +2165,8 @@ pub(crate) fn analyze_select_mouse_up<'e, E: ExecutionState<'e>>(
         reset_ui_event_handlers,
         state: SelectMouseUpState::ResetUiEventHandlers,
         call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+        inline_depth: 0,
+        eq_one_comparisons: bumpvec_with_capacity(0x20, bump),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_lclick);
     analysis.analyze(&mut analyzer);
@@ -2179,6 +2184,10 @@ enum SelectMouseUpState {
     /// ..
     ResetUiEventHandlers,
     SetCurrentCursorType,
+    /// Find func(x, _, 1, 1), if it calls another func(x, _, 1, 1)
+    /// then use that.
+    /// x should be a value that was compared against 1 before
+    SelectUnits,
 }
 
 struct SelectMouseUpAnalyzer<'e, 'acx, 'a, E: ExecutionState<'e>> {
@@ -2187,6 +2196,8 @@ struct SelectMouseUpAnalyzer<'e, 'acx, 'a, E: ExecutionState<'e>> {
     reset_ui_event_handlers: E::VirtualAddress,
     state: SelectMouseUpState,
     call_tracker: CallTracker<'acx, 'e, E>,
+    inline_depth: u8,
+    eq_one_comparisons: BumpVec<'acx, Operand<'e>>,
 }
 
 impl<'e, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
@@ -2195,25 +2206,83 @@ impl<'e, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        if let Operation::Call(dest) = *op {
-            if let Some(dest) = ctrl.resolve_va(dest) {
-                match self.state {
-                    SelectMouseUpState::ResetUiEventHandlers => {
-                        if dest == self.reset_ui_event_handlers {
-                            self.state = SelectMouseUpState::SetCurrentCursorType;
-                            ctrl.clear_unchecked_branches();
+        match self.state {
+            SelectMouseUpState::ResetUiEventHandlers |
+                SelectMouseUpState::SetCurrentCursorType =>
+            {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        match self.state {
+                            SelectMouseUpState::ResetUiEventHandlers => {
+                                if dest == self.reset_ui_event_handlers {
+                                    self.state = SelectMouseUpState::SetCurrentCursorType;
+                                    ctrl.clear_unchecked_branches();
+                                }
+                            }
+                            _ => {
+                                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                                if let Some(c) = Operand::and_masked(arg1).0.if_custom() {
+                                    if let Some(func) = self.call_tracker.custom_id_to_func(c) {
+                                        self.result.decide_cursor_type = Some(func);
+                                        self.result.set_current_cursor_type = Some(dest);
+                                        self.state = SelectMouseUpState::SelectUnits;
+                                    }
+                                }
+                                self.call_tracker.add_call(ctrl, dest);
+                            }
                         }
                     }
-                    SelectMouseUpState::SetCurrentCursorType => {
+                }
+            }
+            SelectMouseUpState::SelectUnits => {
+                let ctx = ctrl.ctx();
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        if let Some(c) = Operand::and_masked(arg1).0.if_custom() {
-                            if let Some(func) = self.call_tracker.custom_id_to_func(c) {
-                                self.result.decide_cursor_type = Some(func);
-                                self.result.set_current_cursor_type = Some(dest);
+                        let arg3 =
+                            ctx.and_const(ctrl.resolve(self.arg_cache.on_call(2)), 0xff);
+                        let arg4 =
+                            ctx.and_const(ctrl.resolve(self.arg_cache.on_call(3)), 0xff);
+                        let ok = arg3 == ctx.const_1() &&
+                            arg4 == ctx.const_1() &&
+                            self.eq_one_comparisons.contains(&Operand::and_masked(arg1).0);
+                        if ok {
+                            if self.inline_depth < 3 {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                            }
+                            if self.result.select_units.is_none() {
+                                self.result.select_units = Some(dest);
                                 ctrl.end_analysis();
+                                return;
+                            }
+                        } else {
+                            // Allow inlining once to multi_select(global_arr)
+                            if self.inline_depth == 0 {
+                                if is_global(arg1) {
+                                    self.inline_depth += 1;
+                                    ctrl.analyze_with_current_state(self, dest);
+                                    self.inline_depth -= 1;
+                                    if self.result.select_units.is_some() {
+                                        ctrl.end_analysis();
+                                        return;
+                                    }
+                                }
                             }
                         }
                         self.call_tracker.add_call(ctrl, dest);
+                    }
+                } else if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let eq_one = condition.if_arithmetic_eq_neq()
+                        .filter(|x| x.1 == ctx.const_1())
+                        .map(|x| x.0);
+                    if let Some(eq_one) = eq_one {
+                        let no_mask = Operand::and_masked(eq_one).0;
+                        if no_mask.if_custom().is_some() {
+                            self.eq_one_comparisons.push(no_mask);
+                        }
                     }
                 }
             }

@@ -427,6 +427,8 @@ results! {
         ClipCursor => clip_cursor => cache_game_screen_lclick,
         DecideCursorType => decide_cursor_type => cache_select_mouse_up,
         SetCurrentCursorType => set_current_cursor_type => cache_select_mouse_up,
+        // select_units(amount, ptr_arr, bool, bool)
+        SelectUnits => select_units => cache_select_mouse_up,
     }
 }
 
@@ -4140,7 +4142,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     fn cache_select_mouse_up(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(
-            &[DecideCursorType, SetCurrentCursorType], &[],
+            &[DecideCursorType, SetCurrentCursorType, SelectUnits], &[],
             |s| {
                 let mouse_up = s.select_mouse_up(actx)?;
                 let reset_ui_event_handlers = s.reset_ui_event_handlers(actx)?;
@@ -4149,7 +4151,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     reset_ui_event_handlers,
                     mouse_up,
                 );
-                Some(([r.decide_cursor_type, r.set_current_cursor_type], []))
+                Some(([r.decide_cursor_type, r.set_current_cursor_type, r.select_units], []))
             })
     }
 }
