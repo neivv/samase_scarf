@@ -76,7 +76,7 @@ pub use crate::analysis::{
 
 pub use crate::ai::AiScriptHook;
 pub use crate::dat::{
-    DatTablePtr, DatPatch, DatPatches, DatArrayPatch, DatEntryCountPatch, DatReplaceFunc
+    DatTablePtr, DatPatch, DatPatches, DatArrayPatch, DatEntryCountPatch, DatReplaceFunc,
 };
 pub use crate::eud::{Eud, EudTable};
 pub use crate::firegraft::RequirementTables;

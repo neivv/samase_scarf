@@ -122,6 +122,13 @@ pub struct DatPatches<'e, Va: VirtualAddress> {
     pub patches: Vec<DatPatch<'e, Va>>,
     /// Bytes refered by hook/replace patches
     pub code_bytes: Vec<u8>,
+    /// Offsets to `code_bytes` code which contain dat array constants.
+    /// (offset, dat, field)
+    /// On 64bit the constant is u32 are relative to exe base.
+    /// (No instruction-changing patches will need to be applied to RIP-relative instructions,
+    /// as they can't have a register index, so RIP-relative constants aren't relevant here)
+    ///
+    /// Guaranteed to be sorted by `offset`
     pub arrays_in_code_bytes: Vec<(usize, DatType, u8)>,
     pub set_status_screen_tooltip: Option<Va>,
     pub warnings: DatWarnings,
@@ -490,6 +497,12 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     sprites::patch_hp_bar_init(dat_ctx)?;
     dat_ctx.finish_all_patches();
     dat_ctx.result.warnings = get_warnings_tls();
+    if crate::test_assertions() {
+        // is_sorted_by_key(|x| x.0)
+        for pair in dat_ctx.result.arrays_in_code_bytes.windows(2) {
+            assert!(pair[0].0 < pair[1].0);
+        }
+    }
     Some(mem::replace(&mut dat_ctx.result, DatPatches::empty()))
 }
 
@@ -568,7 +581,17 @@ enum WidenInstruction {
     /// of extra offsets in the instruction.
     StackAccess(i32),
     /// Memory access is assumed to be index to dat arrays, replace u8 index with u32 index.
-    ArrayIndex,
+    /// u64 is address of the array.
+    ArrayIndex(u64, DatType, u8, Option<BaseIndexRegs>),
+}
+
+/// For widening insturctions on 64bit, where there can be
+/// an instruction such as movzx eax, [rax + r12 + dat_array] with rax being byte
+/// index while r12 is constant binary base.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+struct BaseIndexRegs {
+    binary_base: u8,
+    index: u8,
 }
 
 pub(crate) struct RequiredStableAddressesMap<'acx, Va: VirtualAddress> {
@@ -1779,32 +1802,18 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 _ => false,
             };
             if array_itself_needs_widen {
-                let code_bytes_before = self.dat_ctx.result.code_bytes.len();
                 // This instruction can be array indexed read (the usual case; Default),
                 // but also case where the indexed variable was spilled to stack and
                 // read back (StackAccess)
-                let widen_mode = match
-                    Self::select_widen_mode(ctrl, dest_unresolved, value_unresolved)
-                {
-                    WidenInstruction::Default => WidenInstruction::ArrayIndex,
-                    x => x,
-                };
+                let widen_mode = Self::select_widen_mode_array_index(
+                    ctrl,
+                    dest_unresolved,
+                    value_unresolved,
+                    addr,
+                    dat,
+                    field_id,
+                );
                 self.widen_instruction(ctrl.address(), widen_mode);
-                // If this instruction had the array address immediate, mark is at something
-                // that needs to be fixed in result.code_bytes
-                let result = &mut self.dat_ctx.result;
-                let mut i = code_bytes_before + 2;
-                loop {
-                    i += 1;
-                    if let Some(bytes) = result.code_bytes.get_mut(i..(i + 4)) {
-                        if LittleEndian::read_u32(bytes) == addr.as_u64() as u32 {
-                            result.arrays_in_code_bytes.push((i, dat, field_id));
-                            LittleEndian::write_u32(bytes, u32::max_value());
-                        }
-                    } else {
-                        break;
-                    }
-                }
             }
             if dat == DatType::Orders {
                 // Probs never reason to increase order limit
@@ -1823,16 +1832,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         None
     }
 
-    /// Both write and read value have to be unresolved.
-    /// If these refer to stack memory, return WidenInstruction::StackAccess
-    ///
-    /// Similar to CfgAnalyzer::set_assigning_instruction, other than only needing
-    /// one layer of resolving.
-    fn select_widen_mode(
+    /// Common implementation of select_widen_mode / select_widen_mode_array_index
+    fn select_widen_mode_inner(
         ctrl: &mut Control<'e, '_, '_, Self>,
         write: Option<&DestOperand<'e>>,
         read: Operand<'e>,
-    ) -> WidenInstruction {
+    ) -> (WidenInstruction, Option<BaseIndexRegs>) {
+        let mut base_idx = None;
         for i in 0..2 {
             // Iteration 0: Value if memory, 1: Dest if memory
             // Assuming that if both are memory value takes priority.
@@ -1852,6 +1858,26 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                     _ => continue,
                 }
             };
+            (|| {
+                let (l, r) = unres.address().0.if_arithmetic_add()?;
+                let l = l.if_register()?;
+                let r = r.if_register()?;
+                let l_val = ctrl.resolve_register(l);
+                let r_val = ctrl.resolve_register(r);
+                let base = ctrl.binary().base();
+                if l_val.if_constant() == Some(base.as_u64()) {
+                    base_idx = Some(BaseIndexRegs {
+                        binary_base: l,
+                        index: r,
+                    });
+                } else if r_val.if_constant() == Some(base.as_u64()) {
+                    base_idx = Some(BaseIndexRegs {
+                        binary_base: r,
+                        index: l,
+                    });
+                }
+                Some(())
+            })();
             let resolved = ctrl.resolve_mem(unres);
             let ctx = ctrl.ctx();
             let esp = ctx.register(4);
@@ -1861,11 +1887,42 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             if base == esp {
                 let offset = offset.wrapping_sub(unres.address().1);
                 if let Ok(offset) = i32::try_from(offset as i64) {
-                    return WidenInstruction::StackAccess(offset);
+                    return (WidenInstruction::StackAccess(offset), None);
                 }
             }
         }
-        WidenInstruction::Default
+        (WidenInstruction::Default, base_idx)
+    }
+
+    /// Both write and read value have to be unresolved.
+    /// If these refer to stack memory, return WidenInstruction::StackAccess
+    ///
+    /// Similar to CfgAnalyzer::set_assigning_instruction, other than only needing
+    /// one layer of resolving.
+    fn select_widen_mode(
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        write: Option<&DestOperand<'e>>,
+        read: Operand<'e>,
+    ) -> WidenInstruction {
+        Self::select_widen_mode_inner(ctrl, write, read).0
+    }
+
+    /// Like select_widen_mode, but instead of Default / StackAaccess
+    /// returns ArrayIndex / StackAccess.
+    fn select_widen_mode_array_index(
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        write: Option<&DestOperand<'e>>,
+        read: Operand<'e>,
+        array_addr: E::VirtualAddress,
+        dat: DatType,
+        field_id: u8,
+    ) -> WidenInstruction {
+        match Self::select_widen_mode_inner(ctrl, write, read) {
+            (WidenInstruction::Default, base_idx) => {
+                WidenInstruction::ArrayIndex(array_addr.as_u64(), dat, field_id, base_idx)
+            }
+            (mode, _) => mode,
+        }
     }
 
     /// If this is jump on `rdtsc mod C`, assume it to be unconditional, patch it to
@@ -2807,7 +2864,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         let idx_3 = start.wrapping_add(3);
         let base = patch[idx_1] & 0x7;
         let variant = (patch[idx_1] & 0xc0) >> 6;
-        if mode != WidenInstruction::ArrayIndex || variant == 3 {
+        if matches!(mode, WidenInstruction::ArrayIndex(..)) == false || variant == 3 {
             let mut patch = patch;
             let mut patch_len = patch_len;
             let mut buffer = [0u8; 16];
@@ -2875,25 +2932,98 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             } else {
                 self.add_hook(address, ins_len, &patch[..(patch_len as usize)]);
             }
-        } else {
-            if matches!(patch[idx_1] & 0xc7, 0x80 | 0x81 | 0x82 | 0x83 | 0x85 | 0x86 | 0x87) {
-                // Widen [reg + base] to [reg * 4 + base]
-                let index_reg = patch[idx_1] & 0x7;
-                let other = patch[idx_1] & 0x38;
-                let mut buf = [0; 16];
-                for i in 0..(idx_1) {
-                    buf[i as usize] = patch[i as usize];
+            return;
+        } else if let WidenInstruction::ArrayIndex(array_addr, dat, field_id, base_idx) = mode {
+            let modrm = patch[idx_1];
+            let sib = patch[idx_2];
+            let index_reg = modrm & 0x7;
+            let other = modrm & 0x38;
+            if E::VirtualAddress::SIZE == 4 {
+                if matches!(modrm & 0xc7, 0x80 | 0x81 | 0x82 | 0x83 | 0x85 | 0x86 | 0x87) {
+                    // Widen [reg + base] to [reg * 4 + base]
+                    let mut buf = [0; 16];
+                    for i in 0..(idx_1) {
+                        buf[i as usize] = patch[i as usize];
+                    }
+                    buf[idx_1] = 0x4 | other;
+                    buf[idx_2] = 0x85 | (index_reg << 3);
+                    for i in idx_3..(patch_len as usize + 1) {
+                        buf[i] = patch[i - 1];
+                    }
+                    // This instruction should have the array address immediate,
+                    // mark is at something that needs to be fixed in result.code_bytes
+                    if let Some(bytes) = buf.get_mut(idx_3..(idx_3 + 4)) {
+                        let value = LittleEndian::read_u32(bytes);
+                        if value == array_addr as u32 {
+                            let result = &mut self.dat_ctx.result;
+                            let offset = result.code_bytes.len() + idx_3;
+                            result.arrays_in_code_bytes.push((offset, dat, field_id));
+                            LittleEndian::write_u32(bytes, u32::MAX);
+                        } else {
+                            dat_warn!(self, "Expected to find array immediate @ {address:?}");
+                        }
+                    }
+                    self.add_hook(address, ins_len, &buf[..(patch_len as usize + 1)]);
+                    return;
                 }
-                buf[idx_1] = 0x4 | other;
-                buf[idx_2] = 0x85 | (index_reg << 3);
-                for i in idx_3..(patch_len as usize + 1) {
-                    buf[i] = patch[i - 1];
-                }
-                self.add_hook(address, ins_len, &buf[..(patch_len as usize + 1)]);
             } else {
-                dat_warn!(self, "Don't know how to widen array index @ {address:?}");
+                // 64bit:
+                // SIB with 32bit immediate and base + index * 1
+                if modrm & 0xc7 == 0x84 && sib & 0xc0 == 0x00 {
+                    if let Some(base_idx) = base_idx {
+                        // Get REX byte, assume either at [start - 1] or [start - 2]
+                        // if [start - 1] is 0x0f (0x0f not currently used though)
+                        let maybe_rex_idx = match patch.get(start.wrapping_sub(1)) {
+                            Some(&0x0f) => start.wrapping_sub(2),
+                            _ => start.wrapping_sub(1),
+                        };
+                        let rex = match patch.get(maybe_rex_idx) {
+                            Some(&x) if x & 0xf0 == 0x40 => x & 0xf,
+                            _ => 0,
+                        };
+                        let index = ((sib >> 3) & 7) | ((rex & 2) << 2);
+                        let base = (sib & 7) | ((rex & 1) << 3);
+                        if index == base_idx.index && base == base_idx.binary_base {
+                            // Can just change index scale to 4
+                            patch[idx_2] |= 0x80;
+                        } else if index == base_idx.binary_base && base == base_idx.index {
+                            // Have to switch index and base around
+                            patch[idx_2] = ((sib & 7) << 3) |
+                                ((sib >> 3) & 7) |
+                                0x80;
+                            if rex != 0 {
+                                patch[maybe_rex_idx] = (patch[maybe_rex_idx] & 0xfc) |
+                                    ((rex & 1) << 1) |
+                                    ((rex & 2) >> 1);
+                            }
+                        } else {
+                            dat_warn!(self, "Expected base/idx @ {address:?} were wrong");
+                            return;
+                        }
+                        // This instruction should have the array address immediate,
+                        // mark is at something that needs to be fixed in result.code_bytes
+                        if let Some(bytes) = patch.get_mut(idx_3..(idx_3 + 4)) {
+                            let value = self.binary.base() + LittleEndian::read_u32(bytes);
+                            if value.as_u64() == array_addr {
+                                let result = &mut self.dat_ctx.result;
+                                let offset = result.code_bytes.len() + idx_3;
+                                result.arrays_in_code_bytes.push((offset, dat, field_id));
+                                LittleEndian::write_u32(bytes, u32::MAX);
+                            } else {
+                                dat_warn!(self, "Expected to find array immediate @ {address:?}");
+                            }
+                        }
+                        if ins_len == patch_len {
+                            self.add_patch(address, &patch[..], ins_len);
+                        } else {
+                            self.add_hook(address, ins_len, &patch[..(patch_len as usize)]);
+                        }
+                        return;
+                    }
+                }
             }
         }
+        dat_warn!(self, "Don't know how to widen array index @ {address:?}");
     }
 
     /// NOTE: Address should be start of a instruction, and the patch should be long
