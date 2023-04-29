@@ -1504,23 +1504,8 @@ order_bb: Some(VirtualAddress(1401aea30))
 190913d8:4 = 140efd8bc (00000000)
 
 -- Dat patches --
-WARN Don't know how to widen array index @ VirtualAddress(140186bb0)
 WARN Unknown Flingy dat offset @ VirtualAddress(140186bb4): Mem8[Undefined]
-WARN Don't know how to widen array index @ VirtualAddress(140198e79)
-WARN Don't know how to widen array index @ VirtualAddress(14019f92f)
-WARN Don't know how to widen array index @ VirtualAddress(14019f95c)
-WARN Don't know how to widen array index @ VirtualAddress(14019fa27)
-WARN Don't know how to widen array index @ VirtualAddress(14019fa54)
-WARN Don't know how to widen array index @ VirtualAddress(14019fa98)
-WARN Don't know how to widen array index @ VirtualAddress(1401b131b)
-WARN Don't know how to widen array index @ VirtualAddress(1401b159e)
-WARN Don't know how to widen array index @ VirtualAddress(1401c50fe)
-WARN Don't know how to widen array index @ VirtualAddress(1401d85a0)
-WARN Don't know how to widen array index @ VirtualAddress(1401d85fb)
 WARN Unimplemented rm patch at VirtualAddress(140237aba), base 4 fffffc08
-WARN Don't know how to widen array index @ VirtualAddress(140262c74)
-WARN Don't know how to widen array index @ VirtualAddress(1403cb590)
-WARN Don't know how to widen array index @ VirtualAddress(1403e3c34)
 WARN Unable to remap stack pointer offset @ VirtualAddress(140407060)
 WARN Unable to remap stack pointer offset @ VirtualAddress(14040707b)
 WARN Unable to remap stack pointer offset @ VirtualAddress(1404070d5)
@@ -1720,6 +1705,7 @@ PortData array patches:
 140181399 = [0f, 84, ab, f4, ff, ff]
 1401813c6 = [90, 8b, d0]
 140181418 = [90, 8b, c0]
+140186bb0 = [90, 41, 8b, 09]
 14018db96 = [90, e9, f9, 1f, 00, 00]
 14018fd1e = [90, 41, 8b, 8c, 84, ff, ff, ff, ff]
 140190948 = [90, 8b, c0]
@@ -1756,7 +1742,10 @@ PortData array patches:
 14019f268 = [90, 90, 8b, c7]
 14019f2f4 = [90, 44, 8b, 84, 81, ff, ff, ff, ff]
 14019f32e = [90, 44, 8b, 84, 81, ff, ff, ff, ff]
+14019f95c = [90, 8b, 04, 87]
 14019f982 = [90, 8b, f2]
+14019fa54 = [90, 8b, 04, 87]
+14019fa98 = [90, 8b, 04, 81]
 14019fb5d = [90, 8b, b4, 83, ff, ff, ff, ff]
 14019fb6d = [90, 90, 8b, d6]
 14019fe10 = [90, 44, 8b, f2]
@@ -1815,7 +1804,9 @@ PortData array patches:
 1401b086f = [74, 10]
 1401b0e5f = [75, 03]
 1401b108f = [74, 13]
+1401b131b = [90, 8b, 04, 81]
 1401b1594 = [90, 8b, c2]
+1401b159e = [90, 8b, 14, 82]
 1401b3173 = [90, e9, ba, 05, 00, 00]
 1401b37ba = [90, e9, 4c, 1b, 00, 00]
 1401bfa28 = [90, 8b, d8]
@@ -1831,6 +1822,7 @@ PortData array patches:
 1401c4f02 = [90, 41, 8b, d4]
 1401c4f52 = [90, 41, 8b, cc]
 1401c4fd5 = [90, 41, 8b, d4]
+1401c50fe = [90, 8b, 14, 81]
 1401c6395 = [90, 41, 8b, ac, b4, ff, ff, ff, ff]
 1401c64af = [90, 90, 8b, d5]
 1401c64bd = [90, 41, 8b, 84, b4, ff, ff, ff, ff]
@@ -1844,6 +1836,8 @@ PortData array patches:
 1401d1845 = [90, 8b, c0]
 1401d184f = [90, 8b, d0]
 1401d1860 = [90, 8b, 94, 86, ff, ff, ff, ff]
+1401d85a0 = [90, 8b, 14, 81]
+1401d85fb = [90, 8b, 14, 81]
 1401d8c86 = [90, 8b, 84, 83, ff, ff, ff, ff]
 1401dac0a = [90, 8b, da]
 1401dac13 = [74, 73]
@@ -1896,6 +1890,7 @@ PortData array patches:
 140261707 = [90, 41, 8b, 94, 84, ff, ff, ff, ff]
 140261773 = [90, 41, 8b, 94, 84, ff, ff, ff, ff]
 1402617c8 = [0f, 85, f6, fe, ff, ff]
+140262c74 = [90, 8b, 04, 81]
 140265006 = [0f, 85, 5d, 01, 00, 00]
 140267b50 = [90, 8b, c8]
 140267f4f = [74, 20]
@@ -1930,6 +1925,7 @@ PortData array patches:
 14039b7d2 = [90, 8b, c0]
 14039fd04 = [90, 8b, 84, 9e, ff, ff, ff, ff]
 1403a0c5f = [90, 43, 8b, 84, a7, ff, ff, ff, ff]
+1403cb590 = [90, 8b, 01]
 1403cb5a0 = [90, 8b, c8]
 1403d66b0 = [90, 8b, c8]
 1403d6740 = [90, 8b, c8]
@@ -1959,6 +1955,7 @@ PortData array patches:
 140198c8d:8 = [81, bc, 87, ff, ff, ff, ff, 82, 00, 00, 00]
 140198cdf:2 = [3d, 82, 00, 00, 00]
 140198cee:8 = [81, bc, 87, ff, ff, ff, ff, 82, 00, 00, 00]
+140198e79:4 = [81, 3c, 82, 82, 00, 00, 00]
 140198e99:2 = [3d, 82, 00, 00, 00]
 140198f41:8 = [81, bc, 87, ff, ff, ff, ff, 82, 00, 00, 00]
 140198f60:8 = [81, bc, 87, ff, ff, ff, ff, 82, 00, 00, 00]
@@ -2008,6 +2005,7 @@ PortData array patches:
 140347827:3 = [81, f9, 82, 00, 00, 00]
 1403479d2:3 = [81, f9, 82, 00, 00, 00]
 140347a07:3 = [81, f9, 82, 00, 00, 00]
+1403e3c34:4 = [81, 3c, 81, 82, 00, 00, 00]
 1403e3c46:2 = [3d, 82, 00, 00, 00]
 1403e6782:8 = [81, bc, 86, ff, ff, ff, ff, 3c, 00, 00, 00]
 1403e67c5:2 = [3d, 82, 00, 00, 00]

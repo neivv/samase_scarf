@@ -586,11 +586,12 @@ enum WidenInstruction {
 }
 
 /// For widening insturctions on 64bit, where there can be
-/// an instruction such as movzx eax, [rax + r12 + dat_array] with rax being byte
+/// an instruction such as movzx eax, [rax + r12 + dat_array_offset] with rax being byte
 /// index while r12 is constant binary base.
+/// Or just [rax + r12] where r12 is (binary_base + dat_array_offset)
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 struct BaseIndexRegs {
-    binary_base: u8,
+    base: u8,
     index: u8,
 }
 
@@ -1837,6 +1838,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         ctrl: &mut Control<'e, '_, '_, Self>,
         write: Option<&DestOperand<'e>>,
         read: Operand<'e>,
+        array_addr: E::VirtualAddress,
     ) -> (WidenInstruction, Option<BaseIndexRegs>) {
         let mut base_idx = None;
         for i in 0..2 {
@@ -1859,20 +1861,29 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 }
             };
             (|| {
-                let (l, r) = unres.address().0.if_arithmetic_add()?;
+                let (addr_var, addr_const) = unres.address();
+                let (l, r) = addr_var.if_arithmetic_add()?;
                 let l = l.if_register()?;
                 let r = r.if_register()?;
                 let l_val = ctrl.resolve_register(l);
                 let r_val = ctrl.resolve_register(r);
-                let base = ctrl.binary().base();
-                if l_val.if_constant() == Some(base.as_u64()) {
+                let expected_base = if addr_const == 0 {
+                    // Assuming [r1 + r2]
+                    // where one reg is index, and other is `exe_base + dat_array_offset`
+                    array_addr.as_u64()
+                } else {
+                    // Assuming [r1 + r2 + dat_array_offset]
+                    // where one is index, and other is exe_base
+                    ctrl.binary().base().as_u64()
+                };
+                if l_val.if_constant() == Some(expected_base) {
                     base_idx = Some(BaseIndexRegs {
-                        binary_base: l,
+                        base: l,
                         index: r,
                     });
-                } else if r_val.if_constant() == Some(base.as_u64()) {
+                } else if r_val.if_constant() == Some(expected_base) {
                     base_idx = Some(BaseIndexRegs {
-                        binary_base: r,
+                        base: r,
                         index: l,
                     });
                 }
@@ -1904,7 +1915,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         write: Option<&DestOperand<'e>>,
         read: Operand<'e>,
     ) -> WidenInstruction {
-        Self::select_widen_mode_inner(ctrl, write, read).0
+        Self::select_widen_mode_inner(ctrl, write, read, E::VirtualAddress::from_u64(0)).0
     }
 
     /// Like select_widen_mode, but instead of Default / StackAaccess
@@ -1917,7 +1928,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         dat: DatType,
         field_id: u8,
     ) -> WidenInstruction {
-        match Self::select_widen_mode_inner(ctrl, write, read) {
+        match Self::select_widen_mode_inner(ctrl, write, read, array_addr) {
             (WidenInstruction::Default, base_idx) => {
                 WidenInstruction::ArrayIndex(array_addr.as_u64(), dat, field_id, base_idx)
             }
@@ -2968,9 +2979,11 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 }
             } else {
                 // 64bit:
-                // SIB with 32bit immediate and base + index * 1
-                if modrm & 0xc7 == 0x84 && sib & 0xc0 == 0x00 {
+                if (modrm & 0xc7 == 0x84 || modrm & 0xc7 == 0x04) && sib & 0xc0 == 0x00 {
+                    // SIB with 32bit immediate and base + index * 1
+                    // Or SIB with base + index * 1
                     if let Some(base_idx) = base_idx {
+                        let has_imm = modrm & 0xc0 != 0;
                         // Get REX byte, assume either at [start - 1] or [start - 2]
                         // if [start - 1] is 0x0f (0x0f not currently used though)
                         let maybe_rex_idx = match patch.get(start.wrapping_sub(1)) {
@@ -2983,10 +2996,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         };
                         let index = ((sib >> 3) & 7) | ((rex & 2) << 2);
                         let base = (sib & 7) | ((rex & 1) << 3);
-                        if index == base_idx.index && base == base_idx.binary_base {
+                        if index == base_idx.index && base == base_idx.base {
                             // Can just change index scale to 4
                             patch[idx_2] |= 0x80;
-                        } else if index == base_idx.binary_base && base == base_idx.index {
+                        } else if index == base_idx.base && base == base_idx.index {
                             // Have to switch index and base around
                             patch[idx_2] = ((sib & 7) << 3) |
                                 ((sib >> 3) & 7) |
@@ -3000,17 +3013,21 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                             dat_warn!(self, "Expected base/idx @ {address:?} were wrong");
                             return;
                         }
-                        // This instruction should have the array address immediate,
-                        // mark is at something that needs to be fixed in result.code_bytes
-                        if let Some(bytes) = patch.get_mut(idx_3..(idx_3 + 4)) {
-                            let value = self.binary.base() + LittleEndian::read_u32(bytes);
-                            if value.as_u64() == array_addr {
-                                let result = &mut self.dat_ctx.result;
-                                let offset = result.code_bytes.len() + idx_3;
-                                result.arrays_in_code_bytes.push((offset, dat, field_id));
-                                LittleEndian::write_u32(bytes, u32::MAX);
-                            } else {
-                                dat_warn!(self, "Expected to find array immediate @ {address:?}");
+                        if has_imm {
+                            // This instruction should have the array address immediate,
+                            // mark is at something that needs to be fixed in result.code_bytes
+                            if let Some(bytes) = patch.get_mut(idx_3..(idx_3 + 4)) {
+                                let value = self.binary.base() + LittleEndian::read_u32(bytes);
+                                if value.as_u64() == array_addr {
+                                    let result = &mut self.dat_ctx.result;
+                                    let offset = result.code_bytes.len() + idx_3;
+                                    result.arrays_in_code_bytes.push((offset, dat, field_id));
+                                    LittleEndian::write_u32(bytes, u32::MAX);
+                                } else {
+                                    dat_warn!(
+                                        self, "Expected to find array immediate @ {address:?}",
+                                    );
+                                }
                             }
                         }
                         if ins_len == patch_len {
@@ -3020,6 +3037,17 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         }
                         return;
                     }
+                } else if modrm & 0xc0 == 0x00 && matches!(modrm & 0x7, 4 | 5) == false {
+                    // Single register as address without anything else,
+                    // should not need any modrm byte changes.
+                    // Presumably an address constant was loaded to register with
+                    // a RIP-relative `lea reg, [constant]` before.
+                    if ins_len == patch_len {
+                        self.add_patch(address, &patch[..], ins_len);
+                    } else {
+                        self.add_hook(address, ins_len, &patch[..(patch_len as usize)]);
+                    }
+                    return;
                 }
             }
         }
