@@ -442,11 +442,11 @@ bnet_message_switch: Mem32[(Custom_4 * 4) + 7eb0f0]
 Buttonsets: [VirtualAddress(00e62cc8)]
 Unit status: [VirtualAddress(00e63880)]
 Req tables:
-Units: [(VirtualAddress(00653562), 2), (VirtualAddress(00653598), 0), (VirtualAddress(006535a2), 2), (VirtualAddress(00653705), 0), (VirtualAddress(00653764), 2), (VirtualAddress(006537d2), 2), (VirtualAddress(00653928), 2), (VirtualAddress(00653999), 2), (VirtualAddress(006539f4), 2), (VirtualAddress(00653a03), 2), (VirtualAddress(00653c04), 0), (VirtualAddress(00653c0e), 2), (VirtualAddress(00e39d2c), 0)]
-Upgrades: [(VirtualAddress(00532301), 2), (VirtualAddress(00532335), 0), (VirtualAddress(0053233f), 2), (VirtualAddress(00532444), 0), (VirtualAddress(00e368c0), 0)]
-Tech use: [(VirtualAddress(0053217e), 2), (VirtualAddress(005321a8), 0), (VirtualAddress(005321b2), 2), (VirtualAddress(005322a3), 0), (VirtualAddress(00e368bc), 0)]
-Tech research: [(VirtualAddress(00531fce), 2), (VirtualAddress(00531ff8), 0), (VirtualAddress(00532002), 2), (VirtualAddress(00532110), 0), (VirtualAddress(00e368c8), 0)]
-Orders: [(VirtualAddress(00531de2), 2), (VirtualAddress(00531e18), 0), (VirtualAddress(00531e22), 2), (VirtualAddress(00531f6a), 0), (VirtualAddress(00e368c4), 0)]
+Units: e398e8, refs [653562 + 2, 653598 + 0, 6535a2 + 2, 653705 + 0, 653764 + 2, 6537d2 + 2, 653928 + 2, 653999 + 2, 6539f4 + 2, 653a03 + 2, 653c04 + 0, 653c0e + 2, e39d2c + 0]
+Upgrades: e35c60, refs [532301 + 2, 532335 + 0, 53233f + 2, 532444 + 0, e368c0 + 0]
+Tech use: e360e8, refs [53217e + 2, 5321a8 + 0, 5321b2 + 2, 5322a3 + 0, e368bc + 0]
+Tech research: e35fa8, refs [531fce + 2, 531ff8 + 0, 532002 + 2, 532110 + 0, e368c8 + 0]
+Orders: e36398, refs [531de2 + 2, 531e18 + 0, 531e22 + 2, 531f6a + 0, e368c4 + 0]
 Aiscript hook: Some(
     AiScriptHook {
         op_limit_hook_begin: VirtualAddress(0063826c),

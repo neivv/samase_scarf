@@ -1,3 +1,5 @@
+use std::fmt;
+
 use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis, RelocValues};
@@ -187,13 +189,14 @@ fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
     functions: &FunctionFinder<'_, 'e, E>,
     relocs: &[RelocValues<E::VirtualAddress>],
     signature: &[u8],
-) -> Vec<(E::VirtualAddress, u32)> {
+) -> RequirementTable<E::VirtualAddress> {
     use std::cmp::Ordering;
 
     let bump = &analysis.bump;
     let data = analysis.binary_sections.data;
     let table_addresses = find_bytes(bump, &data.data, signature);
     let mut result = Vec::with_capacity(16);
+    let mut address = E::VirtualAddress::from_u64(u64::MAX);
     for &table_rva in &table_addresses {
         let table_va = data.virtual_address + table_rva.0;
         let mut index = relocs.binary_search_by(|x| match x.value >= table_va {
@@ -205,12 +208,16 @@ fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
             if offset >= 0x100 {
                 break;
             }
+            address = table_va;
             result.push((reloc.address, offset as u32));
             index += 1;
         }
     }
     filter_requirement_results(analysis, functions, &mut result);
-    result
+    RequirementTable {
+        references: result,
+        address,
+    }
 }
 
 fn filter_requirement_results<'e, E: ExecutionState<'e>>(
@@ -402,9 +409,34 @@ pub(crate) fn find_requirement_tables<'e, E: ExecutionState<'e>>(
 /// so there's a offset
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RequirementTables<Va: VirtualAddress> {
-    pub units: Vec<(Va, u32)>,
-    pub upgrades: Vec<(Va, u32)>,
-    pub tech_research: Vec<(Va, u32)>,
-    pub tech_use: Vec<(Va, u32)>,
-    pub orders: Vec<(Va, u32)>,
+    pub units: RequirementTable<Va>,
+    pub upgrades: RequirementTable<Va>,
+    pub tech_research: RequirementTable<Va>,
+    pub tech_use: RequirementTable<Va>,
+    pub orders: RequirementTable<Va>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct RequirementTable<Va> {
+    pub references: Vec<(Va, u32)>,
+    pub address: Va,
+}
+
+impl<Va: VirtualAddress> RequirementTable<Va> {
+    pub(crate) fn sort_unstable(&mut self) {
+        self.references.sort_unstable_by_key(|x| x.0);
+    }
+}
+
+impl<Va: VirtualAddress> fmt::Debug for RequirementTable<Va> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:x}, refs [", self.address.as_u64())?;
+        for (i, &(addr, offset)) in self.references.iter().enumerate() {
+            if i != 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{:x} + {:x}", addr.as_u64(), offset)?;
+        }
+        write!(f, "]")
+    }
 }

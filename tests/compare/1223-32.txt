@@ -442,11 +442,11 @@ bnet_message_switch: Mem32[(Custom_4 * 4) + 7af0ec]
 Buttonsets: [VirtualAddress(00d94520)]
 Unit status: [VirtualAddress(00d950d8)]
 Req tables:
-Units: [(VirtualAddress(006171bf), 2), (VirtualAddress(006171cb), 2), (VirtualAddress(00617265), 0), (VirtualAddress(00617275), 0), (VirtualAddress(0061727c), 0), (VirtualAddress(0061742e), 0), (VirtualAddress(00617484), 2), (VirtualAddress(006174ee), 2), (VirtualAddress(00617726), 2), (VirtualAddress(00617788), 2), (VirtualAddress(006177e3), 2), (VirtualAddress(006177f5), 2), (VirtualAddress(00617a3d), 0), (VirtualAddress(00617a47), 2), (VirtualAddress(00d8ba54), 0)]
-Upgrades: [(VirtualAddress(0050997a), 2), (VirtualAddress(00509993), 2), (VirtualAddress(00509a05), 0), (VirtualAddress(00509a10), 0), (VirtualAddress(00509a17), 0), (VirtualAddress(00509b1f), 0), (VirtualAddress(00d898c0), 0)]
-Tech use: [(VirtualAddress(0050973f), 2), (VirtualAddress(0050974a), 2), (VirtualAddress(005097d5), 0), (VirtualAddress(005097e0), 0), (VirtualAddress(005097e7), 0), (VirtualAddress(005098e2), 0), (VirtualAddress(00d898bc), 0)]
-Tech research: [(VirtualAddress(005094bd), 2), (VirtualAddress(005094c8), 2), (VirtualAddress(00509565), 0), (VirtualAddress(00509570), 0), (VirtualAddress(00509577), 0), (VirtualAddress(00509686), 0), (VirtualAddress(00d898c8), 0)]
-Orders: [(VirtualAddress(005091e1), 2), (VirtualAddress(005091ed), 2), (VirtualAddress(00509285), 0), (VirtualAddress(00509290), 0), (VirtualAddress(00509297), 0), (VirtualAddress(0050940c), 0), (VirtualAddress(00d898c4), 0)]
+Units: d8b610, refs [6171bf + 2, 6171cb + 2, 617265 + 0, 617275 + 0, 61727c + 0, 61742e + 0, 617484 + 2, 6174ee + 2, 617726 + 2, 617788 + 2, 6177e3 + 2, 6177f5 + 2, 617a3d + 0, 617a47 + 2, d8ba54 + 0]
+Upgrades: d88c60, refs [50997a + 2, 509993 + 2, 509a05 + 0, 509a10 + 0, 509a17 + 0, 509b1f + 0, d898c0 + 0]
+Tech use: d890e8, refs [50973f + 2, 50974a + 2, 5097d5 + 0, 5097e0 + 0, 5097e7 + 0, 5098e2 + 0, d898bc + 0]
+Tech research: d88fa8, refs [5094bd + 2, 5094c8 + 2, 509565 + 0, 509570 + 0, 509577 + 0, 509686 + 0, d898c8 + 0]
+Orders: d89398, refs [5091e1 + 2, 5091ed + 2, 509285 + 0, 509290 + 0, 509297 + 0, 50940c + 0, d898c4 + 0]
 Aiscript hook: Some(
     AiScriptHook {
         op_limit_hook_begin: VirtualAddress(005ffd4b),

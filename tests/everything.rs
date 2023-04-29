@@ -1704,43 +1704,43 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     let new_codegen3 = minor_version > 22;
     if E::VirtualAddress::SIZE == 4 {
         if minor_version < 21 {
-            assert_eq!(results.requirement_table_refs.units.len(), 13);
-            assert_eq!(results.requirement_table_refs.upgrades.len(), 4);
-            assert_eq!(results.requirement_table_refs.tech_use.len(), 4);
-            assert_eq!(results.requirement_table_refs.tech_research.len(), 4);
-            assert_eq!(results.requirement_table_refs.orders.len(), 4);
+            assert_eq!(results.requirement_table_refs.units.references.len(), 13);
+            assert_eq!(results.requirement_table_refs.upgrades.references.len(), 4);
+            assert_eq!(results.requirement_table_refs.tech_use.references.len(), 4);
+            assert_eq!(results.requirement_table_refs.tech_research.references.len(), 4);
+            assert_eq!(results.requirement_table_refs.orders.references.len(), 4);
         } else if new_codegen3 {
-            assert_eq!(results.requirement_table_refs.units.len(), 13);
-            assert_eq!(results.requirement_table_refs.upgrades.len(), 5);
-            assert_eq!(results.requirement_table_refs.tech_use.len(), 5);
-            assert_eq!(results.requirement_table_refs.tech_research.len(), 5);
-            assert_eq!(results.requirement_table_refs.orders.len(), 5);
+            assert_eq!(results.requirement_table_refs.units.references.len(), 13);
+            assert_eq!(results.requirement_table_refs.upgrades.references.len(), 5);
+            assert_eq!(results.requirement_table_refs.tech_use.references.len(), 5);
+            assert_eq!(results.requirement_table_refs.tech_research.references.len(), 5);
+            assert_eq!(results.requirement_table_refs.orders.references.len(), 5);
         } else if new_codegen2 {
             // Assertions enabled
-            assert_eq!(results.requirement_table_refs.units.len(), 15);
-            assert_eq!(results.requirement_table_refs.upgrades.len(), 7);
-            assert_eq!(results.requirement_table_refs.tech_use.len(), 7);
-            assert_eq!(results.requirement_table_refs.tech_research.len(), 7);
-            assert_eq!(results.requirement_table_refs.orders.len(), 7);
+            assert_eq!(results.requirement_table_refs.units.references.len(), 15);
+            assert_eq!(results.requirement_table_refs.upgrades.references.len(), 7);
+            assert_eq!(results.requirement_table_refs.tech_use.references.len(), 7);
+            assert_eq!(results.requirement_table_refs.tech_research.references.len(), 7);
+            assert_eq!(results.requirement_table_refs.orders.references.len(), 7);
         } else {
             // Different compiler codegen caused one less ref for equivalent code
             if new_codegen {
-                assert_eq!(results.requirement_table_refs.units.len(), 13);
+                assert_eq!(results.requirement_table_refs.units.references.len(), 13);
             } else {
-                assert_eq!(results.requirement_table_refs.units.len(), 14);
+                assert_eq!(results.requirement_table_refs.units.references.len(), 14);
             }
-            assert_eq!(results.requirement_table_refs.upgrades.len(), 5);
-            assert_eq!(results.requirement_table_refs.tech_use.len(), 5);
-            assert_eq!(results.requirement_table_refs.tech_research.len(), 5);
-            assert_eq!(results.requirement_table_refs.orders.len(), 5);
+            assert_eq!(results.requirement_table_refs.upgrades.references.len(), 5);
+            assert_eq!(results.requirement_table_refs.tech_use.references.len(), 5);
+            assert_eq!(results.requirement_table_refs.tech_research.references.len(), 5);
+            assert_eq!(results.requirement_table_refs.orders.references.len(), 5);
         }
     } else {
         // All 64bit exes are new_codegen3 versions
-        assert_eq!(results.requirement_table_refs.units.len(), 13);
-        assert_eq!(results.requirement_table_refs.upgrades.len(), 3);
-        assert_eq!(results.requirement_table_refs.tech_use.len(), 3);
-        assert_eq!(results.requirement_table_refs.tech_research.len(), 3);
-        assert_eq!(results.requirement_table_refs.orders.len(), 3);
+        assert_eq!(results.requirement_table_refs.units.references.len(), 13);
+        assert_eq!(results.requirement_table_refs.upgrades.references.len(), 3);
+        assert_eq!(results.requirement_table_refs.tech_use.references.len(), 3);
+        assert_eq!(results.requirement_table_refs.tech_research.references.len(), 3);
+        assert_eq!(results.requirement_table_refs.orders.references.len(), 3);
     }
 
     let step_secondary_order = analysis.step_secondary_order();
