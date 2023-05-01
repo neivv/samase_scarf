@@ -2902,7 +2902,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                             return;
                         }
                         let new_offset = match
-                            self.state.stack_size_tracker.remap_ebp_offset(offset, reg_offset)
+                            self.state.stack_size_tracker.remap_stack_offset(offset, reg_offset)
                         {
                             Some(s) => s,
                             None => {
@@ -3070,6 +3070,60 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         self.state.pending_hooks.push((address, code_bytes_offset, hook.len() as u8, skip));
     }
 
+    #[inline]
+    fn debug_verify_patch_is_same(&self, addr: E::VirtualAddress, patch: &[u8], skip: u8) {
+        // For cases where a patch was already added to an address, confirm
+        // that the patch is same as would've been added here.
+        #[cfg(any(debug_assertions, feature = "test_assertions", feature = "binaries"))]
+        {
+            let result = &self.dat_ctx.result;
+            let old_patch = if skip as usize == patch.len() {
+                // Not hook
+                result.patches.iter()
+                    .find_map(|x| match *x {
+                        DatPatch::Replace(a, offset, len) if a == addr && len == skip => {
+                            Some(offset)
+                        }
+                        _ => None,
+                    })
+                    .map(|offset| &result.code_bytes[(offset as usize)..][..(skip as usize)])
+            } else {
+                // Hook
+                result.patches.iter()
+                    .find_map(|x| match *x {
+                        DatPatch::Hook(a, offset, len, s) |
+                            DatPatch::TwoStepHook(a, _, offset, len, s)
+                            if a == addr && len == patch.len() as u8 && s == skip =>
+                        {
+                            Some(offset)
+                        }
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        self.state.pending_hooks.iter()
+                            .find(|&&(a, _, len, s)| {
+                                a == addr && len == patch.len() as u8 && s == skip
+                            })
+                            .map(|x| x.1)
+                    })
+                    .map(|offset| &result.code_bytes[(offset as usize)..][..patch.len()])
+            };
+            if let Some(old_patch) = old_patch {
+                if patch != old_patch {
+                    dat_warn!(
+                        self, "Tried to patch {addr:?} with {patch:02x?}, \
+                        but a different patch {old_patch:02x?} was already applied"
+                    );
+                }
+            } else {
+                dat_warn!(
+                    self, "Tried to patch {addr:?} with {patch:02x?}, \
+                    but a different patch was already applied"
+                );
+            }
+        }
+    }
+
     fn generate_stack_size_patches(&mut self) {
         let bump = &self.dat_ctx.analysis.bump;
         let mut stack_size_tracker = mem::replace(
@@ -3078,8 +3132,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         );
         stack_size_tracker.generate_patches(|addr, patch, skip| {
             if !self.dat_ctx.patched_addresses.insert(addr) {
-                // This shouldn't happen, it would likely mean that two stack_size_trackers
-                // which may give different allocation mappings had ran.
+                self.debug_verify_patch_is_same(addr, patch, skip as u8);
                 dat_warn!(self, "Patch conflict for stack size @ {:?}", addr);
                 return;
             }
