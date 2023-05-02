@@ -2876,30 +2876,35 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         let base = patch[idx_1] & 0x7;
         let variant = (patch[idx_1] & 0xc0) >> 6;
         if matches!(mode, WidenInstruction::ArrayIndex(..)) == false || variant == 3 {
-            let mut patch = patch;
             let mut patch_len = patch_len;
-            let mut buffer = [0u8; 16];
             // Fix u8 [ebp - x] offset to a newly allocated u32
             if let WidenInstruction::StackAccess(reg_offset) = mode {
                 if variant == 1 || variant == 2 {
-                    let const_off = if base == 4 { &patch[idx_3..] } else { &patch[idx_2..] };
+                    let imm_offset = if base == 4 { idx_3 } else { idx_2 };
+                    let const_off = &patch[imm_offset..];
                     let offset = if variant == 1 {
                         const_off[0] as i8 as i32
                     } else {
-                        LittleEndian::read_i32(&const_off)
+                        LittleEndian::read_i32(const_off)
                     };
                     let entry_rel_offset = offset.wrapping_add(reg_offset);
                     if entry_rel_offset >= 0 {
                         // Don't reallocate func arguments, but still align them to 4
                         // The argument slots may be used for temps later, but assuming
                         // that conflicts there are rare enough to not be relevant.
-                        patch[idx_2] &= 0xfc;
+                        patch[imm_offset] &= 0xfc;
                     } else {
                         if base == 4 {
-                            dat_warn!(
-                                self, "Unimplemented rm patch at {address:?}, base {base:x} {reg_offset:x}"
-                            );
-                            return;
+                            let sib = patch[idx_2];
+                            // Verify that this is just [ESP + const]
+                            if sib != 0x24 {
+                                // Technically should also check that rex & 2 == 0, as otherwise
+                                // 0x24 means r12 index
+                                dat_warn!(
+                                    self, "Don't know how to patch multi-reg SIB {address:?}",
+                                );
+                                return;
+                            }
                         }
                         let new_offset = match
                             self.state.stack_size_tracker.remap_stack_offset(offset, reg_offset)
@@ -2914,19 +2919,25 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                         };
                         if let Ok(new_offset) = i8::try_from(new_offset) {
                             patch[idx_1] = (patch[idx_1] & !0xc0) | 0x40;
-                            patch[idx_2] = new_offset as u8;
+                            patch[imm_offset] = new_offset as u8;
+                            if variant == 2 {
+                                // If there's another constant after offset imm,
+                                // move it from imm32 offset to imm8 offset
+                                let rest = LittleEndian::read_u32(&patch[(imm_offset + 4)..]);
+                                LittleEndian::write_u32(&mut patch[(imm_offset + 1)..], rest);
+                            }
+                            if variant == 2 {
+                                patch_len = patch_len.wrapping_sub(3);
+                            }
                         } else {
-                            for i in 0..(patch_len as usize) {
-                                buffer[i] = patch[i];
-                            }
+                            patch[idx_1] = (patch[idx_1] & !0xc0) | 0x80;
+                            LittleEndian::write_i32(&mut patch[imm_offset..], new_offset);
                             if variant == 1 {
-                                for i in (idx_3..(patch_len as usize)).rev() {
-                                    buffer[i + 3] = buffer[i];
-                                }
+                                // If there's another constant after offset imm,
+                                // move it from imm8 offset to imm32 offset
+                                let rest = LittleEndian::read_u32(&patch[(imm_offset + 1)..]);
+                                LittleEndian::write_u32(&mut patch[(imm_offset + 4)..], rest);
                             }
-                            buffer[idx_1] = (buffer[idx_1] & !0xc0) | 0x80;
-                            LittleEndian::write_i32(&mut buffer[idx_2..], new_offset);
-                            patch = &mut buffer;
                             if variant == 1 {
                                 patch_len = patch_len.wrapping_add(3);
                             }
@@ -3133,7 +3144,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         stack_size_tracker.generate_patches(|addr, patch, skip| {
             if !self.dat_ctx.patched_addresses.insert(addr) {
                 self.debug_verify_patch_is_same(addr, patch, skip as u8);
-                dat_warn!(self, "Patch conflict for stack size @ {:?}", addr);
                 return;
             }
             if skip == patch.len() {

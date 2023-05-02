@@ -1505,18 +1505,9 @@ order_bb: Some(VirtualAddress(1401ba4e0))
 
 -- Dat patches --
 WARN Unknown Flingy dat offset @ VirtualAddress(14018ca74): Mem8[Undefined]
-WARN Unimplemented rm patch at VirtualAddress(14023b01a), base 4 fffffc08
 WARN Unknown Weapons dat offset @ VirtualAddress(1403ca584): Mem8[Mem64[rcx + 34] + c]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403ca5e6): Mem8[Mem64[rcx + 34] + c]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403ca631): Mem8[Mem64[rcx + 34] + c]
-WARN Unimplemented rm patch at VirtualAddress(1403de330), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(1403de355), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(1403de3a5), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(1403de50e), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(1403de47c), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(1403de5c6), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(1403de5f5), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(14023b03b), base 4 fffffc08
 WARN Unknown Upgrades dat offset @ VirtualAddress(1403c569b): Mem8[Mem64[rdx + 34] + 1a]
 WARN Unknown Upgrades dat offset @ VirtualAddress(1403c56ab): Mem8[Mem64[rdx + 34] + 1a]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403ca541): Mem8[Mem64[rcx + 34] + c]
@@ -1527,6 +1518,30 @@ WARN Unknown Weapons dat offset @ VirtualAddress(14018725a): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(14018725a): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(14018725a): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403de4d1): ((Undefined >> 8) & ff)
+WARN Unwind info fixup unimplemented for VirtualAddress(1403de2b0)
+WARN Unwind info fixup unimplemented for VirtualAddress(1403de2b0)
+WARN Can't patch low stack access @ VirtualAddress(1403de2d6)
+WARN Can't patch low stack access @ VirtualAddress(1403de2e3)
+WARN Can't patch low stack access @ VirtualAddress(1403de2ef)
+WARN Can't patch low stack access @ VirtualAddress(1403de720)
+WARN Can't patch low stack access @ VirtualAddress(1403de728)
+WARN Can't patch low stack access @ VirtualAddress(1403de730)
+WARN Can't patch low stack access @ VirtualAddress(1403de720)
+WARN Can't patch low stack access @ VirtualAddress(1403de728)
+WARN Can't patch low stack access @ VirtualAddress(1403de730)
+WARN Can't patch low stack access @ VirtualAddress(1403de720)
+WARN Can't patch low stack access @ VirtualAddress(1403de728)
+WARN Can't patch low stack access @ VirtualAddress(1403de730)
+WARN Can't patch low stack access @ VirtualAddress(1403de720)
+WARN Can't patch low stack access @ VirtualAddress(1403de728)
+WARN Can't patch low stack access @ VirtualAddress(1403de730)
+WARN Can't patch low stack access @ VirtualAddress(1403de720)
+WARN Can't patch low stack access @ VirtualAddress(1403de728)
+WARN Can't patch low stack access @ VirtualAddress(1403de730)
+WARN Can't patch low stack access @ VirtualAddress(1403de720)
+WARN Can't patch low stack access @ VirtualAddress(1403de728)
+WARN Can't patch low stack access @ VirtualAddress(1403de730)
+WARN Unwind info fixup unimplemented for VirtualAddress(14023acb0)
 Units entry count patches: [140c0f82c, 140c0f844, 140c0f85c, 140c0f874, 140c0f88c, 140c0f8a4, 140c0f8bc, 140c0f8d4, 140c0f8ec, 140c0f904, 140c0f91c, 140c0f934, 140c0f94c, 140c0f964, 140c0f97c, 140c0f994, 140c0f9ac, 140c0f9c4, 140c0f9dc, 140c0f9f4, 140c0fa0c, 140c0fa24, 140c0fa3c, 140c0fa54, 140c0fa6c, 140c0fa84, 140c0fa9c, 140c0fab4, 140c0facc, 140c0fae4, 140c0fafc, 140c0fb14, 140c0fb2c, 140c0fb44, 140c0fb5c, 140c0fb74, 140c0fb8c, 140c0fba4, 140c0fbbc, 140c0fbd4, 140c0fbec, 140c0fc04, 140c0fc1c, 140c0fc34, 140c0fc4c, 140c0fc64, 140c0fc7c, 140c0fc94, 140c0fcac, 140c0fcc4, 140c0fcdc, 140c0fcf4, 140c0fd0c, 140c0fd24]
 Units array patches:
     00: [14018ca35, 1401951e3, 1401b6c7e, 1401bb0e5, 1401bb155, 1401bb1c7, 1401db886, 1401e5002, 1401e8bdd, 1401ea22e, 140388f28, 140389d14, 140c0f820, 140c0fda0]
@@ -1859,8 +1874,11 @@ PortData array patches:
 1401e86de = [90, 90]
 1401e8bd9 = [90, 8b, 84, 81, ff, ff, ff, ff]
 1401ea22a = [90, 8b, 84, 81, ff, ff, ff, ff]
+14023acbb = [48, 8d, a8, f8, fc, ff, ff]
+14023acc2 = [48, 81, ec, e0, 03, 00, 00]
 14023b026 = [90, 8b, c0]
 14023b04b = [90, 8b, d0]
+14023b1d7 = [4c, 8d, 9c, 24, e0, 03, 00, 00]
 14024d88d = [90, 8b, c0]
 14024d8e1 = [90, 8b, c0]
 14024e9bd = [90, 90, 8b, d6]
@@ -1952,11 +1970,20 @@ PortData array patches:
 1403cceaa = [90, 44, 8b, c0]
 1403cd7f8 = [90, 45, 8b, f0]
 1403cd809 = [90, 41, 8b, d6]
+1403de2b8 = [48, 83, ec, 68]
 1403de320 = [90, 41, 8b, b4, 9e, ff, ff, ff, ff]
+1403de330 = [40, 89, 74, 24, 58]
 1403de349 = [90, 41, 8b, 84, 9e, ff, ff, ff, ff]
+1403de355 = [89, 44, 24, 5c]
+1403de3a5 = [90, 8b, 44, 24, 58]
+1403de47c = [90, 8b, 74, 24, 58]
 1403de4ce = [90, 8b, d0]
+1403de50e = [90, 8b, 44, 24, 5c]
 1403de517 = [90, 8b, d0]
+1403de5c6 = [90, 8b, 74, 24, 58]
+1403de5f5 = [90, 8b, 74, 24, 58]
 1403de600 = [90, 90, 8b, c6]
+1403de73d = [48, 83, ec, 68]
 --- Hooks ---
 140174cf0:4 = [40, 81, fe, 54, 00, 00, 00]
 14019dfc4:8 = [81, bc, 87, ff, ff, ff, ff, 82, 00, 00, 00]
@@ -1997,6 +2024,8 @@ PortData array patches:
 1401d8589:2 = [ba, 22, 00, 00, 00]
 1401dcb84:3 = [81, fa, 82, 00, 00, 00]
 1401dd068:3 = [81, fa, 82, 00, 00, 00]
+14023b01a:4 = [89, 84, 24, d0, 03, 00, 00]
+14023b03b:4 = [89, 84, 24, d4, 03, 00, 00]
 1402560f7:2 = [3d, 2c, 00, 00, 00]
 140262ef3:4 = [41, 81, fb, 82, 00, 00, 00]
 140263860:3 = [81, fa, 82, 00, 00, 00]

@@ -1505,13 +1505,12 @@ order_bb: Some(VirtualAddress(1401b9070))
 
 -- Dat patches --
 WARN Unknown Flingy dat offset @ VirtualAddress(14018fca4): Mem8[Undefined]
-WARN Unimplemented rm patch at VirtualAddress(140241b01), base 4 fffffc28
-WARN Unimplemented rm patch at VirtualAddress(140241b22), base 4 fffffc28
 WARN Unknown Upgrades dat offset @ VirtualAddress(1403dcd2c): Mem8[Mem64[rdx + 58] + 1a]
 WARN Unknown Upgrades dat offset @ VirtualAddress(1403dcd44): Mem8[Mem64[rdx + 58] + 1a]
 WARN Unknown Weapons dat offset @ VirtualAddress(14018936c): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(14018936c): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(14018936c): Mem8[Undefined]
+WARN Unwind info fixup unimplemented for VirtualAddress(1402417e0)
 WARN Unwind info fixup unimplemented for VirtualAddress(140406d80)
 WARN Unwind info fixup unimplemented for VirtualAddress(140406d80)
 Units entry count patches: [140d7182c, 140d71844, 140d7185c, 140d71874, 140d7188c, 140d718a4, 140d718bc, 140d718d4, 140d718ec, 140d71904, 140d7191c, 140d71934, 140d7194c, 140d71964, 140d7197c, 140d71994, 140d719ac, 140d719c4, 140d719dc, 140d719f4, 140d71a0c, 140d71a24, 140d71a3c, 140d71a54, 140d71a6c, 140d71a84, 140d71a9c, 140d71ab4, 140d71acc, 140d71ae4, 140d71afc, 140d71b14, 140d71b2c, 140d71b44, 140d71b5c, 140d71b74, 140d71b8c, 140d71ba4, 140d71bbc, 140d71bd4, 140d71bec, 140d71c04, 140d71c1c, 140d71c34, 140d71c4c, 140d71c64, 140d71c7c, 140d71c94, 140d71cac, 140d71cc4, 140d71cdc, 140d71cf4, 140d71d0c, 140d71d24]
@@ -1851,8 +1850,11 @@ PortData array patches:
 1401ea55e = [90, 90]
 1401eaa54 = [90, 8b, 84, 81, ff, ff, ff, ff]
 1401ebfe2 = [90, 8b, 84, 81, ff, ff, ff, ff]
+1402417eb = [48, 8d, a8, 18, fd, ff, ff]
+1402417f2 = [48, 81, ec, c0, 03, 00, 00]
 140241b0d = [90, 8b, c0]
 140241b2e = [90, 8b, d0]
+140241cb3 = [4c, 8d, 9c, 24, c0, 03, 00, 00]
 1402542fd = [90, 8b, c0]
 140254351 = [90, 8b, c0]
 14025541d = [90, 90, 8b, d6]
@@ -1942,7 +1944,7 @@ PortData array patches:
 1403e7407 = [90, 41, 8b, e8]
 1403e7411 = [90, 90, 8b, d5]
 140406d8d = [48, 8d, 6c, 24, d1]
-140406d92 = [48, 81, ec, fc, 98, 00, 00]
+140406d92 = [48, 81, ec, a8, 00, 00, 00]
 140406df7 = [90, 41, 8b, b4, 9e, ff, ff, ff, ff]
 140406e00 = [40, 89, 75, 1f]
 140406e12 = [90, 41, 8b, 84, 9e, ff, ff, ff, ff]
@@ -1955,7 +1957,7 @@ PortData array patches:
 14040708f = [90, 8b, 75, 1f]
 1404070bb = [90, 8b, 75, 1f]
 1404070c5 = [90, 90, 8b, c6]
-14040725d = [48, 81, c4, d4, 98, 00, 00]
+14040725d = [48, 81, c4, a8, 00, 00, 00]
 --- Hooks ---
 14017a310:4 = [40, 81, fe, 54, 00, 00, 00]
 1401a5244:8 = [81, bc, 87, ff, ff, ff, ff, 82, 00, 00, 00]
@@ -1996,6 +1998,8 @@ PortData array patches:
 1401d7e99:2 = [ba, 22, 00, 00, 00]
 1401db695:3 = [81, fa, 82, 00, 00, 00]
 1401dbbd8:3 = [81, fa, 82, 00, 00, 00]
+140241b01:4 = [89, 84, 24, b0, 03, 00, 00]
+140241b22:4 = [89, 84, 24, b4, 03, 00, 00]
 14025de67:2 = [3d, 2c, 00, 00, 00]
 14026c723:4 = [41, 81, fb, 82, 00, 00, 00]
 14026d080:3 = [81, fa, 82, 00, 00, 00]

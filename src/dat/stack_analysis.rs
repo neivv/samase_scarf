@@ -31,12 +31,17 @@ pub struct StackSizeTracker<'acx, 'e, E: ExecutionState<'e>> {
     // index 1 one word lower at + 4 etc.
     //  (*) confusingly actual name is self.init_esp
     remaps: BumpVec<'acx, i32>,
-    // Records instructions that read/write memory at addresses >= (register(4) - pre_offset)
-    // Used when expanding the stack
-    low_stack_accesses: BumpVec<'acx, E::VirtualAddress>,
+    // Records instructions that read/write memory across self.pre_offset
+    // Either base reg is above pre_offset, having been fixed to have larger allocation
+    // than before, but memory access is to arguments/shadow space, or
+    // base reg is below pre_offset but memory access is to local variables.
+    across_pre_offset_accesses: BumpVec<'acx, E::VirtualAddress>,
     // When another register is used to point to stack,
     // its offset needs to be patched when `self.allocs_at_bottom` is set to true.
-    alt_stack_pointer_inits: BumpVec<'acx, E::VirtualAddress>,
+    // The first offset is "stack offset of the destination register after instruction",
+    // the second offset is "stack offset of the register which was used as input to this
+    // instruction"
+    alt_stack_pointer_inits: BumpVec<'acx, (E::VirtualAddress, u32, u32)>,
     first_branch_call: bool,
     allocs_at_bottom: bool,
 }
@@ -55,7 +60,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
             stack_alloc_size: 0,
             init_esp: None,
             remaps: BumpVec::new_in(bump),
-            low_stack_accesses: BumpVec::new_in(bump),
+            across_pre_offset_accesses: BumpVec::new_in(bump),
             alt_stack_pointer_inits: bumpvec_with_capacity(4, bump),
             first_branch_call: true,
             allocs_at_bottom: false,
@@ -74,7 +79,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
             stack_alloc_size: 0,
             init_esp: None,
             remaps: BumpVec::new_in(bump),
-            low_stack_accesses: BumpVec::new_in(bump),
+            across_pre_offset_accesses: BumpVec::new_in(bump),
             alt_stack_pointer_inits: BumpVec::new_in(bump),
             first_branch_call: true,
             allocs_at_bottom: false,
@@ -87,7 +92,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
         self.stack_alloc_size = 0;
         self.init_esp = None;
         self.first_branch_call = true;
-        self.low_stack_accesses.clear();
+        self.across_pre_offset_accesses.clear();
         self.alt_stack_pointer_inits.clear();
         // I think not resetting remaps is correct? if reset() is intended to
         // reset analysis when reanalyzing a function.
@@ -165,26 +170,52 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                         }
                     }
                 } else {
-                    if self.stack_allocs.is_empty() {
-                        if let DestOperand::Register64(..) = *dest {
-                            // Check for moving esp to other register
-                            // (Or esp +- offset)
-                            // Checking before resolve for (hopefully) bit less work,
-                            // don't know how to patch fancier moves anyway
-                            let is_reg_move = val.if_register().is_some() ||
-                                val.if_add_with_const().or_else(|| val.if_sub_with_const())
-                                    .and_then(|x| x.0.if_register()).is_some();
-                            if is_reg_move {
-                                let val = ctrl.resolve(val);
-                                let is_esp_move = if let Some((a, _)) = val.if_add_with_const()
-                                    .or_else(|| val.if_sub_with_const())
-                                {
-                                    a == ctx.register(4)
+                    if let DestOperand::Register64(..) = *dest {
+                        let val_unres = val;
+                        // Check for moving esp to other register
+                        // (Or esp +- offset)
+                        // Checking before resolve for (hopefully) bit less work,
+                        // don't know how to patch fancier moves anyway
+                        let is_reg_move = val_unres.if_register().is_some() ||
+                            val_unres.if_add_with_const()
+                                .or_else(|| val_unres.if_sub_with_const())
+                                .and_then(|x| x.0.if_register()).is_some();
+                        if is_reg_move {
+                            let val = ctrl.resolve(val);
+                            let esp_offset = if let Some((l, r)) = val.if_sub_with_const() {
+                                if l == ctx.register(4) {
+                                    u32::try_from(r).ok()
                                 } else {
-                                    val == ctx.register(4)
-                                };
-                                if is_esp_move {
-                                    self.alt_stack_pointer_inits.push(ctrl.address());
+                                    None
+                                }
+                            } else if val == ctx.register(4) {
+                                Some(0)
+                            } else {
+                                None
+                            };
+                            // Assuming that val_unres is `reg` or `reg +/- c`
+                            let source_offset =
+                                if let Some((_, r)) = val_unres.if_add_with_const()
+                            {
+                                i32::try_from(r).ok()
+                            } else if let Some((_, r)) = val_unres.if_sub_with_const() {
+                                i32::try_from(r).ok().map(|x| -x)
+                            } else {
+                                Some(0)
+                            };
+                            if let Some(off) = esp_offset {
+                                // source_offset is the source register's stack offset before
+                                // move. If the source register is at bottom of the stack
+                                // frame (Below self.pre_offset), the move won't need to fixed
+                                // up afterwards.
+                                let source_offset = source_offset.and_then(|x| {
+                                    let x = i32::try_from(off).ok()?
+                                        .checked_add(x)?;
+                                    u32::try_from(x).ok()
+                                });
+                                if let Some(source) = source_offset {
+                                    let address = ctrl.address();
+                                    self.alt_stack_pointer_inits.push((address, off, source));
                                 }
                             }
                         }
@@ -200,28 +231,25 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                                 _ => None,
                             }
                         };
-                        if let Some(mem) = mem {
-                            let mem = ctrl.resolve_mem(mem);
+                        if let Some(mem_unres) = mem {
+                            let (unres_base, unres_offset) = mem_unres.address();
+                            let mem = ctrl.resolve_mem(mem_unres);
                             let (base, offset) = mem.address();
+                            let unres_offset = offset.wrapping_sub(unres_offset);
+                            let offset = (offset as i64 as i32).unsigned_abs();
+                            let unres_offset = (unres_offset as i64 as i32).unsigned_abs();
+                            let crosses_pre_offset =
+                                (offset <= self.pre_offset && unres_offset > self.pre_offset) ||
+                                (unres_offset <= self.pre_offset && offset > self.pre_offset);
                             if base == ctx.register(4) &&
-                                offset.wrapping_add(self.pre_offset as u64) < 0x8000_0000
+                                crosses_pre_offset &&
+                                unres_base.if_register().is_some()
                             {
-                                // If esp has been added back to be <= init_esp - self.pre_offset,
-                                // ignore, skipping function prologue pops.
-                                let current_esp = ctrl.resolve_register(4);
-                                let esp_above_pre_offset = match current_esp.if_sub_with_const() {
-                                    Some((l, r)) => {
-                                        l == ctx.register(4) && r > self.pre_offset as u64
-                                    }
-                                    None => true,
-                                };
-                                if esp_above_pre_offset || offset < 0x8000_0000 {
-                                    let address = ctrl.address();
-                                    if self.low_stack_accesses.capacity() == 0 {
-                                        self.low_stack_accesses.reserve(16);
-                                    }
-                                    self.low_stack_accesses.push(address);
+                                let address = ctrl.address();
+                                if self.across_pre_offset_accesses.capacity() == 0 {
+                                    self.across_pre_offset_accesses.reserve(16);
                                 }
+                                self.across_pre_offset_accesses.push(address);
                             }
                         }
                     }
@@ -322,11 +350,25 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
             }
         }
         if self.allocs_at_bottom {
-            for &addr in &self.alt_stack_pointer_inits {
-                self.patch_alt_stack_pointer_init(addr, extra_alloc, &mut add_result);
+            let mut prev = E::VirtualAddress::from_u64(0);
+            for &(addr, off1, off2) in &self.alt_stack_pointer_inits {
+                if addr == prev {
+                    // May be common, but not common enough to need a hashmap?
+                    continue;
+                }
+                prev = addr;
+                // Hoping that any alt stack pointers pointing to bottom of stack
+                // are only used during prologue
+                // Only patch stack pointer inits that cross the point where
+                // new stack variables are placed (self.pre_offset)
+                if off1 <= self.pre_offset && off2 > self.pre_offset ||
+                    off2 <= self.pre_offset && off1 > self.pre_offset
+                {
+                    self.patch_alt_stack_pointer_init(addr, extra_alloc, &mut add_result);
+                }
             }
             let mut prev = E::VirtualAddress::from_u64(0);
-            for &addr in &self.low_stack_accesses {
+            for &addr in &self.across_pre_offset_accesses {
                 if addr == prev {
                     // May be common, but not common enough to need a hashmap?
                     continue;
@@ -382,7 +424,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
             match *bytes {
                 // add/sub rsp, imm32
                 [0x48, 0x81, 0xc4 | 0xec, ..] => {
-                    let old_alloc = LittleEndian::read_u32(&bytes[2..]) as i32;
+                    let old_alloc = LittleEndian::read_u32(&bytes[3..]) as i32;
                     let new_alloc = old_alloc.saturating_add(extra_alloc as i32);
                     let value = match bytes[2] == 0xc4 {
                         true => new_alloc,
@@ -392,9 +434,9 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                 }
                 // add/sub rsp, imm8
                 [0x48, 0x83, 0xc4 | 0xec, ..] => {
-                    let old_alloc = bytes[2] as i8 as i32;
+                    let old_alloc = bytes[3] as i8 as i32;
                     let new_alloc = old_alloc.saturating_add(extra_alloc as i32);
-                    let value = match bytes[2] == 0xc4 {
+                    let value = match bytes[3] == 0xc4 {
                         true => new_alloc,
                         false => 0i32.wrapping_sub(new_alloc),
                     };
@@ -426,35 +468,42 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
             dat_warn!(self, "Can't patch alt stack pointer init @ {:?}", address);
         } else {
             match *bytes {
-                // lea reg, [rsp/r12 + imm8/32]
-                [rex, 0x8d, modrm, 0x24, ..]
-                    if rex & 0xf8 == 0x48 && matches!(modrm & 0xc7, 0x44 | 0x84) =>
+                // lea reg, [reg + imm8/32]
+                [rex, 0x8d, modrm, maybe_sib, ..]
+                    if rex & 0xf8 == 0x48 &&
+                        matches!(modrm & 0xc0, 0x40 | 0x80) &&
+                        (modrm & 7 != 4 || maybe_sib == 0x24) =>
                 {
                     let mut buffer = [0u8; 8];
                     buffer.copy_from_slice(&bytes[..8]);
+                    let imm_offset = if modrm & 7 == 4 {
+                        4
+                    } else {
+                        3
+                    };
                     let (offset, old_len) = if modrm & 0xc0 == 0x40 {
                         // imm8
-                        (buffer[4] as i8 as i32, 5)
+                        (buffer[imm_offset] as i8 as i32, imm_offset + 1)
                     } else {
                         // imm32
-                        (LittleEndian::read_i32(&buffer[4..]), 8)
+                        (LittleEndian::read_i32(&buffer[imm_offset..]), imm_offset + 4)
                     };
-                    if offset >= 0 {
-                        dat_warn!(self, "Can't patch alt stack pointer init @ {:?}", address);
-                        return;
-                    }
-                    let new_offset = offset.wrapping_sub(extra_alloc as i32);
+                    let new_offset = if offset >= 0 {
+                        offset.wrapping_add(extra_alloc as i32)
+                    } else {
+                        offset.wrapping_sub(extra_alloc as i32)
+                    };
                     // If using imm8, the 3 high bytes written here will just
                     // be ignored
-                    LittleEndian::write_i32(&mut buffer[4..], new_offset);
-                    if new_offset < -0x7f {
+                    LittleEndian::write_i32(&mut buffer[imm_offset..], new_offset);
+                    if new_offset > 0x7f || new_offset < -0x80 {
                         // Convert to imm32 if new_offset doesn't fit in imm8
                         buffer[2] = buffer[2] & !0xc0 | 0x80;
-                        add_result(address, &buffer[..8], old_len);
+                        add_result(address, &buffer[..(imm_offset + 4)], old_len);
                     } else {
                         // If new offset fits in imm8, old offset should have too
-                        debug_assert!(buffer[2] & 0xc0 == 0x40 && old_len == 5);
-                        add_result(address, &buffer[..5], old_len);
+                        debug_assert!(buffer[2] & 0xc0 == 0x40 && old_len == imm_offset + 1);
+                        add_result(address, &buffer[..(imm_offset + 1)], old_len);
                     }
                 }
                 _ => {

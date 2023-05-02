@@ -1508,13 +1508,6 @@ WARN Unknown Flingy dat offset @ VirtualAddress(140189894): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403d1c74): Mem8[Mem64[rcx + 34] + c]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403d1cd6): Mem8[Mem64[rcx + 34] + c]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403d1d21): Mem8[Mem64[rcx + 34] + c]
-WARN Unimplemented rm patch at VirtualAddress(1403e4d00), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(1403e4d25), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(1403e4d75), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(1403e4ede), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(1403e4e4c), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(1403e4f96), base 4 ffffff88
-WARN Unimplemented rm patch at VirtualAddress(1403e4fc5), base 4 ffffff88
 WARN Unknown Upgrades dat offset @ VirtualAddress(1403cd19b): Mem8[Mem64[rdx + 34] + 1a]
 WARN Unknown Upgrades dat offset @ VirtualAddress(1403cd1ab): Mem8[Mem64[rdx + 34] + 1a]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403d1c31): Mem8[Mem64[rcx + 34] + c]
@@ -1525,6 +1518,29 @@ WARN Unknown Weapons dat offset @ VirtualAddress(1401841fa): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(1401841fa): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(1401841fa): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403e4ea1): ((Undefined >> 8) & ff)
+WARN Unwind info fixup unimplemented for VirtualAddress(1403e4c80)
+WARN Unwind info fixup unimplemented for VirtualAddress(1403e4c80)
+WARN Can't patch low stack access @ VirtualAddress(1403e4ca6)
+WARN Can't patch low stack access @ VirtualAddress(1403e4cb3)
+WARN Can't patch low stack access @ VirtualAddress(1403e4cbf)
+WARN Can't patch low stack access @ VirtualAddress(1403e50f0)
+WARN Can't patch low stack access @ VirtualAddress(1403e50f8)
+WARN Can't patch low stack access @ VirtualAddress(1403e5100)
+WARN Can't patch low stack access @ VirtualAddress(1403e50f0)
+WARN Can't patch low stack access @ VirtualAddress(1403e50f8)
+WARN Can't patch low stack access @ VirtualAddress(1403e5100)
+WARN Can't patch low stack access @ VirtualAddress(1403e50f0)
+WARN Can't patch low stack access @ VirtualAddress(1403e50f8)
+WARN Can't patch low stack access @ VirtualAddress(1403e5100)
+WARN Can't patch low stack access @ VirtualAddress(1403e50f0)
+WARN Can't patch low stack access @ VirtualAddress(1403e50f8)
+WARN Can't patch low stack access @ VirtualAddress(1403e5100)
+WARN Can't patch low stack access @ VirtualAddress(1403e50f0)
+WARN Can't patch low stack access @ VirtualAddress(1403e50f8)
+WARN Can't patch low stack access @ VirtualAddress(1403e5100)
+WARN Can't patch low stack access @ VirtualAddress(1403e50f0)
+WARN Can't patch low stack access @ VirtualAddress(1403e50f8)
+WARN Can't patch low stack access @ VirtualAddress(1403e5100)
 WARN Unwind info fixup unimplemented for VirtualAddress(140239920)
 WARN Unwind info fixup unimplemented for VirtualAddress(140239920)
 WARN Can't patch low stack access @ VirtualAddress(14023993c)
@@ -1865,12 +1881,12 @@ PortData array patches:
 1401e8f29 = [90, 8b, 84, 81, ff, ff, ff, ff]
 1401ecb8a = [90, 8b, 84, 81, ff, ff, ff, ff]
 140239928 = [48, 8d, 6c, 24, b9]
-14023992d = [48, 81, ec, fc, e0, 00, 00]
+14023992d = [48, 81, ec, f0, 00, 00, 00]
 140239b55 = [89, 45, 37]
 140239b60 = [90, 8b, c0]
 140239b75 = [89, 45, 3b]
 140239b84 = [90, 8b, d0]
-140239d0d = [48, 81, c4, d4, e0, 00, 00]
+140239d0d = [48, 81, c4, f0, 00, 00, 00]
 14024aebd = [90, 8b, c0]
 14024af11 = [90, 8b, c0]
 14024bffd = [90, 90, 8b, d6]
@@ -1962,11 +1978,20 @@ PortData array patches:
 1403d459a = [90, 44, 8b, c0]
 1403d4ee8 = [90, 45, 8b, f0]
 1403d4ef9 = [90, 41, 8b, d6]
+1403e4c88 = [48, 83, ec, 68]
 1403e4cf0 = [90, 41, 8b, b4, 9e, ff, ff, ff, ff]
+1403e4d00 = [40, 89, 74, 24, 58]
 1403e4d19 = [90, 41, 8b, 84, 9e, ff, ff, ff, ff]
+1403e4d25 = [89, 44, 24, 5c]
+1403e4d75 = [90, 8b, 44, 24, 58]
+1403e4e4c = [90, 8b, 74, 24, 58]
 1403e4e9e = [90, 8b, d0]
+1403e4ede = [90, 8b, 44, 24, 5c]
 1403e4ee7 = [90, 8b, d0]
+1403e4f96 = [90, 8b, 74, 24, 58]
+1403e4fc5 = [90, 8b, 74, 24, 58]
 1403e4fd0 = [90, 90, 8b, c6]
+1403e510d = [48, 83, ec, 68]
 --- Hooks ---
 140175f40:4 = [40, 81, fe, 54, 00, 00, 00]
 14019dd24:8 = [81, bc, 87, ff, ff, ff, ff, 82, 00, 00, 00]
