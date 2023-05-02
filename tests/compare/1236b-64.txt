@@ -1514,8 +1514,6 @@ WARN Unwind info fixup unimplemented for VirtualAddress(1404343d0)
 WARN Unwind info fixup unimplemented for VirtualAddress(1404343d0)
 WARN Unwind info fixup unimplemented for VirtualAddress(14024fb50)
 WARN Unwind info fixup unimplemented for VirtualAddress(14024fb50)
-WARN Can't patch low stack access @ VirtualAddress(14024fb6f)
-WARN Can't patch low stack access @ VirtualAddress(140250087)
 Units entry count patches: [140da982c, 140da9844, 140da985c, 140da9874, 140da988c, 140da98a4, 140da98bc, 140da98d4, 140da98ec, 140da9904, 140da991c, 140da9934, 140da994c, 140da9964, 140da997c, 140da9994, 140da99ac, 140da99c4, 140da99dc, 140da99f4, 140da9a0c, 140da9a24, 140da9a3c, 140da9a54, 140da9a6c, 140da9a84, 140da9a9c, 140da9ab4, 140da9acc, 140da9ae4, 140da9afc, 140da9b14, 140da9b2c, 140da9b44, 140da9b5c, 140da9b74, 140da9b8c, 140da9ba4, 140da9bbc, 140da9bd4, 140da9bec, 140da9c04, 140da9c1c, 140da9c34, 140da9c4c, 140da9c64, 140da9c7c, 140da9c94, 140da9cac, 140da9cc4, 140da9cdc, 140da9cf4, 140da9d0c, 140da9d24]
 Units array patches:
     00: [14019cb15, 1401a5b9d, 1401bdbde, 1401c3fd5, 1401c4045, 1401c40b7, 1401e6986, 1401edd04, 1401f3f38, 1401f60e6, 1403c9f08, 1403cae64, 140da9820, 140da9da0]
@@ -1853,8 +1851,10 @@ PortData array patches:
 1401f60e2 = [90, 8b, 84, 81, ff, ff, ff, ff]
 14024fb58 = [48, 8d, ac, 24, 40, fd, ff, ff]
 14024fb60 = [48, 81, ec, c0, 03, 00, 00]
+14024fb6f = [48, 89, 9c, 24, 00, 04, 00, 00]
 14024fede = [90, 8b, c0]
 14024feff = [90, 8b, d0]
+140250087 = [48, 8b, 9c, 24, 00, 04, 00, 00]
 14025008f = [48, 81, c4, c0, 03, 00, 00]
 14026310d = [90, 8b, c0]
 140263161 = [90, 8b, c0]

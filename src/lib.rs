@@ -60,6 +60,7 @@ mod unresolve;
 mod util;
 mod vtables;
 mod x86_64_globals;
+mod x86_64_instruction_info;
 
 pub mod dat;
 

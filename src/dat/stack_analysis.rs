@@ -8,6 +8,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, Operation, Operand};
 
 use crate::util::{bumpvec_with_capacity, ControlExt};
+use crate::x86_64_instruction_info;
 
 pub struct StackSizeTracker<'acx, 'e, E: ExecutionState<'e>> {
     stack_allocs: BumpVec<'acx, (i32, E::VirtualAddress)>,
@@ -516,8 +517,8 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
     fn patch_low_stack_access<Cb>(
         &self,
         address: E::VirtualAddress,
-        _extra_alloc: u32,
-        _add_result: &mut Cb,
+        extra_alloc: u32,
+        add_result: &mut Cb,
     )
     where Cb: FnMut(E::VirtualAddress, &[u8], usize),
     {
@@ -531,10 +532,67 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
         if E::VirtualAddress::SIZE == 4 {
             dat_warn!(self, "Can't patch low stack access @ {:?}", address);
         } else {
-            match *bytes {
-                _ => {
-                    dat_warn!(self, "Can't patch low stack access @ {:?}", address);
+            let mut buffer = [0u8; 0x18];
+            buffer.copy_from_slice(&bytes[..0x18]);
+            let mut main_opcode_pos = 0;
+            while main_opcode_pos < buffer.len() &&
+                x86_64_instruction_info::is_prefix(buffer[main_opcode_pos])
+            {
+                main_opcode_pos += 1;
+            }
+            if main_opcode_pos >= buffer.len() - 8 {
+                dat_warn!(self, "Can't patch low stack access @ {:?}", address);
+                return;
+            }
+            let main_op = &mut buffer[main_opcode_pos..];
+            let opcode = match main_op[0] == 0x0f {
+                true => 0x100 + main_op[1] as usize,
+                false => main_op[0] as usize
+            };
+            let params_pos = if opcode < 0x100 { 1 } else { 2 };
+            if !x86_64_instruction_info::is_modrm_instruction(opcode) {
+                dat_warn!(self, "Can't patch low stack access @ {:?}", address);
+                return;
+            }
+            let modrm = main_op[params_pos];
+            if matches!(modrm & 0xc0, 0x40 | 0x80) == false {
+                dat_warn!(self, "Can't patch low stack access @ {:?}", address);
+                return;
+            }
+            // Can't calculate old length otherwise unless x86_64_instruction_info also
+            // adds non-modrm imm size function
+            let old_len = match
+                super::instruction_length::<E::VirtualAddress>(self.binary, address)
+            {
+                Some(s) => s as usize,
+                None => {
+                    dat_warn!(self, "Can't read instruction @ {:?}", address);
+                    return;
                 }
+            };
+            let imm_pos = if modrm & 7 == 4 {
+                params_pos + 2
+            } else {
+                params_pos + 1
+            };
+            let imm = if modrm & 0xc0 == 0x40 {
+                main_op[imm_pos] as i8 as i32
+            } else {
+                LittleEndian::read_i32(&main_op[imm_pos..])
+            };
+            let new_imm = if imm < 0 {
+                imm.wrapping_sub(extra_alloc as i32)
+            } else {
+                imm.wrapping_add(extra_alloc as i32)
+            };
+            if let Ok(new_imm) = i8::try_from(new_imm) {
+                main_op[params_pos] = (modrm & !0xc0) | 0x40;
+                main_op[imm_pos] = new_imm as u8;
+                add_result(address, &buffer[..(main_opcode_pos + imm_pos + 1)], old_len);
+            } else {
+                main_op[params_pos] = (modrm & !0xc0) | 0x80;
+                LittleEndian::write_i32(&mut main_op[imm_pos..], new_imm);
+                add_result(address, &buffer[..(main_opcode_pos + imm_pos + 4)], old_len);
             }
         }
     }
