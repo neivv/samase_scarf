@@ -1518,9 +1518,6 @@ WARN Unknown Weapons dat offset @ VirtualAddress(14018361a): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(14018361a): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(14018361a): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(140402721): ((Undefined >> 8) & ff)
-WARN Unwind info fixup unimplemented for VirtualAddress(140402500)
-WARN Unwind info fixup unimplemented for VirtualAddress(140402500)
-WARN Unwind info fixup unimplemented for VirtualAddress(1402435e0)
 Units entry count patches: [140c3782c, 140c37844, 140c3785c, 140c37874, 140c3788c, 140c378a4, 140c378bc, 140c378d4, 140c378ec, 140c37904, 140c3791c, 140c37934, 140c3794c, 140c37964, 140c3797c, 140c37994, 140c379ac, 140c379c4, 140c379dc, 140c379f4, 140c37a0c, 140c37a24, 140c37a3c, 140c37a54, 140c37a6c, 140c37a84, 140c37a9c, 140c37ab4, 140c37acc, 140c37ae4, 140c37afc, 140c37b14, 140c37b2c, 140c37b44, 140c37b5c, 140c37b74, 140c37b8c, 140c37ba4, 140c37bbc, 140c37bd4, 140c37bec, 140c37c04, 140c37c1c, 140c37c34, 140c37c4c, 140c37c64, 140c37c7c, 140c37c94, 140c37cac, 140c37cc4, 140c37cdc, 140c37cf4, 140c37d0c, 140c37d24]
 Units array patches:
     00: [140188885, 140194918, 1401b1b3e, 1401b5e05, 1401b5e75, 1401b5ee7, 1401da5a6, 1401e3f7c, 1401eabfd, 1401ee44e, 1403b04a8, 1403b1294, 140c37820, 140c37da0]
@@ -1968,6 +1965,8 @@ PortData array patches:
 140402978 = [48, 8b, ac, 24, 98, 00, 00, 00]
 140402980 = [48, 8b, 9c, 24, 90, 00, 00, 00]
 14040298d = [48, 83, ec, 68]
+140b8003c = [29, 64, 83, 00, 25, 34, 82, 00, 19, 01, 7c, 00, 0b, f0, 09, e0, 07, c0, 05, 70, 04, 50]
+140baa184 = [0c, c2, 08, f0, 06, d0, 04, c0, 02, 70]
 --- Hooks ---
 140175d60:4 = [40, 81, fe, 54, 00, 00, 00]
 14019fae4:8 = [81, bc, 87, ff, ff, ff, ff, 82, 00, 00, 00]

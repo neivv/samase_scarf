@@ -61,6 +61,7 @@ mod util;
 mod vtables;
 mod x86_64_globals;
 mod x86_64_instruction_info;
+mod x86_64_unwind;
 
 pub mod dat;
 

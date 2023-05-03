@@ -1,5 +1,6 @@
 use std::convert::TryFrom;
 
+use arrayvec::ArrayVec;
 use bumpalo::collections::Vec as BumpVec;
 use byteorder::{ByteOrder, LittleEndian};
 
@@ -9,6 +10,7 @@ use scarf::{BinaryFile, DestOperand, Operation, Operand};
 
 use crate::util::{bumpvec_with_capacity, ControlExt};
 use crate::x86_64_instruction_info;
+use crate::x86_64_unwind::UnwindFunctions;
 
 pub struct StackSizeTracker<'acx, 'e, E: ExecutionState<'e>> {
     stack_allocs: BumpVec<'acx, (i32, E::VirtualAddress)>,
@@ -323,7 +325,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
         }
     }
 
-    pub fn generate_patches<Cb>(&mut self, mut add_result: Cb)
+    pub fn generate_patches<Cb>(&mut self, unwind: &UnwindFunctions, mut add_result: Cb)
     // patch, skip
     // Hook if skip != patch length
     where Cb: FnMut(E::VirtualAddress, &[u8], usize),
@@ -338,15 +340,21 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                 return;
             }
         };
+        let add_result = &mut add_result;
         // Align to 16 bytes to not break SSE alignment assumptions if function
         // happens to have any. And of course 64-bit has to always have 16-aligned stack.
         let extra_alloc = align16(self.remaps.len() as u32 * 4);
+        let mut unwind_patch_addresses = ArrayVec::<E::VirtualAddress, 4>::new();
         for &(alloc_amt, addr) in self.stack_allocs.iter() {
             if alloc_amt == orig_alloc_amt || alloc_amt == 0i32.wrapping_sub(orig_alloc_amt) {
-                self.patch_stack_alloc(addr, extra_alloc, &mut add_result);
-                if E::VirtualAddress::SIZE == 8 {
-                    // Needs to find the unwind opcode for stack alloc and correct the size there
-                    dat_warn!(self, "Unwind info fixup unimplemented for {:?}", self.entry);
+                if let Some(end_addr) = self.patch_stack_alloc(addr, extra_alloc, add_result) {
+                    if E::VirtualAddress::SIZE == 8 {
+                        if !unwind_patch_addresses.contains(&end_addr) {
+                            if unwind_patch_addresses.try_push(end_addr).is_err() {
+                                dat_warn!(self, "Too many unwind patches in {:?}", self.entry);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -365,7 +373,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                 if off1 <= self.pre_offset && off2 > self.pre_offset ||
                     off2 <= self.pre_offset && off1 > self.pre_offset
                 {
-                    self.patch_alt_stack_pointer_init(addr, extra_alloc, &mut add_result);
+                    self.patch_alt_stack_pointer_init(addr, extra_alloc, add_result);
                 }
             }
             let mut prev = E::VirtualAddress::from_u64(0);
@@ -375,24 +383,29 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                     continue;
                 }
                 prev = addr;
-                self.patch_low_stack_access(addr, extra_alloc, &mut add_result);
+                self.patch_low_stack_access(addr, extra_alloc, add_result);
             }
+        }
+        if !unwind_patch_addresses.is_empty() {
+            self.patch_unwind_info(&unwind_patch_addresses, extra_alloc, unwind, add_result);
         }
     }
 
+    /// Returns instruction end for unwind info patching (Unwind info insturction offsets
+    /// for instruction end)
     fn patch_stack_alloc<Cb>(
         &self,
         address: E::VirtualAddress,
         extra_alloc: u32,
         add_result: &mut Cb,
-    )
+    ) -> Option<E::VirtualAddress>
     where Cb: FnMut(E::VirtualAddress, &[u8], usize),
     {
         let bytes = match self.binary.slice_from_address(address, 0x18) {
             Ok(o) => o,
             Err(_) => {
                 dat_warn!(self, "Can't read instruction @ {:?}", address);
-                return;
+                return None;
             }
         };
         if E::VirtualAddress::SIZE == 4 {
@@ -421,6 +434,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                     dat_warn!(self, "Can't patch stack alloc @ {:?}", address);
                 }
             }
+            None
         } else {
             match *bytes {
                 // add/sub rsp, imm32
@@ -432,6 +446,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                         false => 0i32.wrapping_sub(new_alloc),
                     };
                     self.add_esp_add(address, 7, value, add_result);
+                    Some(address + 7)
                 }
                 // add/sub rsp, imm8
                 [0x48, 0x83, 0xc4 | 0xec, ..] => {
@@ -442,9 +457,11 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                         false => 0i32.wrapping_sub(new_alloc),
                     };
                     self.add_esp_add(address, 4, value, add_result);
+                    Some(address + 4)
                 }
                 _ => {
                     dat_warn!(self, "Can't patch stack alloc @ {:?}", address);
+                    None
                 }
             }
         }
@@ -594,6 +611,147 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                 LittleEndian::write_i32(&mut main_op[imm_pos..], new_imm);
                 add_result(address, &buffer[..(main_opcode_pos + imm_pos + 4)], old_len);
             }
+        }
+    }
+
+    fn patch_unwind_info<Cb>(
+        &self,
+        // End of stack alloc instruction
+        patch_addresses: &[E::VirtualAddress],
+        extra_alloc: u32,
+        unwind: &UnwindFunctions,
+        add_result: &mut Cb,
+    )
+    where Cb: FnMut(E::VirtualAddress, &[u8], usize),
+    {
+        let extra_alloc_words = extra_alloc / 8;
+        let binary = self.binary;
+        let unwind_info = unwind.function_unwind_info_address(binary, self.entry)
+            .and_then(|x| Some((x, binary.slice_from_address_to_end(x).ok()?)));
+        let (unwind_info, unwind_info_bytes) = match unwind_info {
+            Some(s) => s,
+            None => {
+                dat_warn!(self, "Unwind info not found for {:?}", self.entry);
+                return;
+            }
+        };
+        if unwind.unwind_info_refcount(binary, unwind_info) != 1 {
+            // Could make work by asking patcher to either allocate
+            // completely new unwind info (If windows doesn't care about it
+            // not being in the exe), or by copying the entire function to
+            // new memory and dynamically adding unwind info for it.
+            // But this branch is likely never hit so not going to do that work now.
+            dat_warn!(self, "Unwind info for {:?} is shared by other functions", self.entry);
+            return;
+        }
+        let failed = (|| {
+            let &prologue_length = unwind_info_bytes.get(1)?;
+            let &unwind_code_count = unwind_info_bytes.get(2)?;
+            let unwind_codes = unwind_info_bytes.get(4..)?
+                .get(..(unwind_code_count as usize * 2))?;
+            let mut new_codes = ArrayVec::<u8, 64>::new();
+            new_codes.try_extend_from_slice(unwind_codes).ok()?;
+            let mut changed = false;
+            for &addr in patch_addresses {
+                let func_relative = match addr.as_u64().checked_sub(self.entry.as_u64())
+                    .and_then(|x| u8::try_from(x).ok())
+                {
+                    Some(s) => s,
+                    None => continue,
+                };
+                if func_relative > prologue_length {
+                    continue;
+                }
+                let mut pos = 0usize;
+                while pos < new_codes.len() {
+                    let (rel_addr, opcode) = match new_codes.get(pos..(pos + 2)) {
+                        Some(s) => (s[0], s[1]),
+                        None => break,
+                    };
+                    if rel_addr == func_relative {
+                        let op = opcode & 0xf;
+                        if op == 2 {
+                            // Small alloc
+                            let old = opcode >> 4;
+                            let new = (old as u32).checked_add(extra_alloc_words)?;
+                            if new < 0x10 {
+                                // Can keep as small alloc
+                                new_codes[pos + 1] = ((new as u8) << 4) | 2;
+                            } else {
+                                // Grow to large alloc
+                                // Arrayvec doesn't have nice way to insert u16, so just
+                                // inserting high byte followed by low byte.
+                                // Rarely used code anyway.
+                                let new = u16::try_from(new).ok()?;
+                                new_codes[pos + 1] = 0x01;
+                                new_codes.try_insert(pos + 2, (new >> 8) as u8).ok()?;
+                                new_codes.try_insert(pos + 2, new as u8).ok()?;
+                            }
+                        } else if op == 1 {
+                            // Large alloc
+                            let old_bytes = new_codes.get_mut((pos + 2)..(pos + 4))?;
+                            let old = LittleEndian::read_u16(old_bytes);
+                            let new = (old as u32).checked_add(extra_alloc_words)?;
+                            LittleEndian::write_u16(old_bytes, new as u16);
+                            if new & 0xffff_0000 != 0 {
+                                let hi_add = (new >> 16) as u16;
+                                if opcode & 0xf0 == 0x10 {
+                                    // Was already large alloc, just increment it by 1
+                                    let old_bytes_hi = new_codes.get_mut((pos + 4)..(pos + 6))?;
+                                    let new_hi = LittleEndian::read_u16(old_bytes_hi)
+                                        .checked_add(hi_add)?;
+                                    LittleEndian::write_u16(old_bytes_hi, new_hi);
+                                } else {
+                                    // Grow to large alloc
+                                    new_codes[pos + 1] = 0x11;
+                                    new_codes.try_insert(pos + 4, (hi_add >> 8) as u8).ok()?;
+                                    new_codes.try_insert(pos + 6, hi_add as u8).ok()?;
+                                }
+                            } else {
+                                // No need to consider large alloc u16 didn't overflow
+                            }
+                        } else {
+                            // Don't know how to handle this opcode
+                            return None;
+                        }
+                        changed = true;
+                        break;
+                    } else {
+                        // Opcode is 0xf, but for opcode 1 first bit of param
+                        // affects the opcode length
+                        static UNWIND_OPCODE_PARAM_LENGTHS: [u8; 0x20] = [
+                            1, 2, 1, 1, 2, 3, 0xff, 0xff,   2, 3, 1, 0xff, 0xff, 0xff, 0xff, 0xff,
+                            1, 3, 1, 1, 2, 3, 0xff, 0xff,   2, 3, 1, 0xff, 0xff, 0xff, 0xff, 0xff,
+                        ];
+                        let length = UNWIND_OPCODE_PARAM_LENGTHS[opcode as usize & 0x1f];
+                        pos += length as usize * 2;
+                    }
+                }
+            }
+            if changed {
+                if new_codes.len() > unwind_codes.len() {
+                    // If the code count was not even, there is
+                    // padding u16 that can now be used. Otherwise
+                    // will have to do something more complex.
+                    let can_use_padding = unwind_codes.len() - new_codes.len() == 2 &&
+                        unwind_code_count & 1 == 1;
+                    if can_use_padding {
+                        add_result(unwind_info + 2, &[unwind_code_count.checked_add(1)?], 1);
+                        add_result(unwind_info + 4, &new_codes, new_codes.len());
+                    } else {
+                        dat_warn!(
+                            self, "Can't fit new unwind codes for function {:?}", self.entry
+                        );
+                        return None;
+                    }
+                } else {
+                    add_result(unwind_info + 4, &new_codes, new_codes.len());
+                }
+            }
+            Some(())
+        })().is_none();
+        if failed {
+            dat_warn!(self, "Unwind patch for {:?} failed", self.entry);
         }
     }
 

@@ -63,6 +63,7 @@ use crate::util::{
     bumpvec_with_capacity, single_result_assign, if_callable_const, ControlExt, OperandExt,
     OptionExt,
 };
+use crate::x86_64_unwind;
 
 use partial_register_moves::PartialRegisterMoves;
 
@@ -561,6 +562,7 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     update_status_screen_tooltip: E::VirtualAddress,
     required_stable_addresses: RequiredStableAddressesMap<'acx, E::VirtualAddress>,
     rdtsc_custom: Operand<'e>,
+    unwind_functions: Rc<x86_64_unwind::UnwindFunctions>,
 }
 
 /// Selects handling of memory accesses in widen_instruction()
@@ -748,6 +750,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
 
         let text = analysis.binary_sections.text;
         let step_iscript = cache.step_iscript(analysis)?;
+        let unwind_functions = cache.unwind_functions();
         let bump = &analysis.bump;
         let ctx = analysis.ctx;
         Some(DatPatchContext {
@@ -791,6 +794,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             update_status_screen_tooltip: E::VirtualAddress::from_u64(0),
             required_stable_addresses: RequiredStableAddressesMap::with_capacity(1024, bump),
             rdtsc_custom: ctx.and_const(ctx.custom(RDTSC_CUSTOM), 0xffff_ffff),
+            unwind_functions,
         })
     }
 
@@ -3141,7 +3145,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             &mut self.state.stack_size_tracker,
             stack_analysis::StackSizeTracker::empty(self.binary, bump),
         );
-        stack_size_tracker.generate_patches(|addr, patch, skip| {
+        let unwind = Rc::clone(&self.dat_ctx.unwind_functions);
+        stack_size_tracker.generate_patches(&unwind, |addr, patch, skip| {
             if !self.dat_ctx.patched_addresses.insert(addr) {
                 self.debug_verify_patch_is_same(addr, patch, skip as u8);
                 return;

@@ -40,6 +40,7 @@ use crate::text;
 use crate::units;
 use crate::vtables::{self, Vtables};
 use crate::x86_64_globals;
+use crate::x86_64_unwind;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FiregraftAddresses<Va: VirtualAddress> {
@@ -702,6 +703,7 @@ pub struct AnalysisCache<'e, E: ExecutionState<'e>> {
     trigger_unit_count_caches: Cached<TriggerUnitCountCaches<'e>>,
     replay_minimap_unexplored_fog_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
     crt_fastfail: Cached<Rc<Vec<E::VirtualAddress>>>,
+    unwind_functions: Cached<Rc<x86_64_unwind::UnwindFunctions>>,
     dat_tables: DatTables<'e>,
 }
 
@@ -919,6 +921,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
                 trigger_unit_count_caches: Default::default(),
                 replay_minimap_unexplored_fog_patch: Default::default(),
                 crt_fastfail: Default::default(),
+                unwind_functions: Default::default(),
                 dat_tables: DatTables::new(),
             },
             shareable: AnalysisCtx {
@@ -1601,6 +1604,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         let globals_with_values = self.globals_with_values.0.as_deref().unwrap();
         let functions_with_callers = self.functions_with_callers.0.as_deref().unwrap();
         FunctionFinder::new(functions, globals_with_values, functions_with_callers)
+    }
+
+    pub fn unwind_functions(&mut self) -> Rc<x86_64_unwind::UnwindFunctions> {
+        let binary = self.binary;
+        self.unwind_functions.get_or_insert_with(|| {
+            Rc::new(x86_64_unwind::UnwindFunctions::new(binary))
+        }).clone()
     }
 
     fn cache_single_address<F>(
