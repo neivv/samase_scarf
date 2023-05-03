@@ -81,7 +81,7 @@ pub use crate::dat::{
     DatTablePtr, DatPatch, DatPatches, DatArrayPatch, DatEntryCountPatch, DatReplaceFunc,
 };
 pub use crate::eud::{Eud, EudTable};
-pub use crate::firegraft::RequirementTables;
+pub use crate::firegraft::{RequirementTables, RequirementTable};
 pub use crate::game::{Limits};
 pub use crate::inline_hook::InlineHookState;
 pub use crate::iscript::StepIscriptHook;

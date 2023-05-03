@@ -422,12 +422,6 @@ pub struct RequirementTable<Va> {
     pub address: Va,
 }
 
-impl<Va: VirtualAddress> RequirementTable<Va> {
-    pub(crate) fn sort_unstable(&mut self) {
-        self.references.sort_unstable_by_key(|x| x.0);
-    }
-}
-
 impl<Va: VirtualAddress> fmt::Debug for RequirementTable<Va> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:x}, refs [", self.address.as_u64())?;

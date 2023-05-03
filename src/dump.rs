@@ -11,6 +11,12 @@ macro_rules! out {
     }
 }
 
+impl<Va: VirtualAddress> crate::RequirementTable<Va> {
+    pub(crate) fn sort_unstable(&mut self) {
+        self.references.sort_unstable_by_key(|x| x.0);
+    }
+}
+
 pub fn dump<'e, E: ExecutionState<'e>>(
     analysis: &mut Analysis<'e, E>,
     filter: Option<&str>,
