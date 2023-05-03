@@ -5,7 +5,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
 
 use crate::analysis_find::{entry_of_until, EntryOf};
-use crate::util::{bumpvec_with_capacity, OperandExt};
+use crate::util::{bumpvec_with_capacity, ControlExt, OperandExt};
 use super::{DatType, DatPatchContext, DatArrayPatch, reloc_address_of_instruction};
 
 pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
@@ -134,8 +134,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     if self.state == InitUnitsState::UnitSearchInit {
                         let arg_cache = &self.dat_ctx.analysis.arg_cache;
                         let arg2 = ctrl.resolve(arg_cache.on_call(1));

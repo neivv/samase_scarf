@@ -3858,10 +3858,19 @@ fn reloc_address_of_instruction<'e, E: ExecutionState<'e>, A>(
 where A: analysis::Analyzer<'e, Exec=E>
 {
     let mut imm_addr = ctrl.current_instruction_end() - 4;
+    let expected_riprel =
+        addr.as_u64().wrapping_sub(ctrl.current_instruction_end().as_u64()) as i64 as i32 as u32;
+    let base_relative = binary.try_rva_32(addr)?;
     while imm_addr > ctrl.address() {
         if let Ok(imm) = binary.read_u32(imm_addr) {
-            if imm == addr.as_u64() as u32 {
-                return Some(imm_addr);
+            if E::VirtualAddress::SIZE == 4 {
+                if imm == addr.as_u64() as u32 {
+                    return Some(imm_addr);
+                }
+            } else {
+                if imm == expected_riprel || imm == base_relative {
+                    return Some(imm_addr);
+                }
             }
         }
         imm_addr = imm_addr - 1;
