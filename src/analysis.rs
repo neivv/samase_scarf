@@ -1416,7 +1416,9 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
                     while vec.len() <= a.field_id as usize {
                         vec.push(Vec::new());
                     }
-                    vec[a.field_id as usize].push((a.address, a.entry, a.byte_offset));
+                    vec[a.field_id as usize].push(
+                        (a.address, a.entry, a.orig_entry, a.byte_offset)
+                    );
                     vec[a.field_id as usize].sort_unstable();
                 }
                 DatPatch::EntryCount(ref a) => {
@@ -4180,7 +4182,7 @@ pub struct DatPatchesDebug<'e, Va: VirtualAddress> {
 }
 
 pub struct DatTablePatchesDebug<Va: VirtualAddress> {
-    pub array_patches: Vec<Vec<(Va, i32, u32)>>,
+    pub array_patches: Vec<Vec<(Va, i32, i32, u32)>>,
     pub entry_counts: Vec<Va>,
 }
 

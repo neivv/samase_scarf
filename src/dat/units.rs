@@ -124,7 +124,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 dat: DatType::Units,
                                 field_id: 0x26,
                                 address: patch_addr,
-                                entry: i32::min_value(),
+                                entry: i32::MIN,
+                                orig_entry: 0xe4,
                                 byte_offset: 0,
                             });
                             self.state = InitUnitsState::Done;

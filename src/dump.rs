@@ -262,14 +262,20 @@ pub fn dump_dat_patches<'e, E: ExecutionState<'e>>(
                 .position(|x| x.len() != 0)
                 .map(|x| debug.array_patches.len().min(0x80) - x)
                 .unwrap_or(0);
-            let mut print_array = |arr: &[(E::VirtualAddress, i32, u32)], i: usize| {
-                let all_offsets_zero = arr.iter().all(|x| x.1 == 0 && x.2 == 0);
+            let mut print_array = |arr: &[(E::VirtualAddress, i32, i32, u32)], i: usize| {
+                let all_offsets_zero = arr.iter().all(|x| x.1 == 0 && x.2 == 0 && x.3 == 0);
                 if all_offsets_zero {
                     let mapped = arr.iter().map(|x| x.0.as_u64()).collect::<Vec<_>>();
                     out!(&mut out, "    {:02x}: {:x?}", i, mapped);
                 } else {
                     let mapped = arr.iter()
-                        .map(|x| format!("{:x}:{:x}+{:x}", x.0.as_u64(), x.1, x.2))
+                        .map(|x| {
+                            if x.1 == x.2 {
+                                format!("{:x}:{:x}+{:x}", x.0.as_u64(), x.1, x.3)
+                            } else {
+                                format!("{:x}:{:x}+{:x} (orig {:x})", x.0.as_u64(), x.1, x.3, x.2)
+                            }
+                        })
                         .collect::<Vec<_>>();
                     out!(&mut out, "    {:02x}: {:x?}", i, mapped);
                 }

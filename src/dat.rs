@@ -302,7 +302,15 @@ pub struct DatArrayPatch<Va: VirtualAddress> {
     /// field array until overwritten)
     pub address: Va,
     /// Offset from start of the array in entries.
+    /// i32::MIN for special value of end of array.
     pub entry: i32,
+    /// What entry the BW code referred to.
+    /// Almost always same as entry, but differs for one sprite hp array use
+    /// (Special cased in sprites::patch_hp_bar_init), as well as has just the
+    /// original array length when `entry == i32::MIN`
+    /// Though this could also just store RVA of the value instead of having
+    /// patcher calculate it.
+    pub orig_entry: i32,
     /// Offset within the specified entry in bytes.
     pub byte_offset: u32,
 }
@@ -906,6 +914,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 field_id,
                 address,
                 entry: offset,
+                orig_entry: offset,
                 byte_offset,
             });
             match self.array_address_patches.entry(rva) {
@@ -987,6 +996,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                         field_id,
                         address: reloc.address,
                         entry: 0,
+                        orig_entry: 0,
                         byte_offset,
                     };
                     self.add_or_override_dat_array_patch(patch);
