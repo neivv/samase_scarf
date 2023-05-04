@@ -1228,6 +1228,10 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.enter(AnalysisCache::set_status_screen_tooltip)
     }
 
+    pub fn unit_wireframe_type(&mut self) -> Option<Operand<'e>> {
+        self.enter(AnalysisCache::unit_wireframe_type)
+    }
+
     pub fn dat_patches(&mut self) -> Option<Rc<DatPatches<'e, E::VirtualAddress>>> {
         self.enter(AnalysisCache::dat_patches)
     }
@@ -2848,6 +2852,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         actx: &AnalysisCtx<'e, E>,
     ) -> Option<E::VirtualAddress> {
         self.dat_patches(actx)?.set_status_screen_tooltip
+    }
+
+    fn unit_wireframe_type(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<Operand<'e>> {
+        self.dat_patches(actx)?.unit_wireframe_type
     }
 
     fn dat_patches(

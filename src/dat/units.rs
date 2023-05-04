@@ -81,6 +81,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         if dest_index == index &&
                             base != self.units_dat_target_acq_range.as_u64()
                         {
+                            let ctx = ctrl.ctx();
+                            self.dat_ctx.result.unit_wireframe_type = Some(ctx.constant(base));
                             let base = E::VirtualAddress::from_u64(base);
                             let end = base + 0xe4;
                             self.dat_ctx.add_dat_global_refs(
@@ -344,9 +346,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if !ok {
                     // Zerg building morph check.
                     // (((Mem16[(x + 1)] - 82) & ffff) > 16)
-                    ok = condition.if_arithmetic_gt()
-                        .and_then(|(l, r)| {
-                            r.if_constant().filter(|&c| c == 0x16)?;
+                    ok = condition.if_arithmetic_gt_const(0x16)
+                        .and_then(|l| {
                             let l = l.if_arithmetic_and_const(0xffff)?;
                             let l = l.if_arithmetic_sub_const(0x82)?;
                             l.if_mem16_offset(1)?;

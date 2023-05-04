@@ -132,6 +132,7 @@ pub struct DatPatches<'e, Va: VirtualAddress> {
     /// Guaranteed to be sorted by `offset`
     pub arrays_in_code_bytes: Vec<(usize, DatType, u8)>,
     pub set_status_screen_tooltip: Option<Va>,
+    pub unit_wireframe_type: Option<Operand<'e>>,
     pub warnings: DatWarnings,
 }
 
@@ -244,6 +245,7 @@ impl<'e, Va: VirtualAddress> DatPatches<'e, Va> {
             code_bytes: Vec::new(),
             arrays_in_code_bytes: Vec::new(),
             set_status_screen_tooltip: None,
+            unit_wireframe_type: None,
             warnings: DatWarnings::new(),
         }
     }
@@ -788,6 +790,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 code_bytes: Vec::with_capacity(2048),
                 arrays_in_code_bytes: Vec::with_capacity(64),
                 set_status_screen_tooltip: None,
+                unit_wireframe_type: None,
                 warnings: DatWarnings::new(),
             },
             patched_addresses: HashSet::with_capacity_and_hasher(64, Default::default()),

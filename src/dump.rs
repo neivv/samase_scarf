@@ -205,6 +205,10 @@ pub fn dump<'e, E: ExecutionState<'e>>(
             &mut out, "set_status_screen_tooltip: {:?}",
             analysis.set_status_screen_tooltip(),
         );
+        out!(
+            &mut out, "unit_wireframe_type: {}",
+            format_op_operand(analysis.unit_wireframe_type()),
+        );
 
         out!(&mut out, "SMemAlloc: {:?}", analysis.smem_alloc());
         out!(&mut out, "SMemFree: {:?}", analysis.smem_free());
