@@ -461,8 +461,8 @@ Aiscript hook: Some(
         return_address: VirtualAddress(005cdcef),
     },
 )
-step_order_hidden: [Inlined { entry: VirtualAddress(0059bb6a), exit: VirtualAddress(0059bc4a), unit: rsi, state: InlineHookState { enter_regs: 0000, stack_size: 0000, kept_regs: 0040, clobber_regs: 0007 } }]
-step_secondary_order: [Inlined { entry: VirtualAddress(0059b9c5), exit: VirtualAddress(0059ba6e), unit: rsi, state: InlineHookState { enter_regs: 0000, stack_size: 0000, kept_regs: 0040, clobber_regs: 0007 } }]
+step_order_hidden: [Inlined { entry: VirtualAddress(0059bb6a), exit: VirtualAddress(0059bc4a), unit: rsi, state: InlineHookState { enter_regs: 0000, stack_size: 0000, kept_regs: 0040, clobber_regs: 0007 }, whole_stack_size: 0 }]
+step_secondary_order: [Inlined { entry: VirtualAddress(0059b9c5), exit: VirtualAddress(0059ba6e), unit: rsi, state: InlineHookState { enter_regs: 0000, stack_size: 0000, kept_regs: 0040, clobber_regs: 0007 }, whole_stack_size: 0 }]
 command_lengths: len 67, [-1, -1, -1, -1, -1, 1, 33, 33, 1, 26, 26, 26, 8, 3, 5, 2, 1, 1, 5, 3, 10, 11, -1, -1, 1, 1, 2, 1, 1, 1, 2, 3, 3, 2, 2, 3, 1, 2, 2, 1, 2, 3, 1, 2, 2, 2, 1, 5, 2, 1, 2, 1, 1, 3, 1, 7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 10, 2, 5, -1, 1, -1, 82, 5, -1, 2, 12, 13, 5, 50, 50, 50, 4]
 units.dat: cc2550 (entry size 12)
 weapons.dat: cc28b8 (entry size 12)

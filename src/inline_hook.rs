@@ -138,7 +138,7 @@ pub fn inline_hook_state<'e, E: ExecutionState<'e>>(
     let mut clobber_registers = 0;
     for i in 0..register_count {
         let reg = ctx.register(i);
-        if entry_end_state.resolve(reg) != reg {
+        if entry_end_state.resolve_register(i) != reg {
             clobber_registers |= 1 << i;
         }
     }
@@ -177,7 +177,7 @@ pub fn inline_hook_state<'e, E: ExecutionState<'e>>(
         let mask = 1 << i;
         if exit_registers & mask != 0 {
             let reg = ctx.register(i);
-            let end_reg = entry_end_state.resolve(reg);
+            let end_reg = entry_end_state.resolve_register(i);
             if end_reg != reg {
                 if analyzer.registers & mask == 0 {
                     // This register was only used in call param guess, assume that it isn't

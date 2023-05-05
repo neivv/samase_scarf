@@ -23,6 +23,10 @@ pub enum StepOrderHiddenHook<'e, Va: VirtualAddress> {
         // Unresolved at entry
         unit: Operand<'e>,
         state: InlineHookState,
+        /// How much the stack was offset by the function prologue.
+        /// Required for keeping 64bit unwind info valid-ish.
+        /// May not necessarily be valid on 32bit.
+        whole_stack_size: u16,
     },
     Separate(Va),
 }
@@ -35,6 +39,10 @@ pub enum SecondaryOrderHook<'e, Va: VirtualAddress> {
         // Unresolved at entry
         unit: Operand<'e>,
         state: InlineHookState,
+        /// How much the stack was offset by the function prologue.
+        /// Required for keeping 64bit unwind info valid-ish.
+        /// May not necessarily be valid on 32bit.
+        whole_stack_size: u16,
     },
     Separate(Va),
 }
@@ -103,6 +111,7 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
     func_entry: E::VirtualAddress,
     jump_addr: E::VirtualAddress,
     unit: Operand<'e>,
+    stack_pointer: Operand<'e>,
 ) -> Option<SecondaryOrderHook<'e, E::VirtualAddress>> {
     fn resolve_at_addr<'e, F: ExecutionState<'e>>(
         binary: &'e BinaryFile<F::VirtualAddress>,
@@ -231,6 +240,15 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
         Some(SecondaryOrderHook::Separate(addr))
     } else {
         let resolved = resolve_at_addr::<E>(binary, ctx, addr, unit, jump_addr)?;
+        let whole_stack_size = stack_pointer
+            .if_sub_with_const()
+            .filter(|x| x.0 == ctx.register(4))
+            .and_then(|x| u16::try_from(x.1).ok())
+            .unwrap_or(0);
+        if E::VirtualAddress::SIZE == 8 && whole_stack_size & 0xf != 8 {
+            return None;
+        }
+
         let (entry, unit_at_hook, esp_offsets) =
             find_secondary_order_access::<E>(binary, ctx, addr, resolved)?;
         let end = cfg.immediate_postdominator(node.index)?;
@@ -245,6 +263,7 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
             exit: end_address,
             unit: unit_at_hook,
             state,
+            whole_stack_size,
         })
     }
 }
@@ -412,8 +431,8 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
     /// Finds `cmp order, 0xb0` jump that is the first thing done in step_order_hidden,
     /// `addr` being the function that step_order_hidden has been inlined to.
     struct Analyzer<'e, F: ExecutionState<'e>> {
-        // Jump addr, unit unresolved
-        result: Option<(F::VirtualAddress, Operand<'e>, EspOffsetRegs)>,
+        // Jump addr, unit unresolved, stack resolved
+        result: Option<(F::VirtualAddress, Operand<'e>, Operand<'e>, EspOffsetRegs)>,
     }
 
     impl<'f, F: ExecutionState<'f>> scarf::Analyzer<'f> for Analyzer<'f, F> {
@@ -435,7 +454,8 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
                         if let Some(unres) = unres {
                             let regs = EspOffsetRegs::from_entry_state(exec_state, ctx);
                             if let Some(esp_offsets) = regs {
-                                self.result = Some((ctrl.address(), unres, esp_offsets));
+                                let rsp = ctrl.resolve_register(4);
+                                self.result = Some((ctrl.address(), unres, rsp, esp_offsets));
                             }
                         }
                     }
@@ -454,7 +474,7 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
     analysis.analyze(&mut analyzer);
     let mut cfg = analysis.finish();
 
-    let (jump_addr, unit_at_hook, esp_offsets) = analyzer.result?;
+    let (jump_addr, unit_at_hook, stack_pointer, esp_offsets) = analyzer.result?;
     cfg.calculate_node_indices();
     let jump_rva = scarf::Rva(binary.rva_32(jump_addr));
     let node = cfg.nodes()
@@ -471,11 +491,21 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
             state.remove_entry_register(reg);
         }
 
+        let whole_stack_size = stack_pointer
+            .if_sub_with_const()
+            .filter(|x| x.0 == ctx.register(4))
+            .and_then(|x| u16::try_from(x.1).ok())
+            .unwrap_or(0);
+        if E::VirtualAddress::SIZE == 8 && whole_stack_size & 0xf != 8 {
+            return None;
+        }
+
         Some(StepOrderHiddenHook::Inlined {
             entry,
             exit: end_address,
             unit: unit_at_hook,
             state,
+            whole_stack_size,
         })
     }
 }
@@ -699,7 +729,7 @@ pub(crate) fn step_secondary_order<'e, E: ExecutionState<'e>>(
             if let Some(res) = analyzer.result {
                 return EntryOf::Ok(res);
             }
-            if let Some((jump_addr, unit)) = analyzer.pre_result {
+            if let Some((jump_addr, unit, stack_pointer)) = analyzer.pre_result {
                 let cfg = analysis.finish();
                 let res = step_secondary_order_hook_info(
                     binary,
@@ -708,6 +738,7 @@ pub(crate) fn step_secondary_order<'e, E: ExecutionState<'e>>(
                     entry,
                     jump_addr,
                     unit,
+                    stack_pointer,
                 );
                 if let Some(res) = res {
                     return EntryOf::Ok(res);
@@ -725,7 +756,7 @@ pub(crate) fn step_secondary_order<'e, E: ExecutionState<'e>>(
 
 struct StepSecondaryOrderAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: Option<SecondaryOrderHook<'e, E::VirtualAddress>>,
-    pre_result: Option<(E::VirtualAddress, Operand<'e>)>,
+    pre_result: Option<(E::VirtualAddress, Operand<'e>, Operand<'e>)>,
     call_found: bool,
     inlining: bool,
     caller: E::VirtualAddress,
@@ -757,7 +788,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         self.checked_funcs.push(dest);
                         let mut analysis = FuncAnalysis::new(self.binary, self.ctx, dest);
                         analysis.analyze(self);
-                        if let Some((jump_addr, unit)) = self.pre_result.take() {
+                        if let Some((jump_addr, unit, stack_pointer)) = self.pre_result.take() {
                             let cfg = analysis.finish();
                             self.result = step_secondary_order_hook_info(
                                 self.binary,
@@ -766,6 +797,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                                 dest,
                                 jump_addr,
                                 unit,
+                                stack_pointer,
                             );
                             if self.result.is_some() {
                                 ctrl.end_analysis();
@@ -779,7 +811,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 let condition = ctrl.resolve(condition);
                 let unit = step_secondary_order_hallu_jump_check::<E::VirtualAddress>(condition);
                 if let Some(unit) = unit.and_then(|u| ctrl.unresolve(u)) {
-                    self.pre_result = Some((ctrl.address(), unit));
+                    let rsp = ctrl.resolve_register(4);
+                    self.pre_result = Some((ctrl.address(), unit, rsp));
                 }
             }
             _ => (),
