@@ -645,7 +645,7 @@ impl<'a, 'acx, 'e: 'a + 'acx, E: ExecutionState<'e>> FindSetLimits<'a, 'acx, 'e,
         if self.game_loop_set_local_u32s.len() <= (index >> 3) {
             self.game_loop_set_local_u32s.resize((index >> 3) + 1, U8Chunk([0u8; 8]));
         }
-        self.game_loop_set_local_u32s[(index >> 3)].0[index & 7] |= 1 << bit;
+        self.game_loop_set_local_u32s[index >> 3].0[index & 7] |= 1 << bit;
     }
 
     fn check_esp(esp: Operand<'e>, ctx: OperandCtx<'e>) -> bool {
