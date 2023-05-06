@@ -3126,6 +3126,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
 
     #[inline]
     fn debug_verify_patch_is_same(&self, addr: E::VirtualAddress, patch: &[u8], skip: u8) {
+        // Ignore unused warning when the code below is not compiled in
+        let _ = (addr, patch, skip);
         // For cases where a patch was already added to an address, confirm
         // that the patch is same as would've been added here.
         #[cfg(any(debug_assertions, feature = "test_assertions", feature = "binaries"))]
