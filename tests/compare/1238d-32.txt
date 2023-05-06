@@ -503,6 +503,7 @@ Prism vertex shaders: [db8180, db9160, dba298, dbafa8, dbbf88, dbcd08]
 Prism pixel shaders: [dda7e0, ddcc60, dc6cb8, dc4120, ddddc0, ddee50, dc86c0, de0108, de1780, dce128, dbe090, de6c70, dd09b0, deb2c8, dd7888, dd8808, dd69d8, dec558, dd5598, dd1a70, dd9758, ded1b8, dd2e00, dd4488, deec10, df0648, df20e0, dc0a88, dccb88, dbf028, dc2b08, df32c0, de41d0, df5168, dca468, df69a8, dc1b08, de8dd8, dcbcf0, de7f90, dc5f48, dc5090, dcf1b0]
 set_status_screen_tooltip: Some(VirtualAddress(007e2820))
 unit_wireframe_type: 11cda80
+campaign_map_names: 100cc7c
 SMemAlloc: None
 SMemFree: None
 allocator: Mem32[fb990c]
@@ -1675,6 +1676,9 @@ PortData array patches:
     03: [fa4708]
     04: [fa4718]
     05: [fa4728]
+MapData entry count patches: [f8e088]
+MapData array patches:
+    00: [53b782, f8e080]
 --- Replaces ---
 0072c485 = [90, 8b, d1]
 0072c4b3 = [90, 8b, d1]
@@ -2124,3 +2128,4 @@ Grp index hooks: ["007e0892", "007e3119", "007e5739"]
 00894830 = SelfOrSubunitAirWeapon
 008948e0 = SelfOrSubunitGroundWeapon
 00894930 = UnitGroundWeapon
+Campaign map name init hook: 0053b8c5

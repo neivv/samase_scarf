@@ -505,6 +505,7 @@ Prism vertex shaders: [140b60bb0, 140b61ba0, 140b62cf0, 140b63a10, 140b64a00, 14
 Prism pixel shaders: [140b83400, 140b85890, 140b6f7d0, 140b6cc10, 140b86a00, 140b87aa0, 140b711e0, 140b88d60, 140b8a3f0, 140b76ca0, 140b66b20, 140b8f900, 140b79540, 140b93f80, 140b80480, 140b81410, 140b7f5c0, 140b95220, 140b7e170, 140b7a610, 140b82370, 140b95e90, 140b7b9b0, 140b7d050, 140b978f0, 140b99330, 140b9add0, 140b69540, 140b756f0, 140b67ad0, 140b6b5e0, 140b9bfc0, 140b8ce50, 140b9de70, 140b72fa0, 140b9f6c0, 140b6a5d0, 140b91a80, 140b74840, 140b90c30, 140b6ea50, 140b6db90, 140b77d30]
 set_status_screen_tooltip: Some(VirtualAddress(1404548e0))
 unit_wireframe_type: 14107e7d0
+campaign_map_names: 140eaa7f8
 SMemAlloc: None
 SMemFree: None
 allocator: Mem64[140e4e2c0]
@@ -1678,6 +1679,9 @@ PortData array patches:
     03: [140e2fb28]
     04: [140e2fb40]
     05: [140e2fb58]
+MapData entry count patches: [140e1108c]
+MapData array patches:
+    00: [140154b58, 140e11080]
 --- Replaces ---
 1403693c9 = [90, 42, 8b, 8c, 9b, ff, ff, ff, ff]
 1403693d7 = [90, 8b, c9]
@@ -2239,3 +2243,4 @@ Grp index hooks: ["1404525af", "140455389", "140457e54"]
 140524a50 = SelfOrSubunitAirWeapon
 140524b30 = SelfOrSubunitGroundWeapon
 140524ba0 = UnitGroundWeapon
+Campaign map name init hook: 140154c2c

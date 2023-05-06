@@ -1232,6 +1232,10 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.enter(AnalysisCache::unit_wireframe_type)
     }
 
+    pub fn campaign_map_names(&mut self) -> Option<Operand<'e>> {
+        self.enter(AnalysisCache::campaign_map_names)
+    }
+
     pub fn dat_patches(&mut self) -> Option<Rc<DatPatches<'e, E::VirtualAddress>>> {
         self.enter(AnalysisCache::dat_patches)
     }
@@ -1476,6 +1480,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         ext_array_args.sort_unstable_by_key(|x| x.0);
         grp_index_hooks.sort_unstable_by_key(|x| *x);
         grp_texture_hooks.sort_unstable_by_key(|x| x.0);
+        let campaign_map_names = patches.campaign_map_names;
         Some(DatPatchesDebug {
             warnings,
             tables: map,
@@ -1487,6 +1492,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
             ext_array_args,
             grp_index_hooks,
             grp_texture_hooks,
+            campaign_map_names,
         })
     }
 }
@@ -2861,6 +2867,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.dat_patches(actx)?.unit_wireframe_type
     }
 
+    fn campaign_map_names(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<Operand<'e>> {
+        self.dat_patches(actx)?.campaign_map_names.map(|x| x.0)
+    }
+
     fn dat_patches(
         &mut self,
         actx: &AnalysisCtx<'e, E>,
@@ -4190,6 +4203,7 @@ pub struct DatPatchesDebug<'e, Va: VirtualAddress> {
     pub ext_array_args: Vec<(Va, Vec<(usize, u8)>)>,
     pub grp_index_hooks: Vec<Va>,
     pub grp_texture_hooks: Vec<(Va, u8, Operand<'e>, Operand<'e>, Operand<'e>)>,
+    pub campaign_map_names: Option<(Operand<'e>, Va)>,
 }
 
 pub struct DatTablePatchesDebug<Va: VirtualAddress> {

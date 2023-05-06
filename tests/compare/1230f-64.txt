@@ -505,6 +505,7 @@ Prism vertex shaders: []
 Prism pixel shaders: []
 set_status_screen_tooltip: None
 unit_wireframe_type: 140c36800
+campaign_map_names: None
 SMemAlloc: Some(VirtualAddress(140553580))
 SMemFree: Some(VirtualAddress(1405535d0))
 allocator: None
@@ -1505,6 +1506,7 @@ order_bb: Some(VirtualAddress(1401a5a80))
 190913d8:4 = 140e390ec (00000000)
 
 -- Dat patches --
+WARN Conflict with dat global refs @ VirtualAddress(140255bb2)  MapData:0
 WARN Unknown Flingy dat offset @ VirtualAddress(14017b554): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(14039eb14): Mem8[Mem64[rcx + 34] + c]
 WARN Unknown Weapons dat offset @ VirtualAddress(14039eb76): Mem8[Mem64[rcx + 34] + c]
@@ -1519,6 +1521,7 @@ WARN Unknown Weapons dat offset @ VirtualAddress(14017622a): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(14017622a): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(14017622a): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403b1401): ((Undefined >> 8) & ff)
+WARN Could not find campaign map name patch
 Units entry count patches: [140b9382c, 140b93844, 140b9385c, 140b93874, 140b9388c, 140b938a4, 140b938bc, 140b938d4, 140b938ec, 140b93904, 140b9391c, 140b93934, 140b9394c, 140b93964, 140b9397c, 140b93994, 140b939ac, 140b939c4, 140b939dc, 140b939f4, 140b93a0c, 140b93a24, 140b93a3c, 140b93a54, 140b93a6c, 140b93a84, 140b93a9c, 140b93ab4, 140b93acc, 140b93ae4, 140b93afc, 140b93b14, 140b93b2c, 140b93b44, 140b93b5c, 140b93b74, 140b93b8c, 140b93ba4, 140b93bbc, 140b93bd4, 140b93bec, 140b93c04, 140b93c1c, 140b93c34, 140b93c4c, 140b93c64, 140b93c7c, 140b93c94, 140b93cac, 140b93cc4, 140b93cdc, 140b93cf4, 140b93d0c, 140b93d24]
 Units array patches:
     00: [14017b515, 140184105, 14019f9ae, 1401a6685, 1401a66f5, 1401a6767, 1401c0c96, 1401c7abc, 1401cafdd, 1401ccafe, 140360c48, 1403619c4, 140b93820, 140b93da0]
@@ -1689,6 +1692,9 @@ PortData array patches:
     03: [140b93568]
     04: [140b93580]
     05: [140b93598]
+MapData entry count patches: [140bd15bc]
+MapData array patches:
+    00: [140252c5c, 140252e2d, 1402e8a98, 1402e8ccd, 1402ff6a8, 14030dd5b, 1403afb6a, 140bd15b0]
 --- Replaces ---
 14013bc48 = [eb, 1c]
 14013be62 = [75, 1c]
@@ -2272,3 +2278,4 @@ Grp index hooks: ["14039ba09", "14039ddb4", "1403a8a4f"]
 1401a69f0 = UnitCurrentUpgrade
 1401a8100 = UnitOrderWeapon
 1401bd060 = UnitCloakTech
+Campaign map name init hook: None

@@ -505,6 +505,7 @@ Prism vertex shaders: []
 Prism pixel shaders: []
 set_status_screen_tooltip: None
 unit_wireframe_type: 140cce9a0
+campaign_map_names: None
 SMemAlloc: Some(VirtualAddress(140588530))
 SMemFree: Some(VirtualAddress(140588580))
 allocator: None
@@ -1519,6 +1520,7 @@ WARN Unknown Weapons dat offset @ VirtualAddress(140181a9a): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(140181a9a): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(140181a9a): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(1403e1551): ((Undefined >> 8) & ff)
+WARN Could not find campaign map name patch
 Units entry count patches: [140c2282c, 140c22844, 140c2285c, 140c22874, 140c2288c, 140c228a4, 140c228bc, 140c228d4, 140c228ec, 140c22904, 140c2291c, 140c22934, 140c2294c, 140c22964, 140c2297c, 140c22994, 140c229ac, 140c229c4, 140c229dc, 140c229f4, 140c22a0c, 140c22a24, 140c22a3c, 140c22a54, 140c22a6c, 140c22a84, 140c22a9c, 140c22ab4, 140c22acc, 140c22ae4, 140c22afc, 140c22b14, 140c22b2c, 140c22b44, 140c22b5c, 140c22b74, 140c22b8c, 140c22ba4, 140c22bbc, 140c22bd4, 140c22bec, 140c22c04, 140c22c1c, 140c22c34, 140c22c4c, 140c22c64, 140c22c7c, 140c22c94, 140c22cac, 140c22cc4, 140c22cdc, 140c22cf4, 140c22d0c, 140c22d24]
 Units array patches:
     00: [1401873a5, 140190436, 1401b41ae, 1401b9ec5, 1401b9f35, 1401b9fa7, 1401daca6, 1401e3c4f, 1401e738d, 1401e994e, 14038c118, 14038cf04, 140c22820, 140c22da0]
@@ -1689,6 +1691,9 @@ PortData array patches:
     03: [140c22568]
     04: [140c22580]
     05: [140c22598]
+MapData entry count patches: [140c60e1c]
+MapData array patches:
+    00: [14027803c, 14027820d, 140308ac8, 140308cfd, 1403218f2, 140337ccb, 1403dfb9a, 140c60e10]
 --- Replaces ---
 140140858 = [eb, 1c]
 140140a72 = [75, 1c]
@@ -2274,3 +2279,4 @@ Grp index hooks: ["1403c9a09", "1403cc414", "1403d7d2f"]
 1401ba450 = UnitCurrentUpgrade
 1401bbb50 = UnitOrderWeapon
 1401d4850 = UnitCloakTech
+Campaign map name init hook: None

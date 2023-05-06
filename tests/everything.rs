@@ -2319,6 +2319,14 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         check_global_struct_opt(use_map_set_rgb_color, binary, "use_map_set_rgb_color");
     }
 
+    // Campaign map names were moved to vector<string> in 1.23.3
+    let map_names = analysis.campaign_map_names();
+    if minor_version < 23 || (minor_version == 23 && patch_version < 3) {
+        assert!(map_names.is_none());
+    } else {
+        check_global_struct_opt(map_names, binary, "campaign_map_names")
+    }
+
     let dump_text = samase_scarf::dump::dump_all(analysis);
     let compare_path = if E::VirtualAddress::SIZE == 4 {
         format!("tests/compare/{}-32.txt", filename_str)

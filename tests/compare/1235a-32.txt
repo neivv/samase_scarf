@@ -503,6 +503,7 @@ Prism vertex shaders: [d7f100, d800e0, d81218, d81f28, d82f08, d83c88]
 Prism pixel shaders: [da1760, da3be0, d8dc38, d8b0a0, da4d40, da5dd0, d8f640, da7088, da8700, d950a8, d85010, dadbf0, d97930, db2248, d9e808, d9f788, d9d958, db34d8, d9c518, d989f0, da06d8, db4138, d99d80, d9b408, db5b90, db75c8, db9060, d87a08, d93b08, d85fa8, d89a88, dba240, dab150, dbc0e8, d913e8, dbd928, d88a88, dafd58, d92c70, daef10, d8cec8, d8c010, d96130]
 set_status_screen_tooltip: Some(VirtualAddress(007746f0))
 unit_wireframe_type: f6b610
+campaign_map_names: 1152acc
 SMemAlloc: Some(VirtualAddress(00912380))
 SMemFree: Some(VirtualAddress(009123c0))
 allocator: Mem32[11a3df4]
@@ -1678,6 +1679,9 @@ PortData array patches:
     03: [ed3370]
     04: [ed3380]
     05: [ed3390]
+MapData entry count patches: [efc3d0]
+MapData array patches:
+    00: [6f1c82, efc3c8]
 --- Replaces ---
 00533759 = [eb, 0f]
 00533945 = [75, 0f]
@@ -2140,3 +2144,4 @@ Grp index hooks: ["00774fd9", "00776ad9", "00783102"]
 005b4cf0 = UnitOrderWeapon
 005c82c0 = UnitCloakTech
 007772b0 = UpdateStatusScreenTooltip
+Campaign map name init hook: 006f1dc7

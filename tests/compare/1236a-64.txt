@@ -505,6 +505,7 @@ Prism vertex shaders: [140b4db30, 140b4eb20, 140b4fc70, 140b50990, 140b51980, 14
 Prism pixel shaders: [140b70380, 140b72810, 140b5c750, 140b59b90, 140b73980, 140b74a20, 140b5e160, 140b75ce0, 140b77370, 140b63c20, 140b53aa0, 140b7c880, 140b664c0, 140b80f00, 140b6d400, 140b6e390, 140b6c540, 140b821a0, 140b6b0f0, 140b67590, 140b6f2f0, 140b82e10, 140b68930, 140b69fd0, 140b84870, 140b862b0, 140b87d50, 140b564c0, 140b62670, 140b54a50, 140b58560, 140b88f40, 140b79dd0, 140b8adf0, 140b5ff20, 140b8c640, 140b57550, 140b7ea00, 140b617c0, 140b7dbb0, 140b5b9d0, 140b5ab10, 140b64cb0]
 set_status_screen_tooltip: Some(VirtualAddress(1403efbd0))
 unit_wireframe_type: 140e30bd0
+campaign_map_names: 14103ed58
 SMemAlloc: Some(VirtualAddress(1405cdbb0))
 SMemFree: Some(VirtualAddress(1405cdc10))
 allocator: Mem64[141092ba8]
@@ -1681,6 +1682,9 @@ PortData array patches:
     03: [140d71568]
     04: [140d71580]
     05: [140d71598]
+MapData entry count patches: [140d9ce8c]
+MapData array patches:
+    00: [140354488, 140d9ce80]
 --- Replaces ---
 140149148 = [eb, 1c]
 140149362 = [75, 1c]
@@ -2260,3 +2264,4 @@ Grp index hooks: ["1403f0699", "1403f2b64", "1404017ef"]
 1401c2140 = UnitOrderWeapon
 1401d96b0 = UnitCloakTech
 1403f35b0 = UpdateStatusScreenTooltip
+Campaign map name init hook: 14035457d

@@ -209,6 +209,10 @@ pub fn dump<'e, E: ExecutionState<'e>>(
             &mut out, "unit_wireframe_type: {}",
             format_op_operand(analysis.unit_wireframe_type()),
         );
+        out!(
+            &mut out, "campaign_map_names: {}",
+            format_op_operand(analysis.campaign_map_names()),
+        );
 
         out!(&mut out, "SMemAlloc: {:?}", analysis.smem_alloc());
         out!(&mut out, "SMemFree: {:?}", analysis.smem_free());
@@ -346,6 +350,11 @@ pub fn dump_dat_patches<'e, E: ExecutionState<'e>>(
         out!(&mut out, "--- Func replaces ---");
         for (addr, ty) in dat_patches.func_replaces {
             out!(&mut out, "{:08x} = {:?}", addr.as_u64(), ty);
+        }
+        if let Some((_, addr)) = dat_patches.campaign_map_names {
+            out!(&mut out, "Campaign map name init hook: {:08x}", addr.as_u64());
+        } else {
+            out!(&mut out, "Campaign map name init hook: None");
         }
     } else {
         out!(&mut out, "Dat patches analysis failed");

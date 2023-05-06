@@ -23,6 +23,7 @@ macro_rules! dat_warn {
     }
 }
 
+mod campaign;
 mod cmdbtns;
 mod game;
 mod partial_register_moves;
@@ -109,6 +110,15 @@ static PORTDATA_ARRAY_WIDTHS_64: &[u8] = &[
     8, 8, 1, 1, 1, 1,
 ];
 
+// Don't think mapdata labels do that, but same size changes
+static MAPDATA_ARRAY_WIDTHS_32: &[u8] = &[
+    4,
+];
+
+static MAPDATA_ARRAY_WIDTHS_64: &[u8] = &[
+    8,
+];
+
 const RDTSC_CUSTOM: u32 = 0x2000_0000;
 // One for each register 0x2000_0010 .. 0x2000_0020
 const PARTIAL_REGISTER_CLEAR_CUSTOM: u32 = 0x2000_0010;
@@ -133,6 +143,8 @@ pub struct DatPatches<'e, Va: VirtualAddress> {
     pub arrays_in_code_bytes: Vec<(usize, DatType, u8)>,
     pub set_status_screen_tooltip: Option<Va>,
     pub unit_wireframe_type: Option<Operand<'e>>,
+    /// Vector<String> and point where it should be resized to have entries > 0x41
+    pub campaign_map_names: Option<(Operand<'e>, Va)>,
     pub warnings: DatWarnings,
 }
 
@@ -246,6 +258,7 @@ impl<'e, Va: VirtualAddress> DatPatches<'e, Va> {
             arrays_in_code_bytes: Vec::new(),
             set_status_screen_tooltip: None,
             unit_wireframe_type: None,
+            campaign_map_names: None,
             warnings: DatWarnings::new(),
         }
     }
@@ -446,7 +459,8 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     init_warnings_tls();
     let dats = [
         DatType::Units, DatType::Weapons, DatType::Flingy, DatType::Sprites,
-        DatType::Upgrades, DatType::TechData, DatType::PortData, DatType::Orders,
+        DatType::Upgrades, DatType::TechData, DatType::PortData, DatType::MapData,
+        DatType::Orders,
     ];
     let firegraft = cache.firegraft_addresses(analysis);
     let sprite_sync = cache.sprite_include_in_vision_sync(analysis)?;
@@ -506,6 +520,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     triggers::trigger_analysis(dat_ctx)?;
     cmdbtns::cmdbtn_analysis(dat_ctx)?;
     sprites::patch_hp_bar_init(dat_ctx)?;
+    campaign::patch_mapdata_names(dat_ctx)?;
     dat_ctx.finish_all_patches();
     dat_ctx.result.warnings = get_warnings_tls();
     if crate::test_assertions() {
@@ -527,6 +542,7 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     upgrades: DatTable<E::VirtualAddress>,
     techdata: DatTable<E::VirtualAddress>,
     portdata: DatTable<E::VirtualAddress>,
+    mapdata: DatTable<E::VirtualAddress>,
     orders: DatTable<E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     text: &'e BinarySection<E::VirtualAddress>,
@@ -779,6 +795,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             upgrades: dat_table(0xc),
             techdata: dat_table(0xb),
             portdata: dat_table(0x6),
+            mapdata: dat_table(0x1),
             orders: dat_table(0x13),
             binary: analysis.binary,
             relocs: cache.globals_with_values(),
@@ -791,6 +808,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 arrays_in_code_bytes: Vec::with_capacity(64),
                 set_status_screen_tooltip: None,
                 unit_wireframe_type: None,
+                campaign_map_names: None,
                 warnings: DatWarnings::new(),
             },
             patched_addresses: HashSet::with_capacity_and_hasher(64, Default::default()),
@@ -827,6 +845,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                     (&mut self.portdata, 0x6e, &PORTDATA_ARRAY_WIDTHS_32)
                 } else {
                     (&mut self.portdata, 0x6e, &PORTDATA_ARRAY_WIDTHS_64)
+                }
+            }
+            DatType::MapData => {
+                if E::VirtualAddress::SIZE == 4 {
+                    (&mut self.mapdata, 0x41, &MAPDATA_ARRAY_WIDTHS_32)
+                } else {
+                    (&mut self.mapdata, 0x41, &MAPDATA_ARRAY_WIDTHS_64)
                 }
             }
             DatType::Orders => (&mut self.orders, 0xbd, &ORDER_ARRAY_WIDTHS),
@@ -1397,6 +1422,7 @@ fn entry_limit_to_dat(entries: u32) -> Option<(DatType, bool)> {
         0x2c => (DatType::TechData, true),
         0x6e => (DatType::PortData, false),
         0xbd => (DatType::Orders, false),
+        // Not including mapdata, its entry limit patch requires bit of special handling
         _ => return None,
     })
 }
