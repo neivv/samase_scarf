@@ -488,13 +488,33 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         dat_ctx.add_func_arg_patches();
     }
     // Status screen array (Using unit 0xff)
+    let (buttonset_size, status_func_size) = match E::VirtualAddress::SIZE == 4 {
+        true => (0xc, 0xc),
+        false => (0x18, 0x18),
+    };
     for &status_addr in &firegraft.unit_status_funcs {
         let end_ptr = status_addr + 0xe4 * 0xc;
-        dat_ctx.add_dat_global_refs(DatType::Units, 0xff, status_addr, end_ptr, 0, 0xc, false);
+        dat_ctx.add_dat_global_refs(
+            DatType::Units,
+            0xff,
+            status_addr,
+            end_ptr,
+            0,
+            status_func_size,
+            false,
+        );
     }
     for &buttons in &firegraft.buttonsets {
         let end_ptr = buttons + 0xfa * 0xc;
-        dat_ctx.add_dat_global_refs(DatType::Units, 0xfe, buttons, end_ptr, 0, 0xc, false);
+        dat_ctx.add_dat_global_refs(
+            DatType::Units,
+            0xfe,
+            buttons,
+            end_ptr,
+            0,
+            buttonset_size,
+            false,
+        );
         units::button_use_analysis(dat_ctx, buttons)?;
     }
     if let Some(sync) = sprite_sync.if_constant() {
