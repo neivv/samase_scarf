@@ -101,6 +101,11 @@ pub(crate) struct InitStatRes<'e, Va: VirtualAddress> {
     pub get_statres_icons_ddsgrp: Option<Va>,
 }
 
+pub(crate) struct RunDialogChild<'e> {
+    pub first_dialog: Option<Operand<'e>>,
+    pub run_dialog_stack: Option<Operand<'e>>,
+}
+
 impl<'e, Va: VirtualAddress> Default for MultiWireframes<'e, Va> {
     fn default() -> Self {
         MultiWireframes {
@@ -2215,6 +2220,213 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 }
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) fn analyze_run_dialog<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    run_dialog: E::VirtualAddress,
+) -> RunDialogChild<'e> {
+    let mut result = RunDialogChild {
+        first_dialog: None,
+        run_dialog_stack: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, run_dialog);
+    let mut analyzer = RunDialogChildAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        state: RunDialogChildState::InitReturnCode,
+        allow_inline: false,
+        inlining: false,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum RunDialogChildState {
+    /// Find Mem32[dialog_return_code] = 0xffff_fffd
+    InitReturnCode,
+    /// Find Mem32[dialog + x] &= 0xfbff_ffff
+    FlagClear,
+    /// Find call to run_dialog_start_loop(arg1)
+    ///     (Sometimes inlined)
+    /// Find run_dialog_stack.push(arg1)
+    /// (Store arg1 to MemWord[[vec.0] + [vec.1]])
+    Stack,
+    /// Call step_dialogs(arg1 = arg1)
+    ///     (Sometimes inlined)
+    /// Then call (*first_dialog).once_in_frame(arg1 = first_dialog)
+    FirstDialog,
+}
+
+struct RunDialogChildAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut RunDialogChild<'e>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: RunDialogChildState,
+    allow_inline: bool,
+    inlining: bool,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunDialogChildAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match self.state {
+            RunDialogChildState::InitReturnCode => {
+                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size == MemAccessSize::Mem32 {
+                        if ctrl.resolve(value).if_constant() == Some(0xffff_fffd) {
+                            self.state = RunDialogChildState::FlagClear;
+                            self.allow_inline = true;
+                            ctrl.clear_all_branches();
+                        }
+                    }
+                }
+            }
+            RunDialogChildState::FlagClear => {
+                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size == MemAccessSize::Mem32 {
+                        let mem = ctrl.resolve_mem(&mem);
+                        let ok = mem.address().0 == self.arg_cache.on_entry(0) &&
+                            value.if_arithmetic_and_const(0xfbff_ffff).is_some();
+                        if ok {
+                            self.state = RunDialogChildState::Stack;
+                            self.allow_inline = true;
+                            ctrl.clear_all_branches();
+                            if self.inlining {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                } else if self.allow_inline {
+                    // If there is a call with arg1 = arg1 before any other call or jump,
+                    // inline it, as the flag clear is actually in a function that sends
+                    // dialog init events etc.
+                    if let Operation::Jump { .. } = *op {
+                        self.allow_inline = false;
+                    } else if let Operation::Call(dest) = *op {
+                        self.allow_inline = false;
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            if ctrl.resolve(self.arg_cache.on_call(0)) ==
+                                self.arg_cache.on_entry(0)
+                            {
+                                self.inlining = true;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inlining = false;
+                                // Should have switched to State::Stack, otherwise wasn't
+                                // the function we wanted.
+                                if self.state != RunDialogChildState::Stack {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            RunDialogChildState::Stack => {
+                if let Operation::Call(dest) = *op {
+                    if self.allow_inline {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            if ctrl.resolve(self.arg_cache.on_call(0)) ==
+                                self.arg_cache.on_entry(0)
+                            {
+                                // Only try inlining once, should be that or nothing.
+                                self.allow_inline = false;
+                                ctrl.analyze_with_current_state(self, dest);
+                                if self.state != RunDialogChildState::Stack {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size == E::WORD_SIZE {
+                        if ctrl.resolve(value) == self.arg_cache.on_entry(0) {
+                            let mem = ctrl.resolve_mem(&mem);
+                            // Check vec.ptr + vec.len
+                            let ok = mem.if_no_offset()
+                                .and_then(|x| x.if_arithmetic_add())
+                                .and_either(|x| {
+                                    x.if_arithmetic_mul_const(E::VirtualAddress::SIZE as u64)
+                                })
+                                .and_then(|(len, ptr)| {
+                                    let ptr = ctrl.if_mem_word(ptr)?;
+                                    let len = ctrl.if_mem_word(len)?;
+                                    if ptr.with_offset(E::VirtualAddress::SIZE as u64) == *len {
+                                        let ctx = ctrl.ctx();
+                                        Some(ptr.address_op(ctx))
+                                    } else {
+                                        None
+                                    }
+                                });
+                            if let Some(vec) = ok {
+                                self.result.run_dialog_stack = Some(vec);
+                                self.state = RunDialogChildState::FirstDialog;
+                                self.allow_inline = true;
+                                ctrl.clear_unchecked_branches();
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    // Follow len != capacity jumps
+                    let condition = ctrl.resolve(condition);
+                    let eq = condition.if_arithmetic_eq_neq()
+                        .and_then(|(l, r, eq)| {
+                            let (l, l_off) = ctrl.if_mem_word(Operand::and_masked(l).0)?.address();
+                            let (r, r_off) = ctrl.if_mem_word(Operand::and_masked(r).0)?.address();
+                            if l == r && (
+                                l_off == r_off.wrapping_add(E::VirtualAddress::SIZE as u64) ||
+                                r_off == l_off.wrapping_add(E::VirtualAddress::SIZE as u64)
+                            ) {
+                                Some(eq)
+                            } else {
+                                None
+                            }
+                        });
+                    if let Some(eq) = eq {
+                        ctrl.continue_at_neq_address(eq, to);
+                    }
+                }
+            }
+            RunDialogChildState::FirstDialog => {
+                if let Operation::Call(dest) = *op {
+                    let dest = ctrl.resolve(dest);
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    if let Some(dest) = dest.if_constant() {
+                        if self.allow_inline {
+                            if arg1 == self.arg_cache.on_entry(0) {
+                                let dest = E::VirtualAddress::from_u64(dest);
+                                // Only try inlining once, should be that or nothing.
+                                self.allow_inline = false;
+                                ctrl.analyze_with_current_state(self, dest);
+                                if self.result.first_dialog.is_some() {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    } else {
+                        let offsets =
+                            struct_layouts::dialog_once_in_frame::<E::VirtualAddress>();
+                        let ok = ctrl.if_mem_word(dest)
+                            .and_then(|mem| {
+                                let (base, off) = mem.address();
+                                if base == arg1 && offsets.iter().any(|&x| off == x) {
+                                    Some(base)
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(first) = ok {
+                            self.result.first_dialog = Some(first);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
         }
     }
 }

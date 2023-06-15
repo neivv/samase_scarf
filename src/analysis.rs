@@ -656,6 +656,8 @@ results! {
         SelectStartX => select_start_x => cache_game_screen_lclick,
         SelectStartY => select_start_y => cache_game_screen_lclick,
         IsSelecting => is_selecting => cache_game_screen_lclick,
+        FirstDialog => first_dialog => cache_run_dialog_children,
+        RunDialogStack => run_dialog_stack => cache_run_dialog_children,
     }
 }
 
@@ -4188,6 +4190,17 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     mouse_up,
                 );
                 Some(([r.decide_cursor_type, r.set_current_cursor_type, r.select_units], []))
+            })
+    }
+
+    fn cache_run_dialog_children(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[], &[FirstDialog, RunDialogStack],
+            |s| {
+                let run_dialog = s.run_dialog(actx)?;
+                let r = dialog::analyze_run_dialog(actx, run_dialog);
+                Some(([], [r.first_dialog, r.run_dialog_stack]))
             })
     }
 }

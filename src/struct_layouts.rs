@@ -510,6 +510,13 @@ pub fn control_u16_value<Va: VirtualAddress>() -> &'static [u64] {
     }
 }
 
+pub fn dialog_once_in_frame<Va: VirtualAddress>() -> &'static [u64] {
+    match Va::SIZE == 4 {
+        true => &[0x4c, 0x64],
+        false => &[0x78, 0xa0],
+    }
+}
+
 pub fn pathing_map_tile_regions<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xc,
