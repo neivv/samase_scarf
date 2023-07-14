@@ -957,58 +957,16 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             let offset_bytes = (reloc.value.as_u64().wrapping_sub(array_ptr.as_u64())) as i32;
             let offset = (start_index as i32).saturating_add(offset_bytes / field_size as i32);
             let byte_offset = offset_bytes as u32 % field_size as u32;
-            let array_patch = DatPatch::Array(DatArrayPatch {
+            let array_patch = DatArrayPatch {
                 dat,
                 field_id,
                 address,
                 entry: offset,
                 orig_entry: offset,
                 byte_offset,
-            });
-            match self.array_address_patches.entry(rva) {
-                Entry::Occupied(e) => {
-                    enum Action {
-                        UseOld,
-                        UseNew,
-                        Warn,
-                    }
-                    // Overlap, if the offset isn't 0 it's likely 0 entry
-                    // for an array whose start_index isn't 0
-                    // Also assume that entry -1 is more correct than something else.
-                    let index = *e.get();
-                    let action = if byte_offset != 0 {
-                        Action::UseOld
-                    } else {
-                        if let DatPatch::Array(ref patch) = self.result.patches[index] {
-                            if offset == -1 && patch.entry != -1 {
-                                Action::UseNew
-                            } else if patch.entry == -1 && offset != -1 {
-                                Action::UseOld
-                            } else {
-                                Action::Warn
-                            }
-                        } else {
-                            Action::Warn
-                        }
-                    };
-                    match action {
-                        Action::UseOld => continue,
-                        Action::Warn => {
-                            dat_warn!(
-                                self, "Conflict with dat global refs @ {:?}  {:?}:{:x}",
-                                address, dat, field_id,
-                            );
-                            continue;
-                        }
-                        Action::UseNew => {
-                            self.result.patches[index] = array_patch;
-                        }
-                    }
-                }
-                Entry::Vacant(e) => {
-                    e.insert(self.result.patches.len());
-                    self.result.patches.push(array_patch);
-                }
+            };
+            if !self.add_or_override_dat_array_patch(array_patch) {
+                continue;
             }
             // Assuming that array ref analysis for hardcoded indices isn't important.
             // (It isn't as of this writing)
@@ -1055,18 +1013,72 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         }
     }
 
-    fn add_or_override_dat_array_patch(&mut self, patch: DatArrayPatch<E::VirtualAddress>) {
+    /// Return false if the patch wasn't added due to an existing patch having priority.
+    ///
+    /// Has heuristics to determine which of two arrays gets priority in case of conflict.
+    fn add_or_override_dat_array_patch(
+        &mut self,
+        patch: DatArrayPatch<E::VirtualAddress>,
+    ) -> bool {
+        enum Action {
+            UseOld,
+            UseNew,
+            Warn,
+        }
+
         let address = patch.address;
+        let entry = patch.entry;
+        let field_id = patch.field_id;
+        let dat = patch.dat;
         let rva = Rva((address.as_u64() - self.binary.base.as_u64()) as u32);
         let patch = DatPatch::Array(patch);
         match self.array_address_patches.entry(rva) {
             Entry::Occupied(e) => {
+                // Overlap, if the entry isn't 0 it's likely 0 entry
+                // for an array whose start_index isn't 0
+                // Also assume that entry -1 is more correct than something else.
                 let index = *e.get();
-                self.result.patches[index] = patch;
+                let action = if entry == i32::MIN {
+                    // Special case of known array end; (at least) units::init_units_analysis
+                    // will add this for units.dat dimensionbox end which likely overlaps
+                    // with another array.
+                    Action::UseNew
+                } else if entry != 0 {
+                    Action::UseOld
+                } else {
+                    if let DatPatch::Array(ref old) = self.result.patches[index] {
+                        if entry == -1 && old.entry != -1 {
+                            Action::UseNew
+                        } else if old.entry == -1 && entry != -1 {
+                            Action::UseOld
+                        } else if entry == 0 && old.entry != 0 {
+                            Action::UseNew
+                        } else {
+                            Action::Warn
+                        }
+                    } else {
+                        Action::Warn
+                    }
+                };
+                match action {
+                    Action::UseOld => false,
+                    Action::Warn => {
+                        dat_warn!(
+                            self, "Conflict with dat global refs @ {:?}  {:?}:{:x}",
+                            address, dat, field_id,
+                        );
+                        false
+                    }
+                    Action::UseNew => {
+                        self.result.patches[index] = patch;
+                        true
+                    }
+                }
             }
             Entry::Vacant(e) => {
                 e.insert(self.result.patches.len());
                 self.result.patches.push(patch);
+                true
             }
         }
     }
