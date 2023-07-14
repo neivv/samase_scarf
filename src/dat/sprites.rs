@@ -1,6 +1,6 @@
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{DestOperand, Operation};
+use scarf::{DestOperand, Operation, Rva};
 
 use crate::analysis_find::{entry_of_until, EntryOf};
 use crate::util::{ControlExt};
@@ -36,11 +36,14 @@ pub(crate) fn patch_hp_bar_init<'a, 'e, E: ExecutionState<'e>>(
         }).into_option().is_some();
         if ok {
             // Also fix the already added array patch to refer to start of the array now
-            for patch in &mut dat_ctx.result.patches {
-                if let DatPatch::Array(ref mut arr) = *patch {
-                    if arr.address == global.use_address {
-                        arr.entry = 0;
-                        return Some(());
+            let rva = Rva(binary.rva_32(global.use_address));
+            if let Some(&index) = dat_ctx.array_address_patches.get(&rva) {
+                if let Some(patch) = dat_ctx.result.patches.get_mut(index) {
+                    if let DatPatch::Array(arr) = patch {
+                        if arr.address == global.use_address {
+                            arr.entry = 0;
+                            return Some(());
+                        }
                     }
                 }
             }
