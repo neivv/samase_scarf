@@ -20,9 +20,11 @@ static CHECKED_OPCODES: [u8; 0x100] = [
     /* c0 */ 0, 0, 0, 0,  0, 0, 1, 1,  0, 0, 0, 0,  0, 0, 0, 0,
     /* d0 */ 0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
     /* e0 */ 0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
-    /* f0 */ 0, 0, 0, 0,  0, 0, 0, 1,  1, 0, 0, 0,  0, 0, 1, 1,
+    /* f0 */ 0, 0, 0, 0,  0, 0, 1, 1,  0, 0, 0, 0,  0, 0, 1, 1,
 ];
 
+// Note: f6 and f7 have imm sizes 1/4 if `second_byte >> 3` < 2
+// The search code will adjust for it when pushing the result.
 static IMM_SIZE: [u8; 0x100] = [
     /* 00 */ 0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
     /* 10 */ 0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
@@ -39,7 +41,7 @@ static IMM_SIZE: [u8; 0x100] = [
     /* c0 */ 0, 0, 0, 0,  0, 0, 1, 4,  0, 0, 0, 0,  0, 0, 0, 0,
     /* d0 */ 0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
     /* e0 */ 0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
-    /* f0 */ 0, 0, 0, 0,  0, 0, 0, 1,  4, 0, 0, 0,  0, 0, 0, 0,
+    /* f0 */ 0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
 ];
 
 pub fn x86_64_globals<Va: VirtualAddress>(binary: &BinaryFile<Va>) -> Vec<RelocValues<Va>> {
@@ -110,8 +112,9 @@ pub fn x86_64_globals<Va: VirtualAddress>(binary: &BinaryFile<Va>) -> Vec<RelocV
         // has ~88% rate of not passing, ~69% if done at 4 values at once.
         // Maybe 4 values at once combined with B / C would be a fine alternative too?
         let modrm = win[2];
+        let opcode = win[1] as usize;
         let b = modrm & 0x47;
-        let ok = (CHECKED_OPCODES[win[1] as usize]) &
+        let ok = (CHECKED_OPCODES[opcode]) &
             (b.wrapping_sub(4) < 2) as u8;
         if ok != 0 {
             let offset_pos;
@@ -134,6 +137,16 @@ pub fn x86_64_globals<Va: VirtualAddress>(binary: &BinaryFile<Va>) -> Vec<RelocV
                 binary.base() + offset
             };
             if value >= global_min && value < global_max {
+                // Fix f6 / f7 where there can be an immediate depending on modrm byte.
+                let value = if opcode.wrapping_sub(0xf6) < 2 && (modrm >> 3) < 2 && b == 5 {
+                    if opcode & 1 == 0 {
+                        value + 1
+                    } else {
+                        value + 4
+                    }
+                } else {
+                    value
+                };
                 out.push(RelocValues {
                     address: text.virtual_address + text_pos + offset_pos,
                     value,
