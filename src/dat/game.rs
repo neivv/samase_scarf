@@ -1216,7 +1216,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                         address,
                         address + 2,
                     ) {
-                        warn!("Can't fit extended array patch to {:?}", address);
+                        dat_warn!(self, "Can't fit extended array patch to {:?}", address);
                         continue;
                     }
                     let mut hook_ctx = FunctionHookContext::<E> {
@@ -1232,7 +1232,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                             _ => (),
                         }
                     } else {
-                        warn!("Can't find free space for hook @ {:?}", address);
+                        dat_warn!(self, "Can't find free space for hook @ {:?}", address);
                     }
                 }
             }
