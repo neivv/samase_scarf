@@ -138,7 +138,7 @@ pub fn x86_64_globals<Va: VirtualAddress>(binary: &BinaryFile<Va>) -> Vec<RelocV
             };
             if value >= global_min && value < global_max {
                 // Fix f6 / f7 where there can be an immediate depending on modrm byte.
-                let value = if opcode.wrapping_sub(0xf6) < 2 && (modrm >> 3) < 2 && b == 5 {
+                let value = if opcode.wrapping_sub(0xf6) < 2 && ((modrm >> 3) & 7) < 2 && b == 5 {
                     if opcode & 1 == 0 {
                         value + 1
                     } else {
