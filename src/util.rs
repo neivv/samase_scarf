@@ -510,18 +510,7 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
                 if mem.size == MemAccessSize::Mem8 {
                     let value = self.resolve(value);
                     if let Some(mem) = value.if_mem8() {
-                        let (base, offset) = mem.address();
-                        fn check(op: Operand<'_>) -> bool {
-                            op.if_arithmetic(ArithOpType::Modulo)
-                                .or_else(|| op.if_arithmetic(ArithOpType::And))
-                                .and_then(|x| x.1.if_constant())
-                                .filter(|&c| c > 0x400)
-                                .is_some()
-                        }
-                        let skip = offset == 0xfff ||
-                            check(base) ||
-                            base.if_arithmetic_add().filter(|&(l, r)| check(l) || check(r))
-                                .is_some();
+                        let skip = aliasing_mem8_check(mem);
                         if skip {
                             self.skip_operation();
                             let ctx = self.ctx();
@@ -663,6 +652,24 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
     }
 }
 
+fn aliasing_mem8_check(mem: &scarf::MemAccess<'_>) -> bool {
+    let (base, offset) = mem.address();
+    fn check(op: Operand<'_>) -> bool {
+        op.if_arithmetic(ArithOpType::Modulo)
+            .or_else(|| op.if_arithmetic(ArithOpType::And))
+            .and_then(|x| x.1.if_constant())
+            .filter(|&c| c > 0x400)
+            .is_some()
+    }
+    fn check_add_pair<'e>(a: Operand<'e>, b: Operand<'e>) -> bool {
+        check(a) && Operand::and_masked(b).0.if_arithmetic_xor().is_some()
+    }
+    offset == 0xfff ||
+        base.if_arithmetic_add().filter(|&(l, r)| {
+            check_add_pair(l, r) || check_add_pair(r, l)
+        }).is_some()
+}
+
 // Hackyish fix for accounting scarf sometimes removing `& ffff_ffff` in 32bit mode
 // (Maybe that scarf behaviour can be removed?)
 #[inline]
@@ -704,4 +711,31 @@ pub fn resolve_rdata_const<'e, Va: VirtualAddress>(
 #[inline]
 pub fn test_assertions() -> bool {
     cfg!(feature = "test_assertions")
+}
+
+#[test]
+fn test_mem8_alias() {
+    let ctx = &scarf::OperandContext::new();
+
+    // Relatively simple mem accesses shouldn't pass the check
+    // global_u8_arr[u16_index]
+    let mem = ctx.mem_access(
+        ctx.and_const(
+            ctx.register(0),
+            0xffff,
+        ),
+        0x1000_0000,
+        MemAccessSize::Mem8,
+    );
+    assert!(aliasing_mem8_check(&mem) == false);
+    // global_u8_arr[u32_index]
+    let mem = ctx.mem_access(
+        ctx.and_const(
+            ctx.register(0),
+            0xffff_fffff,
+        ),
+        0x1000_0000,
+        MemAccessSize::Mem8,
+    );
+    assert!(aliasing_mem8_check(&mem) == false);
 }
