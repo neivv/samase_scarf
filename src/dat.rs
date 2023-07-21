@@ -62,7 +62,6 @@ use crate::range_list::RangeList;
 use crate::struct_layouts;
 use crate::util::{
     bumpvec_with_capacity, single_result_assign, if_callable_const, ControlExt, OperandExt,
-    OptionExt,
 };
 use crate::x86_64_unwind;
 
@@ -471,22 +470,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         let address = table.address.if_constant().map(|x| E::VirtualAddress::from_u64(x))?;
         dat_ctx.add_dat(dat, address, table.entry_size).ok()?;
     }
-    dat_ctx.unchecked_refs.build_lookup();
 
-    dat_ctx.add_patches_from_code_refs();
-    // Always analyze step_ai_script as it has checks for unit ids in every opcode,
-    // and the function is hard to reach otherwise.
-    if let Some(step_ai_script) = dat_ctx.cache.step_ai_script(dat_ctx.analysis) {
-        dat_ctx.analyze_function_without_goal(step_ai_script);
-    }
-    while !dat_ctx.funcs_needing_retval_patch.is_empty() ||
-        dat_ctx.u8_funcs_pos != dat_ctx.u8_funcs.len() ||
-        !dat_ctx.func_arg_widen_queue.is_empty()
-    {
-        dat_ctx.retval_patch_funcs();
-        dat_ctx.add_u8_func_patches();
-        dat_ctx.add_func_arg_patches();
-    }
     // Status screen array (Using unit 0xff)
     let (buttonset_size, status_func_size) = match E::VirtualAddress::SIZE == 4 {
         true => (0xc, 0xc),
@@ -522,6 +506,28 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         let end_ptr = sync + 0x205;
         dat_ctx.add_dat_global_refs(DatType::Sprites, 0xff, sync, end_ptr, 0, 0x1, false);
     }
+
+    // This will also use add_dat_global_refs, specifically for wireframe type array.
+    // Must be done before instructions_needing_verify.build_lookup
+    units::init_units_analysis(dat_ctx)?;
+
+    dat_ctx.unchecked_refs.build_lookup();
+    dat_ctx.instructions_needing_verify.build_lookup();
+
+    dat_ctx.add_patches_from_code_refs();
+    // Always analyze step_ai_script as it has checks for unit ids in every opcode,
+    // and the function is hard to reach otherwise.
+    if let Some(step_ai_script) = dat_ctx.cache.step_ai_script(dat_ctx.analysis) {
+        dat_ctx.analyze_function_without_goal(step_ai_script);
+    }
+    while !dat_ctx.funcs_needing_retval_patch.is_empty() ||
+        dat_ctx.u8_funcs_pos != dat_ctx.u8_funcs.len() ||
+        !dat_ctx.func_arg_widen_queue.is_empty()
+    {
+        dat_ctx.retval_patch_funcs();
+        dat_ctx.add_u8_func_patches();
+        dat_ctx.add_func_arg_patches();
+    }
     if dat_ctx.unknown_global_u8_mem.len() != 1 {
         dat_warn!(
             dat_ctx, "Expected to have 1 unknown global u8 memory, got {}",
@@ -534,7 +540,6 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         &mut dat_ctx.required_stable_addresses,
         &mut dat_ctx.result,
     );
-    units::init_units_analysis(dat_ctx)?;
     units::command_analysis(dat_ctx)?;
     wireframe::grp_index_patches(dat_ctx)?;
     triggers::trigger_analysis(dat_ctx)?;
@@ -568,6 +573,14 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     text: &'e BinarySection<E::VirtualAddress>,
     result: DatPatches<'e, E::VirtualAddress>,
     unchecked_refs: util::UncheckedRefs<'acx>,
+    /// Verifies that DatPatch::Array references in code are actually instructions
+    /// accessing the array and not false positives. False positives are removed
+    /// before returning the result.
+    /// Needed for 64-bit. Not done for 32-bit as
+    /// 1) The globals from relocs are assumed to be accurate
+    /// 2) This does not currently handle instructions where the global is used as constant
+    ///     that exist in 32-bit code. E.g. `cmp [eax], units_dat_hitpoints`
+    instructions_needing_verify: util::InstructionsNeedingVerify<'acx>,
     // Funcs that seem to possibly only return in al need to be patched to widen
     // the return value to entirety of eax.
     // That's preferred over patching callers to widen the retval on their own side, as
@@ -607,7 +620,7 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     /// Maybe dumb to special case this
     update_status_screen_tooltip: E::VirtualAddress,
     required_stable_addresses: RequiredStableAddressesMap<'acx, E::VirtualAddress>,
-    rdtsc_custom: Operand<'e>,
+    rdtsc_tracker: util::RdtscTracker<'e>,
     unwind_functions: Rc<x86_64_unwind::UnwindFunctions>,
 }
 
@@ -799,6 +812,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         let unwind_functions = cache.unwind_functions();
         let bump = &analysis.bump;
         let ctx = analysis.ctx;
+        let instructions_needing_verify_capacity = match E::VirtualAddress::SIZE == 4 {
+            true => 0,
+            false => 1024,
+        };
         Some(DatPatchContext {
             array_lookup: HashMap::with_capacity_and_hasher(128, Default::default()),
             operand_to_u8_op: HashMap::with_capacity_and_hasher(2048, Default::default()),
@@ -808,6 +825,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             u8_funcs: bumpvec_with_capacity(16, bump),
             u8_funcs_pos: 0,
             unchecked_refs: util::UncheckedRefs::new(bump),
+            instructions_needing_verify:
+                util::InstructionsNeedingVerify::new(bump, instructions_needing_verify_capacity),
             units: dat_table(0x36),
             weapons: dat_table(0x18),
             flingy: dat_table(0x7),
@@ -842,7 +861,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             array_address_patches: HashMap::with_capacity_and_hasher(256, Default::default()),
             update_status_screen_tooltip: E::VirtualAddress::from_u64(0),
             required_stable_addresses: RequiredStableAddressesMap::with_capacity(1024, bump),
-            rdtsc_custom: ctx.and_const(ctx.custom(RDTSC_CUSTOM), 0xffff_ffff),
+            rdtsc_tracker: util::RdtscTracker::new(
+                ctx.and_const(ctx.custom(RDTSC_CUSTOM), 0xffff_ffff)
+            ),
             unwind_functions,
         })
     }
@@ -953,7 +974,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 _ => break,
             };
             let address = reloc.address;
-            let rva = Rva((address.as_u64() - self.binary.base.as_u64()) as u32);
+            let rva = Rva(self.binary.rva_32(address));
             let offset_bytes = (reloc.value.as_u64().wrapping_sub(array_ptr.as_u64())) as i32;
             let offset = (start_index as i32).saturating_add(offset_bytes / field_size as i32);
             let byte_offset = offset_bytes as u32 % field_size as u32;
@@ -965,7 +986,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 orig_entry: offset,
                 byte_offset,
             };
-            if !self.add_or_override_dat_array_patch(array_patch) {
+            if !self.add_dat_array_patch_unverified(array_patch) {
                 continue;
             }
             // Assuming that array ref analysis for hardcoded indices isn't important.
@@ -1005,12 +1026,36 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                         orig_entry: 0,
                         byte_offset,
                     };
-                    self.add_or_override_dat_array_patch(patch);
+                    self.add_dat_array_patch_unverified(patch);
                 } else {
                     break;
                 }
             }
         }
+    }
+
+    /// Return false if the patch wasn't added due to an existing patch having priority.
+    ///
+    /// Adds the patch, but adds the address to instructions_needing_verify list.
+    /// The verification is needed to avoid global false positives in 64bit,
+    /// but will also be done in 32bit for consistency. Shouldn't be too expensive?
+    fn add_dat_array_patch_unverified(
+        &mut self,
+        patch: DatArrayPatch<E::VirtualAddress>,
+    ) -> bool {
+        let address = patch.address;
+        if !self.add_or_override_dat_array_patch(patch) {
+            return false;
+        }
+
+        let text = self.text;
+        let text_end = text.virtual_address + text.virtual_size;
+        if E::VirtualAddress::SIZE == 8 && address >= text.virtual_address && address < text_end {
+            // Address should be 4 bytes from instruction end..
+            let rva = Rva(self.binary.rva_32(address).wrapping_add(4));
+            self.instructions_needing_verify.push(rva);
+        }
+        true
     }
 
     /// Return false if the patch wasn't added due to an existing patch having priority.
@@ -1030,7 +1075,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         let entry = patch.entry;
         let field_id = patch.field_id;
         let dat = patch.dat;
-        let rva = Rva((address.as_u64() - self.binary.base.as_u64()) as u32);
+        let rva = Rva(self.binary.rva_32(address));
         let patch = DatPatch::Array(patch);
         match self.array_address_patches.entry(rva) {
             Entry::Occupied(e) => {
@@ -1230,6 +1275,30 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
     }
 
     fn finish_all_patches(&mut self) {
+        let binary = self.binary;
+        if E::VirtualAddress::SIZE == 8 {
+            self.verify_remaining_instructions();
+            let bad_patch_rvas = self.instructions_needing_verify.finish(&self.analysis.bump);
+            if !bad_patch_rvas.is_empty() {
+                // TODO: This would be better(?) with swap_remove, but some code
+                // may rely on patch order so not doing it right now.
+                // Usually will have to remove few patches so retain is better
+                // than multiple removes.
+                // Or maybe could just have Patch::None nops?
+                for &rva in &bad_patch_rvas {
+                    if let Some(&index) = self.array_address_patches.get(&Rva(rva.0 - 4)) {
+                        self.result.patches[index] =
+                            DatPatch::GrpIndexHook(E::VirtualAddress::from_u64(0));
+                    } else {
+                        dat_warn!(self, "Expected to find array patch for rva {:x}", rva.0);
+                    }
+                }
+                self.result.patches.retain(|x| match x {
+                    DatPatch::GrpIndexHook(x) => x.as_u64() != 0,
+                    _ => true,
+                });
+            }
+        }
         let funcs = mem::replace(&mut self.analyzed_functions, Default::default());
         for (rva, state) in funcs.into_iter() {
             if self.u8_funcs.contains(&rva) {
@@ -1249,7 +1318,6 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 BumpVec::new_in(&self.analysis.bump),
             );
             if !pending_hooks.is_empty() {
-                let binary = self.binary;
                 let mut hook_ctx = FunctionHookContext::<E> {
                     result: &mut self.result,
                     required_stable_addresses: &mut rsa,
@@ -1258,6 +1326,34 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 hook_ctx.process_pending_hooks(pending_hooks);
             }
         }
+    }
+
+    /// instructions_needing_verify will have most of the instructions verified in
+    /// dat ref analysis, but that is not done for all of the array patches, which
+    /// will be handled here.
+    fn verify_remaining_instructions(&mut self) {
+        let mut pos = 0usize;
+        let base = self.binary.base();
+        while let Some(rva) = self.instructions_needing_verify.next_unverified(&mut pos) {
+            let address = base + rva.0;
+            self.analyze_for_instruction_verify(address);
+        }
+    }
+
+    fn analyze_for_instruction_verify(&mut self, address: E::VirtualAddress) {
+        let functions = self.cache.functions();
+        let binary = self.binary;
+        let ctx = self.analysis.ctx;
+        entry_of_until(binary, &functions, address, |entry| {
+            let mut analyzer = util::InstructionVerifyOnlyAnalyzer::<E>::new(
+                &mut self.instructions_needing_verify,
+                self.text,
+                &self.rdtsc_tracker,
+            );
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.entry_of()
+        });
     }
 
     fn retval_patch_funcs(&mut self) {
@@ -1387,6 +1483,7 @@ struct DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     /// (Jump destinations can be patched over if the patch starts at the start
     /// of the range)
     required_stable_addresses: &'a mut RequiredStableAddresses<'acx, E::VirtualAddress>,
+    instruction_verify_pos: util::InsVerifyIter<E::VirtualAddress>,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug, Hash)]
@@ -1493,6 +1590,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         if self.state.stack_size_tracker.operation(ctrl, op) {
             return;
         }
+        let binary = self.binary;
         let ctx = ctrl.ctx();
         if self.is_update_status_screen_tooltip {
             match *op {
@@ -1524,16 +1622,34 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             return;
         }
-        let ref_addr = self.ref_address;
         let ins_address = ctrl.address();
+        let current_instruction_end = ctrl.current_instruction_end();
+        let ref_addr = self.ref_address;
         if ins_address == self.switch_table {
             // Executed to switch table cases, stop
             ctrl.skip_operation();
             ctrl.end_branch();
             return;
         }
-        if ref_addr >= ins_address && ref_addr < ctrl.current_instruction_end() {
+        if ref_addr >= ins_address && ref_addr < current_instruction_end {
             self.result = EntryOf::Ok(());
+        }
+
+        // InstructionsNeedingVerify needs "instruction end" as the position that
+        // is added at first and now checked. The added value is just `memaddr_pos + 4`,
+        // which is the actual instruction end when there is no immediate constant,
+        // but for instructions that have an immediate, adjust the "instruction_verify_end"
+        // to be before it so that it matches the initial `+ 4`.
+        if E::VirtualAddress::SIZE == 8 &&
+            self.instruction_verify_pos.near_instruction_end(current_instruction_end)
+        {
+            let instruction_verify_end = current_instruction_end -
+                util::instruction_verify_imm_size(self.text, ins_address);
+            self.instruction_verify_pos.at_instruction_end(
+                instruction_verify_end,
+                binary,
+                &mut self.dat_ctx.instructions_needing_verify,
+            );
         }
 
         // Rdtsc checks usually are enough but not always.
@@ -1541,17 +1657,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 
         match *op {
             Operation::Move(ref dest, val, None) => {
-                if val.is_undefined() {
-                    let binary = ctrl.binary();
-                    // Special case rdtsc to move Custom() that will be checked
-                    // later on in jumps.
-                    if let Ok(slice) = binary.slice_from_address(ins_address, 2) {
-                        if slice == &[0x0f, 0x31] {
-                            ctrl.move_resolved(dest, self.dat_ctx.rdtsc_custom);
-                            ctrl.skip_operation();
-                            return;
-                        }
-                    }
+                if self.dat_ctx.rdtsc_tracker.check(ctrl, dest, val) {
+                    return;
                 }
                 if self.mode == DatFuncAnalysisMode::ArrayIndex {
                     self.check_array_ref(ctrl, val);
@@ -1646,13 +1753,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Jump { condition, to } => {
                 let condition = ctrl.resolve(condition);
                 if let Some(to) = ctrl.resolve_va(to) {
-                    let binary = self.binary;
                     if let Err(e) = self.required_stable_addresses.add_jump_dest(binary, to) {
                         dat_warn!(
                             self, "Overlapping stable addresses {:?} for jump to {:?}", e, to,
                         );
                     }
-                    if self.check_rdtsc_jump(ctrl, condition, to) {
+                    if self.dat_ctx.rdtsc_tracker.check_rdtsc_jump(ctrl, condition, to) {
+                        self.make_jump_unconditional(ins_address);
                         return;
                     }
                 }
@@ -1681,7 +1788,15 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 
     fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
-        self.current_branch = ctrl.address();
+        let address = ctrl.address();
+        self.current_branch = address;
+        if E::VirtualAddress::SIZE == 8 {
+            self.instruction_verify_pos.reset(
+                address,
+                self.binary,
+                &mut self.dat_ctx.instructions_needing_verify,
+            );
+        }
     }
 }
 
@@ -1712,6 +1827,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             mode,
             required_stable_addresses,
             partial_register_moves: PartialRegisterMoves::new(),
+            instruction_verify_pos: util::InsVerifyIter::empty(),
             state: Box::new(DatFuncAnalysisState {
                 calls: bumpvec_with_capacity(64, bump),
                 calls_reverse_lookup:
@@ -1760,6 +1876,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             mode,
             required_stable_addresses,
             partial_register_moves: PartialRegisterMoves::new(),
+            instruction_verify_pos: util::InsVerifyIter::empty(),
         }
     }
 
@@ -2012,55 +2129,6 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 WidenInstruction::ArrayIndex(array_addr.as_u64(), dat, field_id, base_idx)
             }
             (mode, _) => mode,
-        }
-    }
-
-    /// If this is jump on `rdtsc mod C`, assume it to be unconditional, patch it to
-    /// be unconditional and skip the non-jump branch.
-    fn check_rdtsc_jump(
-        &mut self,
-        ctrl: &mut Control<'e, '_, '_, Self>,
-        condition: Operand<'e>,
-        to: E::VirtualAddress,
-    ) -> bool {
-        let is_rdtsc_jump = condition.if_arithmetic_gt()
-            .and_either_other(Operand::if_constant)
-            .and_then(|x| {
-                if let Some((l, r)) = x.if_arithmetic_and() {
-                    // Modulo compiled to `x & c`
-                    r.if_constant().filter(|&c| c.wrapping_add(1) & c == 0)?;
-                    if l.if_custom() == Some(RDTSC_CUSTOM) {
-                        Some(())
-                    } else {
-                        None
-                    }
-                } else if let Some((l, r)) = x.if_arithmetic(ArithOpType::Modulo) {
-                    r.if_constant()?;
-                    if l == self.dat_ctx.rdtsc_custom || l.if_custom() == Some(RDTSC_CUSTOM) {
-                        Some(())
-                    } else {
-                        None
-                    }
-                } else if let Some((l, r)) = x.if_arithmetic_sub() {
-                    // `rdtsc - (rdtsc / x * x)` where division is replaced with multiplication
-                    r.if_arithmetic_mul()
-                        .or_else(|| r.if_arithmetic_lsh())
-                        .and_then(|x| x.1.if_constant())?;
-                    l.if_arithmetic_or()
-                        .and_if_either_other(|x| x == self.dat_ctx.rdtsc_custom)?;
-                    Some(())
-                } else {
-                    None
-                }
-            })
-            .is_some();
-        if is_rdtsc_jump {
-            self.make_jump_unconditional(ctrl.address());
-            ctrl.end_branch();
-            ctrl.add_branch_with_current_state(to);
-            true
-        } else {
-            false
         }
     }
 

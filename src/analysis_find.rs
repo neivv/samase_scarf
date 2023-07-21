@@ -308,7 +308,7 @@ pub struct GlobalRefs<Va: VirtualAddress> {
     pub func_entry: Va,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum EntryOf<R> {
     Ok(R),
     Retry,

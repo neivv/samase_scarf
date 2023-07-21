@@ -4,6 +4,8 @@ use scarf::analysis::RelocValues;
 use scarf::exec_state::VirtualAddress;
 use scarf::BinaryFile;
 
+use crate::x86_64_instruction_info;
+
 static CHECKED_OPCODES: [u8; 0x100] = [
     /* 00 */ 1, 1, 1, 1,  0, 0, 0, 0,  1, 1, 1, 1,  0, 0, 0, 0,
     /* 10 */ 1, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
@@ -159,4 +161,47 @@ pub fn x86_64_globals<Va: VirtualAddress>(binary: &BinaryFile<Va>) -> Vec<RelocV
     // here ends up reducing the time spent to sort the full global list a lot.
     out.sort_unstable_by_key(|x| x.value);
     out
+}
+
+/// Returns instruction immediate value size, at least sometimes =)
+/// (Used by dat patches, and since this uses immediate size array already
+/// it could be kinda reused)
+pub fn immediate_size_approx(bytes: &[u8; 0x10]) -> u32 {
+    let mut is_16bit = false;
+    let mut pos = 0;
+    loop {
+        if x86_64_instruction_info::is_prefix(bytes[pos]) {
+            is_16bit |= bytes[pos] == 0x66;
+        } else {
+            break;
+        }
+        if pos > 0xc {
+            // ???
+            return 0;
+        }
+        pos += 1;
+    }
+    let opcode = bytes[pos] as usize;
+    let size = IMM_SIZE[opcode];
+    if opcode == 0xf6 || opcode == 0xf7 {
+        let modrm = bytes[pos + 1] as usize;
+        if (modrm >> 3) & 7 < 2 {
+            if opcode & 1 == 0 {
+                1
+            } else {
+                if is_16bit {
+                    2
+                } else {
+                    4
+                }
+            }
+        } else {
+            0
+        }
+    } else {
+        // if is_16bit && size == 4 { 2 } else { size },
+        // as it's known that `size` is only 1 or 4.
+        let size = size as u32;
+        (size >> (is_16bit as u32)) | (size & 1)
+    }
 }
