@@ -1535,6 +1535,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         if ref_addr >= ins_address && ref_addr < ctrl.current_instruction_end() {
             self.result = EntryOf::Ok(());
         }
+
+        // Rdtsc checks usually are enough but not always.
+        ctrl.aliasing_memory_fix(op);
+
         match *op {
             Operation::Move(ref dest, val, None) => {
                 if val.is_undefined() {
