@@ -305,17 +305,29 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         if self.instruction_verify_pos.near_instruction_end(current_instruction_end) {
             let instruction_verify_end = current_instruction_end -
                 instruction_verify_imm_size(self.text, address);
-
-            let binary = ctrl.binary();
-            self.instruction_verify_pos.at_instruction_end(
-                instruction_verify_end,
-                binary,
-                self.instructions_needing_verify,
-            );
-            self.entry_of = EntryOf::Ok(());
-            if self.instruction_verify_pos.next_address() > ctrl.address() + 0x4000 {
-                // Assuming that this function won't find anything else.
-                ctrl.end_analysis();
+            // Extra check as sometimes things line up in a way that instruction
+            // ends can match but the current instruction wouldn't actually refer
+            // to a constant.
+            // E.g. f7 2d 00 00 c6 00 => imul dword [rip + c60000]
+            // c6 00 f0 => mov byte [rax], imm f0
+            // The second instruction would have same end as first after adjusting
+            // for the immediate.
+            // So require the instruction without immediate to be at least 5 bytes
+            // as an extra filter.
+            let end_start_diff = (instruction_verify_end.as_u64() as u32)
+                .wrapping_sub(address.as_u64() as u32);
+            if end_start_diff >= 5 {
+                let binary = ctrl.binary();
+                self.instruction_verify_pos.at_instruction_end(
+                    instruction_verify_end,
+                    binary,
+                    self.instructions_needing_verify,
+                );
+                self.entry_of = EntryOf::Ok(());
+                if self.instruction_verify_pos.next_address() > ctrl.address() + 0x4000 {
+                    // Assuming that this function won't find anything else.
+                    ctrl.end_analysis();
+                }
             }
         }
         ctrl.aliasing_memory_fix(op);

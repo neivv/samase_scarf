@@ -1645,11 +1645,16 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         {
             let instruction_verify_end = current_instruction_end -
                 util::instruction_verify_imm_size(self.text, ins_address);
-            self.instruction_verify_pos.at_instruction_end(
-                instruction_verify_end,
-                binary,
-                &mut self.dat_ctx.instructions_needing_verify,
-            );
+            let end_start_diff = (instruction_verify_end.as_u64() as u32)
+                .wrapping_sub(ins_address.as_u64() as u32);
+            // See commment in InstructionVerifyOnlyAnalyzer::operation
+            if end_start_diff >= 5 {
+                self.instruction_verify_pos.at_instruction_end(
+                    instruction_verify_end,
+                    binary,
+                    &mut self.dat_ctx.instructions_needing_verify,
+                );
+            }
         }
 
         // Rdtsc checks usually are enough but not always.
