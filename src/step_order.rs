@@ -87,6 +87,12 @@ pub(crate) struct OrderTower<Va: VirtualAddress> {
     pub pick_random_target: Option<Va>,
 }
 
+pub(crate) struct OrderInfest<Va: VirtualAddress> {
+    pub can_be_infested: Option<Va>,
+    pub detach_addon: Option<Va>,
+    pub can_rally: Option<Va>,
+}
+
 // Checks for comparing secondary_order to 0x95 (Hallucination)
 // Returns the unit operand
 fn step_secondary_order_hallu_jump_check<'e, Va: VirtualAddress>(
@@ -1800,6 +1806,187 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         if this == ecx && dest == self.get_target_acquisition_range {
                             self.result.pick_random_target = Some(E::VirtualAddress::from_u64(0));
                             ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_order_infest<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    order_infest: E::VirtualAddress,
+) -> OrderInfest<E::VirtualAddress> {
+    let mut result = OrderInfest {
+        can_be_infested: None,
+        detach_addon: None,
+        can_rally: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut analyzer = AnalyzeOrderInfest::<E> {
+        result: &mut result,
+        state: OrderInfestState::CanBeInfested,
+        inline_limit: 0,
+        inline_depth: 0,
+        verify_func: E::VirtualAddress::from_u64(0),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, order_infest);
+    analysis.analyze(&mut analyzer);
+    // Can get false positive since can_rally also checks command center unit id
+    if result.can_rally.is_none() {
+        result.can_be_infested = None;
+    }
+    result
+}
+
+struct AnalyzeOrderInfest<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OrderInfest<E::VirtualAddress>,
+    state: OrderInfestState,
+    inline_limit: u8,
+    inline_depth: u8,
+    verify_func: E::VirtualAddress,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum OrderInfestState {
+    /// Call with this = this, verify by inlining
+    CanBeInfested,
+    /// Should check unit_id == 0x6a
+    VerifyCanBeInfested,
+    /// Call with this = this, verify by inlining
+    DetachAddon,
+    /// Should write this.addon = 0
+    VerifyDetachAddon,
+    /// Call with this = this, verify by inlining
+    CanRally,
+    /// Should compare unit_id == 0x6f
+    VerifyCanRally,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    AnalyzeOrderInfest<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        let state = self.state;
+        if self.inline_limit != 0 {
+            if matches!(*op, Operation::Call(..) | Operation::Jump { .. }) {
+                self.inline_limit -= 1;
+                if self.inline_limit == 0 {
+                    ctrl.end_analysis();
+                    return;
+                }
+            }
+        }
+        match state {
+            OrderInfestState::CanBeInfested | OrderInfestState::DetachAddon |
+                OrderInfestState::CanRally =>
+            {
+                if let Operation::Call(dest) = *op {
+                    if ctrl.resolve_register(1) == ctx.register(1) {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let new_state = match state {
+                                OrderInfestState::CanBeInfested =>
+                                    OrderInfestState::VerifyCanBeInfested,
+                                OrderInfestState::DetachAddon =>
+                                    OrderInfestState::VerifyDetachAddon,
+                                OrderInfestState::CanRally | _ => OrderInfestState::VerifyCanRally,
+                            };
+                            self.verify_func = dest;
+                            self.state = new_state;
+                            self.inline_depth = 1;
+                            self.inline_limit = 9;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = 0;
+                            self.inline_limit = 0;
+                            if self.state == new_state {
+                                self.state = state;
+                            } else if self.result.can_rally.is_some() {
+                                ctrl.end_analysis();
+                            } else {
+                                ctrl.clear_unchecked_branches();
+                            }
+                        }
+                    }
+                }
+            }
+            OrderInfestState::VerifyCanBeInfested | OrderInfestState::VerifyDetachAddon |
+                OrderInfestState::VerifyCanRally =>
+            {
+                if self.inline_depth > 1 {
+                    return;
+                }
+                // Inline for this.unit_id() in case
+                if let Operation::Call(dest) = *op {
+                    if ctrl.resolve_register(1) == ctx.register(1) {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let old_limit = self.inline_limit;
+                            self.inline_depth += 1;
+                            self.inline_limit = 1;
+                            ctrl.inline(self, dest);
+                            if self.inline_limit == 1 {
+                                ctrl.skip_operation();
+                            }
+                            self.inline_depth -= 1;
+                            self.inline_limit = old_limit;
+                        }
+                    }
+                } else {
+                    if state == OrderInfestState::VerifyDetachAddon {
+                        if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                            if mem.size == E::WORD_SIZE {
+                                let mem = ctrl.resolve_mem(mem);
+                                let (base, offset) = mem.address();
+                                let addon_offset =
+                                    struct_layouts::unit_specific::<E::VirtualAddress>();
+                                if base == ctx.register(1) && offset == addon_offset {
+                                    if ctrl.resolve(value) == ctx.const_0() {
+                                        self.result.detach_addon = Some(self.verify_func);
+                                        self.state = OrderInfestState::CanRally;
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Check jump for unit_id == constant
+                        if let Operation::Jump { condition, .. } = *op {
+                            let condition = ctrl.resolve(condition);
+                            let constant = match state {
+                                OrderInfestState::VerifyCanBeInfested => 0x6a,
+                                _ => 0x6f,
+                            };
+                            let mut ok = condition.if_arithmetic_eq_neq()
+                                .filter(|x| x.1.if_constant() == Some(constant))
+                                .and_then(|x| {
+                                    x.0.if_mem16_offset(
+                                        struct_layouts::unit_id::<E::VirtualAddress>()
+                                    )
+                                }) == Some(ctx.register(1));
+                            if !ok && state == OrderInfestState::VerifyCanRally {
+                                // 64bit switch uses more likely bit test and not
+                                // multiple comparisons
+                                ok = condition.if_arithmetic_eq_const(0).unwrap_or(condition)
+                                    .if_arithmetic_and_const(1)
+                                    .and_then(|x| x.if_arithmetic_rsh())
+                                    .filter(|x| x.0.if_constant() == Some(0x204300000f0001a1))
+                                    .is_some();
+                            }
+                            if ok {
+                                if state == OrderInfestState::VerifyCanBeInfested {
+                                    self.result.can_be_infested = Some(self.verify_func);
+                                    self.state = OrderInfestState::DetachAddon;
+                                } else {
+                                    self.result.can_rally = Some(self.verify_func);
+                                }
+                                ctrl.end_analysis();
+                            }
                         }
                     }
                 }

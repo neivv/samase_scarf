@@ -430,6 +430,9 @@ results! {
         SetCurrentCursorType => set_current_cursor_type => cache_select_mouse_up,
         // select_units(amount, ptr_arr, bool, bool)
         SelectUnits => select_units => cache_select_mouse_up,
+        UnitCanBeInfested => unit_can_be_infested => cache_order_infest,
+        UnitDetachAddon => unit_detach_addon => cache_order_infest,
+        UnitCanRally => unit_can_rally => cache_order_infest,
     }
 }
 
@@ -3943,6 +3946,21 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let result = step_order::analyze_order_tower(actx, tower, get_acq);
                 Some((
                     [result.pick_random_target],
+                    [],
+                ))
+            });
+    }
+
+    fn cache_order_infest(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[UnitCanBeInfested, UnitDetachAddon, UnitCanRally],
+            &[],
+            |s| {
+                let infest = s.order_function(0xf, actx)?;
+                let result = step_order::analyze_order_infest(actx, infest);
+                Some((
+                    [result.can_be_infested, result.detach_addon, result.can_rally],
                     [],
                 ))
             });
