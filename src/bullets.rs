@@ -1287,7 +1287,6 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for HitUnitAnalyzer<'a, 
                         self.not_hallu_state = Some((other_addr, exec.clone()));
                         ctrl.clear_unchecked_branches();
                         ctrl.continue_at_address(continue_addr);
-
                     }
                 }
             }

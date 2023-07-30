@@ -6,6 +6,7 @@ use scarf::exec_state::ExecutionState;
 use scarf::exec_state::VirtualAddress;
 
 use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::linked_list::DetectListAdd;
 use crate::struct_layouts::{self, if_unit_sprite};
 use crate::switch;
 use crate::util::{ControlExt, OperandExt, single_result_assign};
@@ -13,6 +14,8 @@ use crate::util::{ControlExt, OperandExt, single_result_assign};
 pub(crate) struct StepIscript<'e, Va: VirtualAddress> {
     pub switch_table: Option<Va>,
     pub iscript_bin: Option<Operand<'e>>,
+    pub first_free_image: Option<Operand<'e>>,
+    pub last_free_image: Option<Operand<'e>>,
     pub hook: Option<StepIscriptHook<'e, Va>>,
 }
 
@@ -147,14 +150,19 @@ pub(crate) fn analyze_step_iscript<'e, E: ExecutionState<'e>>(
     let mut result = StepIscript {
         switch_table: None,
         iscript_bin: None,
+        first_free_image: None,
+        last_free_image: None,
         hook: None,
     };
     let arg_cache = &analysis.arg_cache;
     let mut analyzer = StepIscriptAnalyzer {
         result: &mut result,
         wait_check_seen: false,
+        searching_free_images: false,
+        inline_depth: 0,
         opcode_check: None,
         arg_cache,
+        list_add_tracker: DetectListAdd::new(Some(ctx.register(1))),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, step_iscript);
     analysis.analyze(&mut analyzer);
@@ -164,14 +172,21 @@ pub(crate) fn analyze_step_iscript<'e, E: ExecutionState<'e>>(
 struct StepIscriptAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut StepIscript<'e, E::VirtualAddress>,
     wait_check_seen: bool,
+    searching_free_images: bool,
+    inline_depth: u8,
     opcode_check: Option<(E::VirtualAddress, u32)>,
     arg_cache: &'a ArgCache<'e, E>,
+    list_add_tracker: DetectListAdd<'e, E>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepIscriptAnalyzer<'a, 'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.searching_free_images {
+            self.free_images_op(ctrl, op);
+            return;
+        }
         let ctx = ctrl.ctx();
         match *op {
             Operation::Move(_, val, None) => {
@@ -233,7 +248,16 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepIscriptAnalyzer<
                             }
                         }
                     }
-                    ctrl.end_analysis();
+                    let binary = ctrl.binary();
+                    if let Ok(branch_16) = binary.read_u32(switch_table + 0x16 * 4) {
+                        let opcode_end = match E::VirtualAddress::SIZE == 4 {
+                            true => E::VirtualAddress::from_u64(branch_16 as u64),
+                            false => binary.base() + branch_16,
+                        };
+                        self.searching_free_images = true;
+                        ctrl.clear_unchecked_branches();
+                        ctrl.continue_at_address(opcode_end);
+                    }
                     return;
                 }
                 let condition = ctrl.resolve(condition);
@@ -263,6 +287,50 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepIscriptAnalyzer<
                 }
             }
             _ => ()
+        }
+    }
+
+    fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if self.searching_free_images {
+            self.list_add_tracker.branch_start(ctrl);
+        }
+    }
+
+    fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if self.searching_free_images {
+            let ctx = ctrl.ctx();
+            if let Some(result) = self.list_add_tracker.result(ctx) {
+                self.result.first_free_image = Some(result.head);
+                self.result.last_free_image = Some(result.tail);
+                ctrl.end_analysis();
+            }
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> StepIscriptAnalyzer<'a, 'e, E> {
+    fn free_images_op(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        self.list_add_tracker.operation(ctrl, op);
+        if let Operation::Call(dest) = *op {
+            if self.inline_depth < 2 {
+                let ctx = ctrl.ctx();
+                let this = ctrl.resolve(ctx.register(1));
+                if this == ctx.register(1) {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.inline_depth += 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth -= 1;
+                        if self.result.first_free_image.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+        } else if let Operation::Jump { to, .. } = *op {
+            if to.if_constant().is_none() {
+                // Switch branch
+                ctrl.end_branch();
+            }
         }
     }
 }

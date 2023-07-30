@@ -1675,7 +1675,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 FlingyShowStartWalkAnim | FlingyShowEndWalkAnim | FlingySpeedUsedForMove |
                 MapWidthPixels | MapHeightPixels | DcreepNextUpdate | DcreepUnitNextUpdate |
                 LastDyingUnit | UnitCount | FirstFreeUnit | LastFreeUnit | ObserverUi |
-                OnClipCursorEnd | SelectStartX | SelectStartY | IsSelecting | FirstDialog =>
+                OnClipCursorEnd | SelectStartX | SelectStartY | IsSelecting | FirstDialog |
+                FirstFreeImage | LastFreeImage =>
             {
                 check_global_opt(result, binary, op.name());
             }

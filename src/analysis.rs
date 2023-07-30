@@ -566,6 +566,8 @@ results! {
         SyncActive => sync_active => cache_game_loop,
         SyncData => sync_data => cache_game_loop,
         IscriptBin => iscript_bin => cache_step_iscript,
+        FirstFreeImage => first_free_image => cache_step_iscript,
+        LastFreeImage => last_free_image => cache_step_iscript,
         StormCommandUser => storm_command_user => cache_step_network,
         FirstFreeOrder => first_free_order => cache_prepare_issue_order,
         LastFreeOrder => last_free_order => cache_prepare_issue_order,
@@ -2298,11 +2300,14 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     fn cache_step_iscript(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
-        self.cache_many(&[StepIscriptSwitch], &[IscriptBin], |s| {
+        self.cache_many(&[StepIscriptSwitch], &[IscriptBin, FirstFreeImage, LastFreeImage], |s| {
             let step_iscript = s.step_iscript(actx)?;
             let result = iscript::analyze_step_iscript(actx, step_iscript);
             s.step_iscript_hook = result.hook;
-            Some(([result.switch_table], [result.iscript_bin]))
+            Some((
+                [result.switch_table],
+                [result.iscript_bin, result.first_free_image, result.last_free_image],
+            ))
         })
     }
 
