@@ -132,6 +132,7 @@ order_init_arbiter: 005c4370
 pick_auto_target: 005c69d0
 pick_random_target: 005c68d0
 place_building: 0075e1f0
+place_creep_rect: 005df710
 play_smk: 0075f920
 play_sound: 0078bf20
 play_sound_at_unit: 006ea0e0
@@ -204,9 +205,11 @@ step_order: 005dbaf0
 step_replay_commands: 00744790
 step_train: 0058dbf0
 step_unit_movement: 005bef20
+stop_creep_disappearing_at_building: 007b0570
 stop_targeting: 007ad630
 targeting_lclick: 00617b50
 targeting_rclick: 006d41f0
+transform_unit: 005b0680
 ttf_cache_character: 00986530
 ttf_malloc: 00cba043
 ttf_render_sdf: 0098ab00
@@ -229,6 +232,7 @@ unit_can_rally: 005b8f80
 unit_changing_player: 005b5c70
 unit_detach_addon: 005d3720
 unit_max_energy: 005cd700
+unit_set_hp: 00591cc0
 unit_update_speed: 005de090
 unit_update_speed_iscript: 005c2ff0
 unit_update_strength: 00656550

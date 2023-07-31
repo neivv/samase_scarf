@@ -174,6 +174,13 @@ pub fn unit_secondary_order<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_remaining_build_time<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xac,
+        false => 0xf0,
+    }
+}
+
 pub fn unit_specific<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xc0,

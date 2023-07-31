@@ -433,6 +433,11 @@ results! {
         UnitCanBeInfested => unit_can_be_infested => cache_order_infest,
         UnitDetachAddon => unit_detach_addon => cache_order_infest,
         UnitCanRally => unit_can_rally => cache_order_infest,
+        UnitSetHp => unit_set_hp => cache_order_zerg_build_self,
+        TransformUnit => transform_unit => cache_order_zerg_build_self,
+        StopCreepDisappearingAtBuilding => stop_creep_disappearing_at_building =>
+                cache_order_zerg_build_self,
+        PlaceCreepRect => place_creep_rect => cache_order_zerg_build_self,
     }
 }
 
@@ -3966,6 +3971,22 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let result = step_order::analyze_order_infest(actx, infest);
                 Some((
                     [result.can_be_infested, result.detach_addon, result.can_rally],
+                    [],
+                ))
+            });
+    }
+
+    fn cache_order_zerg_build_self(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[UnitSetHp, TransformUnit, StopCreepDisappearingAtBuilding, PlaceCreepRect],
+            &[],
+            |s| {
+                let infest = s.order_function(0x2d, actx)?;
+                let r = step_order::analyze_order_zerg_build_self(actx, infest);
+                Some((
+                    [r.unit_set_hp, r.transform_unit, r.stop_creep_disappearing_at_building,
+                        r.place_creep_rect],
                     [],
                 ))
             });

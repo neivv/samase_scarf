@@ -93,6 +93,13 @@ pub(crate) struct OrderInfest<Va: VirtualAddress> {
     pub can_rally: Option<Va>,
 }
 
+pub(crate) struct OrderZergBuildSelf<Va: VirtualAddress> {
+    pub unit_set_hp: Option<Va>,
+    pub transform_unit: Option<Va>,
+    pub stop_creep_disappearing_at_building: Option<Va>,
+    pub place_creep_rect: Option<Va>,
+}
+
 // Checks for comparing secondary_order to 0x95 (Hallucination)
 // Returns the unit operand
 fn step_secondary_order_hallu_jump_check<'e, Va: VirtualAddress>(
@@ -1987,6 +1994,227 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 }
                                 ctrl.end_analysis();
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_order_zerg_build_self<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    order_zerg_build: E::VirtualAddress,
+) -> OrderZergBuildSelf<E::VirtualAddress> {
+    let mut result = OrderZergBuildSelf {
+        unit_set_hp: None,
+        transform_unit: None,
+        stop_creep_disappearing_at_building: None,
+        place_creep_rect: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut analyzer = AnalyzeOrderZergBuildSelf::<E> {
+        result: &mut result,
+        state: ZergBuildSelfState::ClearCompletedFlag,
+        func_candidate: E::VirtualAddress::from_u64(0),
+        arg_cache: &actx.arg_cache,
+        units_dat_flag_jump_seen: false,
+        funcs_seen: 0,
+        any_jumps_seen: false,
+    };
+    let mut exec = E::initial_state(ctx, binary);
+    exec.write_memory(
+        &ctx.mem_access(
+            ctx.register(1),
+            struct_layouts::unit_order_state::<E::VirtualAddress>(),
+            MemAccessSize::Mem8,
+        ),
+        ctx.constant(6),
+    );
+    let mut analysis = FuncAnalysis::with_state(binary, ctx, order_zerg_build, exec);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzeOrderZergBuildSelf<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OrderZergBuildSelf<E::VirtualAddress>,
+    state: ZergBuildSelfState,
+    func_candidate: E::VirtualAddress,
+    funcs_seen: u32,
+    any_jumps_seen: bool,
+    arg_cache: &'a ArgCache<'e, E>,
+    units_dat_flag_jump_seen: bool,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum ZergBuildSelfState {
+    /// Start with order_state = 6.
+    /// Find write of this.flags & !0x1.
+    /// Clear other branches after that.
+    ClearCompletedFlag,
+    /// Should be next call with this = this
+    TransformUnit,
+    /// Should be next call after that, followed by writing 0 to this.remaining_build_time
+    SetUnitHp,
+    /// stop_creep_disappearing_at_building(arg1 = this), followed by
+    /// set_iscript_anim(arg1 = 0xf, 1)
+    /// Note: there is also finish_unit(this = this) before stop_creep_disappearing_at_building
+    StopCreepDisappearAtBuilding,
+    /// place_building_creep_rect(unit_id, x, y) (sometimes inlined)
+    /// -> place_creep_rect(x_tile, y_tile, w_tile, h_tile, skip_borders)
+    ///
+    /// Find jump with units_dat_flags[unit_id] & 8000_0000, follow nonzero branch,
+    /// should be next function with arg5 = 1
+    /// If there is only 1 function before return and no units_dat_flags[unit_id], inline there
+    ///
+    /// Somewhat unsure if always can be found, one call to place_creep_rect(arg5 = 0) is being
+    /// inlined right next to arg5 = 1 call sometimes.
+    PlaceCreepRect,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    AnalyzeOrderZergBuildSelf<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            ZergBuildSelfState::ClearCompletedFlag => {
+                if let Operation::Move(DestOperand::Memory(ref dest_mem), value, None) = *op {
+                    let value = ctrl.resolve(value);
+                    let ok = value.if_and_with_const()
+                        .filter(|x| x.1 & 0xff == 0xfe)
+                        .and_then(|x| {
+                            let mem = x.0.if_memory()?;
+                            let dest_mem = ctrl.resolve_mem(dest_mem);
+                            let flags_offset = struct_layouts::unit_flags::<E::VirtualAddress>();
+                            (*mem == dest_mem && mem.address() == (ctx.register(1), flags_offset))
+                                .then_some(())
+                        })
+                        .is_some();
+                    if ok {
+                        self.state = ZergBuildSelfState::TransformUnit;
+                        ctrl.clear_unchecked_branches();
+                    }
+                }
+            }
+            ZergBuildSelfState::TransformUnit => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ctx.register(1));
+                        if this == ctx.register(1) {
+                            self.result.transform_unit = Some(dest);
+                            self.state = ZergBuildSelfState::SetUnitHp;
+                        }
+                    }
+                }
+            }
+            ZergBuildSelfState::SetUnitHp => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve(ctx.register(1));
+                        if this == ctx.register(1) {
+                            self.func_candidate = dest;
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size == MemAccessSize::Mem16 {
+                        if ctrl.resolve(value) == ctx.const_0() {
+                            let mem = ctrl.resolve_mem(&mem);
+                            let build_time_offset = struct_layouts::unit_remaining_build_time::
+                                <E::VirtualAddress>();
+                            if mem.address() == (ctx.register(1), build_time_offset) {
+                                if self.func_candidate.as_u64() != 0 {
+                                    self.result.unit_set_hp = Some(self.func_candidate);
+                                    self.func_candidate = E::VirtualAddress::from_u64(0);
+                                    self.state = ZergBuildSelfState::StopCreepDisappearAtBuilding;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ZergBuildSelfState::StopCreepDisappearAtBuilding => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.func_candidate.as_u64() != 0 {
+                            let arg1 = ctx.and_const(
+                                ctrl.resolve(self.arg_cache.on_thiscall_call(0)),
+                                0xff,
+                            );
+                            if arg1.if_constant() == Some(0xf) {
+                                self.result.stop_creep_disappearing_at_building =
+                                    Some(self.func_candidate);
+                                self.state = ZergBuildSelfState::PlaceCreepRect;
+                                ctrl.clear_unchecked_branches();
+                                return;
+                            }
+                        }
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        if arg1 == ctx.register(1) {
+                            self.func_candidate = dest;
+                        }
+                    }
+                }
+            }
+            ZergBuildSelfState::PlaceCreepRect => {
+                if !self.units_dat_flag_jump_seen {
+                    if let Operation::Jump { condition, to } = *op {
+                        if condition != ctx.const_1() {
+                            self.any_jumps_seen = true;
+                        }
+                        let condition = ctrl.resolve(condition);
+                        // Check units_dat_flags[unit_id * 4] & 0x8000_0000
+                        let ok = condition.if_arithmetic_eq_neq_zero(ctx)
+                            .and_then(|x| {
+                                let mem = x.0.if_arithmetic_and_const(0x80)?
+                                    .if_mem8()?;
+                                mem.address().0.if_arithmetic_mul_const(4)?;
+                                Some(x.1)
+                            });
+                        if let Some(eq_zero) = ok {
+                            self.units_dat_flag_jump_seen = true;
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_neq_address(eq_zero, to);
+                        }
+                    } else {
+                        if !self.any_jumps_seen {
+                            if let Operation::Call(dest) = *op {
+                                if let Some(dest) = ctrl.resolve_va(dest) {
+                                    self.func_candidate = dest;
+                                }
+                                self.funcs_seen = self.funcs_seen.wrapping_add(1);
+                            } else if let Operation::Return(..) = *op {
+                                if self.funcs_seen == 1 || self.funcs_seen == 3 {
+                                    // Inline to place_building_creep_rect
+                                    // Analysis shouldn't depend on arguments, so just
+                                    // creating empty exec state for that
+                                    // Just place_building_creep_rect() call or
+                                    // place_building_creep_rect(id, x(), y()) 3 calls
+                                    self.any_jumps_seen = true;
+                                    let binary = ctrl.binary();
+                                    let mut analysis = FuncAnalysis::new(binary, ctx, self.func_candidate);
+                                    analysis.analyze(self);
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    if let Operation::Call(dest) = *op {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let arg5 = ctx.and_const(
+                                ctrl.resolve(self.arg_cache.on_call(4)),
+                                0xff,
+                            );
+                            if arg5 == ctx.const_1() {
+                                self.result.place_creep_rect = Some(dest);
+                            }
+                            ctrl.end_analysis();
                         }
                     }
                 }
