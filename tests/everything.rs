@@ -1676,7 +1676,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 MapWidthPixels | MapHeightPixels | DcreepNextUpdate | DcreepUnitNextUpdate |
                 LastDyingUnit | UnitCount | FirstFreeUnit | LastFreeUnit | ObserverUi |
                 OnClipCursorEnd | SelectStartX | SelectStartY | IsSelecting | FirstDialog |
-                FirstFreeImage | LastFreeImage =>
+                FirstFreeImage | LastFreeImage | UpdateGameScreenSizeMode | GameScreenHeightRatio
+                =>
             {
                 check_global_opt(result, binary, op.name());
             }
