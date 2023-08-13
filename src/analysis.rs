@@ -668,6 +668,11 @@ results! {
         IsSelecting => is_selecting => cache_game_screen_lclick,
         FirstDialog => first_dialog => cache_run_dialog_children,
         RunDialogStack => run_dialog_stack => cache_run_dialog_children,
+        // enum determining how update_game_screen_size behaves.
+        UpdateGameScreenSizeMode => update_game_screen_size_mode => cache_update_game_screen_size,
+        // float; 1.0 = game screen takes entire screen, usually ~0.8 to not have console
+        // cover bottom of the map.
+        GameScreenHeightRatio => game_screen_height_ratio => cache_update_game_screen_size,
     }
 }
 
@@ -2524,6 +2529,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::DrawImage, |s| s.cache_draw_game_layer(actx))
     }
 
+    fn update_game_screen_size(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::UpdateGameScreenSize,
+            |s| s.cache_draw_game_layer(actx),
+        )
+    }
+
     fn cache_bullet_creation(&mut self, actx: &AnalysisCtx<'e, E>) {
         use OperandAnalysis::*;
         self.cache_many(&[AddressAnalysis::CreateBullet], &[
@@ -4245,6 +4257,17 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let run_dialog = s.run_dialog(actx)?;
                 let r = dialog::analyze_run_dialog(actx, run_dialog);
                 Some(([], [r.first_dialog, r.run_dialog_stack]))
+            })
+    }
+
+    fn cache_update_game_screen_size(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[], &[UpdateGameScreenSizeMode, GameScreenHeightRatio],
+            |s| {
+                let update = s.update_game_screen_size(actx)?;
+                let r = clientside::analyze_update_game_screen_size(actx, update);
+                Some(([], [r.update_mode, r.game_screen_height_ratio]))
             })
     }
 }

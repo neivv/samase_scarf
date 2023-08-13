@@ -313,6 +313,7 @@ game: (Mem32[c64870] ^ 1658bfb7)
 game_data: eab1e8
 game_lobby: None
 game_screen_height_bwpx: Mem32[c63be4]
+game_screen_height_ratio: Mem32[c63bec]
 game_screen_lclick_callback: Mem32[e8043c]
 game_screen_rclick_callback: Mem32[e80440]
 game_screen_rect_winpx: cc33e0
@@ -435,6 +436,7 @@ unit_should_reveal_area: Mem32[cc2bd0]
 unit_skin_map: c6353c
 unit_strength: ce4080
 units: Mem32[cc2ba0]
+update_game_screen_size_mode: Mem32[c63c10]
 use_map_set_rgb_color: None
 use_rgb_colors: None
 vertex_buffer: c75220

@@ -4,7 +4,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{
     BinaryFile, BinarySection, DestOperand, MemAccess, MemAccessSize, Operand, OperandCtx,
-    Operation, Rva,
+    Operation, Rva, ArithOpType,
 };
 
 use crate::analysis::{AnalysisCtx, ArgCache};
@@ -102,6 +102,11 @@ pub(crate) struct SelectMouseUp<Va: VirtualAddress> {
     pub decide_cursor_type: Option<Va>,
     pub set_current_cursor_type: Option<Va>,
     pub select_units: Option<Va>,
+}
+
+pub(crate) struct UpdateGameScreenSize<'e> {
+    pub update_mode: Option<Operand<'e>>,
+    pub game_screen_height_ratio: Option<Operand<'e>>,
 }
 
 // Candidates are either a global ref with Some(global), or a call with None
@@ -2282,6 +2287,90 @@ impl<'e, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         let no_mask = Operand::and_masked(eq_one).0;
                         if no_mask.if_custom().is_some() {
                             self.eq_one_comparisons.push(no_mask);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_update_game_screen_size<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    update_game_screen_size: E::VirtualAddress,
+) -> UpdateGameScreenSize<'e> {
+    let mut result = UpdateGameScreenSize {
+        update_mode: None,
+        game_screen_height_ratio: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut analyzer = UpdateGameScreenSizeAnalyzer::<E> {
+        result: &mut result,
+        state: UpdateGameScreenSizeState::UpdateMode,
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, update_game_screen_size);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum UpdateGameScreenSizeState {
+    /// Find update_mode == 2 jump, follow that
+    UpdateMode,
+    /// match against f32 `x / (y * ratio)`
+    HeightRatio,
+}
+
+struct UpdateGameScreenSizeAnalyzer<'e, 'a, E: ExecutionState<'e>> {
+    result: &'a mut UpdateGameScreenSize<'e>,
+    state: UpdateGameScreenSizeState,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    UpdateGameScreenSizeAnalyzer<'e, 'a, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match self.state {
+            UpdateGameScreenSizeState::UpdateMode => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let ok = condition.if_arithmetic_eq_neq()
+                        .filter(|x| x.1.if_constant() == Some(2) && is_global(x.0));
+                    if let Some((var, _, eq)) = ok {
+                        self.result.update_mode = Some(var);
+                        self.state = UpdateGameScreenSizeState::HeightRatio;
+                        ctrl.clear_unchecked_branches();
+                        ctrl.continue_at_eq_address(eq, to);
+                    }
+                }
+            }
+            UpdateGameScreenSizeState::HeightRatio => {
+                if let Operation::Move(_, value, None) = *op {
+                    if let Some((_, r)) = if_f32_div(value) {
+                        let r = ctrl.resolve(r);
+                        if let Some((l, r)) = r.if_arithmetic_float(ArithOpType::Mul) {
+                            let mut result = None;
+                            if is_global(l) {
+                                if !is_global(r) {
+                                    result = Some(l);
+                                }
+                            } else if is_global(r) {
+                                if !is_global(l) {
+                                    result = Some(r);
+                                }
+                            }
+                            if let Some(result) = result {
+                                self.result.game_screen_height_ratio = Some(result);
+                                ctrl.end_analysis();
+                            }
                         }
                     }
                 }
