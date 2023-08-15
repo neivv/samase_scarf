@@ -1247,6 +1247,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                         result: &mut self.game_ctx.result,
                         required_stable_addresses: self.required_stable_addresses,
                         binary: binary,
+                        entry: self.func_start,
                     };
                     if let Some(free_space) = hook_ctx.find_short_jump_hook_space(address) {
                         match self.game_ctx.result.patches[i] {

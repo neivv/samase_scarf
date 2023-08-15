@@ -1526,7 +1526,6 @@ WARN Unknown Upgrades dat offset @ VirtualAddress(1403e1c29): Mem8[Mem64[rdx + 5
 WARN Unknown Weapons dat offset @ VirtualAddress(140187bbc): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(140187bbc): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress(140187bbc): Mem8[Undefined]
-WARN Can't find free space for hook @ VirtualAddress(1402578c4)
 Units entry count patches: [140d559ec, 140d55a04, 140d55a1c, 140d55a34, 140d55a4c, 140d55a64, 140d55a7c, 140d55a94, 140d55aac, 140d55ac4, 140d55adc, 140d55af4, 140d55b0c, 140d55b24, 140d55b3c, 140d55b54, 140d55b6c, 140d55b84, 140d55b9c, 140d55bb4, 140d55bcc, 140d55be4, 140d55bfc, 140d55c14, 140d55c2c, 140d55c44, 140d55c5c, 140d55c74, 140d55c8c, 140d55ca4, 140d55cbc, 140d55cd4, 140d55cec, 140d55d04, 140d55d1c, 140d55d34, 140d55d4c, 140d55d64, 140d55d7c, 140d55d94, 140d55dac, 140d55dc4, 140d55ddc, 140d55df4, 140d55e0c, 140d55e24, 140d55e3c, 140d55e54, 140d55e6c, 140d55e84, 140d55e9c, 140d55eb4, 140d55ecc, 140d55ee4]
 Units array patches:
     00: [1401902b5, 140198327, 1401bc72e, 1401c3265, 1401c32d5, 1401c3347, 1401e3fb6, 1401e96cc, 1401ef578, 1401f1426, 1403a3a98, 1403a49f4, 140d55888, 140d559e0]
@@ -2139,7 +2138,7 @@ MapData array patches:
 0b: VirtualAddress(1402754a9):3 = ((rax * 8) + 4)
 0b: VirtualAddress(140275697):7 = 0
 0b: VirtualAddress(1402756a9):3 = 4
-0c: VirtualAddress(1402578c4):3 = (((r8 & ffffffff) * c) + ((rcx - (r8 & ffffffff)) / 6e8))
+0c: VirtualAddress(1402578c4):3 (Two step VirtualAddress(1402578b0)) = (((r8 & ffffffff) * c) + ((rcx - (r8 & ffffffff)) / 6e8))
 0c: VirtualAddress(140258649):4 = (rdi + (rbx * c))
 0c: VirtualAddress(140258691):4 = (rdi + (rbx * c))
 0d: VirtualAddress(14028f296):7 = (rax * 4)

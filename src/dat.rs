@@ -1321,6 +1321,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 let mut hook_ctx = FunctionHookContext::<E> {
                     result: &mut self.result,
                     required_stable_addresses: &mut rsa,
+                    entry: binary.base() + rva.0,
                     binary,
                 };
                 hook_ctx.process_pending_hooks(pending_hooks);
@@ -4027,11 +4028,31 @@ fn instruction_length<Va: VirtualAddress>(binary: &BinaryFile<Va>, address: Va) 
     }
 }
 
+fn min_instruction_length<Va: VirtualAddress>(
+    binary: &BinaryFile<Va>,
+    address: Va,
+    min: u32,
+) -> Option<u32> {
+    let bytes = binary.slice_from_address(address, min + 0x20).ok()?;
+    let mut len = 0;
+    while len < min {
+        let slice = bytes.get(len as usize..)?;
+        let new_len = if Va::SIZE == 4 {
+            lde::X86::ld(slice)
+        } else {
+            lde::X64::ld(slice)
+        };
+        len += new_len;
+    }
+    Some(len)
+}
+
 /// Data required to build hooks for a function
 struct FunctionHookContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut DatPatches<'e, E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     required_stable_addresses: &'a mut RequiredStableAddresses<'acx, E::VirtualAddress>,
+    entry: E::VirtualAddress,
 }
 
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'acx, 'e, E> {
@@ -4130,9 +4151,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'acx, 'e, E> {
         let mut cand = None;
         let mut result = None;
         let binary = self.binary;
+        let base = binary.base();
         for (start, end) in self.required_stable_addresses.iter() {
-            let start = binary.base + start.0;
-            let end = binary.base + end.0;
+            let start = base + start.0;
+            let end = base + end.0;
             if let Some(cand) = cand.take() {
                 if start >= cand + 0xa {
                     result = Some(cand);
@@ -4146,18 +4168,24 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> FunctionHookContext<'a, 'acx, 'e, E> {
                 cand = Some(end);
             }
         }
-        if let Some(cand) = result {
-            let bytes = binary.slice_from_address(cand, 0x20).ok()?;
-            let mut len = 0;
-            while len < 0xa {
-                let slice = bytes.get(len as usize..)?;
-                let new_len = if E::VirtualAddress::SIZE == 4 {
-                    lde::X86::ld(slice)
-                } else {
-                    lde::X64::ld(slice)
-                };
-                len += new_len;
+        if result.is_none() {
+            // Try at start of the function.
+            // Not the very first instructions though, as that is probably better
+            // to leave untouched to keep function-level hooks simpler.
+            // Technically this could be the what `cand` is initialized to, but to
+            // keep test compare diffs simpler, do this only if nothing was found.
+            let addr = self.entry + min_instruction_length(binary, self.entry, 0x10)?;
+            if let Some((start, _)) = self.required_stable_addresses.iter().next() {
+                let start = base + start.0;
+                if start >= addr + 0xa {
+                    result = Some(addr);
+                }
+            } else {
+                result = Some(addr);
             }
+        }
+        if let Some(cand) = result {
+            let len = min_instruction_length(binary, cand, 0xa)?;
             self.add_required_stable_address_for_patch(cand, cand + len);
         }
         result
