@@ -3,7 +3,7 @@ use bumpalo::collections::Vec as BumpVec;
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{OperandType};
-use scarf::{BinaryFile, DestOperand, MemAccess, Operand, Operation, Rva};
+use scarf::{BinaryFile, DestOperand, MemAccess, MemAccessSize, Operand, Operation, Rva};
 
 use crate::analysis::{AnalysisCache, AnalysisCtx};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
@@ -525,6 +525,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         }
         let index = terms.join(ctx);
         let index_zero = index == ctx.const_0();
+        // If upgrades / tech memaccess isn't byte sized, don't patch it as it
+        // won't work out due to switch from [player][upgrade] indexing to [upgrade][player]
+        // And it should just be initialization memset.
+        let size_byte = mem.size == MemAccessSize::Mem8;
         match offset {
             // Unit availability
             0x18c ..= 0xc3b => self.patch_unit_array(ctrl, 0x6, true, 1, offset - 0x18c, index),
@@ -545,41 +549,61 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                 self.patch_unit_array(ctrl, 0xa, false, 4, offset - 0xb274, index)
             }
             // Tech availability sc
-            0xdd34 ..= 0xde53 => self.patch_tech_array(ctrl, 3, 0x18, 0, offset - 0xdd34, index),
+            0xdd34 ..= 0xde53 if size_byte => {
+                self.patch_tech_array(ctrl, 3, 0x18, 0, offset - 0xdd34, index);
+            }
             // Tech level sc
-            0xde54 ..= 0xdf73 => self.patch_tech_array(ctrl, 2, 0x18, 0, offset - 0xde54, index),
+            0xde54 ..= 0xdf73 if size_byte => {
+                self.patch_tech_array(ctrl, 2, 0x18, 0, offset - 0xde54, index);
+            }
             // Upgrade limit sc
-            0xdf98 ..= 0xe1bf => self.patch_upgrade_array_sc(ctrl, 1, offset - 0xdf98, index),
+            0xdf98 ..= 0xe1bf if size_byte => {
+                self.patch_upgrade_array_sc(ctrl, 1, offset - 0xdf98, index);
+            }
             // Upgrade level sc
-            0xe1c0 ..= 0xe3e7 => self.patch_upgrade_array_sc(ctrl, 0, offset - 0xe1c0, index),
+            0xe1c0 ..= 0xe3e7 if size_byte => {
+                self.patch_upgrade_array_sc(ctrl, 0, offset - 0xe1c0, index);
+            }
             // Tech availability bw
-            0xff48 if !index_zero => self.patch_tech_array(ctrl, 3, 0x14, 0, 0, index),
+            0xff48 if !index_zero && size_byte => {
+                self.patch_tech_array(ctrl, 3, 0x14, 0, 0, index);
+            }
             // Tech level bw
-            0x10038 if !index_zero => self.patch_tech_array(ctrl, 2, 0x14, 0, 0, index),
+            0x10038 if !index_zero && size_byte => {
+                self.patch_tech_array(ctrl, 2, 0x14, 0, 0, index);
+            }
             // Upgrade limit bw
-            0x1015a if !index_zero => self.patch_upgrade_array_bw(ctrl, 1, 0, 0, index),
+            0x1015a if !index_zero && size_byte => {
+                self.patch_upgrade_array_bw(ctrl, 1, 0, 0, index);
+            }
             // Upgrade level bw
-            0x1020e if !index_zero => self.patch_upgrade_array_bw(ctrl, 0, 0, 0, index),
+            0x1020e if !index_zero && size_byte => {
+                self.patch_upgrade_array_bw(ctrl, 0, 0, 0, index);
+            }
             // Tech availability bw (Real)
-            0xff60 ..= 0x1004f => {
+            0xff60 ..= 0x1004f if size_byte => {
                 self.patch_tech_array(ctrl, 3, 0x14, 0x18, offset - 0xff60, index)
             }
             // Tech level bw (Real)
-            0x10050 ..= 0x1013f => {
+            0x10050 ..= 0x1013f if size_byte => {
                 self.patch_tech_array(ctrl, 3, 0x14, 0x18, offset - 0x10050, index)
             }
             // Tech being researched bits
-            0x10140 ..= 0x10187 => self.patch_bit_array(ctrl, 5, 6, offset - 0x10140, index),
+            0x10140 ..= 0x10187 if size_byte => {
+                self.patch_bit_array(ctrl, 5, 6, offset - 0x10140, index);
+            }
             // Upgrade limit bw (Real)
-            0x10188 ..= 0x1023b => {
+            0x10188 ..= 0x1023b if size_byte => {
                 self.patch_upgrade_array_bw(ctrl, 1, 0x2e, offset - 0x10188, index)
             }
             // Upgrade level bw (Real)
-            0x1023c ..= 0x102ef => {
+            0x1023c ..= 0x102ef if size_byte => {
                 self.patch_upgrade_array_bw(ctrl, 0, 0x2e, offset - 0x1023c, index)
             }
             // Upgrade being researched bits
-            0x102f0 ..= 0x1034f => self.patch_bit_array(ctrl, 4, 8, offset - 0x102f0, index),
+            0x102f0 ..= 0x1034f if size_byte => {
+                self.patch_bit_array(ctrl, 4, 8, offset - 0x102f0, index);
+            }
             _ => {
             }
         }
