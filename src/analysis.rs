@@ -673,6 +673,8 @@ results! {
         // float; 1.0 = game screen takes entire screen, usually ~0.8 to not have console
         // cover bottom of the map.
         GameScreenHeightRatio => game_screen_height_ratio => cache_update_game_screen_size,
+        SfxData => sfx_data => cache_play_sound,
+        SoundChannels => sound_channels => cache_play_sound,
     }
 }
 
@@ -4268,6 +4270,17 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let update = s.update_game_screen_size(actx)?;
                 let r = clientside::analyze_update_game_screen_size(actx, update);
                 Some(([], [r.update_mode, r.game_screen_height_ratio]))
+            })
+    }
+
+    fn cache_play_sound(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[], &[SfxData, SoundChannels],
+            |s| {
+                let play = s.play_sound(actx)?;
+                let r = sound::analyze_play_sound(actx, play);
+                Some(([], [r.sfx_data, r.sound_channels]))
             })
     }
 }

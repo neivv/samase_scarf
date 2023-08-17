@@ -1638,7 +1638,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
             Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg |
                 AntiTroll | MouseX | MouseY | NetUserLatency | MapHistory | MpqLocale |
                 UiConsoles | StatResIconsDdsGrp | UseRgbColors | InLobbyOrGame | GameLobby |
-                RgbColors | DisableColorChoice | UseMapSetRgbColor =>
+                RgbColors | DisableColorChoice | UseMapSetRgbColor | SfxData | SoundChannels =>
             {
                 continue;
             }
@@ -2262,12 +2262,18 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(flingy_update_target_dir.is_some());
     }
 
-    // sfx.json was added in 1.22.0
+    // sfx.json was added in 1.22.0 (?)
     let lookup_sound_id = analysis.lookup_sound_id();
+    let sfxdata = analysis.sfx_data();
+    let sound_channels = analysis.sound_channels();
     if minor_version < 22 {
         assert!(lookup_sound_id.is_none());
+        assert!(sfxdata.is_none());
+        assert!(sound_channels.is_none());
     } else {
         assert!(lookup_sound_id.is_some());
+        check_global_opt(sfxdata, binary, "sfxdata");
+        check_global_struct_opt(sound_channels, binary, "sound_channels");
     }
 
     // Console structs changed in 1.23.0

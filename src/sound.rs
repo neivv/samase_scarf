@@ -1,10 +1,15 @@
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState};
-use scarf::{Operand, Operation};
+use scarf::{DestOperand, MemAccessSize, Operand, Operation};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::switch;
-use crate::util::{ControlExt};
+use crate::util::{ControlExt, OptionExt};
+
+pub(crate) struct PlaySound<'e> {
+    pub sfx_data: Option<Operand<'e>>,
+    pub sound_channels: Option<Operand<'e>>,
+}
 
 pub(crate) fn play_sound<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
@@ -105,6 +110,76 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlaySoundAnalyzer<'a
                 }
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) fn analyze_play_sound<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    play_sound: E::VirtualAddress,
+) -> PlaySound<'e> {
+    let ctx = analysis.ctx;
+    let binary = analysis.binary;
+    let arg_cache = &analysis.arg_cache;
+    let mut result = PlaySound {
+        sfx_data: None,
+        sound_channels: None,
+    };
+    let mut analyzer = PlaySoundFnAnalyzer::<E> {
+        result: &mut result,
+        arg_cache,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, play_sound);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct PlaySoundFnAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut PlaySound<'e>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlaySoundFnAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        // Just search for sound_channel.x6 = sfx_data[sound].x5b / x7f
+        // Both sound channel and sfxdata struct sizes/layouts have changed across patches.
+        if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+            let ctx = ctrl.ctx();
+            // Skip stack writes early
+            if mem.size != MemAccessSize::Mem8 || mem.address().0 == ctx.register(4) {
+                return;
+            }
+            let value = ctrl.resolve(value);
+            let sfx_data = value
+                .if_mem8()
+                .and_then(|x| {
+                    let (base, offset) = x.address();
+                    (0x30..0x100).contains(&offset)
+                        .then_some(base)?
+                        .if_arithmetic_add()
+                })
+                .and_either_other(|x| {
+                    let (l, c) = x.if_mul_with_const()?;
+                    (c >= 0x80 && c < 0x150 &&
+                        ctx.and_const(l, 0xffff_ffff) ==
+                        ctx.and_const(self.arg_cache.on_entry(0), 0xffff_ffff)
+                    ).then_some(())
+                });
+            if let Some(sfx) = sfx_data {
+                let mem = ctrl.resolve_mem(mem);
+                let channels = mem
+                    .if_add_either_other(ctx, |x| {
+                        x.if_mul_with_const().filter(|x| (0x18..0x30).contains(&x.1))
+                    })
+                    .map(|x| ctx.sub_const(x, 0x6));
+                if let Some(channels) = channels {
+                    self.result.sfx_data = Some(sfx);
+                    self.result.sound_channels = Some(channels);
+                    ctrl.end_analysis();
+                }
+            }
         }
     }
 }
