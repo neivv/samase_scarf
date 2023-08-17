@@ -675,6 +675,8 @@ results! {
         GameScreenHeightRatio => game_screen_height_ratio => cache_update_game_screen_size,
         SfxData => sfx_data => cache_play_sound,
         SoundChannels => sound_channels => cache_play_sound,
+        LastRevealer => last_revealer => cache_finish_unit_post,
+        LastHiddenUnit => last_hidden_unit => cache_finish_unit_post,
     }
 }
 
@@ -2687,6 +2689,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::FinishUnitPre, |s| s.cache_unit_creation(actx))
     }
 
+    fn finish_unit_post(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::FinishUnitPost, |s| s.cache_unit_creation(actx))
+    }
+
     fn fonts(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::Fonts, |s| {
             text::fonts(actx, &s.function_finder())
@@ -3555,6 +3561,14 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    #[cfg(feature = "test_assertions")]
+    fn first_revealer(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(
+            OperandAnalysis::FirstRevealer,
+            |s| s.cache_active_hidden_units(actx),
+        )
+    }
+
     fn step_active_unit_frame(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::StepActiveUnitFrame, |s| s.cache_step_objects(actx))
     }
@@ -4281,6 +4295,24 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let play = s.play_sound(actx)?;
                 let r = sound::analyze_play_sound(actx, play);
                 Some(([], [r.sfx_data, r.sound_channels]))
+            })
+    }
+
+    fn cache_finish_unit_post(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[], &[LastHiddenUnit, LastRevealer],
+            |s| {
+                let func = s.finish_unit_post(actx)?;
+                let r = units::analyze_finish_unit_post(actx, func);
+                #[cfg(feature = "test_assertions")]
+                {
+                    let first_hidden = s.first_hidden_unit(actx);
+                    assert_eq!(r.first_hidden_unit, first_hidden);
+                    let first_revealer = s.first_revealer(actx);
+                    assert_eq!(r.first_revealer, first_revealer);
+                }
+                Some(([], [r.last_hidden_unit, r.last_revealer]))
             })
     }
 }

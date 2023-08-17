@@ -382,6 +382,19 @@ pub fn is_global(op: Operand<'_>) -> bool {
     }
 }
 
+/// Like is_global, but also filters out smaller-than-word Memory operands.
+pub fn is_global_struct<'e, E: ExecutionState<'e>>(op: Operand<'_>) -> bool {
+    if let Some(mem) = op.if_memory() {
+        if mem.size.bytes() < E::WORD_SIZE.bytes() {
+            false
+        } else {
+            is_global_rec(mem.address().0)
+        }
+    } else {
+        is_global(op)
+    }
+}
+
 fn is_global_rec(op: Operand<'_>) -> bool {
     let mut op = op;
     loop {

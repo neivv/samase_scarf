@@ -9,11 +9,12 @@ use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, entry_of_until, FunctionFinder};
 use crate::add_terms::collect_arith_add_terms;
 use crate::call_tracker::CallTracker;
+use crate::linked_list::DetectListAdd;
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
 use crate::util::{
     ControlExt, MemAccessExt, OptionExt, OperandExt, single_result_assign, bumpvec_with_capacity,
-    is_global, if_arithmetic_eq_neq, seems_assertion_call,
+    is_global, is_global_struct, if_arithmetic_eq_neq, seems_assertion_call,
 };
 
 #[derive(Clone, Debug)]
@@ -89,6 +90,13 @@ pub(crate) struct UnitStrength<'e, Va: VirtualAddress> {
     pub init_game_before_map_load_hook: Option<Va>,
     pub create_starting_units: Option<Va>,
     pub create_team_game_starting_units: Option<Va>,
+}
+
+pub(crate) struct FinishUnitPost<'e> {
+    pub first_revealer: Option<Operand<'e>>,
+    pub last_revealer: Option<Operand<'e>>,
+    pub first_hidden_unit: Option<Operand<'e>>,
+    pub last_hidden_unit: Option<Operand<'e>>,
 }
 
 pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
@@ -2721,4 +2729,156 @@ fn is_this_sprite_vismask<'e, Va: VirtualAddress>(ctx: OperandCtx<'e>, op: Opera
             Some(())
         }
     }).is_some()
+}
+
+pub(crate) fn analyze_finish_unit_post<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    finish_unit_post: E::VirtualAddress,
+) -> FinishUnitPost<'e> {
+    let mut result = FinishUnitPost {
+        first_revealer: None,
+        last_revealer: None,
+        first_hidden_unit: None,
+        last_hidden_unit: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, finish_unit_post);
+    let mut analyzer = FinishUnitPostAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        state: FinishUnitPostState::RemoveFromHiddenUnits,
+        inline_depth: 0,
+        inline_limit: 0,
+        list_add_tracker: DetectListAdd::new(Some(ctx.register(1))),
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct FinishUnitPostAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut FinishUnitPost<'e>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: FinishUnitPostState,
+    inline_depth: u8,
+    inline_limit: u8,
+    list_add_tracker: DetectListAdd<'e, E>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum FinishUnitPostState {
+    RemoveFromHiddenUnits,
+    AddToRevealers,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FinishUnitPostAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if self.inline_limit != 0 {
+            match *op {
+                Operation::Call(..) => {
+                    ctrl.end_branch();
+                    return;
+                }
+                Operation::Jump { .. } => {
+                    self.inline_limit -= 1;
+                    if self.inline_limit == 0 {
+                        ctrl.end_analysis();
+                        return;
+                    }
+                }
+                _ => (),
+            }
+        }
+        if self.inline_depth == 0 {
+            // Inline if this == this, and a1 and a2 are globals
+            if let Operation::Call(dest) = *op {
+                let inline = ctrl.resolve_register(1) == ctx.register(1) &&
+                    is_global_struct::<E>(ctrl.resolve(self.arg_cache.on_thiscall_call(0))) &&
+                    is_global_struct::<E>(ctrl.resolve(self.arg_cache.on_thiscall_call(1)));
+                if inline {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.inline_depth = 1;
+                        self.inline_limit = 16;
+                        let old_state = self.state;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth = 0;
+                        self.inline_limit = 0;
+                        if old_state == FinishUnitPostState::RemoveFromHiddenUnits {
+                            if self.state == old_state {
+                                // Clear partially found result if any
+                                self.result.first_hidden_unit = None;
+                                self.result.last_hidden_unit = None;
+                            } else {
+                                ctrl.clear_unchecked_branches();
+                            }
+                        }
+                        if self.result.last_revealer.is_some() {
+                            ctrl.end_analysis();
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+        match self.state {
+            FinishUnitPostState::RemoveFromHiddenUnits => {
+                if let Operation::Move(DestOperand::Memory(ref dest), value, None) = *op {
+                    if dest.size != E::WORD_SIZE || dest.address().0 == ctx.register(4) {
+                        return;
+                    }
+                    let value = ctrl.resolve(value);
+                    if let Some(mem) = ctrl.if_mem_word(value) {
+                        let (base, offset) = mem.address();
+                        if base == ctx.register(1) && offset <= E::VirtualAddress::SIZE as u64 {
+                            let dest = ctrl.resolve_mem(&dest);
+                            if dest.is_global() {
+                                let val = ctx.memory(&dest);
+                                let result = &mut self.result;
+                                if offset == 0 {
+                                    // last_hidden = this.prev
+                                    result.last_hidden_unit = Some(val);
+                                } else if offset == E::VirtualAddress::SIZE as u64 {
+                                    // first_hidden = this.next
+                                    result.first_hidden_unit = Some(val);
+                                }
+                                if result.last_hidden_unit.is_some() &&
+                                    result.first_hidden_unit.is_some()
+                                {
+                                    self.state = FinishUnitPostState::AddToRevealers;
+                                    if self.inline_depth != 0 {
+                                        ctrl.end_analysis();
+                                    } else {
+                                        ctrl.clear_unchecked_branches();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            FinishUnitPostState::AddToRevealers => {
+                self.list_add_tracker.operation(ctrl, op);
+            }
+        }
+    }
+
+    fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if self.state == FinishUnitPostState::AddToRevealers {
+            self.list_add_tracker.branch_start(ctrl);
+        }
+    }
+
+    fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if self.state == FinishUnitPostState::AddToRevealers {
+            let ctx = ctrl.ctx();
+            if let Some(result) = self.list_add_tracker.result(ctx) {
+                self.result.first_revealer = Some(result.head);
+                self.result.last_revealer = Some(result.tail);
+                ctrl.end_analysis();
+            }
+        }
+    }
 }
