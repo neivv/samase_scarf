@@ -406,7 +406,13 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
                     }
                     val
                 } else if mem16_related_offset::<E>(op) == Some(off) {
-                    Some(ctx.custom(0))
+                    // Explicit 16bit and mask here is better for result stability,
+                    // as `Mem16[x] & ffff` and `Mem16[x]` are same, but replacing
+                    // `Mem16` with 64-bit `Custom` makes them different.
+                    // Obviously scarf gets rid of the `& ffff` mask in above simple case,
+                    // but that is not necessarily the case for what the expression ends
+                    // up being in practice.
+                    Some(ctx.and_const(ctx.custom(0), 0xffff))
                 } else {
                     None
                 }

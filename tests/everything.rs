@@ -1045,21 +1045,12 @@ fn everything_1233d() {
         let y_high = ctx.and_const(ctx.rsh_const(y, 0x10), 0xffff);
         let high = ctx.xor(
             ctx.xor(
-                ctx.xor(
-                    ctx.and_const(
-                        ctx.rsh_const(
-                            ctx.custom(0),
-                            0x10,
-                        ),
-                        0xffff,
+                ctx.and_const(
+                    ctx.xor(
+                        ctx.custom(0),
+                        ctx.mem16(ctx.mem32c(0x30), 0x10),
                     ),
-                    ctx.and_const(
-                        ctx.xor(
-                            ctx.custom(0),
-                            ctx.mem16(ctx.mem32c(0x30), 0x10),
-                        ),
-                        0xffff,
-                    ),
+                    0xffff,
                 ),
                 ctx.and_const(
                     ctx.xor(
@@ -1865,16 +1856,16 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         if E::VirtualAddress::SIZE == 4 {
             assert_eq!(x_off, 0x14);
             assert_eq!(y_off, 0x16);
-            assert_eq!(x, ctx.custom(0));
-            assert_eq!(y, ctx.custom(0));
+            assert_eq!(x, ctx.and_const(ctx.custom(0), 0xffff));
+            assert_eq!(y, ctx.and_const(ctx.custom(0), 0xffff));
             assert_eq!(x_size, scarf::MemAccessSize::Mem16);
             assert_eq!(y_size, scarf::MemAccessSize::Mem16);
             assert_eq!(sprite_size, 0x24);
         } else {
             assert_eq!(x_off, 0x1c);
             assert_eq!(y_off, 0x1e);
-            assert_eq!(x, ctx.custom(0));
-            assert_eq!(y, ctx.custom(0));
+            assert_eq!(x, ctx.and_const(ctx.custom(0), 0xffff));
+            assert_eq!(y, ctx.and_const(ctx.custom(0), 0xffff));
             assert_eq!(x_size, scarf::MemAccessSize::Mem16);
             assert_eq!(y_size, scarf::MemAccessSize::Mem16);
             assert_eq!(sprite_size, 0x38);
@@ -1883,8 +1874,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         if E::VirtualAddress::SIZE == 4 {
             assert_eq!(x_off, 0x14);
             assert_eq!(y_off, 0x18);
-            assert_ne!(x, ctx.custom(0));
-            assert_ne!(y, ctx.custom(0));
+            assert_ne!(Operand::and_masked(x).0, ctx.custom(0));
+            assert_ne!(Operand::and_masked(y).0, ctx.custom(0));
             assert_eq!(x_size, scarf::MemAccessSize::Mem32);
             assert_eq!(y_size, scarf::MemAccessSize::Mem32);
             // These seem to use same key always
@@ -1893,8 +1884,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         } else {
             assert_eq!(x_off, 0x20);
             assert_eq!(y_off, 0x28);
-            assert_ne!(x, ctx.custom(0));
-            assert_ne!(y, ctx.custom(0));
+            assert_ne!(Operand::and_masked(x).0, ctx.custom(0));
+            assert_ne!(Operand::and_masked(y).0, ctx.custom(0));
             assert_eq!(x_size, scarf::MemAccessSize::Mem64);
             assert_eq!(y_size, scarf::MemAccessSize::Mem64);
             // These seem to use same key always

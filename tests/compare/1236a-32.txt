@@ -493,10 +493,10 @@ sfxdata.dat: None
 portdata.dat: f0f340 (entry size 16)
 mapdata.dat: f38390 (entry size 32)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress(005766e0), 2) })
-sprite_x: (((((((Custom_0 ^ ((2423 - Custom_0) << 10)) ^ ((((Custom_0 ^ (ba02 - ((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)))) ^ 2423) - Mem16[f96e90]) << 10)) ^ ((Mem16[f974d9] - Custom_0) << 10)) ^ (((Mem16[f974d7] * 2) + ((Custom_0 ^ (ba02 - ((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)))) ^ 2423)) << 10)) ^ (94fcba02 - ((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)))) ^ cee2423) & ffffffff)
+sprite_x: (((((((((2423 - Custom_0) << 10) ^ ((((Custom_0 ^ (ba02 - ((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)))) ^ 2423) - Mem16[f96e90]) << 10)) ^ ((Mem16[f974d9] - Custom_0) << 10)) ^ (((Mem16[f974d7] * 2) + ((Custom_0 ^ (ba02 - ((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)))) ^ 2423)) << 10)) ^ (Custom_0 & ffff)) ^ (94fcba02 - ((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)))) ^ cee2423) & ffffffff)
 sprite_x_offset: Some(14)
 sprite_x_size: Some(Mem32)
-sprite_y: (((((((Custom_0 ^ ((2423 - Custom_0) << 10)) ^ ((((Custom_0 ^ (ba02 - ((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)))) ^ 2423) - Mem16[f96e90]) << 10)) ^ ((Mem16[f974d9] - Custom_0) << 10)) ^ (((Mem16[f974d7] * 2) + ((Custom_0 ^ (ba02 - ((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)))) ^ 2423)) << 10)) ^ (94fcba02 - ((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)))) ^ cee2423) & ffffffff)
+sprite_y: (((((((((2423 - Custom_0) << 10) ^ ((((Custom_0 ^ (ba02 - ((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)))) ^ 2423) - Mem16[f96e90]) << 10)) ^ ((Mem16[f974d9] - Custom_0) << 10)) ^ (((Mem16[f974d7] * 2) + ((Custom_0 ^ (ba02 - ((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)))) ^ 2423)) << 10)) ^ (Custom_0 & ffff)) ^ (94fcba02 - ((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)))) ^ cee2423) & ffffffff)
 sprite_y_offset: Some(18)
 sprite_y_size: Some(Mem32)
 799 euds

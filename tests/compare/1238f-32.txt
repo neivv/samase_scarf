@@ -493,10 +493,10 @@ sfxdata.dat: None
 portdata.dat: f0f340 (entry size 16)
 mapdata.dat: f38390 (entry size 32)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress(00571f20), 2) })
-sprite_x: (((((Custom_0 ^ ((1560 - Custom_0) << 10)) ^ (Mem16[f97050] << 10)) ^ ((Mem16[f96aa3] - Custom_0) << 10)) ^ Mem32[Mem32[30] + 10]) ^ 2f9f6ade)
+sprite_x: (((((((1560 - (Custom_0 & ffff)) << 10) ^ ((Mem16[f96aa3] - (Custom_0 & ffff)) << 10)) ^ (Mem16[f97050] << 10)) ^ (Custom_0 & ffff)) ^ Mem32[Mem32[30] + 10]) ^ 2f9f6ade)
 sprite_x_offset: Some(14)
 sprite_x_size: Some(Mem32)
-sprite_y: (((((Custom_0 ^ ((1560 - Custom_0) << 10)) ^ (Mem16[f97050] << 10)) ^ ((Mem16[f96aa3] - Custom_0) << 10)) ^ Mem32[Mem32[30] + 10]) ^ 2f9f6ade)
+sprite_y: (((((((1560 - (Custom_0 & ffff)) << 10) ^ ((Mem16[f96aa3] - (Custom_0 & ffff)) << 10)) ^ (Mem16[f97050] << 10)) ^ (Custom_0 & ffff)) ^ Mem32[Mem32[30] + 10]) ^ 2f9f6ade)
 sprite_y_offset: Some(18)
 sprite_y_size: Some(Mem32)
 799 euds
