@@ -59,6 +59,9 @@ pub(crate) struct DoMissileDamage<Va: VirtualAddress> {
     pub play_sound_at_unit: Option<Va>,
     pub kill_unit: Option<Va>,
     pub unit_max_energy: Option<Va>,
+    pub splash_lurker: Option<Va>,
+    pub splash_full: Option<Va>,
+    pub for_each_unit_in_area: Option<Va>,
 }
 
 pub(crate) struct HitUnit<Va: VirtualAddress> {
@@ -873,6 +876,9 @@ pub(crate) fn analyze_do_missile_damage<'e, E: ExecutionState<'e>>(
         play_sound_at_unit: None,
         kill_unit: None,
         unit_max_energy: None,
+        splash_lurker: None,
+        splash_full: None,
+        for_each_unit_in_area: None,
     };
     let binary = actx.binary;
     let ctx = actx.ctx;
@@ -886,6 +892,8 @@ pub(crate) fn analyze_do_missile_damage<'e, E: ExecutionState<'e>>(
         call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
         increment_kill_scores_seen: false,
         entry_esp: ctx.register(4),
+        other_splash_branch: None,
+        for_each_unit_in_area_candidate: E::VirtualAddress::from_u64(0),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, do_missile_damage);
     analysis.analyze(&mut analyzer);
@@ -897,6 +905,7 @@ pub(crate) fn analyze_do_missile_damage<'e, E: ExecutionState<'e>>(
     if let Some((switch, exec)) = analyzer.switch.take() {
         let branches = [
             (1, MissileDamageState::Type1Branch),
+            (2, MissileDamageState::SplashBranch),
             (4, MissileDamageState::DisableUnit),
             (7, MissileDamageState::AiUnitWasHit),
             (9, MissileDamageState::Sounds),
@@ -909,6 +918,10 @@ pub(crate) fn analyze_do_missile_damage<'e, E: ExecutionState<'e>>(
                 analysis.analyze(&mut analyzer);
             }
         }
+    }
+    if result.for_each_unit_in_area.is_none() {
+        result.splash_lurker = None;
+        result.splash_full = None;
     }
     result
 }
@@ -923,6 +936,8 @@ struct MissileDamageAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     call_tracker: CallTracker<'acx, 'e, E>,
     increment_kill_scores_seen: bool,
     entry_esp: Operand<'e>,
+    other_splash_branch: Option<(E, E::VirtualAddress)>,
+    for_each_unit_in_area_candidate: E::VirtualAddress,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -959,6 +974,11 @@ enum MissileDamageState {
     /// }
     KillUnit,
     UnitMaxEnergy,
+    /// Find comparison of x == 6d (Lurker weapon); either a jump or conditional move,
+    /// then run the following code twice and search for for_each_unit_in_area(_, func, _)
+    /// with different funcs.
+    SplashBranch,
+    SplashPostComparison,
 }
 
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
@@ -1210,8 +1230,73 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     }
                 }
             }
+            MissileDamageState::SplashBranch => {
+                match *op {
+                    Operation::Jump { condition, to } => {
+                        let condition = ctrl.resolve(condition);
+                        if let Some(eq) = is_lurker_weapon_cmp(condition) {
+                            if let Some(to) = ctrl.resolve_va(to) {
+                                ctrl.clear_unchecked_branches();
+                                let next = ctrl.current_instruction_end();
+                                let (eq_addr, neq_addr) = match eq {
+                                    true => (to, next),
+                                    false => (next, to),
+                                };
+                                let lurker_state = ctrl.exec_state().clone();
+                                self.other_splash_branch = Some((lurker_state, eq_addr));
+                                self.state = MissileDamageState::SplashPostComparison;
+                                ctrl.continue_at_address(neq_addr);
+                            }
+                        }
+                    }
+                    Operation::Move(ref dest, value, Some(condition)) => {
+                        let condition = ctrl.resolve(condition);
+                        if let Some(eq) = is_lurker_weapon_cmp(condition) {
+                            ctrl.clear_unchecked_branches();
+                            let next = ctrl.current_instruction_end();
+                            ctrl.skip_operation();
+                            let mut lurker_state = ctrl.exec_state().clone();
+                            if eq {
+                                lurker_state.move_to(dest, value);
+                            } else {
+                                ctrl.move_unresolved(dest, value);
+                            }
+                            self.other_splash_branch = Some((lurker_state, next));
+                            self.state = MissileDamageState::SplashPostComparison;
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            MissileDamageState::SplashPostComparison => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if let Some(arg2) = ctrl.resolve_va(self.arg_cache.on_call(1)) {
+                            if let Some((lurker_state, addr)) = self.other_splash_branch.take() {
+                                self.for_each_unit_in_area_candidate = dest;
+                                self.result.splash_full = Some(arg2);
+                                ctrl.clear_unchecked_branches();
+                                ctrl.end_branch();
+                                ctrl.add_branch_with_state(addr, lurker_state, Default::default());
+                            } else {
+                                if self.for_each_unit_in_area_candidate == dest {
+                                    self.result.splash_lurker = Some(arg2);
+                                    self.result.for_each_unit_in_area = Some(dest);
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
+}
+
+fn is_lurker_weapon_cmp<'e>(condition: Operand<'e>) -> Option<bool> {
+    condition.if_arithmetic_eq_neq()
+        .filter(|x| x.1.if_constant() == Some(0x6d))
+        .map(|x| x.2)
 }
 
 pub(crate) fn analyze_hit_unit<'e, E: ExecutionState<'e>>(

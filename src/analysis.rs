@@ -403,6 +403,9 @@ results! {
         PlaySoundAtUnit => play_sound_at_unit => cache_do_missile_damage,
         KillUnit => kill_unit => cache_do_missile_damage,
         UnitMaxEnergy => unit_max_energy => cache_do_missile_damage,
+        SplashLurker => splash_lurker => cache_do_missile_damage,
+        SplashFull => splash_full => cache_do_missile_damage,
+        ForEachUnitInArea => for_each_unit_in_area => cache_do_missile_damage,
         HallucinationHit => hallucination_hit => cache_hit_unit,
         DoWeaponDamage => do_weapon_damage => cache_hit_unit,
         DamageUnit => damage_unit => cache_do_weapon_damage,
@@ -4115,13 +4118,14 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use AddressAnalysis::*;
         self.cache_many(
             &[HitUnit, UnitWasHit, DisableUnit, AiUnitWasHit, LookupSoundId, PlaySoundAtUnit,
-                KillUnit, UnitMaxEnergy],
+                KillUnit, UnitMaxEnergy, SplashLurker, SplashFull, ForEachUnitInArea],
             &[],
             |s| {
                 let do_dmg = s.do_missile_damage(actx)?;
                 let r = bullets::analyze_do_missile_damage(actx, do_dmg);
                 Some(([r.hit_unit, r.unit_was_hit, r.disable_unit, r.ai_unit_was_hit,
-                    r.lookup_sound_id, r.play_sound_at_unit, r.kill_unit, r.unit_max_energy],
+                    r.lookup_sound_id, r.play_sound_at_unit, r.kill_unit, r.unit_max_energy,
+                    r.splash_lurker, r.splash_full, r.for_each_unit_in_area],
                     []))
             })
     }
