@@ -556,6 +556,11 @@ results! {
         LastDyingUnit => last_dying_unit => cache_step_objects,
         FirstFreeUnit => first_free_unit => cache_step_objects,
         LastFreeUnit => last_free_unit => cache_step_objects,
+        // How many game steps until order wait timers are reset to be evenly
+        // distributed across units.
+        OrderTimerResetCounter => order_timer_reset_counter => cache_step_objects,
+        SecondaryOrderTimerResetCounter => secondary_order_timer_reset_counter =>
+            cache_step_objects,
         UnitShouldRevealArea => unit_should_reveal_area => cache_step_active_unit,
         MenuScreenId => menu_screen_id => cache_game_loop,
         NetPlayerFlags => net_player_flags => cache_step_network,
@@ -3536,7 +3541,8 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             VisionUpdateCounter, VisionUpdated, FirstDyingUnit, FirstRevealer, FirstInvisibleUnit,
             ActiveIscriptFlingy, ActiveIscriptBullet, DcreepNextUpdate, DcreepListSize,
             DcreepListBegin, DcreepLookup, CreepFuncs, DcreepUnitNextUpdate, UnitCount,
-            LastDyingUnit, FirstFreeUnit, LastFreeUnit,
+            LastDyingUnit, FirstFreeUnit, LastFreeUnit, OrderTimerResetCounter,
+            SecondaryOrderTimerResetCounter,
         ], |s| {
             let step_objects = s.step_objects(actx)?;
             let game = s.game(actx)?;
@@ -3564,7 +3570,8 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 result.active_iscript_bullet, result.dcreep_next_update, result.dcreep_list_size,
                 result.dcreep_list_begin, result.dcreep_lookup, result.creep_funcs,
                 result.dcreep_unit_next_update, result.unit_count, result.last_dying_unit,
-                result.first_free_unit, result.last_free_unit,
+                result.first_free_unit, result.last_free_unit, result.order_timer_reset_counter,
+                result.secondary_order_timer_reset_counter,
             ]))
         })
     }

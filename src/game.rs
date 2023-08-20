@@ -14,7 +14,7 @@ use crate::call_tracker::CallTracker;
 use crate::linked_list::DetectListAdd;
 use crate::struct_layouts;
 use crate::util::{
-    ControlExt, OperandExt, OptionExt, bumpvec_with_capacity, if_arithmetic_eq_neq,
+    ControlExt, OperandExt, OptionExt, MemAccessExt, bumpvec_with_capacity, if_arithmetic_eq_neq,
     if_callable_const, single_result_assign, is_stack_address, is_global,
 };
 
@@ -44,6 +44,8 @@ pub(crate) struct StepObjectsAnalysis<'e, Va: VirtualAddress> {
     pub step_bullet_frame: Option<Va>,
     pub step_bullets: Option<Va>,
     pub reveal_area: Option<Va>,
+    pub order_timer_reset_counter: Option<Operand<'e>>,
+    pub secondary_order_timer_reset_counter: Option<Operand<'e>>,
     pub vision_update_counter: Option<Operand<'e>>,
     pub vision_updated: Option<Operand<'e>>,
     pub first_dying_unit: Option<Operand<'e>>,
@@ -944,6 +946,8 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         step_bullet_frame: None,
         step_bullets: None,
         reveal_area: None,
+        order_timer_reset_counter: None,
+        secondary_order_timer_reset_counter: None,
         vision_update_counter: None,
         vision_updated: None,
         first_dying_unit: None,
@@ -1070,7 +1074,11 @@ enum StepObjectsAnalysisState {
     VisionUpdated,
     // Inline once to depth 1 (step_units), but require the function to start with store of 0
     // to global value (interceptor_focused_this_frame), or a call to such function.
-    // Also assume any comparision against first_active_unit != 0 to be false, as well
+    // Then find a store of 0x96 to a global
+    OrderTimerReset,
+    // Store of 0x12c to a global
+    SecondaryOrderTimerReset,
+    // Assume any comparision against first_active_unit != 0 to be false, as well
     // as completed_unit_count(0xb, 0x69) (Pl12 Dweb)
     // Assume first_dying_unit to be first write to active_iscript_unit.
     FirstDyingUnit,
@@ -1283,13 +1291,14 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             let mem = ctrl.resolve_mem(mem);
                             if !is_stack_address(mem.address().0) {
                                 self.result.vision_updated = Some(ctx.memory(&mem));
-                                self.state = StepObjectsAnalysisState::FirstDyingUnit;
+                                self.state = StepObjectsAnalysisState::OrderTimerReset;
                             }
                         }
                     }
                 }
             }
-            StepObjectsAnalysisState::FirstDyingUnit => {
+            StepObjectsAnalysisState::OrderTimerReset => {
+                ctrl.aliasing_memory_fix(op);
                 if self.needs_inline_verify {
                     match *op {
                         Operation::Move(DestOperand::Memory(mem), value, None) => {
@@ -1310,7 +1319,6 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         _ => (),
                     }
                 }
-                ctrl.aliasing_memory_fix(op);
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if self.check_large_stack_alloc(ctrl) {
@@ -1347,9 +1355,31 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 return;
                             }
                         }
+                    }
+                }
+                if !self.needs_inline_verify {
+                    if let Some(result) = self.check_global_store_const(ctrl, op, 0x96) {
+                        self.result.order_timer_reset_counter = Some(result);
+                        ctrl.clear_unchecked_branches();
+                        self.state = StepObjectsAnalysisState::SecondaryOrderTimerReset;
+                    }
+                }
+            }
+            StepObjectsAnalysisState::SecondaryOrderTimerReset => {
+                if let Some(result) = self.check_global_store_const(ctrl, op, 0x12c) {
+                    self.result.secondary_order_timer_reset_counter = Some(result);
+                    ctrl.clear_unchecked_branches();
+                    self.state = StepObjectsAnalysisState::FirstDyingUnit;
+                }
+            }
+            StepObjectsAnalysisState::FirstDyingUnit => {
+                ctrl.aliasing_memory_fix(op);
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         self.simulate_func(ctrl, dest);
                     }
-                } else if let Operation::Jump { condition, to } = *op {
+                }
+                if let Operation::Jump { condition, to } = *op {
                     let condition = ctrl.resolve(condition);
                     if let Some((cmp, eq_zero)) = condition.if_arithmetic_eq_neq_zero(ctx) {
                         let assume_zero = cmp == self.first_active_unit ||
@@ -1896,6 +1926,25 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepObjectsAnalyzer<'a, 'acx, 'e, E> {
             }
         }
         false
+    }
+
+    fn check_global_store_const(
+        &self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        op: &Operation<'e>,
+        constant: u64,
+    ) -> Option<Operand<'e>> {
+        if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+            let value = ctrl.resolve(value);
+            if value.if_constant() == Some(constant) {
+                let mem = ctrl.resolve_mem(mem);
+                if mem.is_global() {
+                    let ctx = ctrl.ctx();
+                    return Some(ctx.memory(&mem));
+                }
+            }
+        }
+        None
     }
 }
 

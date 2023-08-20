@@ -1668,7 +1668,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 LastDyingUnit | UnitCount | FirstFreeUnit | LastFreeUnit | ObserverUi |
                 OnClipCursorEnd | SelectStartX | SelectStartY | IsSelecting | FirstDialog |
                 FirstFreeImage | LastFreeImage | UpdateGameScreenSizeMode | GameScreenHeightRatio |
-                LastHiddenUnit | LastRevealer | LurkerHitsPos | LurkerHitsFrame =>
+                LastHiddenUnit | LastRevealer | LurkerHitsPos | LurkerHitsFrame |
+                OrderTimerResetCounter | SecondaryOrderTimerResetCounter =>
             {
                 check_global_opt(result, binary, op.name());
             }
