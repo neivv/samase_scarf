@@ -110,11 +110,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FontsAnalyzer<'a, 'e
                         if let Some(offset) = offset {
                             let ctx = ctrl.ctx();
                             ctrl.skip_operation();
-                            let exec_state = ctrl.exec_state();
-                            exec_state.move_to(
-                                &DestOperand::Register64(0),
-                                ctx.custom(offset),
-                            );
+                            ctrl.set_register(0, ctx.custom(offset));
                         }
                     }
                 }
@@ -239,12 +235,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 if ctrl.user_state().get::<FindCacheRenderAsciiState>().shadow_offset_seen {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ctx = ctrl.ctx();
-                        let ecx = ctrl.resolve(ctx.register(1));
-                        let ok = ecx.if_arithmetic_add()
-                            .and_then(|(l, r)| {
-                                r.if_constant()?;
-                                Some(l)
-                            })
+                        let ecx = ctrl.resolve_register(1);
+                        let ok = ecx.if_add_with_const()
+                            .map(|x| x.0)
                             .or_else(|| Some(ecx))
                             .and_then(|x| ctrl.if_mem_word(x))
                             .filter(|&mem| {
@@ -367,7 +360,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TtfCacheCharacterAna
             Operation::Call(dest) => {
                 let ctx = ctrl.ctx();
                 if let Some(dest) = ctrl.resolve_va(dest) {
-                    let ecx = ctrl.resolve(ctx.register(1));
+                    let ecx = ctrl.resolve_register(1);
                     // Args 4, 5, 6 are hardcoded constants. Either
                     //  0xd, 0xb4, 13.84615 (newer)
                     //  0xd, 0xb4, 13.0 (new)

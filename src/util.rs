@@ -545,22 +545,21 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
 
     fn get_new_esp_for_call(&mut self) -> Operand<'e> {
         let ctx = self.ctx();
-        self.resolve(ctx.sub_const(
-            ctx.register(4),
+        ctx.sub_const(
+            self.resolve_register(4),
             <A::Exec as ExecutionState<'e>>::VirtualAddress::SIZE.into(),
-        ))
+        )
     }
 
     fn pop_stack(&mut self) {
         let ctx = self.ctx();
         let state = self.exec_state();
-        state.move_to(
-            &scarf::DestOperand::Register64(4),
-            ctx.add_const(
-                ctx.register(4),
-                <A::Exec as ExecutionState<'e>>::VirtualAddress::SIZE.into(),
-            ),
+        let old_esp = state.resolve_register(4);
+        let new_esp = ctx.add_const(
+            old_esp,
+            <A::Exec as ExecutionState<'e>>::VirtualAddress::SIZE.into(),
         );
+        state.set_register(4, new_esp);
     }
 
     fn check_stack_probe(&mut self) -> bool {

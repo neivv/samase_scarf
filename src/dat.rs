@@ -1748,11 +1748,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                     if let Some(custom) = self.custom_value_for_call(dest) {
                         ctrl.skip_operation();
-                        let exec_state = ctrl.exec_state();
-                        exec_state.move_to(
-                            &DestOperand::Register64(0),
-                            custom,
-                        );
+                        ctrl.set_register(0, custom);
                     }
                 }
             }
@@ -3461,11 +3457,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let dest = E::VirtualAddress::from_u64(dest);
                     if let Some(custom) = self.parent.custom_value_for_call(dest) {
                         ctrl.skip_operation();
-                        let exec_state = ctrl.exec_state();
-                        exec_state.move_to(
-                            &DestOperand::Register64(0),
-                            custom,
-                        );
+                        ctrl.set_register(0, custom);
                     }
                 }
             }
@@ -3874,8 +3866,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
                 Operation::Return(_) => {
-                    let ctx = ctrl.ctx();
-                    let val = ctrl.resolve(ctx.register(0));
+                    let val = ctrl.resolve_register(0);
                     self.returns.push(val);
                 }
                 _ => (),

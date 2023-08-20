@@ -331,7 +331,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 let to_op = to;
                 if let Some(to) = ctrl.resolve_va(to) {
                     let is_tail_call = condition == ctx.const_1() &&
-                        ctrl.resolve(ctx.register(4)) == ctx.register(4) &&
+                        ctrl.resolve_register(4) == ctx.register(4) &&
                         (to < self.func_start || to > self.greatest_address + 0x4000);
                     if is_tail_call {
                         self.operation(ctrl, &Operation::Call(to_op));

@@ -2,12 +2,12 @@ use bumpalo::collections::Vec as BumpVec;
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{OperandHashByAddress};
-use scarf::{DestOperand, Operand, Operation};
+use scarf::{Operand, Operation};
 
 use crate::analysis_find::{entry_of_until, EntryOf};
 use crate::hash_map::{HashMap, HashSet};
 use crate::unresolve::unresolve;
-use crate::util::{OptionExt, OperandExt, bumpvec_with_capacity};
+use crate::util::{ControlExt, OptionExt, OperandExt, bumpvec_with_capacity};
 use super::{DatPatchContext, DatPatch, GrpTexturePatch, reloc_address_of_instruction};
 
 pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
@@ -161,7 +161,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     ctrl.end_analysis();
                 }
                 Operation::Return(_) => {
-                    let eax = ctrl.resolve(ctx.register(0));
+                    let eax = ctrl.resolve_register(0);
                     // Accept deref_this
                     let ok = ctrl.if_mem_word(eax)
                         .and_then(|x| x.if_no_offset())
@@ -174,7 +174,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             return;
         }
-        if ctrl.address() <= self.ref_addr && ctrl.current_instruction_end() > self.ref_addr {
+        let address = ctrl.address();
+        if address <= self.ref_addr && ctrl.current_instruction_end() > self.ref_addr {
             self.entry_of = EntryOf::Ok(());
         }
         match *op {
@@ -194,8 +195,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             Operation::Call(dest) => {
-                let dest = match ctrl.resolve(dest).if_constant() {
-                    Some(dest) => E::VirtualAddress::from_u64(dest),
+                let dest = match ctrl.resolve_va(dest) {
+                    Some(dest) => dest,
                     None => return,
                 };
                 if let Some(grp) = self.functions_returning_grp.get(&dest) {
@@ -206,12 +207,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     };
                     let custom = ctx.custom(custom);
                     ctrl.skip_operation();
-                    let exec_state = ctrl.exec_state();
-                    exec_state.move_to(
-                        &DestOperand::Register64(0),
-                        custom,
-                    );
-                    self.checked_refs.insert(ctrl.address());
+                    ctrl.set_register(0, custom);
+                    self.checked_refs.insert(address);
                     return;
                 }
 
@@ -239,14 +236,13 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         if let Some(addr) = reloc_addr {
                             self.checked_refs.insert(addr);
                         }
-                        let address = ctrl.address();
                         if self.dat_ctx.patched_addresses.insert(address) {
                             self.dat_ctx.result.patches.push(DatPatch::GrpIndexHook(address));
                         }
                         return;
                     }
                 }
-                let ecx = ctrl.resolve(ctx.register(1));
+                let ecx = ctrl.resolve_register(1);
                 if let Some(&grp) = self.grp_operands.get(&ecx.hash_by_address()) {
                     if grp == GrpType::DdsGrpSet {
                         self.inlining = true;
@@ -259,11 +255,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         if self.inline_fail {
                             // Custom(10) for potentially useful DdsGrpSet deref
                             let custom = ctx.custom(0x10);
-                            let exec_state = ctrl.exec_state();
-                            exec_state.move_to(
-                                &DestOperand::Register64(0),
-                                custom,
-                            );
+                            ctrl.set_register(0, custom);
                         }
                     }
                 }
@@ -315,9 +307,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     // caught by this same check
                     ctrl.skip_operation();
                     let custom = ctx.custom(0x11);
-                    let exec_state = ctrl.exec_state();
-                    exec_state.move_to(dest, custom);
-                    let address = ctrl.address();
+                    ctrl.move_unresolved(dest, custom);
                     if self.dat_ctx.patched_addresses.insert(address) {
                         let instruction_len = (ctrl.current_instruction_end().as_u64() as u8)
                             .wrapping_sub(address.as_u64() as u8);
@@ -334,7 +324,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             Operation::Return(..) => {
-                let eax = ctrl.resolve(ctx.register(0));
+                let eax = ctrl.resolve_register(0);
                 if let Some(&grp) = self.grp_operands.get(&eax.hash_by_address()) {
                     self.returns_grp = Some(grp);
                     // Assuming that a function returning grp can't be otherwise interesting

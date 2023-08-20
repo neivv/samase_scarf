@@ -493,7 +493,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AllocatorFromSMemAllo
         } else if let Operation::Jump { condition, to } = *op {
             let ctx = ctrl.ctx();
             if condition == ctx.const_1() {
-                if self.entry_esp == ctrl.resolve(ctx.register(4)) {
+                if self.entry_esp == ctrl.resolve_register(4) {
                     // Tail call
                     let to = ctrl.resolve(to);
                     if to.if_constant().is_none() {
@@ -512,8 +512,7 @@ impl<'e, E: ExecutionState<'e>> AllocatorFromSMemAlloc<'e, E> {
     fn check_result_at_call(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, dest: Operand<'e>) {
         // Check for allocator.vtable.alloc(size, align)
         // Ok if dest is MemWord[[this] + 1 * word_size]
-        let ctx = ctrl.ctx();
-        let ecx = ctrl.resolve(ctx.register(1));
+        let ecx = ctrl.resolve_register(1);
         self.result = ctrl.if_mem_word_offset(dest, 1 * E::VirtualAddress::SIZE as u64)
             .and_then(|x| ctrl.if_mem_word_offset(x, 0))
             .filter(|&x| x == ecx);
@@ -701,7 +700,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 let dest_op = ctrl.resolve(dest_unres);
                 let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                 let arg1_not_this = ctrl.resolve(self.arg_cache.on_call(0));
-                let ecx = ctrl.resolve(ctx.register(1));
+                let ecx = ctrl.resolve_register(1);
                 let mut inline = false;
                 let word_size = E::VirtualAddress::SIZE;
                 if self.check_malloc_free && self.result.allocator.is_none() {
@@ -798,7 +797,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         self.inlining_object_subfunc = inline;
                         let esp = self.func_initial_esp;
                         self.func_initial_esp = ctx.sub_const(
-                            ctrl.resolve(ctx.register(4)),
+                            ctrl.resolve_register(4),
                             E::VirtualAddress::SIZE as u64,
                         );
                         ctrl.analyze_with_current_state(self, dest);
@@ -820,19 +819,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             Operation::Jump { condition, to } => {
                 let ctx = ctrl.ctx();
-                if condition == ctx.const_1() &&
-                    ctrl.resolve(ctx.register(4)) == self.func_initial_esp
-                {
+                let esp = ctrl.resolve_register(4);
+                if condition == ctx.const_1() && esp == self.func_initial_esp {
                     // Tail call
                     ctrl.end_branch();
-                    let exec_state = ctrl.exec_state();
-                    exec_state.move_to(
-                        &DestOperand::Register64(4),
-                        ctx.add_const(
-                            ctx.register(4),
-                            E::VirtualAddress::SIZE as u64,
-                        ),
-                    );
+                    let new_esp = ctx.add_const(esp, E::VirtualAddress::SIZE as u64);
+                    ctrl.set_register(4, new_esp);
                     self.operation(ctrl, &Operation::Call(to));
                 }
             }
@@ -843,9 +835,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             // Make pop ebp always be mov esp, orig_esp
                             // even if current esp is considered unknown
                             let ctx = ctrl.ctx();
-                            let exec_state = ctrl.exec_state();
-                            exec_state.move_resolved(
-                                &DestOperand::Register64(4),
+                            ctrl.set_register(
+                                4,
                                 ctx.sub_const(
                                     self.func_initial_esp,
                                     E::VirtualAddress::SIZE as u64,
@@ -1435,7 +1426,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             return;
                         }
                         if self.inline_depth != self.max_inline_depth {
-                            let this = ctrl.resolve(ctx.register(1));
+                            let this = ctrl.resolve_register(1);
                             if Some(this) == self.result.first_dying_unit {
                                 self.inline_depth += 1;
                                 ctrl.analyze_with_current_state(self, dest);
@@ -1578,7 +1569,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if self.inline_depth < self.max_inline_depth {
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            let this = ctrl.resolve(ctx.register(1));
+                            let this = ctrl.resolve_register(1);
                             if Some(this) == self.result.first_dying_unit {
                                 self.inline_depth += 1;
                                 ctrl.analyze_with_current_state(self, dest);
@@ -1637,7 +1628,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let this = ctrl.resolve(ctx.register(1));
+                        let this = ctrl.resolve_register(1);
                         let cmp = if self.state == StepObjectsAnalysisState::StepActiveUnitFrame {
                             self.first_active_unit
                         } else {
@@ -1672,7 +1663,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             StepObjectsAnalysisState::FirstRevealer => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let this = ctrl.resolve(ctx.register(1));
+                        let this = ctrl.resolve_register(1);
                         let active_iscript_unit = ctrl.resolve(self.active_iscript_unit);
                         // The not Mem[x + 4] check is to avoid confusing other_list.next
                         // from loops.
@@ -1696,7 +1687,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             StepObjectsAnalysisState::UpdateVisibilityArea => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let this = ctrl.resolve(ctx.register(1));
+                        let this = ctrl.resolve_register(1);
                         if this == self.first_active_unit {
                             ctrl.clear_unchecked_branches();
                             self.result.update_unit_visibility = Some(dest);
@@ -1730,7 +1721,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if Some(dest) != self.result.update_unit_visibility {
                             if self.cloak_state_checked {
-                                let this = ctrl.resolve(ctx.register(1));
+                                let this = ctrl.resolve_register(1);
                                 if this == self.first_active_unit {
                                     let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                                     if arg1 == ctx.const_0() {
@@ -1901,11 +1892,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepObjectsAnalyzer<'a, 'acx, 'e, E> {
         if let Some(result) = result {
             let result = ctrl.resolve(result);
             ctrl.skip_operation();
-            let state = ctrl.exec_state();
-            state.move_to(
-                &DestOperand::Register64(0),
-                result,
-            );
+            ctrl.set_register(0, result);
             true
         } else {
             false
@@ -1915,8 +1902,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepObjectsAnalyzer<'a, 'acx, 'e, E> {
     fn check_large_stack_alloc(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) -> bool {
         if self.first_call_of_func {
             self.first_call_of_func = false;
-            let ctx = ctrl.ctx();
-            let maybe_stack_alloc = ctrl.resolve(ctx.register(0))
+            let maybe_stack_alloc = ctrl.resolve_register(0)
                 .if_constant()
                 .filter(|&c| c >= 0x1000)
                 .is_some();
@@ -1972,8 +1958,7 @@ fn analyze_simulate_short<'e, E: ExecutionState<'e>>(
                     }
                 }
                 Operation::Return(..) => {
-                    let ctx = ctrl.ctx();
-                    self.result = Some(ctrl.resolve(ctx.register(0)));
+                    self.result = Some(ctrl.resolve_register(0));
                     ctrl.end_analysis();
                 }
                 _ => (),
@@ -1986,10 +1971,7 @@ fn analyze_simulate_short<'e, E: ExecutionState<'e>>(
         &DestOperand::Memory(ctx.mem_access(ctx.register(4), 0, E::WORD_SIZE)),
         ctx.mem_any(E::WORD_SIZE, ctx.register(4), 0),
     );
-    exec.move_to(
-        &DestOperand::Register64(4),
-        ctx.sub_const(ctx.register(4), E::VirtualAddress::SIZE as u64),
-    );
+    exec.set_register(4, ctx.sub_const(ctx.register(4), E::VirtualAddress::SIZE as u64));
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, func, exec, Default::default());
     let mut analyzer: Analyzer<E> = Analyzer {
         result: None,

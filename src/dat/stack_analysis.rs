@@ -150,7 +150,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                                     self.stack_alloc_size = 0i32.wrapping_sub(c) as u32;
                                     // Becomes `rsp - stack_alloc_size` since c is negative here
                                     let init_esp = ctx.add_const(
-                                        ctrl.resolve(ctx.register(4)),
+                                        ctrl.resolve_register(4),
                                         c as i64 as u64,
                                     );
                                     self.init_esp = Some(init_esp);

@@ -117,7 +117,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayFowAnalyzer<'a
                     }
                 }
                 Operation::Return(..) => {
-                    let eax = ctrl.resolve(ctx.register(0));
+                    let eax = ctrl.resolve_register(0);
                     self.is_get_fn = eax == self.first_fow_sprite;
                 }
                 Operation::Jump { condition, .. } => {
@@ -344,9 +344,8 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         let exec = ctrl.exec_state();
                         let register_count = if E::VirtualAddress::SIZE == 4 { 8 } else { 16 };
                         for i in 0..register_count {
-                            if ctx.and_const(exec.resolve(ctx.register(i)), 0xffff_ffff) == cmp {
-                                let dest = DestOperand::Register64(i);
-                                exec.move_to(&dest, ctx.custom(0));
+                            if ctx.and_const(exec.resolve_register(i), 0xffff_ffff) == cmp {
+                                exec.set_register(i, ctx.custom(0));
                             }
                         }
                     }

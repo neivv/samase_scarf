@@ -1313,7 +1313,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAna
             }
             Operation::Call(dest) if self.inline_depth < 3 || self.inline_depth == 255 => {
                 // Inline to f(this, this.order_target.x, this.order_target.y)
-                let ecx = ctrl.resolve(ctx.register(1));
+                let ecx = ctrl.resolve_register(1);
                 let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                 let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
                 if ecx != ctx.register(1) {

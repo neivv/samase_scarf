@@ -63,7 +63,7 @@ impl<'e, E: ExecutionState<'e>> DetectTailCall<'e, E> {
             if let Some(to) = to.if_constant() {
                 let to = E::VirtualAddress::from_u64(to);
                 if condition == ctx.const_1() {
-                    let esp = exec_state.resolve(ctx.register(4));
+                    let esp = exec_state.resolve_register(4);
                     if esp == ctx.register(4) {
                         // If esp has been written, assume any jump outside function
                         // bounds be tail call from here, otherwise allow short forward jumps.

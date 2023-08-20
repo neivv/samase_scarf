@@ -920,7 +920,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
             DoAttackState::UpdateAttackTarget => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let this = ctrl.resolve(ctx.register(1));
+                        let this = ctrl.resolve_register(1);
                         if this == ctx.register(1) {
                             self.state = DoAttackState::VerifyUpdateAttackTarget;
                             ctrl.analyze_with_current_state(self, dest);
@@ -980,7 +980,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
                             } else if state == DoAttackState::DoAttackMain {
                                 // Step 2: Check for do_attack_main(this, 2, units_dat_air_weapon[x])
                                 let ok = Some(())
-                                    .filter(|_| ctrl.resolve(ctx.register(1)) == ctx.register(1))
+                                    .filter(|_| ctrl.resolve_register(1) == ctx.register(1))
                                     .and_then(|_| {
                                         ctrl.resolve(self.arg_cache.on_thiscall_call(0)).if_constant()
                                     })
@@ -1022,7 +1022,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
                         if state == DoAttackState::DoAttack {
                             if condition == ctx.const_1() {
                                 // Step 0 check can also be a tail call
-                                if ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                                if ctrl.resolve_register(4) == self.entry_esp {
                                     if let Some(to) = ctrl.resolve_va(to) {
                                         if self.is_do_attack_call(ctrl) {
                                             self.do_attack = Some(to);
@@ -1126,14 +1126,14 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepOrder<
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let ctx = ctrl.ctx();
         if let Operation::Jump { condition, .. } = *op {
-            if condition == ctx.const_1() && ctrl.resolve(ctx.register(4)) == self.entry_esp {
+            if condition == ctx.const_1() && ctrl.resolve_register(4) == self.entry_esp {
                 // Don't follow tail calls
                 ctrl.end_branch();
                 return;
             }
         }
         if let Operation::Return(..) = *op {
-            let result = ctrl.resolve(ctx.register(0));
+            let result = ctrl.resolve_register(0);
             if let Some(old) = self.inline_result {
                 if old != result {
                     self.inline_result = Some(ctx.new_undef());
@@ -1377,7 +1377,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderTrain
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if self.result.cancel_queued_unit.is_none() {
-                            let this = ctrl.resolve(ctx.register(1));
+                            let this = ctrl.resolve_register(1);
                             let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                             let ok = this == ctx.register(1) &&
                                 ctx.and_const(arg1, 0xff) == ctx.const_0();
@@ -1596,7 +1596,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 let dest = match *op {
                     Operation::Call(dest) => dest,
                     Operation::Jump { condition, to } if condition == ctx.const_1() &&
-                        ctrl.resolve(ctx.register(4)) == ctx.register(4) => to,
+                        ctrl.resolve_register(4) == ctx.register(4) => to,
                     _ => return,
                 };
                 if let Some(dest) = ctrl.resolve_va(dest) {
@@ -2105,7 +2105,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             ZergBuildSelfState::TransformUnit => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let this = ctrl.resolve(ctx.register(1));
+                        let this = ctrl.resolve_register(1);
                         if this == ctx.register(1) {
                             self.result.transform_unit = Some(dest);
                             self.state = ZergBuildSelfState::SetUnitHp;
@@ -2116,7 +2116,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             ZergBuildSelfState::SetUnitHp => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let this = ctrl.resolve(ctx.register(1));
+                        let this = ctrl.resolve_register(1);
                         if this == ctx.register(1) {
                             self.func_candidate = dest;
                         }

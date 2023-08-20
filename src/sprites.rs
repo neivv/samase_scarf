@@ -211,7 +211,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                         }
                         return;
                     }
-                    let ecx = ctrl.resolve(ctx.register(1));
+                    let ecx = ctrl.resolve_register(1);
                     let tc_arg1 = ctrl.resolve(arg_cache.on_thiscall_call(0));
                     if self.is_list_call(tc_arg1, ecx) {
                         ctrl.analyze_with_current_state(self, dest);
@@ -236,12 +236,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                                 );
                             }
                             let state = ctrl.exec_state();
-                            state.move_to(
-                                &DestOperand::Register64(0),
-                                ctx.custom(custom_id),
-                            );
-                            state.move_to(&DestOperand::Register64(1), ctx.new_undef());
-                            state.move_to(&DestOperand::Register64(2), ctx.new_undef());
+                            state.set_register(0, ctx.custom(custom_id));
+                            state.set_register(1, ctx.new_undef());
+                            state.set_register(2, ctx.new_undef());
                             if arg1_c.is_some() {
                                 let dest = DestOperand::Memory(arg1_mem);
                                 state.move_resolved(&dest, ctx.custom(custom_id + 1));
@@ -646,8 +643,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ResolveCustom<'e, E> {
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Return(..) => {
-                let ctx = ctrl.ctx();
-                let ret = ctrl.resolve(ctx.register(0));
+                let ret = ctrl.resolve_register(0);
                 self.ret.update(ret);
                 let arg1 = ctrl.resolve(self.arg1_loc);
                 self.arg1.update(arg1);
@@ -824,8 +820,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                             }
                         }
                         FowSpritesState::StepLoneSpritesFound => {
-                            let ctx = ctrl.ctx();
-                            let ecx = ctrl.resolve(ctx.register(1));
+                            let ecx = ctrl.resolve_register(1);
                             if ctrl.if_mem_word(ecx).is_none() {
                                 return;
                             }

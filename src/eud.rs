@@ -253,7 +253,7 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
                         // Don't clobber eax (stack alloc size) on 64bit
                         self.first_call = false;
                         if E::VirtualAddress::SIZE == 8 {
-                            if let Some(eax) = ctrl.resolve(ctx.register(0)).if_constant() {
+                            if let Some(eax) = ctrl.resolve_register(0).if_constant() {
                                 if eax > 0x1000 {
                                     ctrl.skip_operation();
                                     return;
@@ -375,7 +375,7 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
                 return false;
             }
 
-            let vec = ctrl.resolve(ctx.register(1));
+            let vec = ctrl.resolve_register(1);
             let vec_buffer_addr = ctx.mem_access(vec, 0, E::WORD_SIZE);
             let vec_buffer = ctrl.read_memory(&vec_buffer_addr);
             let vec_len_addr = ctx.mem_access(vec, E::VirtualAddress::SIZE.into(), E::WORD_SIZE);
@@ -463,7 +463,7 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
                 Operation::Return(..) => true,
                 Operation::Jump { .. } => true,
                 Operation::Call(..) => {
-                    let eax = ctrl.resolve(ctx.register(0));
+                    let eax = ctrl.resolve_register(0);
                     if let Some(c) = eax.if_constant() {
                         if c & 3 == 0 && c > 0x400 {
                             call_reserve = c;
@@ -474,7 +474,7 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
                 _ => true,
             };
             if stop {
-                let esp = ctrl.resolve(ctx.register(4));
+                let esp = ctrl.resolve_register(4);
                 let off = if_arithmetic_add_or_sub_const(esp)
                     .filter(|(r, _)| r.if_register() == Some(4));
                 if let Some((_, off)) = off {

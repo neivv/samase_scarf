@@ -910,10 +910,9 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 } else if let Operation::Special(ref bytes) = op {
                     // (Rep) movs dword
                     if &bytes[..] == &[0xf3, 0xa5] {
-                        let ctx = ctrl.ctx();
-                        let len = ctrl.resolve(ctx.register(1));
-                        let from = ctrl.resolve(ctx.register(6));
-                        let dest = ctrl.resolve(ctx.register(7));
+                        let len = ctrl.resolve_register(1);
+                        let from = ctrl.resolve_register(6);
+                        let dest = ctrl.resolve_register(7);
                         if len.if_constant() == Some(0x23) {
                             if from == self.arg_cache.on_entry(0) {
                                 self.result.game_data = Some(dest);
@@ -974,8 +973,8 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         Operation::Special(ref bytes) => {
                             // (Rep) movs dword
                             if &bytes[..] == &[0xf3, 0xa5] {
-                                let from = ctrl.resolve(ctx.register(6));
-                                let dest = ctrl.resolve(ctx.register(7));
+                                let from = ctrl.resolve_register(6);
+                                let dest = ctrl.resolve_register(7);
                                 let from = ctx.mem_access(from, 0, MemAccessSize::Mem32);
                                 let dest = ctx.mem_access(dest, 0, MemAccessSize::Mem32);
                                 Some((dest, from))
@@ -1101,9 +1100,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSelectMapEntr
                 }
             }
             Operation::Call(_) => {
-                let ctx = ctrl.ctx();
                 let seems_large_stack_alloc = self.first_branch &&
-                    ctrl.resolve(ctx.register(0))
+                    ctrl.resolve_register(0)
                         .if_constant()
                         .filter(|&c| c > 0x1000 && c < 0x10000)
                         .is_some();
@@ -1277,14 +1275,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBeginLoadingR
                         }
                         self.call_limit -= 1;
                         let ctx = ctrl.ctx();
-                        let exec = ctrl.exec_state();
                         let idx = self.func_returns.len() as u32;
                         let custom = ctx.custom(idx);
                         self.func_returns.push(dest);
-                        exec.move_to(
-                            &DestOperand::Register64(0),
-                            custom,
-                        );
+                        ctrl.set_register(0, custom);
                         ctrl.skip_operation();
                     }
                 }
@@ -1795,7 +1789,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                     Operation::Call(dest) => {
                         if self.first_call {
                             self.first_call = false;
-                            let seems_large_stack_alloc = ctrl.resolve(ctx.register(0))
+                            let seems_large_stack_alloc = ctrl.resolve_register(0)
                                     .if_constant()
                                     .filter(|&c| c > 0x1000 && c < 0x10000)
                                     .is_some();
@@ -1862,7 +1856,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                                     return;
                                 }
                             }
-                            let this = ctrl.resolve(ctx.register(1));
+                            let this = ctrl.resolve_register(1);
                             if self.is_map_entry(this) {
                                 self.call_tracker.add_call_resolve(ctrl, dest);
                             }
@@ -2538,7 +2532,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let value = ctrl.resolve(value);
                     if value.if_constant() == Some(999) {
                         ctrl.skip_operation();
-                        ctrl.exec_state().move_to(dest, ctx.custom(0));
+                        ctrl.move_unresolved(dest, ctx.custom(0));
                         return;
                     }
                     // End on loop rerun i = 999 - 2
@@ -2624,7 +2618,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
         let ctx = ctrl.ctx();
         let arg1 = ctx.and_const(ctrl.resolve(self.arg_cache.on_thiscall_call(0)), 0xffff_ffff);
         let arg2 = ctx.and_const(ctrl.resolve(self.arg_cache.on_thiscall_call(1)), 0xffff_ffff);
-        let this = ctrl.resolve(ctx.register(1));
+        let this = ctrl.resolve_register(1);
         let is_single_file = arg1 == ctx.const_0() &&
             arg2 == ctx.const_1() &&
             this.if_arithmetic_add().and_then(|x| x.1.if_constant()).is_some();
@@ -2701,12 +2695,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                 state.move_resolved(&DestOperand::from_oper(dest2), param);
                 if E::VirtualAddress::SIZE == 4 {
                     // Also assuming that func copy is stdcall
-                    let esp = ctrl.resolve(ctx.register(4));
-                    let state = ctrl.exec_state();
-                    state.move_to(
-                        &scarf::DestOperand::Register64(4),
-                        ctx.add_const(esp, 4),
-                    );
+                    let esp = ctrl.resolve_register(4);
+                    ctrl.set_register(4, ctx.add_const(esp, 4));
                 }
             }
         }
@@ -2723,7 +2713,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
             let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
             if let Some(dest) = dest.if_constant() {
                 let dest = E::VirtualAddress::from_u64(dest);
-                let this = ctrl.resolve(ctx.register(1));
+                let this = ctrl.resolve_register(1);
                 let asset_change_cb = if E::VirtualAddress::SIZE == 4 {
                     let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
                     let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
@@ -2797,12 +2787,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                 if is_vtable_fn && arg1 == ctx.const_0() {
                     // Assuming to be func.vtable.delete(0), add 4 to esp to
                     // simulate stdcall
-                    let esp = ctrl.resolve(ctx.register(4));
-                    let state = ctrl.exec_state();
-                    state.move_to(
-                        &scarf::DestOperand::Register64(4),
-                        ctx.add_const(esp, 4),
-                    );
+                    let esp = ctrl.resolve_register(4);
+                    ctrl.set_register(4, ctx.add_const(esp, 4));
                 }
             }
             ctrl.skip_call_preserve_esp();
@@ -2865,7 +2851,7 @@ fn check_actual_open_anim_multi_file<'e, E: ExecutionState<'e>>(
             if let Operation::Call(dest) = *op {
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     let ctx = ctrl.ctx();
-                    if ctx.register(1) == ctrl.resolve(ctx.register(1)) {
+                    if ctx.register(1) == ctrl.resolve_register(1) {
                         if (0..5).all(|i| {
                             self.arg_cache.on_entry(i) == ctrl.resolve(self.arg_cache.on_call(i))
                         }) {
@@ -3091,7 +3077,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                                 self.inline_limit = 3;
                                 self.inline_depth = 1;
                                 self.entry_esp = ctx.sub_const(
-                                    ctrl.resolve(ctx.register(4)),
+                                    ctrl.resolve_register(4),
                                     E::VirtualAddress::SIZE.into(),
                                 );
                                 ctrl.analyze_with_current_state(self, dest);
@@ -3109,7 +3095,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                 } else if let Operation::Jump { condition, .. } = *op {
                     if self.inline_depth != 0 && condition == ctx.const_1() {
                         // Check for tail call memcpy
-                        if ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                        if ctrl.resolve_register(4) == self.entry_esp {
                             let arg3 = ctrl.resolve(arg_cache.on_call(2));
                             if arg3.if_constant() == Some(0x400) {
                                 let arg1 = ctrl.resolve(arg_cache.on_call(0));
@@ -3541,7 +3527,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ProcessEventsAnal
         if let Operation::Call(dest) = *op {
             if let Some(dest) = ctrl.resolve_va(dest) {
                 let ctx = ctrl.ctx();
-                let ecx = ctrl.resolve(ctx.register(1));
+                let ecx = ctrl.resolve_register(1);
                 if is_global(ecx) {
                     let binary = ctrl.binary();
                     let mut analyzer = IsStepBnetController::<E> {
@@ -3609,7 +3595,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
             StepBnetControllerState::FindEvents => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let this = ctrl.resolve(ctx.register(1));
+                        let this = ctrl.resolve_register(1);
                         let ok = ctrl.if_mem_word_offset(this, 0)
                             .and_then(|x| {
                                 let x = ctrl.if_mem_word(x)?;
@@ -3662,8 +3648,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
                                 &dest_resolved,
                                 E::VirtualAddress::SIZE as u64,
                             ) {
-                                let state = ctrl.exec_state();
-                                state.move_to(dest, ctx.new_undef());
+                                ctrl.move_unresolved(dest, ctx.new_undef());
                                 ctrl.skip_operation();
                             }
                         }
@@ -3739,7 +3724,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             JoinParamState::FindGetSaveGameId | JoinParamState::BeforeVariantGet => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let this = ctrl.resolve(ctx.register(1));
+                        let this = ctrl.resolve_register(1);
                         let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                         if self.state == JoinParamState::FindGetSaveGameId {
                             if self.inline_depth != 0 {
@@ -3775,7 +3760,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let this = ctrl.resolve(ctx.register(1));
+                        let this = ctrl.resolve_register(1);
                         let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                         if this == ctx.register(1) && is_stack_address(arg1) {
                             ctrl.analyze_with_current_state(self, dest);
@@ -4039,7 +4024,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSpMapEnd<'a, 
                         // The codegen here may do `al == 0` check and
                         // from there on assume that al is 0.
                         if let Some((val, is_eq)) = eq_neq_zero {
-                            let eax = ctrl.resolve(ctx.register(0));
+                            let eax = ctrl.resolve_register(0);
                             let eax_update = if val == eax {
                                 Some(ctx.const_0())
                             } else if ctx.and_const(eax, 0xff) == val {
@@ -4055,7 +4040,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSpMapEnd<'a, 
                                 };
                                 ctrl.end_branch();
                                 ctrl.add_branch_with_current_state(nonzero_addr);
-                                ctrl.move_resolved(&DestOperand::Register64(0), eax_update);
+                                ctrl.set_register(0, eax_update);
                                 ctrl.add_branch_with_current_state(zero_addr);
                             }
                         }
@@ -4491,7 +4476,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             let tc_arg2 = ctrl.resolve(arg_cache.on_thiscall_call(1));
                             // Arg2 should be map data length; so not global
                             if !is_global(tc_arg2) {
-                                let this = ctrl.resolve(ctx.register(1));
+                                let this = ctrl.resolve_register(1);
                                 let this = if let Some(c) = this.if_custom() {
                                     if let Some(func) = self.call_tracker.custom_id_to_func(c) {
                                         self.map_history_from_get_fn(ctrl, func)
@@ -4532,7 +4517,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         self.call_tracker.add_call_preserve_esp(ctrl, dest);
                     }
                 } else if let Operation::Return(..) = *op {
-                    let ret = ctrl.resolve(ctx.register(0));
+                    let ret = ctrl.resolve_register(0);
                     if let Some(old) = self.inline_return {
                         if !old.is_undefined() && old != ret {
                             self.inline_return = Some(ctx.new_undef());

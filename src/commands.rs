@@ -810,7 +810,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 //   this == player_turns, arg1(u8) == 1, arg2(u8) == 0
                                 // or (depth 2)
                                 //   this == player_turns, arg1(u8) == 0
-                                let this_ok = Some(ctrl.resolve(ctx.register(1))) ==
+                                let this_ok = Some(ctrl.resolve_register(1)) ==
                                     self.result.player_turns;
                                 let arg1 =
                                     ctrl.resolve(self.arg_cache.on_thiscall_call(0));
@@ -1285,7 +1285,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     } else {
                         if let Some(mem) = ctrl.if_mem_word(dest) {
                             let (base, _) = mem.address();
-                            let this = ctrl.resolve(ctx.register(1));
+                            let this = ctrl.resolve_register(1);
                             if ctrl.if_mem_word(base).map(|x| x.address()) == Some((this, 0)) {
                                 let resolved = self.call_tracker.resolve_calls(this);
                                 if is_global(resolved) {

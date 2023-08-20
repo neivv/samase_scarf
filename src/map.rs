@@ -53,8 +53,7 @@ pub(crate) fn map_tile_flags<'e, E: ExecutionState<'e>>(
                     // order_nuke_track calls update_visibility_point([unit + 0xd0])
                     // But it also calls set_sprite_elevation, so the first match
                     // isn't necessarily correct
-                    let ctx = ctrl.ctx();
-                    let arg_this = ctrl.resolve(ctx.register(1));
+                    let arg_this = ctrl.resolve_register(1);
                     let ok = ctrl.if_mem_word_offset(arg_this, offset).is_some();
                     if ok {
                         if let Some(dest) = ctrl.resolve_va(dest) {
@@ -463,8 +462,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CountCacheAnalyze
                     }
                 }
                 if self.inline_depth < 2 {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         self.inline_depth += 1;
                         let old_esp = self.entry_esp;
                         self.entry_esp = ctrl.get_new_esp_for_call();
@@ -481,7 +479,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CountCacheAnalyze
             Operation::Jump { condition, to } => {
                 let ctx = ctrl.ctx();
                 if condition == ctx.const_1() {
-                    if ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                    if ctrl.resolve_register(4) == self.entry_esp {
                         // Tail call
                         ctrl.pop_stack();
                         self.operation(ctrl, &Operation::Call(to));

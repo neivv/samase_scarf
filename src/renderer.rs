@@ -295,7 +295,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 
                         .filter(|&x| x == ctx.register(1))
                         .is_some();
                 if ok {
-                    let ecx = ctrl.resolve(ctx.register(1));
+                    let ecx = ctrl.resolve_register(1);
                     if ecx.if_constant().is_some() || ctrl.if_mem_word(ecx).is_some() {
                         if single_result_assign(Some(ecx), &mut self.result) {
                             ctrl.end_analysis();
@@ -377,7 +377,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindVertexBuffer<'a,
                     }
                 }
                 Operation::Return(..) => {
-                    let ret = ctrl.resolve(ctx.register(0));
+                    let ret = ctrl.resolve_register(0);
                     self.get_fn_result = Some(ret);
                 }
                 _ => (),
@@ -459,11 +459,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FindVertexBuffer<'a, 'e, E> {
     fn check_get_fn_result(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         if self.get_fn_ok {
             if let Some(eax) = self.get_fn_result {
-                let state = ctrl.exec_state();
-                state.move_resolved(
-                    &DestOperand::Register64(0),
-                    eax,
-                );
+                ctrl.set_register(0, eax);
                 ctrl.skip_operation();
             }
             self.get_fn_ok = false;
@@ -627,7 +623,6 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        let ctx = ctrl.ctx();
         if let Operation::Jump { .. } = *op {
             if self.inline_limit != 0 {
                 self.inline_limit -= 1;
@@ -762,7 +757,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer
                 match *op {
                     Operation::Call(dest) => {
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            let this = ctrl.resolve(ctx.register(1));
+                            let this = ctrl.resolve_register(1);
                             let overlay_offset = if self.result.prepare_draw_image.is_none() {
                                 self.sprite_first_overlay_offset
                             } else {
@@ -804,7 +799,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer
                 match *op {
                     Operation::Call(dest) => {
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            let this = ctrl.resolve(ctx.register(1));
+                            let this = ctrl.resolve_register(1);
                             if dest == draw_image {
                                 let offset = self.sprite_first_overlay_offset +
                                     E::VirtualAddress::SIZE;
@@ -1040,7 +1035,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             self.get_render_target_candidate = Some(dest);
                             ctrl.do_call_with_result(ctx.custom(0));
                         } else {
-                            let this = ctrl.resolve(ctx.register(1));
+                            let this = ctrl.resolve_register(1);
                             if this.if_custom() == Some(0) {
                                 if let Some(get) = self.get_render_target_candidate {
                                     self.result.get_render_target = Some(get);

@@ -77,7 +77,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindStepIscript<'a, 
         } else if let Operation::Jump { to, condition } = *op {
             // step_iscript may be a tail call
             let ctx = ctrl.ctx();
-            if condition == ctx.const_1() && ctrl.resolve(ctx.register(4)) == self.entry_esp {
+            if condition == ctx.const_1() && ctrl.resolve_register(4) == self.entry_esp {
                 if let Some(to) = ctrl.resolve_va(to) {
                     self.check_function_call(ctrl, to, false);
                 }
@@ -95,7 +95,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FindStepIscript<'a, 'e, E> {
     ) {
         let ctx = ctrl.ctx();
         let arg_cache = self.arg_cache;
-        let this = ctrl.resolve(ctx.register(1));
+        let this = ctrl.resolve_register(1);
         let arg1 = ctrl.resolve(arg_cache.on_thiscall_call(0));
         let is_first_overlay = ctrl.if_mem_word_offset(this, self.sprite_first_overlay.into())
             .and_then(if_unit_sprite::<E::VirtualAddress>) ==
@@ -314,7 +314,7 @@ impl<'a, 'e, E: ExecutionState<'e>> StepIscriptAnalyzer<'a, 'e, E> {
         if let Operation::Call(dest) = *op {
             if self.inline_depth < 2 {
                 let ctx = ctrl.ctx();
-                let this = ctrl.resolve(ctx.register(1));
+                let this = ctrl.resolve_register(1);
                 if this == ctx.register(1) {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         self.inline_depth += 1;

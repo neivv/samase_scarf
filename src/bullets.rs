@@ -106,7 +106,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                         if arg1.if_mem8().is_some() {
                             self.is_inlining = true;
-                            let ecx = ctrl.resolve(ctx.register(1));
+                            let ecx = ctrl.resolve_register(1);
                             self.active_iscript_unit = Some(ecx);
                             ctrl.user_state().get::<FindCreateBulletState>().calls_seen = 0;
                             self.calls_seen = 0;
@@ -411,7 +411,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepBulletFrameAnaly
                 _ => None,
             };
             if let Some(dest) = dest.and_then(|x| ctrl.resolve_va(x)) {
-                let this = ctrl.resolve(ctx.register(1));
+                let this = ctrl.resolve_register(1);
                 if this == self.this {
                     self.result.step_moving_bullet_frame = Some(dest);
                     ctrl.end_analysis();
@@ -852,8 +852,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DoMissileDmgAnalyzer
                 return;
             }
             if let Some(dest) = ctrl.resolve_va(dest) {
-                let ctx = ctrl.ctx();
-                let this = ctrl.resolve(ctx.register(1));
+                let this = ctrl.resolve_register(1);
                 if ctrl.if_mem_word(this).is_some() {
                     self.result = Some(dest);
                     ctrl.end_analysis();
@@ -1079,7 +1078,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     Some(dest)
                 } else if let Operation::Jump { condition, to } = *op {
                     if condition == ctx.const_1() &&
-                        ctrl.resolve(ctx.register(4)) == self.entry_esp
+                        ctrl.resolve_register(4) == self.entry_esp
                     {
                         // Tail call
                         Some(to)
@@ -1388,9 +1387,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for HitUnitAnalyzer<'a, 
                 let call_dest = if let Operation::Call(dest) = *op {
                     Some(dest)
                 } else if let Operation::Jump { condition, to } = *op {
-                    if condition == ctx.const_1() &&
-                        ctrl.resolve(ctx.register(4)) == ctx.register(4)
-                    {
+                    if condition == ctx.const_1() && ctrl.resolve_register(4) == ctx.register(4) {
                         // Tail call
                         Some(to)
                     } else {
@@ -1402,7 +1399,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for HitUnitAnalyzer<'a, 
                 if let Some(dest) = call_dest {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ecx = ctx.register(1);
-                        let this = ctrl.resolve(ecx);
+                        let this = ctrl.resolve_register(1);
                         let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                         if this != ecx {
                             if E::VirtualAddress::SIZE == 4 &&
@@ -1413,10 +1410,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for HitUnitAnalyzer<'a, 
                                     // and may be mixed with do_weapon_damage args, so fix esp
                                     // manually
                                     ctrl.skip_call_preserve_esp();
-                                    ctrl.move_unresolved(
-                                        &DestOperand::Register64(4),
-                                        ctx.add_const(ctx.register(4), 4),
-                                    );
+                                    let esp = ctrl.resolve_register(4);
+                                    ctrl.set_register(4, ctx.add_const(esp, 4));
                                 }
                             }
                             return;
@@ -1525,7 +1520,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ctx = ctrl.ctx();
-                        let ok = ctrl.resolve(ctx.register(1)) == ctx.register(1) && {
+                        let ok = ctrl.resolve_register(1) == ctx.register(1) && {
                                 let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
                                 let entry_arg5 = self.arg_cache.on_thiscall_entry(4);
                                 ctx.and_const(arg2, 0xff) == ctx.and_const(entry_arg5, 0xff)
@@ -1553,7 +1548,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     Operation::Call(dest) => Some(dest),
                     Operation::Jump { condition, to } if self.inline_depth != 0 => {
                         let is_tail_call = condition == ctx.const_1() &&
-                            ctrl.resolve(ctx.register(4)) == self.entry_esp;
+                            ctrl.resolve_register(4) == self.entry_esp;
                         if is_tail_call {
                             Some(to)
                         } else {

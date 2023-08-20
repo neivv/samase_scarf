@@ -328,7 +328,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for OrderIssuingAnaly
 
                     if !self.inlining {
                         self.inlining = true;
-                        let esp = ctrl.resolve(ctx.register(4));
+                        let esp = ctrl.resolve_register(4);
                         self.entry_esp = ctx.sub_const(esp, E::VirtualAddress::SIZE.into());
                         ctrl.analyze_with_current_state(self, dest);
                         self.inlining = false;
@@ -342,7 +342,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for OrderIssuingAnaly
                 // Accept second call as tailcall if inlining
                 if self.func_results.len() == 1 && condition == ctx.const_1() && self.inlining {
                     if let Some(to) = ctrl.resolve_va(to) {
-                        if ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                        if ctrl.resolve_register(4) == self.entry_esp {
                             self.func_results.push(to);
                             ctrl.end_analysis();
                         }
@@ -660,23 +660,15 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnaly
                         if ok {
                             self.result.create_unit = Some(dest);
                             ctrl.skip_operation();
-                            let exec_state = ctrl.exec_state();
-                            exec_state.move_to(
-                                &DestOperand::Register64(0),
-                                ctx.custom(0),
-                            );
+                            ctrl.set_register(0, ctx.custom(0));
                         }
                     } else {
                         if Some(dest) == self.result.create_unit {
                             ctrl.skip_operation();
-                            let exec_state = ctrl.exec_state();
-                            exec_state.move_to(
-                                &DestOperand::Register64(0),
-                                ctx.custom(0),
-                            );
+                            ctrl.set_register(0, ctx.custom(0));
                             return;
                         }
-                        if ctrl.resolve(ctx.register(1)) == ctx.custom(0) {
+                        if ctrl.resolve_register(1).if_custom() == Some(0) {
                             if self.result.finish_unit_pre.is_none() {
                                 self.result.finish_unit_pre = Some(dest);
                             } else if self.result.finish_unit_post.is_none() {
@@ -1082,7 +1074,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     let ctx = ctrl.ctx();
                     let tc_arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
-                    let this = ctrl.resolve(ctx.register(1));
+                    let this = ctrl.resolve_register(1);
                     let input_unit = self.arg_cache.on_entry(0);
                     let input_player = ctx.and_const(self.arg_cache.on_entry(1), 0xff);
                     // -- If inlining, check if current func is set_unit_player --
@@ -1246,7 +1238,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                         let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                         arg1 == ctx.register(1)
                     } else {
-                        let this = ctrl.resolve(ctx.register(1));
+                        let this = ctrl.resolve_register(1);
                         this == ctx.register(1)
                     };
                     if is_ok {
@@ -1413,8 +1405,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindPlayerGainedU
         }
         if let Operation::Call(dest) = *op {
             if let Some(dest) = ctrl.resolve_va(dest) {
-                let ctx = ctrl.ctx();
-                let this = ctrl.resolve(ctx.register(1));
+                let this = ctrl.resolve_register(1);
                 if this == self.arg_cache.on_entry(0) {
                     if ctrl.resolve(self.arg_cache.on_thiscall_call(0)) ==
                         self.arg_cache.on_entry(1)
@@ -1513,7 +1504,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitSpeedAnalyzer
         if self.inline_depth == 0 {
             if let Operation::Call(dest) = *op {
                 if let Some(dest) = ctrl.resolve_va(dest) {
-                    let this = ctrl.resolve(ctx.register(1));
+                    let this = ctrl.resolve_register(1);
                     if this == ctx.register(1) {
                         self.inline_depth = 1;
                         self.inline_limit = 8;
@@ -1579,7 +1570,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitSpeedAnalyzer
                     let dest = match *op {
                         Operation::Call(dest) => {
                             ctrl.resolve_va(dest)
-                                .filter(|_| ctrl.resolve(ctx.register(1)) == ctx.register(1))
+                                .filter(|_| ctrl.resolve_register(1) == ctx.register(1))
                         }
                         _ => None,
                     };
@@ -1648,7 +1639,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitSpeedAnalyzer
                     } else if let Operation::Jump { to, condition } = *op {
                         // update_speed_iscript is sometimes a tail call
                         if condition == ctx.const_1() {
-                            if ctrl.resolve(ctx.register(4)) == self.entry_esp {
+                            if ctrl.resolve_register(4) == self.entry_esp {
                                 if let Some(to) = ctrl.resolve_va(to) {
                                     self.inline_depth = 3;
                                     self.func_entry = to;
@@ -1893,7 +1884,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         let ctx = ctrl.ctx();
         if self.inline_limit != 0 {
             if let Operation::Return(..) = *op {
-                let result = ctrl.resolve(ctx.register(0));
+                let result = ctrl.resolve_register(0);
                 if let Some(old) = self.inline_result {
                     if old != result {
                         self.inline_result = None;
@@ -2042,7 +2033,7 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
         if self.inline_depth != 0 {
             return false;
         }
-        if ctrl.resolve(ctx.register(1)) != ctx.register(1) {
+        if ctrl.resolve_register(1) != ctx.register(1) {
             return false;
         }
         if ctx.and_const(ctrl.resolve(arg_cache.on_thiscall_call(0)), 0xff) !=
@@ -2420,7 +2411,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if self.inline_depth < 1 {
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            let this = ctrl.resolve(ctx.register(1));
+                            let this = ctrl.resolve_register(1);
                             let ok = struct_layouts::if_unit_sprite::<E::VirtualAddress>(this)
                                 .filter(|&x| x == ctx.register(1))
                                 .is_some();
@@ -2463,7 +2454,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if self.inline_depth < 3 {
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            let this = ctrl.resolve(ctx.register(1));
+                            let this = ctrl.resolve_register(1);
                             if this == self.selection_circle_image {
                                 self.inline_depth += 1;
                                 ctrl.analyze_with_current_state(self, dest);
@@ -2566,10 +2557,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             }
                         }
                         if E::VirtualAddress::SIZE == 4 {
-                            let esp = ctrl.resolve(ctx.register(4));
+                            let esp = ctrl.resolve_register(4);
                             self.call_tracker.add_call_resolve(ctrl, dest);
                             // Assume no stack offset
-                            ctrl.move_resolved(&DestOperand::Register64(4), esp);
+                            ctrl.set_register(4, esp);
                         } else {
                             self.call_tracker.add_call_resolve(ctrl, dest);
                         }
@@ -2599,7 +2590,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let this = ctrl.resolve(ctx.register(1));
+                        let this = ctrl.resolve_register(1);
                         let tc_arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                         if is_global(this) {
                             if self.result.unit_skin_map.is_none() {
@@ -2627,14 +2618,14 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             ctx.const_1()
                         };
                         if E::VirtualAddress::SIZE == 4 {
-                            let esp = ctrl.resolve(ctx.register(4));
+                            let esp = ctrl.resolve_register(4);
                             self.call_tracker.add_call_resolve_with_constraint(
                                 ctrl,
                                 dest,
                                 constraint,
                             );
                             // Assume no stack offset
-                            ctrl.move_resolved(&DestOperand::Register64(4), esp);
+                            ctrl.set_register(4, esp);
                         } else {
                             self.call_tracker.add_call_resolve_with_constraint(
                                 ctrl,

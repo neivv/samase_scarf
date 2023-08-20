@@ -398,8 +398,7 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
         fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation<'a>) {
             if self.set_eax_to_zero {
                 self.set_eax_to_zero = false;
-                let exec_state = ctrl.exec_state();
-                exec_state.move_to(&DestOperand::Register64(0), self.ctx.const_0());
+                ctrl.set_register(0, self.ctx.const_0());
                 return;
             }
             match *op {
@@ -651,11 +650,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'acx, 'e, E
                     .is_some();
                 if is_vtable_fn {
                     ctrl.skip_operation();
-                    let exec_state = ctrl.exec_state();
-                    exec_state.move_to(
-                        &DestOperand::Register64(0),
-                        self.vtable_fn_result_op,
-                    );
+                    ctrl.set_register(0, self.vtable_fn_result_op);
                 }
 
             }
@@ -1567,7 +1562,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     }
                 } else if let Operation::Return(..) = *op {
                     if self.was_replay_func {
-                        let ret = ctrl.resolve(ctx.register(0));
+                        let ret = ctrl.resolve_register(0);
                         if ctx.and_const(ret, 0xff) != ctx.const_1() {
                             self.was_replay_func = false;
                         }
@@ -1599,7 +1594,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             ctrl.do_call_with_result(ctx.custom(0));
                             return;
                         } else {
-                            let this = ctrl.resolve(ctx.register(1));
+                            let this = ctrl.resolve_register(1);
                             if this.if_custom() == Some(0) {
                                 // Assume to be constructor call returning this
                                 ctrl.do_call_with_result(this);
@@ -1654,7 +1649,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         ctrl.do_call_with_result(ctx.custom(1));
                         self.verify_limit = 0;
                     } else {
-                        let this = ctrl.resolve(ctx.register(1));
+                        let this = ctrl.resolve_register(1);
                         if this.if_custom() == Some(1) {
                             // Assume to be constructor call returning this
                             ctrl.do_call_with_result(this);
@@ -1665,7 +1660,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     // obs ui, but writes it to arg1 ObserverUi ** and returns that.
                     // Probably just unique_ptr ABI limitation, so check for both
                     // ObserverUi ** and ObserverUi * in case it ever changes.
-                    let ret = ctrl.resolve(ctx.register(0));
+                    let ret = ctrl.resolve_register(0);
                     self.was_obs_ui_alloc = ret.if_custom() == Some(1) ||
                         ctrl.read_memory(&ctx.mem_access(ret, 0, E::WORD_SIZE))
                             .if_custom() == Some(1);
@@ -1680,7 +1675,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         if Some(dest) == self.result.init_obs_ui {
                             true
                         } else {
-                            let this = ctrl.resolve(ctx.register(1));
+                            let this = ctrl.resolve_register(1);
                             self.console_func_candidates.push((this, dest));
                             self.call_tracker.add_call(ctrl, dest);
                             false

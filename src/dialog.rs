@@ -242,7 +242,7 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
             }
             Operation::Jump { condition, to } => {
                 if condition == ctx.const_1() {
-                    if ctrl.resolve(ctx.register(4)) == ctx.register(4) {
+                    if ctrl.resolve_register(4) == ctx.register(4) {
                         if let Some(dest) = ctrl.resolve_va(to) {
                             if dest < self.func_entry || dest > ctrl.address() + 0x400 {
                                 // Tail call (probably)
@@ -299,11 +299,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
         }
         let ctx = ctrl.ctx();
         if let Some(path_string) = self.path_string.take() {
-            let dest = DestOperand::Register64(0);
             let dest2 = DestOperand::from_oper(ctrl.mem_word(path_string, 0));
             let state = ctrl.exec_state();
             // String creation function returns eax = arg1
-            state.move_resolved(&dest, path_string);
+            state.set_register(0, path_string);
             // Mem[string + 0] is character data
             state.move_resolved(&dest2, self.string_address_constant);
         }
@@ -775,7 +774,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                             self.current_function_u16_param_set = None;
                             ctrl.inline(self, dest);
                             ctrl.skip_operation();
-                            let eax = ctrl.resolve(ctx.register(0));
+                            let eax = ctrl.resolve_register(0);
                             if eax.if_constant().is_some() &&
                                 ctrl.read_memory(&ctx.mem_access(eax, 0, E::WORD_SIZE))
                                     .is_undefined()
@@ -909,11 +908,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     let ctx = ctrl.ctx();
                     let custom = ctx.custom(self.funcs.len() as u32);
                     self.funcs.push(dest);
-                    let exec_state = ctrl.exec_state();
-                    exec_state.move_to(
-                        &DestOperand::Register64(0),
-                        custom,
-                    );
+                    ctrl.set_register(0, custom);
                 } else {
                     let ctx = ctrl.ctx();
                     let is_calling_event_handler = ctrl.if_mem_word(dest)
@@ -1123,7 +1118,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
                         self.check_return_store = Some(ty);
                         ctrl.skip_operation();
                         let custom = ctx.custom(0);
-                        ctrl.move_resolved(&DestOperand::Register64(0), custom);
+                        ctrl.set_register(0, custom);
                     } else {
                         match ty {
                             MultiGrpType::Group => self.result.grpwire_ddsgrp = Some(arg2),
@@ -1135,7 +1130,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
                     // memory (Prevent writing load_dialog result to status_screen global)
                     ctrl.skip_operation();
                     let custom = ctx.custom(1);
-                    ctrl.move_resolved(&DestOperand::Register64(0), custom);
+                    ctrl.set_register(0, custom);
                 }
             }
             _ => (),
@@ -1217,17 +1212,16 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyz
                     }
                 }
                 if self.inline_depth < 2 {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         // Force keep esp/ebp same across calls
                         // esp being same can be wrong but oh well
-                        let esp = ctrl.resolve(ctx.register(4));
-                        let ebp = ctrl.resolve(ctx.register(5));
+                        let esp = ctrl.resolve_register(4);
+                        let ebp = ctrl.resolve_register(5);
                         self.inline_depth += 1;
                         ctrl.inline(self, dest);
                         self.inline_depth -= 1;
                         ctrl.skip_operation();
-                        let eax = ctrl.resolve(ctx.register(0));
+                        let eax = ctrl.resolve_register(0);
                         if eax.if_constant().is_some() &&
                             ctrl.read_memory(&ctx.mem_access(eax, 0, E::WORD_SIZE)).is_undefined()
                         {
@@ -1239,14 +1233,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyz
                             exec_state.move_resolved(&DestOperand::from_oper(val), val);
                         }
                         let exec_state = ctrl.exec_state();
-                        exec_state.move_resolved(
-                            &DestOperand::Register64(4),
-                            esp,
-                        );
-                        exec_state.move_resolved(
-                            &DestOperand::Register64(5),
-                            ebp,
-                        );
+                        exec_state.set_register(4, esp);
+                        exec_state.set_register(5, ebp);
                     }
                 }
             }
@@ -1737,7 +1725,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindClampZoom<'a, 'e
             }
         } else if let Operation::Jump { condition, to } = *op {
             if condition == ctx.const_1() &&
-                ctrl.resolve(ctx.register(4)) == ctx.register(4)
+                ctrl.resolve_register(4) == ctx.register(4)
             {
                 if let Some(to) = ctrl.resolve_va(to) {
                     // Tail call
@@ -1889,10 +1877,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                             if self.inline_depth == 0 {
                                 self.inline_depth += 1;
                                 let old_esp = self.entry_esp;
-                                self.entry_esp = ctx.sub_const(
-                                    ctrl.resolve(ctx.register(4)),
-                                    E::VirtualAddress::SIZE.into(),
-                                );
+                                self.entry_esp = ctrl.get_new_esp_for_call();
                                 ctrl.analyze_with_current_state(self, dest);
                                 self.entry_esp = old_esp;
                                 self.inline_depth -= 1;
@@ -1903,10 +1888,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                         } else {
                             self.state = RunMenusState::CheckPreMissionGlue;
                             let old_esp = self.entry_esp;
-                            self.entry_esp = ctx.sub_const(
-                                ctrl.resolve(ctx.register(4)),
-                                E::VirtualAddress::SIZE.into(),
-                            );
+                            self.entry_esp = ctrl.get_new_esp_for_call();
                             ctrl.analyze_with_current_state(self, dest);
                             self.entry_esp = old_esp;
                             self.state = RunMenusState::TerranBriefing;
@@ -1918,7 +1900,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                     }
                 }
                 if let Operation::Jump { to, condition } = *op {
-                    if ctrl.resolve(ctx.register(4)) == self.entry_esp &&
+                    if ctrl.resolve_register(4) == self.entry_esp &&
                         condition == ctx.const_1()
                     {
                         // Tail call
@@ -1934,7 +1916,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
             }
             RunMenusState::CheckPreMissionGlue => {
                 if let Operation::Jump { condition, .. } = *op {
-                    if ctrl.resolve(ctx.register(4)) == self.entry_esp &&
+                    if ctrl.resolve_register(4) == self.entry_esp &&
                         condition == ctx.const_1()
                     {
                         // Tail call
@@ -1969,7 +1951,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                     }
                 }
                 if let Operation::Jump { condition, to } = *op {
-                    if ctrl.resolve(ctx.register(4)) == self.entry_esp &&
+                    if ctrl.resolve_register(4) == self.entry_esp &&
                         condition == ctx.const_1()
                     {
                         // Tail call
@@ -2199,8 +2181,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
         match *op {
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve_va(dest) {
-                    let ctx = ctrl.ctx();
-                    let this = ctrl.resolve(ctx.register(1));
+                    let this = ctrl.resolve_register(1);
                     // Assuming that the first call with this from a function
                     // return is for statres icons.
                     // The call should be (depending on inlining?) either

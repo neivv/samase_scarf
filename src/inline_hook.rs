@@ -73,7 +73,7 @@ impl EspOffsetRegs {
             if i == 4 {
                 continue;
             }
-            let value = state.resolve(ctx.register(i));
+            let value = state.resolve_register(i);
             if let OperandType::Arithmetic(arith) =  value.ty() {
                 if arith.left == ctx.register(4) {
                     if matches!(arith.ty, ArithOpType::Add | ArithOpType::Sub) {

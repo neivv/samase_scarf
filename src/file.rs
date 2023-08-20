@@ -144,9 +144,8 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
                     } else if self.filename_arg == Arg::Stack(1) && !self.ok {
                         // Inline if arg1 is currently being passed as ecx
                         if let Some(dest) = dest {
-                            let ctx = ctrl.ctx();
                             if !self.inlining {
-                                let ecx = ctrl.resolve(ctx.register(1));
+                                let ecx = ctrl.resolve_register(1);
                                 if ecx == self.arg_cache.on_entry(0) {
                                     self.inlining = true;
                                     ctrl.analyze_with_current_state(self, dest);

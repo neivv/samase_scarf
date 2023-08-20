@@ -105,16 +105,11 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
             id_to_func.push((address, Some(constraint), None));
             ctx.custom(new_id)
         });
+        let new_esp = ctrl.get_new_esp_for_call();
         let exec_state = ctrl.exec_state();
-        exec_state.move_to(
-            &scarf::DestOperand::Register64(4),
-            ctx.sub_const(ctx.register(4), E::VirtualAddress::SIZE.into()),
-        );
+        exec_state.set_register(4, new_esp);
         let val = exec_state.resolve(self.resolve_calls(custom));
-        exec_state.move_to(
-            &scarf::DestOperand::Register64(4),
-            ctx.add_const(ctx.register(4), E::VirtualAddress::SIZE.into()),
-        );
+        ctrl.pop_stack();
         ctrl.do_call_with_result(val)
     }
 
@@ -177,7 +172,7 @@ fn analyze_func_return_c<'e, E: ExecutionState<'e>>(
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             if let Operation::Return(..) = *op {
                 let ctx = ctrl.ctx();
-                let eax = ctrl.resolve(ctx.register(0));
+                let eax = ctrl.resolve_register(0);
                 match self.result {
                     Some(old) => {
                         if old != eax {
