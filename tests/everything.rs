@@ -1668,7 +1668,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 LastDyingUnit | UnitCount | FirstFreeUnit | LastFreeUnit | ObserverUi |
                 OnClipCursorEnd | SelectStartX | SelectStartY | IsSelecting | FirstDialog |
                 FirstFreeImage | LastFreeImage | UpdateGameScreenSizeMode | GameScreenHeightRatio |
-                LastHiddenUnit | LastRevealer =>
+                LastHiddenUnit | LastRevealer | LurkerHitsPos | LurkerHitsFrame =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1683,7 +1683,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 UnitSkinMap | SpriteSkinMap | GrpWireDdsGrp | TranWireDdsGrp |
                 SpriteIncludeInVisionSync | DrawCommands | CreepFuncs | DcreepLookup |
                 DcreepListBegin | DcreepListSize | ReplayHeader | GameScreenRectWinPx |
-                RunDialogStack =>
+                RunDialogStack | LurkerHits =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }

@@ -680,6 +680,11 @@ results! {
         SoundChannels => sound_channels => cache_play_sound,
         LastRevealer => last_revealer => cache_finish_unit_post,
         LastHiddenUnit => last_hidden_unit => cache_finish_unit_post,
+        // Array of (Unit *attacker, Unit *target)[0x10 (pos)][0x20 (frame)] lurker spine hits
+        // in last 32 frames
+        LurkerHits => lurker_hits => cache_splash_lurker,
+        LurkerHitsFrame => lurker_hits_frame => cache_splash_lurker,
+        LurkerHitsPos => lurker_hits_pos => cache_splash_lurker,
     }
 }
 
@@ -4137,6 +4142,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::HitUnit, |s| s.cache_do_missile_damage(actx))
     }
 
+    fn splash_lurker(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::SplashLurker, |s| s.cache_do_missile_damage(actx))
+    }
+
     fn cache_hit_unit(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(
@@ -4317,6 +4329,17 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     assert_eq!(r.first_revealer, first_revealer);
                 }
                 Some(([], [r.last_hidden_unit, r.last_revealer]))
+            })
+    }
+
+    fn cache_splash_lurker(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[], &[LurkerHits, LurkerHitsFrame, LurkerHitsPos],
+            |s| {
+                let func = s.splash_lurker(actx)?;
+                let r = bullets::analyze_splash_lurker(actx, func);
+                Some(([], [r.lurker_hits, r.lurker_hits_frame, r.lurker_hits_pos]))
             })
     }
 }

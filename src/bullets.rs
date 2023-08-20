@@ -77,6 +77,12 @@ pub(crate) struct DoWeaponDamage<Va: VirtualAddress> {
     pub unit_calculate_strength: Option<Va>,
 }
 
+pub(crate) struct SplashLurker<'e> {
+    pub lurker_hits: Option<Operand<'e>>,
+    pub lurker_hits_pos: Option<Operand<'e>>,
+    pub lurker_hits_frame: Option<Operand<'e>>,
+}
+
 struct FindCreateBullet<'a, 'acx, 'e, E: ExecutionState<'e>> {
     is_inlining: bool,
     result: Option<E::VirtualAddress>,
@@ -1637,6 +1643,62 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             }
                         }
                         ctrl.end_analysis();
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_splash_lurker<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    splash_lurker: E::VirtualAddress,
+) -> SplashLurker<'e> {
+    let mut result = SplashLurker {
+        lurker_hits: None,
+        lurker_hits_pos: None,
+        lurker_hits_frame: None,
+    };
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = SplashLurkerAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, splash_lurker);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct SplashLurkerAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut SplashLurker<'e>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SplashLurkerAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if let Operation::Move(DestOperand::Memory(ref dest), value, None) = *op {
+            if dest.size == E::WORD_SIZE && dest.address().0 != ctx.register(4) {
+                let value = ctrl.resolve(value);
+                if value == self.arg_cache.on_entry(0) {
+                    let dest = ctrl.resolve_mem(dest);
+                    // Check for write lurker_hits[frame * 0x10 + pos]
+                    // sizeof(LurkerHit) == sizeof(usize) * 2
+                    let result = dest.if_add_either(ctx, |x| {
+                        x.if_arithmetic_mul_const(E::VirtualAddress::SIZE as u64 * 2)
+                            .and_then(|x| x.if_arithmetic_add())
+                            .and_either(|x| x.if_arithmetic_mul_const(0x10))
+                    });
+                    if let Some(((frame, pos), hits)) = result {
+                        if is_global(frame) && is_global(pos) && is_global(hits) {
+                            self.result.lurker_hits = Some(hits);
+                            self.result.lurker_hits_frame = Some(frame);
+                            self.result.lurker_hits_pos = Some(pos);
+                            ctrl.end_analysis();
+                        }
                     }
                 }
             }
