@@ -11,6 +11,7 @@ use crate::analysis_state::{AnalysisState, StateEnum, StepOrderState};
 use crate::call_tracker::CallTracker;
 use crate::inline_hook::{EspOffsetRegs, InlineHookState, inline_hook_state};
 use crate::struct_layouts;
+use crate::switch::CompleteSwitch;
 use crate::util::{
     ControlExt, MemAccessExt, OperandExt, bumpvec_with_capacity, single_result_assign,
 };
@@ -98,6 +99,13 @@ pub(crate) struct OrderZergBuildSelf<Va: VirtualAddress> {
     pub transform_unit: Option<Va>,
     pub stop_creep_disappearing_at_building: Option<Va>,
     pub place_creep_rect: Option<Va>,
+}
+
+pub(crate) struct OrderNukeLaunch<Va: VirtualAddress> {
+    pub show_unit: Option<Va>,
+    pub hide_unit: Option<Va>,
+    pub move_unit: Option<Va>,
+    pub stop_moving: Option<Va>,
 }
 
 // Checks for comparing secondary_order to 0x95 (Hallucination)
@@ -2220,5 +2228,184 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
         }
+    }
+}
+
+pub(crate) fn analyze_order_nuke_launch<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    order_nuke_launch: E::VirtualAddress,
+) -> OrderNukeLaunch<E::VirtualAddress> {
+    let mut result = OrderNukeLaunch {
+        show_unit: None,
+        hide_unit: None,
+        move_unit: None,
+        stop_moving: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut analyzer = AnalyzeOrderNukeLaunch::<E> {
+        result: &mut result,
+        state: NukeLaunchState::OrderStateSwitch,
+        last_call: E::VirtualAddress::from_u64(0),
+        order_targets_read: 0,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, order_nuke_launch);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AnalyzeOrderNukeLaunch<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OrderNukeLaunch<E::VirtualAddress>,
+    state: NukeLaunchState,
+    last_call: E::VirtualAddress,
+    order_targets_read: u8,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum NukeLaunchState {
+    /// Find switch jump based on self.order_state
+    OrderStateSwitch,
+    /// On order_state == 2 branch
+    /// Should be a call before setting this.related.related = this
+    HideUnit,
+    /// Should be a call after hide_unit but before setting this.order_state = 3
+    StopMoving,
+    /// On order state == 4 branch, find move_unit(this, this.order_target.x, this.order_target.y)
+    /// Assume that it is the next call after both order_target.x and y are read.
+    MoveUnit,
+    /// Should be a call after move_unit but before setting this.order_state = 5
+    ShowUnit,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderNukeLaunch<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        ctrl.aliasing_memory_fix(op);
+        let ctx = ctrl.ctx();
+        match self.state {
+            NukeLaunchState::OrderStateSwitch => {
+                if let Operation::Call(..) = *op {
+                    ctrl.check_stack_probe();
+                } else if let Operation::Jump { condition, to } = *op {
+                    if condition == ctx.const_1() && to.if_constant().is_none() {
+                        let to = ctrl.resolve(to);
+                        let exec = ctrl.exec_state();
+                        if let Some(switch) = CompleteSwitch::new(to, ctx, exec) {
+                            let binary = ctrl.binary();
+                            let branches = [
+                                (2u8, NukeLaunchState::HideUnit),
+                                (4, NukeLaunchState::MoveUnit),
+                            ];
+                            for (n, state) in branches {
+                                if let Some(branch) = switch.branch(binary, ctx, n as u32) {
+                                    self.state = state;
+                                    ctrl.analyze_with_current_state(self, branch);
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            NukeLaunchState::HideUnit => {
+                self.track_last_call_with_this(ctrl, op);
+                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    // Check [[this + C] + C] = this with C being unit.related offset
+                    if mem.size == E::WORD_SIZE && ctrl.resolve(value) == ctx.register(1) {
+                        let mem = ctrl.resolve_mem(mem);
+                        let (base, offset) = mem.address();
+                        if ctrl.if_mem_word_offset(base, offset) == Some(ctx.register(1)) {
+                            self.result.hide_unit = Some(self.last_call);
+                            self.state = NukeLaunchState::StopMoving;
+                            ctrl.clear_unchecked_branches();
+                        }
+                    }
+                }
+            }
+            NukeLaunchState::StopMoving => {
+                if let Some(result) = self.check_call_before_order_state_set(ctrl, op, 3) {
+                    self.result.stop_moving = Some(result);
+                    ctrl.end_analysis();
+                }
+            }
+            NukeLaunchState::MoveUnit => {
+                if self.order_targets_read == 3 {
+                    if let Operation::Call(dest) = *op {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let this = ctrl.resolve_register(1);
+                            let ok = this == ctx.register(1);
+                            if ok {
+                                self.result.move_unit = Some(dest);
+                                self.state = NukeLaunchState::ShowUnit;
+                                ctrl.clear_unchecked_branches();
+                            }
+                        }
+                    }
+                } else {
+                    if let Operation::Move(_, value, None) = *op {
+                        if let Some(mem) = value.unwrap_sext().if_mem16() {
+                            let mem = ctrl.resolve_mem(mem);
+                            let (base, offset) = mem.address();
+                            if base == ctx.register(1) {
+                                let order_target =
+                                    struct_layouts::unit_order_target_pos::<E::VirtualAddress>();
+                                if offset == order_target {
+                                    self.order_targets_read |= 1;
+                                } else if offset == order_target + 2{
+                                    self.order_targets_read |= 2;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            NukeLaunchState::ShowUnit => {
+                if let Some(result) = self.check_call_before_order_state_set(ctrl, op, 5) {
+                    self.result.show_unit = Some(result);
+                    ctrl.end_analysis();
+                }
+            }
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> AnalyzeOrderNukeLaunch<'a, 'e, E> {
+    /// thiscall(this = this) to be exact.
+    fn track_last_call_with_this(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        op: &Operation<'e>,
+    ) {
+        if let Operation::Call(dest) = *op {
+            if ctrl.resolve_register(1) == ctrl.ctx().register(1) {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    self.last_call = dest;
+                }
+            }
+        }
+    }
+
+    fn check_call_before_order_state_set(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        op: &Operation<'e>,
+        state: u8,
+    ) -> Option<E::VirtualAddress> {
+        self.track_last_call_with_this(ctrl, op);
+        if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+            if mem.size == MemAccessSize::Mem8 {
+                if ctrl.resolve(value).if_constant() == Some(state as u64) {
+                    // Could also check mem offset to be this.order_state,
+                    // but going to be lazy and say that Mem8 constant is enough..
+                    if self.last_call.as_u64() != 0 {
+                        return Some(self.last_call);
+                    }
+                }
+            }
+        }
+        None
     }
 }

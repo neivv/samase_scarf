@@ -441,6 +441,10 @@ results! {
         StopCreepDisappearingAtBuilding => stop_creep_disappearing_at_building =>
                 cache_order_zerg_build_self,
         PlaceCreepRect => place_creep_rect => cache_order_zerg_build_self,
+        ShowUnit => show_unit => cache_order_nuke_launch,
+        HideUnit => hide_unit => cache_order_nuke_launch,
+        MoveUnit => move_unit => cache_order_nuke_launch,
+        StopMoving => stop_moving => cache_order_nuke_launch,
     }
 }
 
@@ -4048,6 +4052,21 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some((
                     [r.unit_set_hp, r.transform_unit, r.stop_creep_disappearing_at_building,
                         r.place_creep_rect],
+                    [],
+                ))
+            });
+    }
+
+    fn cache_order_nuke_launch(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[ShowUnit, HideUnit, MoveUnit, StopMoving],
+            &[],
+            |s| {
+                let launch = s.order_function(0x7d, actx)?;
+                let r = step_order::analyze_order_nuke_launch(actx, launch);
+                Some((
+                    [r.show_unit, r.hide_unit, r.move_unit, r.stop_moving],
                     [],
                 ))
             });
