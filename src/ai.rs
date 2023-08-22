@@ -15,7 +15,10 @@ use crate::analysis_state::{self, AnalysisState, AiTownState, GiveAiState, Train
 use crate::hash_map::HashSet;
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
-use crate::util::{OptionExt, OperandExt, single_result_assign, ControlExt};
+use crate::util::{
+    MemAccessExt, OptionExt, OperandExt, single_result_assign, ControlExt, bumpvec_with_capacity,
+    is_global,
+};
 
 pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
@@ -756,6 +759,13 @@ pub(crate) struct AiStepFrameFuncs<'e, Va: VirtualAddressTrait> {
     pub players: Option<Operand<'e>>,
     pub first_ai_script: Option<Operand<'e>>,
     pub hook: Option<AiScriptHook<'e, Va>>,
+    pub step_ai_regions_region: Option<Operand<'e>>,
+    pub step_ai_regions_player: Option<Operand<'e>>,
+    pub resource_areas: Option<Operand<'e>>,
+    pub ai_target_ignore_reset_counter: Option<Operand<'e>>,
+    pub ai_target_ignore_reset_counter2: Option<Operand<'e>>,
+    pub ai_target_ignore_request_reset: Option<Operand<'e>>,
+    pub ai_military_update_counter: Option<Operand<'e>>,
 }
 
 pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
@@ -765,6 +775,7 @@ pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
 ) -> AiStepFrameFuncs<'e, E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
+    let bump = &analysis.bump;
 
     let mut result = AiStepFrameFuncs {
         ai_step_region: None,
@@ -773,6 +784,13 @@ pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
         first_ai_script: None,
         players: None,
         hook: None,
+        step_ai_regions_region: None,
+        step_ai_regions_player: None,
+        resource_areas: None,
+        ai_target_ignore_reset_counter: None,
+        ai_target_ignore_reset_counter2: None,
+        ai_target_ignore_request_reset: None,
+        ai_military_update_counter: None,
     };
 
     let arg_cache = &analysis.arg_cache;
@@ -787,6 +805,7 @@ pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
         state: StepAiState::StepAiScript,
         game_seconds_checked: false,
         entry: step_objects,
+        target_reset_counter2_candidates: bumpvec_with_capacity(4, bump),
     };
     analysis.analyze(&mut analyzer);
     result
@@ -796,10 +815,13 @@ pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
 enum StepAiState {
     StepAiScript,
     StepRegions,
+    ResourceAreas,
+    TargetResetCounter,
+    TargetResetCounter2,
     SpendMoney,
 }
 
-struct StepRegionAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct StepRegionAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut AiStepFrameFuncs<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
@@ -809,9 +831,12 @@ struct StepRegionAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     game_seconds_checked: bool,
     state: StepAiState,
     entry: E::VirtualAddress,
+    target_reset_counter2_candidates: BumpVec<'acx, Operand<'e>>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyzer<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    StepRegionAnalyzer<'a, 'acx, 'e, E>
+{
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -821,6 +846,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                 let limit = match self.state {
                     StepAiState::StepAiScript => 3,
                     StepAiState::StepRegions => 3,
+                    StepAiState::ResourceAreas => 3,
+                    StepAiState::TargetResetCounter => 3,
+                    StepAiState::TargetResetCounter2 => 0,
                     StepAiState::SpendMoney => 0,
                 };
                 if self.inline_depth < limit {
@@ -837,7 +865,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                                     self.entry = entry;
                                     self.inline_depth -= 1;
                                     if self.result.first_ai_script.is_some() {
-                                        if self.inline_depth > 1 {
+                                        if self.inline_depth > 1 || self.inline_depth == 0 {
                                             ctrl.end_analysis();
                                         }
                                     }
@@ -850,15 +878,24 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                                     self.inline_depth -= 1;
                                     if let Some(result) = self.result.ai_step_region {
                                         if result.as_u64() == 0 {
+                                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                                            let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
                                             self.result.ai_step_region = Some(dest);
+                                            self.result.step_ai_regions_player = Some(arg1);
+                                            self.result.step_ai_regions_region = Some(arg2);
                                         }
                                         // ai_spend_money is expected to be at inline depth 1
                                         if self.inline_depth > 1 {
                                             ctrl.end_analysis();
                                         } else {
-                                            self.state = StepAiState::SpendMoney;
+                                            self.state = StepAiState::ResourceAreas;
                                         }
                                     }
+                                } else {
+                                    self.inline_depth += 1;
+                                    let mut analysis = FuncAnalysis::new(self.binary, ctx, dest);
+                                    analysis.analyze(self);
+                                    self.inline_depth -= 1;
                                 }
                             }
                         }
@@ -939,13 +976,27 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                     single_result_assign(players, &mut self.result.players);
                 }
             }
+            Operation::Jump { condition, to } if self.state == StepAiState::TargetResetCounter2 =>
+            {
+                let condition = ctrl.resolve(condition);
+                // The code should do `counter2 == 0 || request != 0`
+                // Always continue at != 0 address, for the first jump,
+                // and if the `global = 6` is found without the global being in candidates,
+                // it just means that `request != 0` was checked first.
+                if let Some((val, eq)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                    if is_global(val) && !self.target_reset_counter2_candidates.contains(&val) {
+                        self.target_reset_counter2_candidates.push(val);
+                        ctrl.continue_at_neq_address(eq, to);
+                    }
+                }
+            }
             Operation::Move(DestOperand::Memory(mem), val, None)
                 if self.state == StepAiState::SpendMoney && mem.size == MemAccessSize::Mem32 =>
             {
                 // Search for ai_spend_money by checking for a global store
                 // global = game.seconds < 4500 ? 7 : 0x25
                 let val = ctrl.resolve(val);
-                if val.iter_no_mem_addr()
+                if Operand::and_masked(val).0.if_custom() == Some(0) || val.iter_no_mem_addr()
                     .any(|x| {
                         // Checking for 4500 > Mem32[game.seconds]
                         x.if_arithmetic_gt()
@@ -954,64 +1005,134 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepRegionAnalyze
                             .is_some()
                     })
                 {
-                    self.game_seconds_checked = true;
+                    let mem = ctrl.resolve_mem(&mem);
+                    if mem.is_global() {
+                        self.game_seconds_checked = true;
+                        self.result.ai_military_update_counter = Some(ctx.memory(&mem));
+                    }
                 }
             }
-            Operation::Move(_, _, Some(condition)) if self.state == StepAiState::SpendMoney => {
+            Operation::Move(ref dest, _, Some(condition))
+                if self.state == StepAiState::SpendMoney =>
+            {
                 let condition = ctrl.resolve(condition);
                 let ok = condition.if_arithmetic_gt()
                     .and_either_other(|x| x.if_constant().filter(|&c| c == 4500))
                     .filter(|&x| is_game_seconds(self.game, x))
                     .is_some();
                 if ok {
-                    self.game_seconds_checked = true;
+                    ctrl.skip_operation();
+                    ctrl.move_unresolved(dest, ctx.custom(0));
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, None) => {
+            Operation::Move(ref dest, val, None) if self.state == StepAiState::StepAiScript => {
                 // step_objects has `counter = counter - 1`
                 // instruction which is after step_ai, so we can stop
                 // if that is reached.
-                if self.inline_depth == 0 && mem.size == MemAccessSize::Mem32 {
-                    let val = ctrl.resolve(val);
-                    let dest = ctrl.resolve_mem(mem);
-                    let stop = Operand::and_masked(val).0
-                        .if_arithmetic_sub_const(1)
-                        .and_then(|x| x.if_memory())
-                        .filter(|&x| x == &dest)
-                        .is_some();
-                    if stop {
-                        ctrl.end_analysis();
+                if self.inline_depth == 0 {
+                    if let DestOperand::Memory(ref mem) = *dest {
+                        if mem.size == MemAccessSize::Mem32 {
+                            let val = ctrl.resolve(val);
+                            let dest = ctrl.resolve_mem(mem);
+                            let stop = Operand::and_masked(val).0
+                                .if_arithmetic_sub_const(1)
+                                .and_then(|x| x.if_memory())
+                                .filter(|&x| x == &dest)
+                                .is_some();
+                            if stop {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                    return;
+                } else if self.inline_depth == 1 {
+                    // Avoid analyzing step_dcreep, which does
+                    // Mem8[global + global >> 7] read early on to the function.
+                    if let Some(mem) = val.if_mem8() {
+                        let mem = ctrl.resolve_mem(mem);
+                        if mem.if_add_either(ctx, |x| x.if_arithmetic_rsh_const(7)).is_some() {
+                            ctrl.end_analysis();
+                        }
                     }
                 }
-                if self.inline_depth != 0 && self.state == StepAiState::StepRegions {
-                    // First branch of ai_step_region always clears flag 0x4
-                    // region = ai_regions[arg1] + arg2 * region_size;
-                    // region.flags &= !0x4;
-                    let val = ctrl.resolve(val);
-                    let dest = ctrl.resolve_mem(mem);
-                    let ok = val.if_arithmetic_and_const(0xfb)
-                        .and_then(|x| x.if_mem8())
-                        .filter(|&x| x.address() == dest.address())
-                        .and_then(|x| x.if_offset(8)) // flag offset
-                        .and_then(|x| x.if_arithmetic_add()) // addition for regions base + index
-                        .and_either(|x| {
-                            // One is arg2 * region_size (0x34),
-                            // other is ai_regions[arg1], that is, Mem32[ai_regions + arg1 * 4]
-                            // Check for just ai_regions[arg1]
-                            x.if_memory()
-                                .and_then(|x| {
-                                    x.if_add_either(ctx, |x| {
-                                        x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
-                                            .filter(|&x| {
-                                                Operand::and_masked(x).0 ==
-                                                    self.arg_cache.on_entry(0)
-                                            })
-                                    })
+            }
+            Operation::Move(DestOperand::Memory(ref mem), val, None)
+                if self.state == StepAiState::StepRegions =>
+            {
+                // First branch of ai_step_region always clears flag 0x4
+                // region = ai_regions[arg1] + arg2 * region_size;
+                // region.flags &= !0x4;
+                let val = ctrl.resolve(val);
+                let dest = ctrl.resolve_mem(mem);
+                let ok = val.if_arithmetic_and_const(0xfb)
+                    .and_then(|x| x.if_mem8())
+                    .filter(|&x| x.address() == dest.address())
+                    .and_then(|x| x.if_offset(8)) // flag offset
+                    .and_then(|x| x.if_arithmetic_add()) // addition for regions base + index
+                    .and_either(|x| {
+                        // One is arg2 * region_size (0x34),
+                        // other is ai_regions[arg1], that is, Mem32[ai_regions + arg1 * 4]
+                        // Check for just ai_regions[arg1]
+                        x.if_memory()
+                            .and_then(|x| {
+                                x.if_add_either(ctx, |x| {
+                                    x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
+                                        .filter(|&x| {
+                                            Operand::and_masked(x).0 ==
+                                                self.arg_cache.on_entry(0)
+                                        })
                                 })
-                        })
-                        .is_some();
-                    if ok {
-                        self.result.ai_step_region = Some(E::VirtualAddress::from_u64(0));
+                            })
+                    })
+                    .is_some();
+                if ok {
+                    self.result.ai_step_region = Some(E::VirtualAddress::from_u64(0));
+                }
+            }
+            Operation::Move(DestOperand::Memory(ref mem), val, None)
+                if self.state == StepAiState::ResourceAreas =>
+            {
+                if ctrl.resolve(val).if_constant() == Some(0x1c2) {
+                    let mem = ctrl.resolve_mem(mem);
+                    if mem.is_global() {
+                        self.result.resource_areas =
+                            Some(mem.with_offset(0u64.wrapping_sub(0x2ee4)).address_op(ctx));
+                        self.state = StepAiState::TargetResetCounter;
+                        if self.inline_depth > 1 {
+                            ctrl.end_analysis();
+                        } else {
+                            ctrl.end_branch();
+                        }
+                    }
+                }
+            }
+            Operation::Move(DestOperand::Memory(ref mem), val, None)
+                if self.state == StepAiState::TargetResetCounter =>
+            {
+                if ctrl.resolve(val).if_constant() == Some(0x12c) {
+                    let mem = ctrl.resolve_mem(mem);
+                    if mem.is_global() {
+                        self.result.ai_target_ignore_reset_counter = Some(ctx.memory(&mem));
+                        ctrl.clear_unchecked_branches();
+                        self.state = StepAiState::TargetResetCounter2;
+                    }
+                }
+            }
+            Operation::Move(DestOperand::Memory(ref mem), val, None)
+                if self.state == StepAiState::TargetResetCounter2 =>
+            {
+                if ctrl.resolve(val).if_constant() == Some(6) {
+                    let mem = ctrl.resolve_mem(mem);
+                    let result = ctx.memory(&mem);
+                    if self.target_reset_counter2_candidates.len() == 0 {
+                        return;
+                    }
+                    self.result.ai_target_ignore_reset_counter2 = Some(result);
+                    if let Some(&other) = self.target_reset_counter2_candidates.iter()
+                        .find(|&&x| x != result)
+                    {
+                        self.result.ai_target_ignore_request_reset = Some(other);
+                        self.state = StepAiState::SpendMoney;
                     }
                 }
             }

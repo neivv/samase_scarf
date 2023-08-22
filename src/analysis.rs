@@ -462,6 +462,18 @@ results! {
         PlayerAiTowns => player_ai_towns,
         PlayerAi => player_ai,
         Players => players => cache_ai_step_frame,
+        // Globals that keep track of which (player, region_id) was being processed
+        // as not all of them are handled in one frame
+        StepAiRegionsRegion => step_ai_regions_region => cache_ai_step_frame,
+        StepAiRegionsPlayer => step_ai_regions_player => cache_ai_step_frame,
+        ResourceAreas => resource_areas => cache_ai_step_frame,
+        // Variables for ai target ignore flag clearing,
+        // first counter counts for 300 frames, after which it resets if
+        // request bool is set or the second counter has counted to zero (from 6 * 300 frames)
+        AiTargetIgnoreResetCounter => ai_target_ignore_reset_counter => cache_ai_step_frame,
+        AiTargetIgnoreResetCounter2 => ai_target_ignore_reset_counter2 => cache_ai_step_frame,
+        AiTargetIgnoreRequestReset => ai_target_ignore_request_reset => cache_ai_step_frame,
+        AiMilitaryUpdateCounter => ai_military_update_counter => cache_ai_step_frame,
         Campaigns => campaigns,
         Fonts => fonts,
         StatusScreenMode => status_screen_mode,
@@ -2865,14 +2877,20 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
         self.cache_many(
-            &[AiStepRegion, AiSpendMoney, StepAiScript], &[FirstAiScript, Players],
+            &[AiStepRegion, AiSpendMoney, StepAiScript], &[FirstAiScript, Players,
+                StepAiRegionsRegion, StepAiRegionsPlayer, ResourceAreas,
+                AiTargetIgnoreResetCounter, AiTargetIgnoreResetCounter2,
+                AiTargetIgnoreRequestReset, AiMilitaryUpdateCounter],
             |s| {
                 let step_objects = s.step_objects(actx)?;
                 let game = s.game(actx)?;
                 let result = ai::step_frame_funcs(actx, step_objects, game);
                 s.aiscript_hook = result.hook;
                 Some(([result.ai_step_region, result.ai_spend_money, result.step_ai_script],
-                    [result.first_ai_script, result.players]))
+                    [result.first_ai_script, result.players, result.step_ai_regions_region,
+                    result.step_ai_regions_player, result.resource_areas,
+                    result.ai_target_ignore_reset_counter, result.ai_target_ignore_reset_counter2,
+                    result.ai_target_ignore_request_reset, result.ai_military_update_counter]))
             },
         )
     }

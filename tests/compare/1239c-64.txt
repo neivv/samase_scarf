@@ -249,7 +249,11 @@ update_visibility_point: 140193da0
 active_iscript_bullet: Mem64[140e077b0]
 active_iscript_flingy: Mem64[140e077a8]
 active_iscript_unit: Mem64[140e077a0]
+ai_military_update_counter: Mem32[140e52f54]
 ai_regions: 140e62e00
+ai_target_ignore_request_reset: Mem32[140e52f60]
+ai_target_ignore_reset_counter: Mem32[140e52f58]
+ai_target_ignore_reset_counter2: Mem32[140e52f5c]
 ai_transport_reachability_cached_region: 140e67c80
 allocated_order_count: Mem32[140e1c918]
 anti_troll: 140e79900
@@ -406,6 +410,7 @@ replay_scenario_chk_size: Mem32[14103b800]
 replay_seek_frame: Mem32[14103b818]
 replay_show_entire_map: Mem32[14103b820]
 replay_visions: Mem8[14103b81c]
+resource_areas: 141044870
 rgb_colors: 140e1de70
 rng_enable: Mem32[14103966c]
 rng_seed: Mem32[141039660]
@@ -428,6 +433,8 @@ sprites: Mem64[140e1cc40]
 statres_icons_ddsgrp: 140e588f0
 status_screen: Mem64[141049890]
 status_screen_mode: Mem8[141049939]
+step_ai_regions_player: Mem32[140e62df8]
+step_ai_regions_region: Mem32[140e62dfc]
 step_game_frames: Mem32[140d75018]
 storm_command_user: Mem32[140d7bb28]
 sync_active: Mem32[141038474]

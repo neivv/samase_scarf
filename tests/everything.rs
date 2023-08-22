@@ -1669,7 +1669,9 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 OnClipCursorEnd | SelectStartX | SelectStartY | IsSelecting | FirstDialog |
                 FirstFreeImage | LastFreeImage | UpdateGameScreenSizeMode | GameScreenHeightRatio |
                 LastHiddenUnit | LastRevealer | LurkerHitsPos | LurkerHitsFrame |
-                OrderTimerResetCounter | SecondaryOrderTimerResetCounter =>
+                OrderTimerResetCounter | SecondaryOrderTimerResetCounter | StepAiRegionsRegion |
+                StepAiRegionsPlayer | AiTargetIgnoreResetCounter | AiTargetIgnoreResetCounter2 |
+                AiTargetIgnoreRequestReset | AiMilitaryUpdateCounter =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1684,7 +1686,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 UnitSkinMap | SpriteSkinMap | GrpWireDdsGrp | TranWireDdsGrp |
                 SpriteIncludeInVisionSync | DrawCommands | CreepFuncs | DcreepLookup |
                 DcreepListBegin | DcreepListSize | ReplayHeader | GameScreenRectWinPx |
-                RunDialogStack | LurkerHits =>
+                RunDialogStack | LurkerHits | ResourceAreas =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }
