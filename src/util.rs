@@ -186,8 +186,7 @@ pub trait OperandExt<'e> {
 
 impl<'e> OperandExt<'e> for Operand<'e> {
     fn if_arithmetic_add_const(self, offset: u64) -> Option<Operand<'e>> {
-        let (l, r) = self.if_arithmetic_add()?;
-        let r = r.if_constant()?;
+        let (l, r) = self.if_add_with_const()?;
         if r != offset {
             None
         } else {
@@ -196,8 +195,7 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     }
 
     fn if_arithmetic_sub_const(self, offset: u64) -> Option<Operand<'e>> {
-        let (l, r) = self.if_arithmetic_sub()?;
-        let r = r.if_constant()?;
+        let (l, r) = self.if_sub_with_const()?;
         if r != offset {
             None
         } else {
@@ -206,8 +204,7 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     }
 
     fn if_arithmetic_mul_const(self, offset: u64) -> Option<Operand<'e>> {
-        let (l, r) = self.if_arithmetic_mul()?;
-        let r = r.if_constant()?;
+        let (l, r) = self.if_mul_with_const()?;
         if r != offset {
             None
         } else {
@@ -216,8 +213,7 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     }
 
     fn if_arithmetic_and_const(self, offset: u64) -> Option<Operand<'e>> {
-        let (l, r) = self.if_arithmetic_and()?;
-        let r = r.if_constant()?;
+        let (l, r) = self.if_and_with_const()?;
         if r != offset {
             None
         } else {
@@ -226,8 +222,7 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     }
 
     fn if_arithmetic_lsh_const(self, offset: u64) -> Option<Operand<'e>> {
-        let (l, r) = self.if_arithmetic(ArithOpType::Lsh)?;
-        let r = r.if_constant()?;
+        let (l, r) = self.if_lsh_with_const()?;
         if r != offset {
             None
         } else {
@@ -236,8 +231,7 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     }
 
     fn if_arithmetic_rsh_const(self, offset: u64) -> Option<Operand<'e>> {
-        let (l, r) = self.if_arithmetic(ArithOpType::Rsh)?;
-        let r = r.if_constant()?;
+        let (l, r) = self.if_rsh_with_const()?;
         if r != offset {
             None
         } else {
@@ -246,8 +240,7 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     }
 
     fn if_arithmetic_eq_const(self, offset: u64) -> Option<Operand<'e>> {
-        let (l, r) = self.if_arithmetic(ArithOpType::Equal)?;
-        let r = r.if_constant()?;
+        let (l, r) = self.if_eq_with_const()?;
         if r != offset {
             None
         } else {
@@ -256,8 +249,7 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     }
 
     fn if_arithmetic_gt_const(self, offset: u64) -> Option<Operand<'e>> {
-        let (l, r) = self.if_arithmetic(ArithOpType::GreaterThan)?;
-        let r = r.if_constant()?;
+        let (l, r) = self.if_gt_with_const()?;
         if r != offset {
             None
         } else {
@@ -301,10 +293,7 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     }
 
     fn unwrap_sext(self) -> Operand<'e> {
-        match *self.ty() {
-            OperandType::SignExtend(val, ..) => val,
-            _ => self,
-        }
+        self.if_sign_extend().map(|x| x.0).unwrap_or(self)
     }
 
     fn if_constant_or_read_binary<Va: VirtualAddress>(
@@ -320,17 +309,20 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     }
 
     fn if_arithmetic_eq_neq(self) -> Option<(Operand<'e>, Operand<'e>, bool)> {
-        let arith = self.if_arithmetic_any()?;
-        if arith.ty == ArithOpType::Equal {
-            Some(
-                Operand::either(arith.left, arith.right, |x| x.if_constant().filter(|&c| c == 0))
-                    .and_then(|(_, other)| other.if_arithmetic_eq())
-                    .map(|(l, r)| (l, r, false))
-                    .unwrap_or_else(|| (arith.left, arith.right, true))
-            )
-        } else if arith.ty == ArithOpType::Xor && self.relevant_bits().end == 1 {
-            // 1bit x ^ y is x != y
-            Some((arith.left, arith.right, false))
+        if let Some((left, right)) = self.if_arithmetic_eq() {
+            if let Some((l, r)) = left.if_arithmetic_eq() {
+                if right.if_constant() == Some(0) {
+                    return Some((l, r, false));
+                }
+            }
+            Some((left, right, true))
+        } else if let Some((left, right)) = self.if_arithmetic_xor() {
+            if self.relevant_bits().end == 1 {
+                // 1bit x ^ y is x != y
+                Some((left, right, false))
+            } else {
+                None
+            }
         } else {
             None
         }

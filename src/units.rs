@@ -1805,8 +1805,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             if let Operation::Jump { condition, .. } = *op {
                 let condition = ctrl.resolve(condition);
                 let ctx = ctrl.ctx();
-                let cmp_zero = if_arithmetic_eq_neq(condition)
-                    .filter(|x| x.1 == ctx.const_0())
+                let cmp_zero = condition.if_arithmetic_eq_neq_zero(ctx)
                     .map(|x| x.0);
                 if let Some(val) = cmp_zero {
                     self.zero_compares.push((ctrl.address(), val));
@@ -1976,9 +1975,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             return;
                         }
 
-                        let result = if_arithmetic_eq_neq(condition)
-                            .filter(|x| x.1 == ctx.const_0())
-                            .and_then(|(l, _, _)| l.if_arithmetic_and_const(4)?.if_mem8());
+                        let result = condition.if_arithmetic_eq_neq_zero(ctx)
+                            .and_then(|(l, _)| l.if_arithmetic_and_const(4)?.if_mem8());
                         if let Some(result) = result {
                             self.result.replay_bfix = Some(result.address_op(ctx));
                             self.state = PrepareIssueOrderState::Gcfg;
