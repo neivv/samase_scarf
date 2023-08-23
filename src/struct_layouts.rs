@@ -216,6 +216,13 @@ pub fn unit_flags<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_poweurp_bits<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0xe0,
+        false => 0x144,
+    }
+}
+
 pub fn unit_secondary_order_state<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0xe2,

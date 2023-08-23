@@ -108,6 +108,11 @@ pub(crate) struct HideUnit<'e, Va: VirtualAddress> {
     pub last_active_unit: Option<Operand<'e>>,
 }
 
+pub(crate) struct KillUnit<Va: VirtualAddress> {
+    pub drop_powerup: Option<Va>,
+    pub remove_unit_ai: Option<Va>,
+}
+
 pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     orders_dat: (E::VirtualAddress, u32),
@@ -3100,6 +3105,120 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for HideUnitAnalyzer<
                         if result.last_active_unit.is_some() &&
                             result.first_active_unit.is_some()
                         {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_kill_unit<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    kill_unit: E::VirtualAddress,
+) -> KillUnit<E::VirtualAddress> {
+    let mut result = KillUnit {
+        drop_powerup: None,
+        remove_unit_ai: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, kill_unit);
+    let mut analyzer = KillUnitAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        state: KillUnitState::DropPowerup,
+        inline_limit: 0,
+        call_tracker: CallTracker::with_capacity(actx, 0, 16),
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct KillUnitAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut KillUnit<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: KillUnitState,
+    inline_limit: u8,
+    call_tracker: CallTracker<'acx, 'e, E>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum KillUnitState {
+    /// Find drop_powerup(this = this)
+    DropPowerup,
+    /// Verify jump on unit.carried_powerup_bits
+    VerifyDropPowerup,
+    /// Find remove_unit_ai(a1 = this, 1u8)
+    RemoveUnitAi,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    KillUnitAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            KillUnitState::DropPowerup => {
+                if let Operation::Call(dest) = *op {
+                    if ctrl.resolve_register(1) == ctx.register(1)  {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.state = KillUnitState::VerifyDropPowerup;
+                            self.inline_limit = 8;
+                            ctrl.analyze_with_current_state(self, dest);
+                            if self.result.drop_powerup.is_some() {
+                                self.result.drop_powerup = Some(dest);
+                                self.state = KillUnitState::RemoveUnitAi;
+                            } else {
+                                self.state = KillUnitState::DropPowerup;
+                            }
+                        }
+                    }
+                }
+            }
+            KillUnitState::VerifyDropPowerup => {
+                match *op {
+                    Operation::Call(dest) => {
+                        if self.inline_limit == 0 {
+                            ctrl.end_analysis();
+                        } else {
+                            self.inline_limit -= 1;
+                        }
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.call_tracker.add_call_resolve(ctrl, dest);
+                        }
+                    }
+                    Operation::Jump { condition, .. } => {
+                        if self.inline_limit == 0 {
+                            ctrl.end_analysis();
+                        } else {
+                            self.inline_limit -= 1;
+                        }
+                        let condition = ctrl.resolve(condition);
+                        let carried_powerup_bits =
+                            struct_layouts::unit_poweurp_bits::<E::VirtualAddress>();
+                        let ok = condition.if_arithmetic_eq_neq_zero(ctx)
+                            .and_then(|x| x.0.if_mem8_offset(carried_powerup_bits)) ==
+                                Some(ctx.register(1));
+                        if ok {
+                            self.result.drop_powerup = Some(E::VirtualAddress::from_u64(0));
+                            ctrl.end_analysis();
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            KillUnitState::RemoveUnitAi => {
+                if let Operation::Call(dest) = *op {
+                    let ok = ctrl.resolve(self.arg_cache.on_call(0)) == ctx.register(1) &&
+                        ctx.and_const(ctrl.resolve(self.arg_cache.on_call(1)), 0xff) ==
+                            ctx.const_1();
+                    if ok {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.result.remove_unit_ai = Some(dest);
                             ctrl.end_analysis();
                         }
                     }

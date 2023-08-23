@@ -447,6 +447,8 @@ results! {
         StopMoving => stop_moving => cache_order_nuke_launch,
         RemoveReferences => remove_references => cache_hide_unit,
         EndCollisionTracking => end_collision_tracking => cache_hide_unit,
+        DropPowerup => drop_powerup => cache_kill_unit,
+        RemoveUnitAi => remove_unit_ai => cache_kill_unit,
     }
 }
 
@@ -4188,17 +4190,15 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             })
     }
 
-    fn hit_unit(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Option<E::VirtualAddress> {
+    fn kill_unit(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::KillUnit, |s| s.cache_do_missile_damage(actx))
+    }
+
+    fn hit_unit(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::HitUnit, |s| s.cache_do_missile_damage(actx))
     }
 
-    fn splash_lurker(
-        &mut self,
-        actx: &AnalysisCtx<'e, E>,
-    ) -> Option<E::VirtualAddress> {
+    fn splash_lurker(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::SplashLurker, |s| s.cache_do_missile_damage(actx))
     }
 
@@ -4411,6 +4411,17 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 }
                 Some(([r.remove_references, r.end_collision_tracking],
                     [r.last_active_unit, r.path_array, r.first_free_path]))
+            })
+    }
+
+    fn cache_kill_unit(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[DropPowerup, RemoveUnitAi], &[],
+            |s| {
+                let func = s.kill_unit(actx)?;
+                let r = units::analyze_kill_unit(actx, func);
+                Some(([r.drop_powerup, r.remove_unit_ai], []))
             })
     }
 }
