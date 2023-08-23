@@ -13,11 +13,10 @@ use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::analysis_state::{self, AnalysisState, AiTownState, GiveAiState, TrainMilitaryState};
 use crate::hash_map::HashSet;
-use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
 use crate::util::{
     MemAccessExt, OptionExt, OperandExt, single_result_assign, ControlExt, bumpvec_with_capacity,
-    is_global,
+    is_global, ExecStateExt,
 };
 
 pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
@@ -216,8 +215,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
                         if mem.size == MemAccessSize::Mem32 {
                             let mem = ctrl.resolve_mem(mem);
                             let (base, offset) = mem.address();
-                            let pos_offset =
-                                struct_layouts::ai_script_pos::<E::VirtualAddress>();
+                            let pos_offset = E::struct_layouts().ai_script_pos();
                             if offset == pos_offset {
                                 let val = ctrl.resolve(val);
                                 let val_refers_to_dest = val.iter_no_mem_addr().any(|x| {
@@ -368,10 +366,8 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchEnd
                         let (base, offset) = dest.address();
                         let old_ok = self.old_base.map(|x| x == base).unwrap_or(true);
                         if old_ok {
-                            let pos_offset =
-                                struct_layouts::ai_script_pos::<E::VirtualAddress>();
-                            let wait_offset =
-                                struct_layouts::ai_script_wait::<E::VirtualAddress>();
+                            let pos_offset = E::struct_layouts().ai_script_pos();
+                            let wait_offset = E::struct_layouts().ai_script_wait();
                             if offset == pos_offset {
                                 let val = ctrl.resolve(val);
                                 let ok = Operand::and_masked(val).0
@@ -617,7 +613,7 @@ pub(crate) fn player_ai<'e, E: ExecutionState<'e>>(
 
     // Set script->player to 0
     let mut state = E::initial_state(ctx, binary);
-    let player_offset = struct_layouts::ai_script_player::<E::VirtualAddress>();
+    let player_offset = E::struct_layouts().ai_script_player();
     let player = ctx.mem32(
         aiscript.script_operand_at_switch,
         player_offset,
@@ -671,10 +667,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlayerAiAnalyzer<'e, 
                         .and_then(|y| y.if_constant())
                         .filter(|&c| c == 0x10)
                         .map(|_| {
-                            ctx.mem_sub_const_op(
-                                &dest,
-                                struct_layouts::player_ai_flags::<E::VirtualAddress>(),
-                            )
+                            ctx.mem_sub_const_op(&dest, E::struct_layouts().player_ai_flags())
                         });
                     if single_result_assign(result, &mut self.result) {
                         ctrl.end_analysis();
@@ -722,8 +715,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnal
         match *op {
             Operation::Call(dest) => {
                 let ctx = ctrl.ctx();
-                let player_off = struct_layouts::ai_script_player::<E::VirtualAddress>();
-                let pos_off = struct_layouts::ai_script_center::<E::VirtualAddress>();
+                let player_off = E::struct_layouts().ai_script_player();
+                let pos_off = E::struct_layouts().ai_script_center();
                 let ok = Some(())
                     .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
                     .and_then(|x| x.if_mem32_offset(player_off))
@@ -925,11 +918,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         .map(|x| x.0)
                         .unwrap_or(condition)
                         .if_arithmetic_and_const(1)
-                        .and_then(|op| {
-                            op.if_mem8_offset(
-                                struct_layouts::ai_script_flags::<E::VirtualAddress>()
-                            )
-                        })
+                        .and_then(|op| op.if_mem8_offset(E::struct_layouts().ai_script_flags()))
                         .is_some();
                     if is_bwscript_check {
                         ctrl.end_branch();
@@ -940,8 +929,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let index = switch.index_operand(ctx)?;
                         let first_ai_script = index.if_mem8()?
                             .if_add_either(ctx, |x| {
-                                let pos_off =
-                                    struct_layouts::ai_script_pos::<E::VirtualAddress>();
+                                let pos_off = E::struct_layouts().ai_script_pos();
                                 x.if_memory()?.if_offset(pos_off)
                             })?.0;
                         Some(first_ai_script)
@@ -1361,11 +1349,11 @@ pub(crate) fn ai_prepare_moving_to<'e, E: ExecutionState<'e>>(
     let mut exec_state = E::initial_state(ctx, binary);
     let order_state = ctx.mem8(
         ctx.register(1),
-        struct_layouts::unit_order_state::<E::VirtualAddress>(),
+        E::struct_layouts().unit_order_state(),
     );
     let target = ctx.mem32(
         ctx.register(1),
-        struct_layouts::unit_target::<E::VirtualAddress>(),
+        E::struct_layouts().unit_target(),
     );
     exec_state.move_to(&DestOperand::from_oper(order_state), ctx.const_0());
     exec_state.move_to(&DestOperand::from_oper(target), ctx.const_0());
@@ -1401,7 +1389,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAna
                 let condition = ctrl.resolve(condition);
                 let jump_on_null = condition.if_arithmetic_eq_neq_zero(ctx)
                     .and_then(|x| {
-                        let unit_ai = struct_layouts::unit_ai::<E::VirtualAddress>();
+                        let unit_ai = E::struct_layouts().unit_ai();
                         ctrl.if_mem_word_offset(x.0, unit_ai)
                             .filter(|&x| x == ctx.register(1))?;
                         Some(x.1)
@@ -1440,8 +1428,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAna
                 if ecx != ctx.register(1) {
                     return;
                 }
-                let order_target_pos =
-                    struct_layouts::unit_order_target_pos::<E::VirtualAddress>();
+                let order_target_pos = E::struct_layouts().unit_order_target_pos();
                 let ok = arg1.unwrap_sext()
                     .if_mem16_offset(order_target_pos)
                     .filter(|&x| x == ecx)
@@ -1520,9 +1507,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             .and_then(|x| {
                                 x.if_add_either_other(ctx, |x| {
                                     x.if_arithmetic_mul_const(4)?
-                                        .if_mem8_offset(
-                                            struct_layouts::unit_player::<E::VirtualAddress>()
-                                        )
+                                        .if_mem8_offset(E::struct_layouts().unit_player())
                                         .filter(|&x| x == ctx.register(1))
                                 })
                             })
@@ -1552,7 +1537,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     // ("ai_region_reachable_without_transport")
                     // Only checking for player now
                     do_inline = ctx.and_const(arg1, 0xff)
-                        .if_mem8_offset(struct_layouts::unit_player::<E::VirtualAddress>())
+                        .if_mem8_offset(E::struct_layouts().unit_player())
                         .filter(|&x| x == ctx.register(1))
                         .is_some();
                 }
@@ -1683,9 +1668,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddMilitaryAnalyzer<
             Operation::Call(dest) => {
                 let ctx = ctrl.ctx();
                 let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                let is_region1 = arg1.if_arithmetic_add_const(
-                        struct_layouts::ai_region_size::<E::VirtualAddress>()
-                    )
+                let is_region1 = arg1.if_arithmetic_add_const(E::struct_layouts().ai_region_size())
                     .and_then(|x| ctrl.if_mem_word(x))
                     .and_then(|x| x.address_op(ctx).if_arithmetic_add())
                     .and_if_either_other(|x| x == self.ai_regions)

@@ -9,10 +9,9 @@ use crate::analysis_state::{AnalysisState, StateEnum, FindCreateBulletState};
 use crate::call_tracker::CallTracker;
 use crate::linked_list::DetectListAdd;
 use crate::switch::{self, CompleteSwitch};
-use crate::struct_layouts;
 use crate::util::{
     bumpvec_with_capacity, ControlExt, MemAccessExt, OptionExt, OperandExt, is_global,
-    seems_assertion_call,
+    seems_assertion_call, ExecStateExt,
 };
 
 pub(crate) struct BulletCreation<'e, Va: VirtualAddress> {
@@ -131,7 +130,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 }
                 let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
                 let is_player = arg4
-                    .if_mem8_offset(struct_layouts::unit_player::<E::VirtualAddress>())
+                    .if_mem8_offset(E::struct_layouts().unit_player())
                     .map(|x| x == unit)
                     .unwrap_or(false);
                 if !is_player {
@@ -516,12 +515,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        let flingy_flags_offset = struct_layouts::flingy_flags::<E::VirtualAddress>();
-        let movement_type_offset = struct_layouts::flingy_movement_type::<E::VirtualAddress>();
-        let next_move_wp_offset = struct_layouts::flingy_next_move_waypoint::<E::VirtualAddress>();
-        let pos_offset = struct_layouts::flingy_pos::<E::VirtualAddress>();
-        let exact_pos_offset = struct_layouts::flingy_exact_pos::<E::VirtualAddress>();
-        let speed_offset = struct_layouts::flingy_speed::<E::VirtualAddress>();
+        let flingy_flags_offset = E::struct_layouts().flingy_flags();
+        let movement_type_offset = E::struct_layouts().flingy_movement_type();
+        let next_move_wp_offset = E::struct_layouts().flingy_next_move_waypoint();
+        let pos_offset = E::struct_layouts().flingy_pos();
+        let exact_pos_offset = E::struct_layouts().flingy_exact_pos();
+        let speed_offset = E::struct_layouts().flingy_speed();
         let ctx = ctrl.ctx();
         let ecx = ctx.register(1);
         match self.state {
@@ -725,7 +724,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
                                 return;
                             }
                         }
-                        let ok = struct_layouts::if_unit_sprite::<E::VirtualAddress>(this) ==
+                        let ok = E::struct_layouts().if_unit_sprite(this) ==
                             Some(ecx);
                         if ok {
                             let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
@@ -993,8 +992,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let ctx = ctrl.ctx();
-        let target_offset = struct_layouts::unit_target::<E::VirtualAddress>();
-        let parent_offset = struct_layouts::bullet_parent::<E::VirtualAddress>();
+        let target_offset = E::struct_layouts().unit_target();
+        let parent_offset = E::struct_layouts().bullet_parent();
         let ecx = ctx.register(1);
         match self.state {
             MissileDamageState::FindSwitch => {
@@ -1018,9 +1017,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         .or_else(|| Some((condition, false)))
                         .and_then(|x| {
                             x.0.if_arithmetic_and_const(0x1)?
-                                .if_mem8_offset(
-                                    struct_layouts::bullet_flags::<E::VirtualAddress>()
-                                )?;
+                                .if_mem8_offset(E::struct_layouts().bullet_flags())?;
                             Some(x.1)
                         });
                     if let Some(jump_on_zero) = result {
@@ -1095,8 +1092,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         let this_target =
                             ctrl.if_mem_word_offset(this, target_offset) == Some(ecx);
                         if this_target {
-                            let timer_offset =
-                                struct_layouts::unit_lockdown_timer::<E::VirtualAddress>();
+                            let timer_offset = E::struct_layouts().unit_lockdown_timer();
                             let lockdown_timer = ctx.mem8(ecx, timer_offset);
                             if ctrl.resolve(lockdown_timer).if_constant() == Some(0x83) {
                                 self.result.disable_unit = Some(dest);
@@ -1121,9 +1117,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     // Just move 0x83 always to lockdown timer value to not having
                     // to handle min/max checks
                     let mem = ctrl.resolve_mem(mem);
-                    if mem.address().1 ==
-                        struct_layouts::unit_lockdown_timer::<E::VirtualAddress>()
-                    {
+                    if mem.address().1 == E::struct_layouts().unit_lockdown_timer() {
                         ctrl.move_resolved(&DestOperand::Memory(mem), ctx.constant(0x83));
                         ctrl.skip_operation();
                     }
@@ -1197,9 +1191,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             // confusing with increment_kill_scores
                             let c_a2 = ctrl.resolve(self.arg_cache.on_call(1));
                             let is_parent_player =
-                                c_a2.if_mem8_offset(
-                                    struct_layouts::unit_player::<E::VirtualAddress>()
-                                ).is_some();
+                                c_a2.if_mem8_offset(E::struct_layouts().unit_player()).is_some();
                             self.increment_kill_scores_seen = is_parent_player;
                             ctrl.clear_unchecked_branches();
                         } else {
@@ -1357,9 +1349,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for HitUnitAnalyzer<'a, 
                     let result = condition.if_arithmetic_eq_neq_zero(ctx)
                         .and_then(|x| {
                             x.0.if_arithmetic_and_const(0x2)?
-                                .if_mem8_offset(
-                                    struct_layouts::bullet_flags::<E::VirtualAddress>()
-                                )?;
+                                .if_mem8_offset(E::struct_layouts().bullet_flags())?;
                             Some(x.1)
                         });
                     if let Some(jump_on_zero) = result {
@@ -1381,9 +1371,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for HitUnitAnalyzer<'a, 
                 }
             }
             HitUnitState::HallucinationHit | HitUnitState::DoWeaponDamage => {
-                let facing_offset = struct_layouts::flingy_facing_direction::<E::VirtualAddress>();
-                let parent_offset = struct_layouts::bullet_parent::<E::VirtualAddress>();
-                let weapon_id_offset = struct_layouts::bullet_weapon_id::<E::VirtualAddress>();
+                let facing_offset = E::struct_layouts().flingy_facing_direction();
+                let parent_offset = E::struct_layouts().bullet_parent();
+                let weapon_id_offset = E::struct_layouts().bullet_weapon_id();
                 let call_dest = if let Operation::Call(dest) = *op {
                     Some(dest)
                 } else if let Operation::Jump { condition, to } = *op {
@@ -1579,7 +1569,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             self.inline_depth = self.inline_depth.wrapping_sub(1);
                         }
                     } else {
-                        let sprite_offset = struct_layouts::unit_sprite::<E::VirtualAddress>();
+                        let sprite_offset = E::struct_layouts().unit_sprite();
                         let ok = ctrl.if_mem_word_offset(this, sprite_offset) == Some(ecx) &&
                             arg1.if_arithmetic_and_const(0x1f).is_some();
                         if ok {
@@ -1625,8 +1615,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     }
                 } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     let mem = ctrl.resolve_mem(mem);
-                    let strength_offset =
-                        struct_layouts::unit_ground_strength::<E::VirtualAddress>();
+                    let strength_offset = E::struct_layouts().unit_ground_strength();
                     if mem.address() == (ecx, strength_offset) {
                         if self.inline_depth != 0 {
                             self.result.unit_update_strength = Some(self.func_entry);

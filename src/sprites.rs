@@ -11,8 +11,9 @@ use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::hash_map::HashMap;
 use crate::linked_list::DetectListAdd;
-use crate::struct_layouts;
-use crate::util::{ControlExt, OperandExt, OptionExt, single_result_assign, bumpvec_with_capacity};
+use crate::util::{
+    ControlExt, ExecStateExt, OperandExt, OptionExt, single_result_assign, bumpvec_with_capacity
+};
 
 pub struct Sprites<'e, Va: VirtualAddress> {
     pub sprite_hlines: Option<Operand<'e>>,
@@ -375,7 +376,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
             let (base, offset) = op.if_mem16()?.address();
             let offset: u32 = u32::try_from(offset).ok()?;
             let rcx = base.if_memory().filter(|mem| mem.size == E::WORD_SIZE)?
-                .if_offset(struct_layouts::unit_related::<E::VirtualAddress>())?;
+                .if_offset(E::struct_layouts().unit_related())?;
             rcx.if_register().filter(|&r| r == 1)?;
             Some(offset)
         }
@@ -416,8 +417,7 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
             });
             if ok {
                 let result = (value, offset, dest.size);
-                let order_target_offset =
-                    struct_layouts::unit_order_target_pos::<E::VirtualAddress>() as u32;
+                let order_target_offset = E::struct_layouts().unit_order_target_pos() as u32;
                 if off == order_target_offset {
                     single_result_assign(Some(result), &mut self.sprite_x_position);
                 } else if off == order_target_offset + 2 {

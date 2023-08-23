@@ -4,8 +4,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until_with_limit};
-use crate::struct_layouts;
-use crate::util::{ControlExt, OperandExt, single_result_assign};
+use crate::util::{ControlExt, ExecStateExt, OperandExt, single_result_assign};
 
 pub struct MapTileFlags<'e, Va: VirtualAddress> {
     pub map_tile_flags: Option<Operand<'e>>,
@@ -47,7 +46,7 @@ pub(crate) fn map_tile_flags<'e, E: ExecutionState<'e>>(
         type State = analysis::DefaultState;
         type Exec = F;
         fn operation(&mut self, ctrl: &mut Control<'b, '_, '_, Self>, op: &Operation<'b>) {
-            let offset = struct_layouts::unit_nuke_dot_sprite::<F::VirtualAddress>();
+            let offset = F::struct_layouts().unit_nuke_dot_sprite();
             match *op {
                 Operation::Call(dest) => {
                     // order_nuke_track calls update_visibility_point([unit + 0xd0])

@@ -213,30 +213,18 @@ pub(crate) fn send_command<'e, E: ExecutionState<'e>>(
     let arg_cache = &analysis.arg_cache;
     let ctx = analysis.ctx;
 
-    // Search for stim button action
-    let stim_funcs = firegraft.buttonsets.iter().filter_map(|&buttons| {
-        binary.read_address(buttons + E::VirtualAddress::SIZE).ok()
-    }).filter_map(|marine_buttons| {
-        let button_size = struct_layouts::button_size::<E::VirtualAddress>();
-        let action_offset = struct_layouts::button_action_func::<E::VirtualAddress>();
-        binary.read_address(marine_buttons + 5 * button_size + action_offset).ok()
-    });
+    let &button_sets = firegraft.buttonsets.first()?;
+    let stim_func = struct_layouts::button_set_index_to_action(binary, button_sets, 0, 5)?;
 
-    let mut result = None;
-    for stim_func in stim_funcs {
-        let mut analysis = FuncAnalysis::new(binary, ctx, stim_func);
-        let mut analyzer = FindSendCommand {
-            result: None,
-            binary,
-            arg_cache,
-            is_inlining: false,
-        };
-        analysis.analyze(&mut analyzer);
-        if single_result_assign(analyzer.result, &mut result) {
-            break;
-        }
-    }
-    result
+    let mut analysis = FuncAnalysis::new(binary, ctx, stim_func);
+    let mut analyzer = FindSendCommand {
+        result: None,
+        binary,
+        arg_cache,
+        is_inlining: false,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
 }
 
 struct FindSendCommand<'a, 'e, E: ExecutionState<'e>> {

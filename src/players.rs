@@ -7,11 +7,10 @@ use scarf::operand::{MemAccessSize};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::analysis_state::{AnalysisState, StateEnum, LocalPlayerState};
-use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::util::{
-    ControlExt, OptionExt, OperandExt, bumpvec_with_capacity, seems_assertion_call,
+    ControlExt, OptionExt, OperandExt, bumpvec_with_capacity, seems_assertion_call, ExecStateExt,
     single_result_assign,
 };
 
@@ -52,9 +51,7 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
                                 Some((l, r))
                                     .and_either_other(|x| {
                                         // Check for [local_player_id] == player
-                                        x.if_mem8_offset(
-                                                struct_layouts::unit_player::<E::VirtualAddress>()
-                                            )
+                                        x.if_mem8_offset(E::struct_layouts().unit_player())
                                     })
                                     .or_else(|| {
                                         // Check for [local_player_id] == 0xff or undef
@@ -92,9 +89,7 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
                             let val = ctrl.resolve(val);
                             let has_player_field_access = val.iter_no_mem_addr()
                                 .any(|x| {
-                                    x.if_mem8_offset(
-                                            struct_layouts::unit_player::<E::VirtualAddress>()
-                                        )
+                                    x.if_mem8_offset(E::struct_layouts().unit_player())
                                         .and_then(|x| ctrl.if_mem_word(x))
                                         .is_some()
                                 });

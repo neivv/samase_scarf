@@ -13,9 +13,9 @@ use crate::analysis_find::{FunctionFinder, entry_of_until, EntryOf};
 use crate::call_tracker::CallTracker;
 use crate::float_cmp::{FloatEqTracker, FloatCmpJump};
 use crate::hash_map::{HashSet};
-use crate::struct_layouts;
 use crate::util::{
-    ControlExt, OperandExt, OptionExt, single_result_assign, is_global, resolve_rdata_const,
+    ControlExt, ExecStateExt, OperandExt, OptionExt, single_result_assign, is_global,
+    resolve_rdata_const,
 };
 use crate::vtables::Vtables;
 
@@ -291,7 +291,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 
                 let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                 let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
                 let ok = ctx.and_const(arg1, 0xff).if_mem8().is_some() &&
-                    arg3.if_mem16_offset(struct_layouts::image_id::<E::VirtualAddress>())
+                    arg3.if_mem16_offset(E::struct_layouts().image_id())
                         .filter(|&x| x == ctx.register(1))
                         .is_some();
                 if ok {
@@ -479,8 +479,8 @@ pub(crate) fn draw_game_layer<'e, E: ExecutionState<'e>>(
 
     let dest_addr_op = ctx.add_const(
         draw_layers,
-        struct_layouts::graphic_layer_size::<E::VirtualAddress>() * 5 +
-            struct_layouts::graphic_layer_draw_func::<E::VirtualAddress>()
+        E::struct_layouts().graphic_layer_size() * 5 +
+            E::struct_layouts().graphic_layer_draw_func()
     );
     let dest_addr = E::VirtualAddress::from_u64(dest_addr_op.if_constant()?);
     let refs = funcs.find_functions_using_global(actx, dest_addr);
@@ -568,9 +568,7 @@ pub(crate) fn analyze_draw_game_layer<'e, E: ExecutionState<'e>>(
         zoom_action_target: None,
         zoom_action_completion: None,
     };
-    let sprite_first_overlay_offset =
-        match struct_layouts::sprite_first_overlay::<E::VirtualAddress>(sprite_size)
-    {
+    let sprite_first_overlay_offset = match E::struct_layouts().sprite_first_overlay(sprite_size) {
         Some(s) => s,
         None => return result,
     };
@@ -805,8 +803,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer
                                     E::VirtualAddress::SIZE;
                                 let cursor_marker = ctrl.if_mem_word_offset(this, offset.into())
                                     .and_then(|sprite| {
-                                        let sprite_offset =
-                                            struct_layouts::unit_sprite::<E::VirtualAddress>();
+                                        let sprite_offset = E::struct_layouts().unit_sprite();
                                         ctrl.if_mem_word_offset(sprite, sprite_offset)
                                     });
                                 if let Some(cursor_marker) = cursor_marker {
@@ -816,8 +813,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer
                             } else {
                                 let should_inline = self.inline_depth == 0 ||
                                     (self.inline_depth == 1 && {
-                                        let sprite_offset =
-                                            struct_layouts::unit_sprite::<E::VirtualAddress>();
+                                        let sprite_offset = E::struct_layouts().unit_sprite();
                                         ctrl.if_mem_word_offset(this, sprite_offset).is_some()
                                     });
                                 if should_inline {

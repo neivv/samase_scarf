@@ -17,7 +17,7 @@ use crate::hash_map::HashMap;
 use crate::struct_layouts;
 use crate::util::{
     ControlExt, MemAccessExt, OperandExt, OptionExt, single_result_assign, if_arithmetic_eq_neq,
-    is_global, bumpvec_with_capacity,
+    is_global, bumpvec_with_capacity, ExecStateExt,
 };
 use crate::vtables::Vtables;
 
@@ -438,9 +438,7 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
                         let val = ctrl.resolve(val);
                         let result = Self::check_move(val);
                         if let Some((screen_coord, scale, struct_offset)) = result {
-                            if struct_offset ==
-                                struct_layouts::event_mouse_xy::<E::VirtualAddress>() as u32
-                            {
+                            if struct_offset == E::struct_layouts().event_mouse_xy() as u32 {
                                 self.result.screen_x = Some(screen_coord);
                                 self.result.scale = Some(scale);
                             } else {
@@ -2068,8 +2066,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         if let Some(mem) = value.if_mem16() {
                             let (base, offset) = mem.address();
                             if base == self.arg_cache.on_entry(0) && dest.is_global() {
-                                let xy_offset =
-                                    struct_layouts::event_mouse_xy::<E::VirtualAddress>();
+                                let xy_offset = E::struct_layouts().event_mouse_xy();
                                 if offset == xy_offset {
                                     self.result.select_start_x = Some(ctx.memory(&dest));
                                     result_changed = true;

@@ -12,10 +12,9 @@ use crate::analysis::{ArgCache, AnalysisCtx};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::call_tracker::CallTracker;
 use crate::linked_list::DetectListAdd;
-use crate::struct_layouts;
 use crate::util::{
     ControlExt, OperandExt, OptionExt, MemAccessExt, bumpvec_with_capacity, if_arithmetic_eq_neq,
-    if_callable_const, single_result_assign, is_stack_address, is_global,
+    if_callable_const, single_result_assign, is_stack_address, is_global, ExecStateExt,
 };
 
 #[derive(Clone)]
@@ -706,17 +705,14 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if self.check_malloc_free && self.result.allocator.is_none() {
                     // Note: Assuming this is inside image vector resize.
                     // alloc image_count * 0x40
-                    let is_alloc =
-                        struct_layouts::if_mul_image_size::<E::VirtualAddress>(arg1_not_this)
-                            .is_some();
+                    let is_alloc = E::struct_layouts().if_mul_image_size(arg1_not_this).is_some();
                     if is_alloc {
                         if let Some(s) = dest_op.if_constant() {
                             self.result.smem_alloc = Some(E::VirtualAddress::from_u64(s));
                             return;
                         }
                     }
-                    let is_thiscall_alloc =
-                        struct_layouts::if_mul_image_size::<E::VirtualAddress>(arg1).is_some();
+                    let is_thiscall_alloc = E::struct_layouts().if_mul_image_size(arg1).is_some();
                     if is_thiscall_alloc {
                         // Check for call word[word[ecx] + 4],
                         // allocator.vtable.alloc(size, align)
@@ -1118,9 +1114,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let ctx = ctrl.ctx();
-        let dcreep_list_index_offset =
-            struct_layouts::dcreep_list_index::<E::VirtualAddress>();
-        let dcreep_x_offset = struct_layouts::dcreep_x::<E::VirtualAddress>();
+        let dcreep_list_index_offset = E::struct_layouts().dcreep_list_index();
+        let dcreep_x_offset = E::struct_layouts().dcreep_x();
         match self.state {
             StepObjectsAnalysisState::DcreepUpdateCounter => {
                 if let Operation::Call(dest) = *op {
@@ -1440,14 +1435,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let ok = if self.state == StepObjectsAnalysisState::DcreepCheck {
                             inner.if_arithmetic_and_const(0x40)
                                 .and_then(|x| {
-                                    let flags_offset =
-                                        struct_layouts::unit_flags::<E::VirtualAddress>();
+                                    let flags_offset = E::struct_layouts().unit_flags();
                                     x.if_mem8_offset(flags_offset + 1)
                                 })
                                 .filter(|&x| Some(x) == self.result.first_dying_unit)
                                 .is_some()
                         } else {
-                            let sprite_offset = struct_layouts::unit_sprite::<E::VirtualAddress>();
+                            let sprite_offset = E::struct_layouts().unit_sprite();
                             ctrl.if_mem_word_offset(inner, sprite_offset)
                                 .filter(|&x| Some(x) == self.result.first_dying_unit)
                                 .is_some()
@@ -1479,7 +1473,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     // matched later on.
                     let mem = ctrl.resolve_mem(mem);
                     let (base, offset) = mem.address();
-                    if offset == struct_layouts::unit_sprite::<E::VirtualAddress>() &&
+                    if offset == E::struct_layouts().unit_sprite() &&
                         Some(base) == self.result.first_dying_unit
                     {
                         ctrl.skip_operation();
@@ -1540,8 +1534,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             Some(s) => s,
                             None => return,
                         };
-                        let unit_id_offset = struct_layouts::unit_id::<E::VirtualAddress>();
-                        let x_offset = struct_layouts::flingy_pos::<E::VirtualAddress>();
+                        let unit_id_offset = E::struct_layouts().unit_id();
+                        let x_offset = E::struct_layouts().flingy_pos();
                         let y_offset = x_offset + 2;
 
                         let ok = ctrl.resolve(self.arg_cache.on_call(0))
@@ -1706,9 +1700,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             .filter(|x| x.1 == ctx.const_0())
                             .and_then(|x| {
                                 x.0.if_arithmetic_and_const(0x3)?
-                                    .if_mem8_offset(
-                                        struct_layouts::unit_flags::<E::VirtualAddress>() + 1,
-                                    )
+                                    .if_mem8_offset(E::struct_layouts().unit_flags() + 1)
                             })
                             .filter(|&x| x == self.first_active_unit)
                             .is_some();
@@ -1777,7 +1769,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         self.inline_limit -= 1;
                     }
                     let condition = ctrl.resolve(condition);
-                    let offset = struct_layouts::unit_invisibility_effects::<E::VirtualAddress>();
+                    let offset = E::struct_layouts().unit_invisibility_effects();
                     let result = if_arithmetic_eq_neq(condition)
                         .filter(|x| x.1 == ctx.const_0())
                         .and_then(|x| x.0.if_mem8_offset(offset));
@@ -1834,9 +1826,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 } else if let Operation::Jump { condition, .. } = *op {
                     let condition = ctrl.resolve(condition);
                     let ok = condition.if_arithmetic_gt()
-                        .and_either(|x| {
-                            x.if_mem8_offset(struct_layouts::unit_order::<E::VirtualAddress>())
-                        })
+                        .and_either(|x| x.if_mem8_offset(E::struct_layouts().unit_order()))
                         .filter(|&x| x.0 == self.first_active_bullet)
                         .is_some();
                     if ok {

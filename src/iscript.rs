@@ -7,9 +7,8 @@ use scarf::exec_state::VirtualAddress;
 
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::linked_list::DetectListAdd;
-use crate::struct_layouts::{self, if_unit_sprite};
 use crate::switch;
-use crate::util::{ControlExt, OperandExt, single_result_assign};
+use crate::util::{ControlExt, ExecStateExt, OperandExt, single_result_assign};
 
 pub(crate) struct StepIscript<'e, Va: VirtualAddress> {
     pub switch_table: Option<Va>,
@@ -42,8 +41,7 @@ pub(crate) fn step_iscript<'e, E: ExecutionState<'e>>(
         result: None,
         inline_limit: 0,
         arg_cache: &actx.arg_cache,
-        sprite_first_overlay:
-            struct_layouts::sprite_first_overlay::<E::VirtualAddress>(sprite_size)?,
+        sprite_first_overlay: E::struct_layouts().sprite_first_overlay(sprite_size)?,
         entry_esp: ctx.register(4),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, finish_unit_pre);
@@ -98,15 +96,13 @@ impl<'a, 'e, E: ExecutionState<'e>> FindStepIscript<'a, 'e, E> {
         let this = ctrl.resolve_register(1);
         let arg1 = ctrl.resolve(arg_cache.on_thiscall_call(0));
         let is_first_overlay = ctrl.if_mem_word_offset(this, self.sprite_first_overlay.into())
-            .and_then(if_unit_sprite::<E::VirtualAddress>) ==
+            .and_then(|x| E::struct_layouts().if_unit_sprite(x)) ==
             Some(ctx.register(1));
         if is_first_overlay {
             let zero = ctx.const_0();
             let ok = ctrl.resolve(arg_cache.on_thiscall_call(1)) == zero &&
                 ctrl.resolve(arg_cache.on_thiscall_call(2)) == zero &&
-                arg1.if_arithmetic_add_const(
-                    struct_layouts::image_iscript::<E::VirtualAddress>()
-                ) == Some(this);
+                arg1.if_arithmetic_add_const(E::struct_layouts().image_iscript()) == Some(this);
             if ok {
                 self.result = Some(dest);
                 ctrl.end_analysis();
@@ -116,7 +112,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FindStepIscript<'a, 'e, E> {
         let inline = consider_inline && (
             is_first_overlay ||
             this == ctx.register(1) ||
-            if_unit_sprite::<E::VirtualAddress>(this) == Some(ctx.register(1))
+            E::struct_layouts().if_unit_sprite(this) == Some(ctx.register(1))
         ) && ctx.and_const(arg1, 0xff).if_constant() == Some(0x10);
 
         if inline {
@@ -385,7 +381,7 @@ impl<'e, 'b, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyzer<'
                     }
                     let arg2 = ctrl.resolve(self.args.on_thiscall_call(1));
 
-                    let image_parent = struct_layouts::image_parent::<E::VirtualAddress>();
+                    let image_parent = E::struct_layouts().image_parent();
                     let arg2_ok = ctrl.if_mem_word_offset(arg2, image_parent).is_some();
                     if !arg2_ok {
                         return;

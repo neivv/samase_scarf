@@ -14,11 +14,10 @@ use crate::analysis_state::{
 };
 use crate::analysis_find::{EntryOf, StringRefs, FunctionFinder, entry_of_until};
 use crate::call_tracker::CallTracker;
-use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
 use crate::util::{
     ControlExt, MemAccessExt, OperandExt, OptionExt, bumpvec_with_capacity, single_result_assign,
-    is_global, is_stack_address,
+    is_global, is_stack_address, ExecStateExt,
 };
 
 #[derive(Clone)]
@@ -452,7 +451,7 @@ impl<'e> FindTooltipCtrlState<'e> {
         // and one of the two func ptrs is graphic_layers[1].draw_func
         let expected_draw_func = ctx.add_const(
             one,
-            struct_layouts::graphic_layer_draw_func::<E::VirtualAddress>(),
+            E::struct_layouts().graphic_layer_draw_func(),
         );
         let (draw_tooltip_layer, other) = if expected_draw_func == func1.0 {
             (func1.1, func2)
@@ -465,7 +464,7 @@ impl<'e> FindTooltipCtrlState<'e> {
         result.draw_f10_menu_tooltip = Some(E::VirtualAddress::from_u64(other.1));
         result.graphic_layers = Some(ctx.sub_const(
             one,
-            struct_layouts::graphic_layer_size::<E::VirtualAddress>(),
+            E::struct_layouts().graphic_layer_size(),
         ));
         result.current_tooltip_ctrl = Some(tooltip_ctrl);
         result.draw_tooltip_layer = Some(E::VirtualAddress::from_u64(draw_tooltip_layer));
@@ -522,7 +521,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'acx, 'e, E>
                             &DestOperand::from_oper(self.arg_cache.on_call(0)),
                             ctx.custom(1),
                         );
-                        let type_offset = struct_layouts::event_type::<E::VirtualAddress>();
+                        let type_offset = E::struct_layouts().event_type();
                         exec_state.move_to(
                             &DestOperand::Memory(
                                 ctx.mem_access(ctx.custom(0), type_offset, MemAccessSize::Mem16)
@@ -657,8 +656,8 @@ pub(crate) fn draw_graphic_layers<'e, E: ExecutionState<'e>>(
     let funcs = functions.functions();
     let global_refs = functions.find_functions_using_global(analysis, graphic_layers_addr);
     let mut result = None;
-    let call_offset = 7 * struct_layouts::graphic_layer_size::<E::VirtualAddress>() +
-        struct_layouts::graphic_layer_draw_func::<E::VirtualAddress>();
+    let call_offset = 7 * E::struct_layouts().graphic_layer_size() +
+        E::struct_layouts().graphic_layer_draw_func();
     let expected_call_addr = ctx.mem_any(
         E::WORD_SIZE,
         graphic_layers,
@@ -802,7 +801,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                         if self.result.cmdicons.is_none() && c == 0xc {
                             let (base, off) = dest.address();
                             let is_u16_move =
-                                struct_layouts::control_u16_value::<E::VirtualAddress>()
+                                E::struct_layouts().control_u16_value()
                                     .iter()
                                     .find(|&&x| x == off)
                                     .map(|&c| (base, c as u16));
@@ -916,7 +915,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         .is_some();
                     if is_calling_event_handler {
                         let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                        let x_offset = struct_layouts::event_mouse_xy::<E::VirtualAddress>();
+                        let x_offset = E::struct_layouts().event_mouse_xy();
                         let x = ctrl.read_memory(
                             &ctx.mem_access(arg2, x_offset, MemAccessSize::Mem16)
                         );
@@ -1346,7 +1345,7 @@ fn find_child_draw_func<'e, E: ExecutionState<'e>>(
         &DestOperand::from_oper(arg2_loc),
         event_address,
     );
-    let event_type = struct_layouts::event_type::<E::VirtualAddress>();
+    let event_type = E::struct_layouts().event_type();
     exec_state.move_to(
         &DestOperand::from_oper(ctx.mem16(event_address, event_type)),
         ctx.constant(0xe),
@@ -1385,8 +1384,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindChildDrawFunc<'a
             {
                 if let Some(val) = ctrl.resolve(val).if_constant() {
                     let mem = ctrl.resolve_mem(mem);
-                    // Older offset for draw func was 0x30, 0x48 is current
-                    let ok = struct_layouts::control_draw_funcs::<E::VirtualAddress>()
+                    let ok = E::struct_layouts().control_draw_funcs()
                         .iter()
                         .any(|&offset| {
                             mem.if_offset(offset)
@@ -2390,8 +2388,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunDialogChildAnalyz
                             }
                         }
                     } else {
-                        let offsets =
-                            struct_layouts::dialog_once_in_frame::<E::VirtualAddress>();
+                        let offsets = E::struct_layouts().dialog_once_in_frame();
                         let ok = ctrl.if_mem_word(dest)
                             .and_then(|mem| {
                                 let (base, off) = mem.address();

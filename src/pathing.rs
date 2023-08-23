@@ -3,9 +3,8 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operand, Operation, DestOperand};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
-use crate::struct_layouts;
 use crate::switch::simple_switch_branch;
-use crate::util::{ControlExt, OperandExt, OptionExt, single_result_assign};
+use crate::util::{ControlExt, ExecStateExt, OperandExt, OptionExt, single_result_assign};
 
 #[derive(Clone, Debug)]
 pub struct RegionRelated<'e, Va: VirtualAddress> {
@@ -37,15 +36,15 @@ pub(crate) fn regions<'e, E: ExecutionState<'e>>(
     let mut state = E::initial_state(ctx, binary);
     let player = ctx.mem32(
         aiscript_hook.script_operand_at_switch,
-        struct_layouts::ai_script_player::<E::VirtualAddress>(),
+        E::struct_layouts().ai_script_player(),
     );
     let x = ctx.mem32(
         aiscript_hook.script_operand_at_switch,
-        struct_layouts::ai_script_center::<E::VirtualAddress>(),
+        E::struct_layouts().ai_script_center(),
     );
     let y = ctx.mem32(
         aiscript_hook.script_operand_at_switch,
-        struct_layouts::ai_script_center::<E::VirtualAddress>() + 4,
+        E::struct_layouts().ai_script_center() + 4,
     );
     state.move_to(&DestOperand::from_oper(player), ctx.const_0());
     state.move_to(&DestOperand::from_oper(x), ctx.constant(999));
@@ -124,9 +123,8 @@ impl<'a, 'e, E: ExecutionState<'e>> RegionsAnalyzer<'a, 'e, E> {
                 let arg1 =  ctrl.resolve(self.arg_cache.on_call(0));
                 let ai_regions = arg1.if_arithmetic_add()
                     .and_either_other(|x| {
-                        x.if_arithmetic_mul_const(
-                            struct_layouts::ai_region_size::<E::VirtualAddress>()
-                        ).filter(|x| x.contains_undefined())
+                        x.if_arithmetic_mul_const(E::struct_layouts().ai_region_size())
+                            .filter(|x| x.contains_undefined())
                     })
                     .and_then(|x| ctrl.if_mem_word(x));
                 if let Some(ai_regions_mem) = ai_regions {
@@ -172,9 +170,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindPathing<'e, E> {
                 // So `(pathing + x * 2) + const_regions_offset`
                 let addr = condition.iter_no_mem_addr()
                     .flat_map(|x| {
-                        x.if_mem16_offset(
-                            struct_layouts::pathing_map_tile_regions::<E::VirtualAddress>()
-                        )
+                        x.if_mem16_offset(E::struct_layouts().pathing_map_tile_regions())
                     })
                     .next();
                 if let Some(addr) = addr {

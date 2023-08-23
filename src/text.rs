@@ -9,8 +9,9 @@ use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until, find_bytes};
 use crate::analysis_state::{
     AnalysisState, StateEnum, FindCacheRenderAsciiState, IsCacheRenderAsciiState,
 };
-use crate::struct_layouts;
-use crate::util::{OptionExt, OperandExt, single_result_assign, bumpvec_with_capacity, ControlExt};
+use crate::util::{
+    ControlExt, ExecStateExt, OptionExt, OperandExt, single_result_assign, bumpvec_with_capacity,
+};
 
 #[derive(Clone)]
 pub struct FontRender<Va: VirtualAddress> {
@@ -429,11 +430,7 @@ impl<'a, 'e, E: ExecutionState<'e>> TtfCacheCharacterAnalyzer<'a, 'e, E> {
     fn is_glyph_set_ptr(&self, op: Operand<'e>) -> bool {
         op.if_arithmetic_add()
             .and_either_other(|x| x.if_register().filter(|&r| r == 1))
-            .and_then(|x| {
-                x.if_arithmetic_mul_const(
-                    struct_layouts::glyph_set_size::<E::VirtualAddress>(),
-                )
-            })
+            .and_then(|x| x.if_arithmetic_mul_const(E::struct_layouts().glyph_set_size()))
             .filter(|&x| Operand::and_masked(x).0 == self.arg_cache.on_thiscall_entry(0))
             .is_some()
     }

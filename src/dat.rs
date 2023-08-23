@@ -59,9 +59,9 @@ use crate::analysis_find::{EntryOf, FunctionFinder, StringRefs, entry_of_until};
 use crate::detect_tail_call::DetectTailCall;
 use crate::hash_map::{HashMap, HashSet};
 use crate::range_list::RangeList;
-use crate::struct_layouts;
 use crate::util::{
     bumpvec_with_capacity, single_result_assign, if_callable_const, ControlExt, OperandExt,
+    ExecStateExt,
 };
 use crate::x86_64_unwind;
 
@@ -2395,9 +2395,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         op.if_memory()
             .filter(|mem| mem.size == E::WORD_SIZE)
             .and_then(|mem| {
-                mem.if_offset(
-                    struct_layouts::control_ptr_value::<E::VirtualAddress>()
-                )
+                mem.if_offset(E::struct_layouts().control_ptr_value())
             })
             .filter(|&base| base == arg_cache.on_entry(0))
             .is_some()
@@ -2422,22 +2420,22 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             return Ok(());
         }
         if size == MemAccessSize::Mem8 {
-            if offset == struct_layouts::bullet_weapon_id::<E::VirtualAddress>() &&
+            if offset == E::struct_layouts().bullet_weapon_id() &&
                 dat == DatType::Weapons
             {
                 // Most likely Bullet.weapon_id, todo
                 return Ok(());
-            } else if offset == struct_layouts::unit_current_tech::<E::VirtualAddress>() &&
+            } else if offset == E::struct_layouts().unit_current_tech() &&
                 dat == DatType::TechData
             {
                 // Unit.building_union.current_tech, todo
                 return Ok(());
-            } else if offset == struct_layouts::unit_current_upgrade::<E::VirtualAddress>() &&
+            } else if offset == E::struct_layouts().unit_current_upgrade() &&
                 dat == DatType::Upgrades
             {
                 // Unit.building_union.current_upgrade, todo
                 return Ok(());
-            } else if offset == struct_layouts::status_screen_stat_dat::<E::VirtualAddress>() &&
+            } else if offset == E::struct_layouts().status_screen_stat_dat() &&
                 dat == DatType::Weapons && self.is_status_screen_data(base)
             {
                 // This is a bit hacky, especially limiting to only ArrayIndex,
@@ -3837,7 +3835,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let ctx = ctrl.ctx();
                         let (base, offset) = mem.address();
                         if base == ctx.register(1) &&
-                            offset == struct_layouts::unit_subunit_linked::<E::VirtualAddress>()
+                            offset == E::struct_layouts().unit_subunit_linked()
                         {
                             self.flags |= SUBUNIT_READ;
                         }
@@ -3857,9 +3855,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let condition = ctrl.resolve(condition);
                     let inf_kerry_cmp = condition.if_arithmetic_eq_neq()
                         .filter(|x| x.1.if_constant() == Some(0x33))
-                        .and_then(|x| {
-                            x.0.if_mem16_offset(struct_layouts::unit_id::<E::VirtualAddress>())
-                        })
+                        .and_then(|x| x.0.if_mem16_offset(E::struct_layouts().unit_id()))
                         .is_some();
                     if inf_kerry_cmp {
                         self.flags |= UNIT_ID_IS_INF_KERRIGAN;
@@ -3939,12 +3935,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> RecognizeDatPatchFunc<'a, 'b, 'acx
                     }
                 });
             if let Some((offset, size)) = this_field {
-                if offset == struct_layouts::unit_current_tech::<E::VirtualAddress>() &&
+                if offset == E::struct_layouts().unit_current_tech() &&
                     size == MemAccessSize::Mem8
                 {
                     return Ok(Some(UnitCurrentTech));
                 }
-                if offset == struct_layouts::unit_current_upgrade::<E::VirtualAddress>() &&
+                if offset == E::struct_layouts().unit_current_upgrade() &&
                     size == MemAccessSize::Mem8
                 {
                     return Ok(Some(UnitCurrentUpgrade));

@@ -10,11 +10,11 @@ use crate::analysis_find::{EntryOf, entry_of_until, FunctionFinder};
 use crate::add_terms::collect_arith_add_terms;
 use crate::call_tracker::CallTracker;
 use crate::linked_list::{self, DetectListAdd};
-use crate::struct_layouts;
+use crate::struct_layouts::StructLayouts;
 use crate::switch::CompleteSwitch;
 use crate::util::{
     ControlExt, MemAccessExt, OptionExt, OperandExt, single_result_assign, bumpvec_with_capacity,
-    is_global, is_global_struct, if_arithmetic_eq_neq, seems_assertion_call,
+    is_global, is_global_struct, if_arithmetic_eq_neq, seems_assertion_call, ExecStateExt,
 };
 
 #[derive(Clone, Debug)]
@@ -191,7 +191,8 @@ struct ActiveHiddenAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
     memref_address: E::VirtualAddress,
 }
 
-fn check_active_hidden_cond<'e, Va: VirtualAddress>(
+fn check_active_hidden_cond<'e>(
+    struct_layouts: StructLayouts,
     condition: Operand<'e>,
     ctx: OperandCtx<'e>,
 ) -> Option<Operand<'e>> {
@@ -201,7 +202,7 @@ fn check_active_hidden_cond<'e, Va: VirtualAddress>(
         .filter(|&(_, r)| r == ctx.const_0())
         .and_then(|(l, _)| {
             l.if_memory()?
-                .if_offset(struct_layouts::unit_subunit_linked::<Va>())
+                .if_offset(struct_layouts.unit_subunit_linked())
                 .filter(|x| !x.contains_undefined())
         })
 }
@@ -243,9 +244,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Jump { condition, .. } => {
                 let condition = ctrl.resolve(condition);
                 let ctx = ctrl.ctx();
-                if let Some(addr) =
-                    check_active_hidden_cond::<E::VirtualAddress>(condition, ctx)
-                {
+                if let Some(addr) = check_active_hidden_cond(E::struct_layouts(), condition, ctx) {
                     // A way to work around duplicates from loops.
                     // Could also check to only accept constant addr,
                     // but I'm scared that it'll change one day.
@@ -666,9 +665,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnaly
                             .filter(|&x| x.if_constant() == Some(0x21))
                             .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
                             .and_then(|x| {
-                                x.if_mem8_offset(
-                                    struct_layouts::unit_player::<E::VirtualAddress>()
-                                )
+                                x.if_mem8_offset(E::struct_layouts().unit_player())
                             })
                             .is_some();
                         if ok {
@@ -1097,10 +1094,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
                     //      or set_sprite_iscript(this = unit.sprite, a1/a2 same)
                     if self.inline_depth != 0 {
                         let this_ok = this == input_unit ||
-                            ctrl.if_mem_word_offset(
-                                    this,
-                                    struct_layouts::unit_sprite::<E::VirtualAddress>(),
-                                )
+                            ctrl.if_mem_word_offset(this, E::struct_layouts().unit_sprite())
                                 .filter(|&x| x == input_unit)
                                 .is_some();
                         if this_ok && ctx.and_const(tc_arg1, 0xff).if_constant() == Some(0x14) {
@@ -1358,10 +1352,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                             } else {
                                 return None;
                             };
-                            let sprite = rest.if_mem8_offset(
-                                struct_layouts::sprite_flags::<E::VirtualAddress>()
-                            )?;
-                            let unit_sprite = struct_layouts::unit_sprite::<E::VirtualAddress>();
+                            let sprite =
+                                rest.if_mem8_offset(E::struct_layouts().sprite_flags())?;
+                            let unit_sprite = E::struct_layouts().unit_sprite();
                             let unit = ctrl.if_mem_word_offset(sprite, unit_sprite)?;
                             if unit == ctx.register(1) {
                                 Some(())
@@ -1381,7 +1374,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                     if let Operation::Move(DestOperand::Memory(ref mem), val, None) = *op {
                         let (base, offset) = ctrl.resolve_mem(mem).address();
                         let addr_ok = base == ctx.register(1) &&
-                            offset == struct_layouts::unit_build_queue::<E::VirtualAddress>();
+                            offset == E::struct_layouts().unit_build_queue();
                         if addr_ok {
                             let val_u16 = ctx.and_const(ctrl.resolve(val), 0xffff);
                             if val_u16.if_constant() == Some(0xe4) {
@@ -1765,11 +1758,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 let ok = ctrl.resolve(condition)
                     .if_arithmetic_gt()
                     .and_either_other(|x| x.if_constant())
-                    .and_then(|x| {
-                        x.if_mem8_offset(
-                            struct_layouts::unit_movement_state::<E::VirtualAddress>()
-                        )
-                    })
+                    .and_then(|x| x.if_mem8_offset(E::struct_layouts().unit_movement_state()))
                     .filter(|&x| x == ctx.register(1))
                     .is_some();
                 if ok {
@@ -1941,9 +1930,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             let arg1 =
                                 ctx.and_const(ctrl.resolve(self.arg_cache.on_call(0)), 0xff);
                             let is_this_order =
-                                arg1.if_mem8_offset(
-                                    struct_layouts::unit_order::<E::VirtualAddress>()
-                                ) == Some(ctx.register(1));
+                                arg1.if_mem8_offset(E::struct_layouts().unit_order())
+                                    == Some(ctx.register(1));
                             if is_this_order {
                                 inline_limit = 0;
                             }
@@ -2156,7 +2144,7 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
     ) -> Option<Operand<'e>> {
         let ctx = ctrl.ctx();
         if value == ctx.and_const(self.arg_cache.on_thiscall_entry(0), 0xff) {
-            return address.if_offset(struct_layouts::order_id::<E::VirtualAddress>());
+            return address.if_offset(E::struct_layouts().order_id());
         }
         None
     }
@@ -2216,7 +2204,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PylonInitAnalyzer
             PylonInitState::FirstPylon => {
                 if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     let mem = ctrl.resolve_mem(mem);
-                    let offset = struct_layouts::unit_next_pylon::<E::VirtualAddress>();
+                    let offset = E::struct_layouts().unit_next_pylon();
                     if mem.address() == (ctx.register(1), offset) {
                         self.result.first_pylon = Some(ctrl.resolve(value));
                         self.state = PylonInitState::AddPylonAura;
@@ -2385,7 +2373,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 ctrl.resolve(self.arg_cache.on_thiscall_call(0)),
                                 0xff,
                             );
-                            if is_this_sprite_vismask::<E::VirtualAddress>(ctx, arg1) {
+                            if is_this_sprite_vismask(E::struct_layouts(), ctx, arg1) {
                                 self.inline_depth += 1;
                                 ctrl.analyze_with_current_state(self, dest);
                                 self.inline_depth -= 1;
@@ -2405,7 +2393,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let r = ctrl.resolve(r);
                         let other = Some((l, r))
                             .and_if_either_other(|x| {
-                                is_this_sprite_vismask::<E::VirtualAddress>(ctx, x)
+                                is_this_sprite_vismask(E::struct_layouts(), ctx, x)
                             });
                         if let Some(other) = other {
                             if is_global(other) && other.if_constant().is_none() {
@@ -2426,7 +2414,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if self.inline_depth < 1 {
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             let this = ctrl.resolve_register(1);
-                            let ok = struct_layouts::if_unit_sprite::<E::VirtualAddress>(this)
+                            let ok = E::struct_layouts().if_unit_sprite(this)
                                 .filter(|&x| x == ctx.register(1))
                                 .is_some();
                             if ok {
@@ -2450,9 +2438,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 None
                             }
                         })
-                        .and_then(|x| {
-                            x.if_mem16_offset(struct_layouts::image_id::<E::VirtualAddress>())
-                        });
+                        .and_then(|x| x.if_mem16_offset(E::struct_layouts().image_id()));
                     if let Some(image) = image {
                         if let Some(to) = ctrl.resolve_va(to) {
                             self.selection_circle_image = image;
@@ -2551,12 +2537,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                     .filter(|&x| x == ctx.register(1))
                                     .is_some() &&
                                 ctx.and_const(arg2, 0xffff)
-                                    .if_mem16_offset(
-                                        struct_layouts::unit_id::<E::VirtualAddress>()
-                                    )
+                                    .if_mem16_offset(E::struct_layouts().unit_id())
                                     .filter(|&x| x == ctx.register(1))
                                     .is_some() &&
-                                struct_layouts::if_unit_sprite::<E::VirtualAddress>(arg3)
+                                E::struct_layouts().if_unit_sprite(arg3)
                                     .filter(|&x| x == ctx.register(1))
                                     .is_some();
                             if ok {
@@ -2584,7 +2568,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let mem = ctrl.resolve_mem(mem);
                     let (base, offset) = mem.address();
                     if base == self.first_free_fow_sprite &&
-                        offset == struct_layouts::unit_sprite::<E::VirtualAddress>()
+                        offset == E::struct_layouts().unit_sprite()
                     {
                         let value = ctrl.resolve(value);
                         if value.if_constant().is_none() {
@@ -2715,17 +2699,18 @@ fn if_division_by_constant<'e, 'acx>(op: Operand<'e>, bump: &'acx Bump) -> Optio
         })
 }
 
-fn is_this_sprite_vismask<'e, Va: VirtualAddress>(ctx: OperandCtx<'e>, op: Operand<'e>) -> bool {
+fn is_this_sprite_vismask<'e>(
+    struct_layouts: StructLayouts,
+    ctx: OperandCtx<'e>,
+    op: Operand<'e>,
+) -> bool {
     Some(()).and_then(|()| {
-        let sprite = op.if_mem8_offset(struct_layouts::sprite_visibility_mask::<Va>())?;
+        let sprite = op.if_mem8_offset(struct_layouts.sprite_visibility_mask())?;
         let (unit, offset) = sprite
             .if_memory()
-            .filter(|x| match Va::SIZE {
-                4 => x.size == MemAccessSize::Mem32,
-                _ => x.size == MemAccessSize::Mem64,
-            })?
+            .filter(|x| x.size == struct_layouts.mem_access_size())?
             .address();
-        if offset != struct_layouts::unit_sprite::<Va>() {
+        if offset != struct_layouts.unit_sprite() {
             return None;
         }
         if unit != ctx.register(1) {
@@ -3002,7 +2987,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for HideUnitAnalyzer<
                     let condition = ctrl.resolve(condition);
                     // Scarf canonicalizes int(Mem32[x] < 0) to `Mem8[x + 3] >> 7`
                     // or `(Mem8[x + 3] & 80) == 0` .__.
-                    let offset = struct_layouts::unit_search_indices::<E::VirtualAddress>();
+                    let offset = E::struct_layouts().unit_search_indices();
                     let ok = condition.if_arithmetic_rsh_const(7)
                         .or_else(|| {
                             condition.if_arithmetic_eq_const(0)
@@ -3022,7 +3007,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for HideUnitAnalyzer<
                 }
             }
             HideUnitState::Paths => {
-                let path_offset = struct_layouts::unit_path::<E::VirtualAddress>();
+                let path_offset = E::struct_layouts().unit_path();
                 if let Operation::Call(dest) = *op {
                     if self.inline_depth < 4 {
                         if let Some(dest) = ctrl.resolve_va(dest) {
@@ -3198,8 +3183,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             self.inline_limit -= 1;
                         }
                         let condition = ctrl.resolve(condition);
-                        let carried_powerup_bits =
-                            struct_layouts::unit_poweurp_bits::<E::VirtualAddress>();
+                        let carried_powerup_bits = E::struct_layouts().unit_poweurp_bits();
                         let ok = condition.if_arithmetic_eq_neq_zero(ctx)
                             .and_then(|x| x.0.if_mem8_offset(carried_powerup_bits)) ==
                                 Some(ctx.register(1));

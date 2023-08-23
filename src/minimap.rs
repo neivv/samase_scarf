@@ -5,8 +5,8 @@ use scarf::{DestOperand, Operand, Operation};
 use crate::analysis::{AnalysisCtx, ArgCache, Patch};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::analysis_state::{AnalysisState, StateEnum, ReplayVisionsState};
-use crate::struct_layouts;
-use crate::util::{ControlExt, OperandExt, OptionExt, bumpvec_with_capacity};
+use crate::util::{ControlExt, ExecStateExt, OperandExt, OptionExt, bumpvec_with_capacity};
+use crate::struct_layouts::StructLayouts;
 
 pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
@@ -241,8 +241,8 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
     type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        fn is_unit_flags_access<Va: VirtualAddress>(val: Operand<'_>) -> bool {
-            val.if_mem32_offset(struct_layouts::unit_flags::<Va>())
+        fn is_unit_flags_access(struct_layouts: StructLayouts, val: Operand<'_>) -> bool {
+            val.if_mem32_offset(struct_layouts.unit_flags())
                 .is_some()
         }
 
@@ -250,7 +250,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
         if let Operation::Move(ref dest, val, None) = *op {
             // If reading unit flags, set cloak state to 0
             // Prevents a branch from making unit.sprite.visibility_mask undefined
-            if is_unit_flags_access::<E::VirtualAddress>(val) {
+            if is_unit_flags_access(E::struct_layouts(), val) {
                 ctrl.exec_state().move_to(dest, ctx.and_const(val, !0x300));
                 ctrl.skip_operation();
                 return;
@@ -283,14 +283,14 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 // Another way that cloak state may be checked
                 let left = ctrl.resolve(arith.left);
                 let right = ctrl.resolve(arith.right);
-                if is_unit_flags_access::<E::VirtualAddress>(left) {
+                if is_unit_flags_access(E::struct_layouts(), left) {
                     ctrl.exec_state()
                         .update(&Operation::SetFlags(scarf::FlagUpdate {
                             left: ctx.and_const(arith.left, !0x300),
                             ..arith
                         }));
                     ctrl.skip_operation();
-                } else if is_unit_flags_access::<E::VirtualAddress>(right) {
+                } else if is_unit_flags_access(E::struct_layouts(), right) {
                     ctrl.exec_state()
                         .update(&Operation::SetFlags(scarf::FlagUpdate {
                             right: ctx.and_const(arith.right, !0x300),
@@ -354,10 +354,8 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 let result = condition.if_arithmetic_eq_neq_zero(ctx)
                     .and_then(|x| x.0.if_arithmetic_and())
                     .and_either(|x| {
-                        let sprite_visibility_mask =
-                            struct_layouts::sprite_visibility_mask::<E::VirtualAddress>();
-                        let unit_sprite =
-                            struct_layouts::unit_sprite::<E::VirtualAddress>();
+                        let sprite_visibility_mask = E::struct_layouts().sprite_visibility_mask();
+                        let unit_sprite = E::struct_layouts().unit_sprite();
                         let sprite = x.if_mem8_offset(sprite_visibility_mask)?;
                         let unit = ctrl.if_mem_word_offset(sprite, unit_sprite)?;
                         ctrl.if_mem_word(unit)

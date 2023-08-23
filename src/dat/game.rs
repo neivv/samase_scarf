@@ -9,8 +9,7 @@ use crate::analysis::{AnalysisCache, AnalysisCtx};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::detect_tail_call::DetectTailCall;
 use crate::hash_map::{HashSet, HashMap};
-use crate::struct_layouts;
-use crate::util::{OperandExt, OptionExt, ControlExt};
+use crate::util::{ExecStateExt, OperandExt, OptionExt, ControlExt};
 
 use super::{
     DatPatches, DatPatch, ExtArrayPatch, RequiredStableAddressesMap, RequiredStableAddresses,
@@ -44,7 +43,7 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
     let unchecked_refs = find_game_refs(analysis, &functions, game_address);
     let checked_functions =
         HashSet::with_capacity_and_hasher(unchecked_refs.len(), Default::default());
-    let ai_build_limit_offset = struct_layouts::player_ai_build_limits::<E::VirtualAddress>();
+    let ai_build_limit_offset = E::struct_layouts().player_ai_build_limits();
     let mut game_ctx = GameContext {
         analysis,
         functions: &functions,
@@ -1137,7 +1136,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         //      (The base is already player_ai + 0x3f0)
         // => unit_id = index % 4e8
         //      player = index / 4e8
-        let player_ai_size = struct_layouts::player_ai_size::<E::VirtualAddress>();
+        let player_ai_size = E::struct_layouts().player_ai_size();
         let (unit_id, player) = Some(index)
             .and_then(|x| x.if_arithmetic_add())
             .and_either(|x| x.if_arithmetic_mul_const(player_ai_size))

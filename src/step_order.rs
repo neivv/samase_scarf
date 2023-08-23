@@ -10,10 +10,11 @@ use crate::analysis_find::{entry_of_until, EntryOf, FunctionFinder};
 use crate::analysis_state::{AnalysisState, StateEnum, StepOrderState};
 use crate::call_tracker::CallTracker;
 use crate::inline_hook::{EspOffsetRegs, InlineHookState, inline_hook_state};
-use crate::struct_layouts;
+use crate::struct_layouts::StructLayouts;
 use crate::switch::CompleteSwitch;
 use crate::util::{
-    ControlExt, MemAccessExt, OperandExt, bumpvec_with_capacity, single_result_assign,
+    ControlExt, ExecStateExt, MemAccessExt, OperandExt, bumpvec_with_capacity,
+    single_result_assign,
 };
 
 #[derive(Clone, Debug)]
@@ -110,7 +111,8 @@ pub(crate) struct OrderNukeLaunch<Va: VirtualAddress> {
 
 // Checks for comparing secondary_order to 0x95 (Hallucination)
 // Returns the unit operand
-fn step_secondary_order_hallu_jump_check<'e, Va: VirtualAddress>(
+fn step_secondary_order_hallu_jump_check<'e>(
+    struct_layouts: StructLayouts,
     condition: Operand<'e>,
 ) -> Option<Operand<'e>> {
     let hallucinated_id_found = condition.iter_no_mem_addr().any(|x| {
@@ -120,7 +122,7 @@ fn step_secondary_order_hallu_jump_check<'e, Va: VirtualAddress>(
         return None;
     }
     condition.iter_no_mem_addr()
-        .filter_map(|x| x.if_mem8_offset(struct_layouts::unit_secondary_order::<Va>()))
+        .filter_map(|x| x.if_mem8_offset(struct_layouts.unit_secondary_order()))
         .next()
 }
 
@@ -226,17 +228,14 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
             }
 
             fn is_secondary_order_read(&mut self, val: Operand<'e>) -> bool {
-                let result = val
-                    .if_mem8_offset(struct_layouts::unit_secondary_order::<G::VirtualAddress>());
+                let result = val.if_mem8_offset(G::struct_layouts().unit_secondary_order());
                 if result == Some(self.unit) {
                     return true;
                 }
                 let result = val.if_arithmetic_eq_neq()
                     .filter(|x| x.1.if_constant() == Some(0x95))
                     .and_then(|x| {
-                        x.0.if_mem8_offset(
-                            struct_layouts::unit_secondary_order::<G::VirtualAddress>()
-                        )
+                        x.0.if_mem8_offset(G::struct_layouts().unit_secondary_order())
                     });
                 result == Some(self.unit)
             }
@@ -297,7 +296,7 @@ pub(crate) fn find_order_function<'e, E: ExecutionState<'e>>(
     // Just take the last call when [ecx+4d] has been set to correct order.
     // Also guess long jumps as tail calls
     let this = analysis.ctx.register(1);
-    let offset = struct_layouts::unit_order::<E::VirtualAddress>();
+    let offset = E::struct_layouts().unit_order();
     find_order_function_any(analysis, step_order, this, offset, order)
 }
 
@@ -310,7 +309,7 @@ pub(crate) fn find_order_function_secondary<'e, E: ExecutionState<'e>>(
         SecondaryOrderHook::Inlined { entry, unit, .. } => (entry, unit),
         SecondaryOrderHook::Separate(entry) => (entry, analysis.ctx.register(1)),
     };
-    let offset = struct_layouts::unit_secondary_order::<E::VirtualAddress>();
+    let offset = E::struct_layouts().unit_secondary_order();
     find_order_function_any(analysis, entry, this, offset, order)
 }
 
@@ -323,7 +322,7 @@ pub(crate) fn find_order_function_hidden<'e, E: ExecutionState<'e>>(
         StepOrderHiddenHook::Inlined { entry, unit, .. } => (entry, unit),
         StepOrderHiddenHook::Separate(entry) => (entry, analysis.ctx.register(1)),
     };
-    let offset = struct_layouts::unit_order::<E::VirtualAddress>();
+    let offset = E::struct_layouts().unit_order();
     find_order_function_any(analysis, entry, this, offset, order)
 }
 
@@ -467,7 +466,7 @@ fn step_order_hook_info<'e, E: ExecutionState<'e>>(
                 Operation::Jump { condition, .. } => {
                     let condition = ctrl.resolve(condition);
                     if let Some(unit) =
-                        find_unit_for_step_hidden_order_cmp::<F::VirtualAddress>(condition)
+                        find_unit_for_step_hidden_order_cmp(F::struct_layouts(), condition)
                     {
                         let ctx = ctrl.ctx();
                         let exec_state = ctrl.exec_state();
@@ -630,7 +629,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'e, E> {
                     .or_else(|| condition.if_arithmetic_eq())
                     .filter(|x| x.1.if_constant().is_some())
                     .filter(|x| {
-                        x.0.if_mem8_offset(struct_layouts::unit_order::<E::VirtualAddress>()) ==
+                        x.0.if_mem8_offset(E::struct_layouts().unit_order()) ==
                             Some(ctx.register(1))
                     })
                     .is_some();
@@ -641,14 +640,15 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsStepOrder<'e, E> {
     }
 }
 
-fn find_unit_for_step_hidden_order_cmp<'e, Va: VirtualAddress>(
+fn find_unit_for_step_hidden_order_cmp<'e>(
+    struct_layouts: StructLayouts,
     condition: Operand<'e>,
 ) -> Option<Operand<'e>> {
     // mem8[x + 4d] > b0
     condition.if_arithmetic_gt()
         .filter(|x| x.1.if_constant() == Some(0xb0))
         .and_then(|x| {
-            x.0.if_mem8_offset(struct_layouts::unit_order::<Va>())
+            x.0.if_mem8_offset(struct_layouts.unit_order())
         })
 }
 
@@ -669,7 +669,7 @@ pub(crate) fn step_order_hidden<'e, E: ExecutionState<'e>>(
             match *op {
                 Operation::Jump { condition, .. } => {
                     let condition = ctrl.resolve(condition);
-                    if find_unit_for_step_hidden_order_cmp::<E::VirtualAddress>(condition)
+                    if find_unit_for_step_hidden_order_cmp(E::struct_layouts(), condition)
                         .is_some()
                     {
                         self.result = Some(self.entry);
@@ -830,7 +830,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             }
             Operation::Jump { condition, .. } => {
                 let condition = ctrl.resolve(condition);
-                let unit = step_secondary_order_hallu_jump_check::<E::VirtualAddress>(condition);
+                let unit = step_secondary_order_hallu_jump_check(E::struct_layouts(), condition);
                 if let Some(unit) = unit.and_then(|u| ctrl.unresolve(u)) {
                     let rsp = ctrl.resolve_register(4);
                     self.pre_result = Some((ctrl.address(), unit, rsp));
@@ -948,9 +948,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
                     let ok = condition.if_arithmetic_eq_neq_zero(ctx)
                         .and_then(|x| {
                             x.0.if_arithmetic_and_const(0x8)?
-                                .if_mem8_offset(
-                                    struct_layouts::unit_flags::<E::VirtualAddress>() + 3
-                                )
+                                .if_mem8_offset(E::struct_layouts().unit_flags() + 3)
                         }) == Some(ctx.register(1));
                     if ok {
                         self.update_attack_target = Some(E::VirtualAddress::from_u64(0));
@@ -1090,12 +1088,12 @@ pub(crate) fn step_order_analysis<'e, E: ExecutionState<'e>>(
     // Assign order = ff (Don't go to any order func)
     // mael, lockdown, stasis timer = 0; flags = 0x8000 (Not disabled, dweb)
     let writes: &[(u16, u16, MemAccessSize)] = &[
-        (struct_layouts::unit_order::<E::VirtualAddress>() as u16, 0xff, MemAccessSize::Mem8),
-        (struct_layouts::unit_lockdown_timer::<E::VirtualAddress>() as u16, 0, MemAccessSize::Mem8),
-        (struct_layouts::unit_stasis_timer::<E::VirtualAddress>() as u16, 0, MemAccessSize::Mem8),
-        (struct_layouts::unit_maelstrom_timer::<E::VirtualAddress>() as u16, 0, MemAccessSize::Mem8),
-        (struct_layouts::unit_acid_spore_count::<E::VirtualAddress>() as u16, 0, MemAccessSize::Mem8),
-        (struct_layouts::unit_flags::<E::VirtualAddress>() as u16, 0x8000, MemAccessSize::Mem32),
+        (E::struct_layouts().unit_order() as u16, 0xff, MemAccessSize::Mem8),
+        (E::struct_layouts().unit_lockdown_timer() as u16, 0, MemAccessSize::Mem8),
+        (E::struct_layouts().unit_stasis_timer() as u16, 0, MemAccessSize::Mem8),
+        (E::struct_layouts().unit_maelstrom_timer() as u16, 0, MemAccessSize::Mem8),
+        (E::struct_layouts().unit_acid_spore_count() as u16, 0, MemAccessSize::Mem8),
+        (E::struct_layouts().unit_flags() as u16, 0x8000, MemAccessSize::Mem32),
     ];
     let ecx = ctx.register(1);
     for &(offset, value, size) in writes {
@@ -1155,7 +1153,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepOrder<
             if let Some(dest) = ctrl.resolve_va(dest) {
                 if state == AnalyzeStepOrderState::FocusAir {
                     let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                    let unit_specific = struct_layouts::unit_specific::<E::VirtualAddress>();
+                    let unit_specific = E::struct_layouts().unit_specific();
                     let ok = ctrl.if_mem_word_offset(arg1, unit_specific)
                         .filter(|&x| x == ctx.register(1))
                         .is_some();
@@ -1213,7 +1211,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepOrder<
                 if self.inline_depth != 0 {
                     if let Operation::Jump { condition, .. } = *op {
                         let condition = ctrl.resolve(condition);
-                        let order_timer = struct_layouts::unit_order_timer::<E::VirtualAddress>();
+                        let order_timer = E::struct_layouts().unit_order_timer();
                         let ok = condition.if_arithmetic_eq_neq_zero(ctx)
                             .and_then(|x| x.0.if_mem8_offset(order_timer))
                             .filter(|&x| x == ctx.register(1))
@@ -1229,7 +1227,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepOrder<
             AnalyzeStepOrderState::FindInterceptorCheck => {
                 if let Operation::Jump { condition, to } = *op {
                     let condition = ctrl.resolve(condition);
-                    let unit_id = struct_layouts::unit_id::<E::VirtualAddress>();
+                    let unit_id = E::struct_layouts().unit_id();
                     let ok = condition.if_arithmetic_eq_neq()
                         .filter(|x| x.1.if_constant() == Some(0x49))
                         .and_then(|x| {
@@ -1279,7 +1277,7 @@ pub(crate) fn analyze_order_train<'e, E: ExecutionState<'e>>(
     // Use secondary order state 2
     let mem = ctx.mem_access(
         ctx.register(1),
-        struct_layouts::unit_secondary_order_state::<E::VirtualAddress>(),
+        E::struct_layouts().unit_secondary_order_state(),
         MemAccessSize::Mem8,
     );
     exec.move_resolved(&DestOperand::Memory(mem), ctx.constant(2));
@@ -1322,8 +1320,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderTrain
                             let ecx = ctx.register(1);
                             let this = ctrl.resolve(ecx);
                             let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
-                            let currently_building =
-                                struct_layouts::unit_currently_building::<E::VirtualAddress>();
+                            let currently_building = E::struct_layouts().unit_currently_building();
                             let ok = ctrl.if_mem_word_offset(this, currently_building) ==
                                     Some(ecx) &&
                                 ctx.and_const(arg2, 0xff) == ctx.const_1();
@@ -1365,8 +1362,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderTrain
                         let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                         let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
                         let ecx = ctx.register(1);
-                        let currently_building =
-                            struct_layouts::unit_currently_building::<E::VirtualAddress>();
+                        let currently_building = E::struct_layouts().unit_currently_building();
                         let ok = arg1 == ecx &&
                             ctrl.if_mem_word_offset(arg2, currently_building) == Some(ecx);
                         if ok {
@@ -1568,7 +1564,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let condition = ctrl.resolve(condition);
                         let jump_if_ai_zero = condition.if_arithmetic_eq_neq_zero(ctx)
                             .and_then(|x| {
-                                let ai = struct_layouts::unit_ai::<E::VirtualAddress>();
+                                let ai = E::struct_layouts().unit_ai();
                                 ctrl.if_mem_word_offset(x.0, ai)
                                     .filter(|&x| x == ctx.register(1))?;
                                 Some(x.1)
@@ -1588,9 +1584,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let condition = ctrl.resolve(condition);
                     let ok = condition.if_arithmetic_eq_neq()
                         .filter(|x| x.1.if_constant() == Some(0x6b))
-                        .and_then(|x| {
-                            x.0.if_mem8_offset(struct_layouts::unit_order::<E::VirtualAddress>())
-                        })
+                        .and_then(|x| x.0.if_mem8_offset(E::struct_layouts().unit_order()))
                         .filter(|&x| x == ctx.register(1))
                         .is_some();
                     if ok {
@@ -1958,8 +1952,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             if mem.size == E::WORD_SIZE {
                                 let mem = ctrl.resolve_mem(mem);
                                 let (base, offset) = mem.address();
-                                let addon_offset =
-                                    struct_layouts::unit_specific::<E::VirtualAddress>();
+                                let addon_offset = E::struct_layouts().unit_specific();
                                 if base == ctx.register(1) && offset == addon_offset {
                                     if ctrl.resolve(value) == ctx.const_0() {
                                         self.result.detach_addon = Some(self.verify_func);
@@ -1980,9 +1973,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             let mut ok = condition.if_arithmetic_eq_neq()
                                 .filter(|x| x.1.if_constant() == Some(constant))
                                 .and_then(|x| {
-                                    x.0.if_mem16_offset(
-                                        struct_layouts::unit_id::<E::VirtualAddress>()
-                                    )
+                                    x.0.if_mem16_offset(E::struct_layouts().unit_id())
                                 }) == Some(ctx.register(1));
                             if !ok && state == OrderInfestState::VerifyCanRally {
                                 // 64bit switch uses more likely bit test and not
@@ -2037,7 +2028,7 @@ pub(crate) fn analyze_order_zerg_build_self<'e, E: ExecutionState<'e>>(
     exec.write_memory(
         &ctx.mem_access(
             ctx.register(1),
-            struct_layouts::unit_order_state::<E::VirtualAddress>(),
+            E::struct_layouts().unit_order_state(),
             MemAccessSize::Mem8,
         ),
         ctx.constant(6),
@@ -2099,7 +2090,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         .and_then(|x| {
                             let mem = x.0.if_memory()?;
                             let dest_mem = ctrl.resolve_mem(dest_mem);
-                            let flags_offset = struct_layouts::unit_flags::<E::VirtualAddress>();
+                            let flags_offset = E::struct_layouts().unit_flags();
                             (*mem == dest_mem && mem.address() == (ctx.register(1), flags_offset))
                                 .then_some(())
                         })
@@ -2133,8 +2124,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if mem.size == MemAccessSize::Mem16 {
                         if ctrl.resolve(value) == ctx.const_0() {
                             let mem = ctrl.resolve_mem(&mem);
-                            let build_time_offset = struct_layouts::unit_remaining_build_time::
-                                <E::VirtualAddress>();
+                            let build_time_offset =
+                                E::struct_layouts().unit_remaining_build_time();
                             if mem.address() == (ctx.register(1), build_time_offset) {
                                 if self.func_candidate.as_u64() != 0 {
                                     self.result.unit_set_hp = Some(self.func_candidate);
@@ -2350,8 +2341,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderNukeL
                             let mem = ctrl.resolve_mem(mem);
                             let (base, offset) = mem.address();
                             if base == ctx.register(1) {
-                                let order_target =
-                                    struct_layouts::unit_order_target_pos::<E::VirtualAddress>();
+                                let order_target = E::struct_layouts().unit_order_target_pos();
                                 if offset == order_target {
                                     self.order_targets_read |= 1;
                                 } else if offset == order_target + 2{

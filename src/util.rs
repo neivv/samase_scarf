@@ -14,6 +14,7 @@ use scarf::{
 };
 
 use crate::analysis::ArgCache;
+use crate::struct_layouts::{StructLayouts};
 
 // When not testing, immediatly end once a value is found, for tests require all values
 // to be same.
@@ -347,6 +348,19 @@ impl<'e> OperandExt<'e> for Operand<'e> {
             }
         }
         Some((l, true))
+    }
+}
+
+pub trait ExecStateExt<'e> {
+    fn struct_layouts() -> StructLayouts;
+}
+
+impl<'e, E: ExecutionState<'e>> ExecStateExt<'e> for E {
+    #[inline]
+    fn struct_layouts() -> StructLayouts {
+        StructLayouts {
+            is_64bit: E::WORD_SIZE == MemAccessSize::Mem64
+        }
     }
 }
 

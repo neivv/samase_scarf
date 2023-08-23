@@ -3,433 +3,366 @@ use scarf::{BinaryFile, Operand, MemAccessSize};
 
 use crate::util::{OperandExt};
 
-pub fn sprite_first_overlay<Va: VirtualAddress>(sprite_size: u32) -> Option<u32> {
-    match (sprite_size, Va::SIZE) {
-        (0x24, 4) => Some(0x1c),
-        (0x28, 4) => Some(0x20),
-        (0x38, 8) => Some(0x28),
-        (0x48, 8) => Some(0x38),
-        _ => None,
+/// Stateless struct that has methods for getting various struct offsets
+/// that differ between 32- and 64-bit.
+/// The methods used to be just generic functions, but specifying the VirtualAddress generic
+/// for them every time when they were called got annoying.
+/// Ideally inlining makes them still constants.
+#[derive(Copy, Clone)]
+pub struct StructLayouts {
+    pub is_64bit: bool,
+}
+
+impl StructLayouts {
+    pub const fn sprite_first_overlay(self, sprite_size: u32) -> Option<u32> {
+        match (sprite_size, self.is_64bit) {
+            (0x24, false) => Some(0x1c),
+            (0x28, false) => Some(0x20),
+            (0x38, true) => Some(0x28),
+            (0x48, true) => Some(0x38),
+            _ => None,
+        }
     }
-}
 
-pub fn sprite_visibility_mask<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xc,
-        false => 0x14,
+    pub const fn mem_access_size(self) -> MemAccessSize {
+        if self.is_64bit {
+            MemAccessSize::Mem64
+        } else {
+            MemAccessSize::Mem32
+        }
     }
-}
 
-pub fn sprite_flags<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xe,
-        false => 0x16,
+    #[inline]
+    const fn pair(self, val_32: u64, val_64: u64) -> u64 {
+        if self.is_64bit {
+            val_64
+        } else {
+            val_32
+        }
     }
-}
 
-pub fn unit_sprite<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xc,
-        false => 0x18,
+    pub const fn sprite_visibility_mask(self) -> u64 {
+        self.pair(0xc, 0x14)
     }
-}
 
-pub fn flingy_next_move_waypoint<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x18,
-        false => 0x30,
+    pub const fn sprite_flags(self) -> u64 {
+        self.pair(0xe, 0x16)
     }
-}
 
-pub fn flingy_flags<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x20,
-        false => 0x38,
+    pub const fn unit_sprite(self) -> u64 {
+        self.pair(0xc, 0x18)
     }
-}
 
-pub fn flingy_facing_direction<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x21,
-        false => 0x39,
+    pub const fn flingy_next_move_waypoint(self) -> u64 {
+        self.pair(0x18, 0x30)
     }
-}
 
-pub fn flingy_movement_type<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x27,
-        false => 0x3f,
+    pub const fn flingy_flags(self) -> u64 {
+        self.pair(0x20, 0x38)
     }
-}
 
-pub fn flingy_pos<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x28,
-        false => 0x40,
+    pub const fn flingy_facing_direction(self) -> u64 {
+        self.pair(0x21, 0x39)
     }
-}
 
-pub fn flingy_exact_pos<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x2c,
-        false => 0x44,
+    pub const fn flingy_movement_type(self) -> u64 {
+        self.pair(0x27, 0x3f)
     }
-}
 
-pub fn flingy_speed<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x38,
-        false => 0x50,
+    pub const fn flingy_pos(self) -> u64 {
+        self.pair(0x28, 0x40)
     }
-}
 
-pub fn unit_player<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x4c,
-        false => 0x68,
+    pub const fn flingy_exact_pos(self) -> u64 {
+        self.pair(0x2c, 0x44)
     }
-}
 
-pub fn unit_order<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x4d,
-        false => 0x69,
+    pub const fn flingy_speed(self) -> u64 {
+        self.pair(0x38, 0x50)
     }
-}
 
-pub fn unit_order_state<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x4e,
-        false => 0x6a,
+    pub const fn unit_player(self) -> u64 {
+        self.pair(0x4c, 0x68)
     }
-}
 
-pub fn unit_order_timer<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x54,
-        false => 0x70,
+    pub const fn unit_order(self) -> u64 {
+        self.pair(0x4d, 0x69)
     }
-}
 
-pub fn unit_order_target_pos<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x58,
-        false => 0x78,
+    pub const fn unit_order_state(self) -> u64 {
+        self.pair(0x4e, 0x6a)
     }
-}
 
-pub fn unit_target<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x5c,
-        false => 0x80,
+    pub const fn unit_order_timer(self) -> u64 {
+        self.pair(0x54, 0x70)
     }
-}
 
-pub fn unit_id<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x64,
-        false => 0x8c,
+    pub const fn unit_order_target_pos(self) -> u64 {
+        self.pair(0x58, 0x78)
     }
-}
 
-pub fn unit_subunit_linked<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x70,
-        false => 0xa0,
+    pub const fn unit_target(self) -> u64 {
+        self.pair(0x5c, 0x80)
     }
-}
 
-pub fn unit_related<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x80,
-        false => 0xc0,
+    pub const fn unit_id(self) -> u64 {
+        self.pair(0x64, 0x8c)
     }
-}
 
-pub fn unit_invisibility_effects<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x96,
-        false => 0xda,
+    pub const fn unit_subunit_linked(self) -> u64 {
+        self.pair(0x70, 0xa0)
     }
-}
 
-pub fn unit_movement_state<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x97,
-        false => 0xdb,
+    pub const fn unit_related(self) -> u64 {
+        self.pair(0x80, 0xc0)
     }
-}
 
-pub fn unit_build_queue<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x98,
-        false => 0xdc,
+    pub const fn unit_invisibility_effects(self) -> u64 {
+        self.pair(0x96, 0xda)
     }
-}
 
-pub fn unit_secondary_order<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xa6,
-        false => 0xea,
+    pub const fn unit_movement_state(self) -> u64 {
+        self.pair(0x97, 0xdb)
     }
-}
 
-pub fn unit_remaining_build_time<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xac,
-        false => 0xf0,
+    pub const fn unit_build_queue(self) -> u64 {
+        self.pair(0x98, 0xdc)
     }
-}
 
-pub fn unit_specific<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xc0,
-        false => 0x108,
+    pub const fn unit_secondary_order(self) -> u64 {
+        self.pair(0xa6, 0xea)
     }
-}
 
-pub fn unit_current_tech<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xc8,
-        false => 0x114,
+    pub const fn unit_remaining_build_time(self) -> u64 {
+        self.pair(0xac, 0xf0)
     }
-}
 
-pub fn unit_nuke_dot_sprite<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xd0,
-        false => 0x128,
+    pub const fn unit_specific(self) -> u64 {
+        self.pair(0xc0, 0x108)
     }
-}
 
-pub fn unit_current_upgrade<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xc9,
-        false => 0x115,
+    pub const fn unit_current_tech(self) -> u64 {
+        self.pair(0xc8, 0x114)
     }
-}
 
-pub fn unit_flags<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xdc,
-        false => 0x140,
+    pub const fn unit_nuke_dot_sprite(self) -> u64 {
+        self.pair(0xd0, 0x128)
     }
-}
 
-pub fn unit_poweurp_bits<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xe0,
-        false => 0x144,
+    pub const fn unit_current_upgrade(self) -> u64 {
+        self.pair(0xc9, 0x115)
     }
-}
 
-pub fn unit_secondary_order_state<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xe2,
-        false => 0x146,
+    pub const fn unit_flags(self) -> u64 {
+        self.pair(0xdc, 0x140)
     }
-}
 
-pub fn unit_currently_building<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xec,
-        false => 0x158,
+    pub const fn unit_poweurp_bits(self) -> u64 {
+        self.pair(0xe0, 0x144)
     }
-}
 
-pub fn unit_next_pylon<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xfc,
-        false => 0x178,
+    pub const fn unit_secondary_order_state(self) -> u64 {
+        self.pair(0xe2, 0x146)
     }
-}
 
-pub fn unit_path<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x100,
-        false => 0x188,
+    pub const fn unit_currently_building(self) -> u64 {
+        self.pair(0xec, 0x158)
     }
-}
 
-pub fn unit_lockdown_timer<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x117,
-        false => 0x1a3,
+    pub const fn unit_next_pylon(self) -> u64 {
+        self.pair(0xfc, 0x178)
     }
-}
 
-pub fn unit_stasis_timer<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x119,
-        false => 0x1a5,
+    pub const fn unit_path(self) -> u64 {
+        self.pair(0x100, 0x188)
     }
-}
 
-pub fn unit_maelstrom_timer<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x124,
-        false => 0x1b4,
+    pub const fn unit_lockdown_timer(self) -> u64 {
+        self.pair(0x117, 0x1a3)
     }
-}
 
-pub fn unit_acid_spore_count<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x126,
-        false => 0x1b6,
+    pub const fn unit_stasis_timer(self) -> u64 {
+        self.pair(0x119, 0x1a5)
     }
-}
 
-pub fn unit_ai<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x134,
-        false => 0x1c8,
+    pub const fn unit_maelstrom_timer(self) -> u64 {
+        self.pair(0x124, 0x1b4)
     }
-}
 
-pub fn unit_ground_strength<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x13a,
-        false => 0x1d2,
+    pub const fn unit_acid_spore_count(self) -> u64 {
+        self.pair(0x126, 0x1b6)
     }
-}
 
-pub fn unit_search_indices<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x13c,
-        false => 0x1d4,
+    pub const fn unit_ai(self) -> u64 {
+        self.pair(0x134, 0x1c8)
     }
-}
 
-pub fn if_mul_image_size<'e, Va: VirtualAddress>(op: Operand<'e>) -> Option<Operand<'e>> {
-    if Va::SIZE == 4 {
-        op.if_arithmetic(scarf::ArithOpType::Lsh)
-            .filter(|(_, r)| r.if_constant() == Some(6))
-            .map(|x| x.0)
-    } else {
-        op.if_arithmetic_mul_const(0x58)
+    pub const fn unit_ground_strength(self) -> u64 {
+        self.pair(0x13a, 0x1d2)
     }
-}
 
-pub fn image_id<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x8,
-        false => 0x10,
+    pub const fn unit_search_indices(self) -> u64 {
+        self.pair(0x13c, 0x1d4)
     }
-}
 
-pub fn image_iscript<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x10,
-        false => 0x18,
+    pub fn if_mul_image_size<'e>(self, op: Operand<'e>) -> Option<Operand<'e>> {
+        if !self.is_64bit {
+            op.if_arithmetic_lsh_const(0x6)
+        } else {
+            op.if_arithmetic_mul_const(0x58)
+        }
     }
-}
 
-pub fn image_parent<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x3c,
-        false => 0x50,
+    pub const fn image_id(self) -> u64 {
+        self.pair(0x8, 0x10)
     }
-}
 
-pub fn if_unit_sprite<'e, Va: VirtualAddress>(op: Operand<'e>) -> Option<Operand<'e>> {
-    let word_size = if Va::SIZE == 4 { MemAccessSize::Mem32 } else { MemAccessSize::Mem64 };
-    op.if_memory()
-        .and_then(|x| {
-            if x.size != word_size {
-                return None;
-            }
-            x.if_offset(unit_sprite::<Va>())
-        })
-}
-
-pub fn ai_region_size<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x34,
-        false => 0x50,
+    pub const fn image_iscript(self) -> u64 {
+        self.pair(0x10, 0x18)
     }
-}
 
-pub fn ai_script_pos<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x8,
-        false => 0x10,
+    pub const fn image_parent(self) -> u64 {
+        self.pair(0x3c, 0x50)
     }
-}
 
-pub fn ai_script_wait<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xc,
-        false => 0x14,
+    pub fn if_unit_sprite<'e>(self, op: Operand<'e>) -> Option<Operand<'e>> {
+        let word_size = if !self.is_64bit { MemAccessSize::Mem32 } else { MemAccessSize::Mem64 };
+        op.if_memory()
+            .and_then(|x| {
+                if x.size != word_size {
+                    return None;
+                }
+                x.if_offset(self.unit_sprite())
+            })
     }
-}
 
-pub fn ai_script_player<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x10,
-        false => 0x18,
+    pub const fn ai_region_size(self) -> u64 {
+        self.pair(0x34, 0x50)
     }
-}
 
-pub fn ai_script_center<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x24,
-        false => 0x2c,
+    pub const fn ai_script_pos(self) -> u64 {
+        self.pair(0x8, 0x10)
     }
-}
 
-pub fn ai_script_flags<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x30,
-        false => 0x40,
+    pub const fn ai_script_wait(self) -> u64 {
+        self.pair(0xc, 0x14)
     }
-}
 
-pub fn player_ai_size<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x4e8,
-        false => 0x6e8,
+    pub const fn ai_script_player(self) -> u64 {
+        self.pair(0x10, 0x18)
     }
-}
 
-pub fn player_ai_flags<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x218,
-        false => 0x410,
+    pub const fn ai_script_center(self) -> u64 {
+        self.pair(0x24, 0x2c)
     }
-}
 
-pub fn player_ai_build_limits<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x3f0,
-        false => 0x5e8,
+    pub const fn ai_script_flags(self) -> u64 {
+        self.pair(0x30, 0x40)
     }
-}
 
-pub fn button_set_size<Va: VirtualAddress>() -> u32 {
-    match Va::SIZE == 4 {
-        true => 0xc,
-        false => 0x18,
+    pub const fn player_ai_size(self) -> u64 {
+        self.pair(0x4e8, 0x6e8)
     }
-}
 
-pub fn button_size<Va: VirtualAddress>() -> u32 {
-    match Va::SIZE == 4 {
-        true => 0x14,
-        false => 0x20,
+    pub const fn player_ai_flags(self) -> u64 {
+        self.pair(0x218, 0x410)
     }
-}
 
-pub fn button_action_func<Va: VirtualAddress>() -> u32 {
-    match Va::SIZE == 4 {
-        true => 0x8,
-        false => 0x10,
+    pub const fn player_ai_build_limits(self) -> u64 {
+        self.pair(0x3f0, 0x5e8)
     }
-}
 
-pub fn button_linked<Va: VirtualAddress>() -> u32 {
-    match Va::SIZE == 4 {
-        true => 0x8,
-        false => 0x10,
+    pub const fn button_set_size(self) -> u32 {
+        self.pair(0xc, 0x18) as u32
+    }
+
+    pub const fn button_size(self) -> u32 {
+        self.pair(0x14, 0x20) as u32
+    }
+
+    pub const fn button_action_func(self) -> u32 {
+        self.pair(0x8, 0x10) as u32
+    }
+
+    pub const fn button_linked(self) -> u32 {
+        self.pair(0x8, 0x10) as u32
+    }
+
+    pub const fn bullet_weapon_id(self) -> u64 {
+        self.pair(0x60, 0x88)
+    }
+
+    pub const fn bullet_flags(self) -> u64 {
+        self.pair(0x62, 0x8a)
+    }
+
+    pub const fn bullet_parent(self) -> u64 {
+        self.pair(0x64, 0x90)
+    }
+
+    pub const fn status_screen_stat_dat(self) -> u64 {
+        self.pair(0x8, 0xc)
+    }
+
+    pub const fn control_ptr_value(self) -> u64 {
+        self.pair(0x40, 0x58)
+    }
+
+    pub const fn order_id(self) -> u64 {
+        self.pair(0x8, 0x10)
+    }
+
+    pub const fn event_type(self) -> u64 {
+        self.pair(0x10, 0x18)
+    }
+
+    pub const fn event_mouse_xy(self) -> u64 {
+        self.pair(0x12, 0x1a)
+    }
+
+    pub const fn glyph_set_size(self) -> u64 {
+        self.pair(0xa0, 0xc8)
+    }
+
+    pub const fn graphic_layer_draw_func(self) -> u64 {
+        self.pair(0x10, 0x18)
+    }
+
+    pub const fn graphic_layer_size(self) -> u64 {
+        self.pair(0x14, 0x20)
+    }
+
+    pub const fn control_draw_funcs(self) -> &'static [u64] {
+        match self.is_64bit {
+            false => &[0x30, 0x48],
+            true => &[0x44, 0x68],
+        }
+    }
+
+    pub const fn control_u16_value(self) -> &'static [u64] {
+        match self.is_64bit {
+            false => &[0x26, 0x3e],
+            true => &[0x32, 0x56],
+        }
+    }
+
+    pub const fn dialog_once_in_frame(self) -> &'static [u64] {
+        match self.is_64bit {
+            false => &[0x4c, 0x64],
+            true => &[0x78, 0xa0],
+        }
+    }
+
+    pub const fn pathing_map_tile_regions(self) -> u64 {
+        self.pair(0xc, 0x18)
+    }
+
+    pub const fn dcreep_list_index(self) -> u64 {
+        self.pair(0x12, 0x22)
+    }
+
+    pub const fn dcreep_x(self) -> u64 {
+        self.pair(0x10, 0x20)
     }
 }
 
@@ -439,129 +372,13 @@ pub fn button_set_index_to_action<Va: VirtualAddress>(
     set: u32,
     button: u32,
 ) -> Option<Va> {
+    let layouts = StructLayouts {
+        is_64bit: Va::SIZE == 8,
+    };
     let set = binary.read_address(
-        button_sets + button_set_size::<Va>().wrapping_mul(set).wrapping_add(Va::SIZE)
+        button_sets + layouts.button_set_size().wrapping_mul(set).wrapping_add(Va::SIZE)
     ).ok()?;
     binary.read_address(
-        set + button_size::<Va>().wrapping_mul(button).wrapping_add(button_action_func::<Va>())
+        set + layouts.button_size().wrapping_mul(button).wrapping_add(layouts.button_action_func())
     ).ok()
-}
-
-pub fn bullet_weapon_id<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x60,
-        false => 0x88,
-    }
-}
-
-pub fn bullet_flags<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x62,
-        false => 0x8a,
-    }
-}
-
-pub fn bullet_parent<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x64,
-        false => 0x90,
-    }
-}
-
-pub fn status_screen_stat_dat<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x8,
-        false => 0xc,
-    }
-}
-
-pub fn control_ptr_value<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x40,
-        false => 0x58,
-    }
-}
-
-pub fn order_id<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x8,
-        false => 0x10,
-    }
-}
-
-pub fn event_type<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x10,
-        false => 0x18,
-    }
-}
-
-pub fn event_mouse_xy<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x12,
-        false => 0x1a,
-    }
-}
-
-pub fn glyph_set_size<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xa0,
-        false => 0xc8,
-    }
-}
-
-pub fn graphic_layer_draw_func<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x10,
-        false => 0x18,
-    }
-}
-
-pub fn graphic_layer_size<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x14,
-        false => 0x20,
-    }
-}
-
-pub fn control_draw_funcs<Va: VirtualAddress>() -> &'static [u64] {
-    match Va::SIZE == 4 {
-        true => &[0x30, 0x48],
-        false => &[0x44, 0x68],
-    }
-}
-
-pub fn control_u16_value<Va: VirtualAddress>() -> &'static [u64] {
-    match Va::SIZE == 4 {
-        true => &[0x26, 0x3e],
-        false => &[0x32, 0x56],
-    }
-}
-
-pub fn dialog_once_in_frame<Va: VirtualAddress>() -> &'static [u64] {
-    match Va::SIZE == 4 {
-        true => &[0x4c, 0x64],
-        false => &[0x78, 0xa0],
-    }
-}
-
-pub fn pathing_map_tile_regions<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0xc,
-        false => 0x18,
-    }
-}
-
-pub fn dcreep_list_index<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x12,
-        false => 0x22,
-    }
-}
-
-pub fn dcreep_x<Va: VirtualAddress>() -> u64 {
-    match Va::SIZE == 4 {
-        true => 0x10,
-        false => 0x20,
-    }
 }
