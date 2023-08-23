@@ -1,10 +1,10 @@
 
 use scarf::analysis::{Analyzer, Control};
-use scarf::exec_state::{ExecutionState};
+use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{DestOperand, Operand, OperandCtx, Operation, MemAccess};
 
 use crate::hash_map::HashMap;
-use crate::util::{ControlExt, OperandExt};
+use crate::util::{ControlExt, MemAccessExt, OperandExt};
 
 /// Finds linked list head and tail variables when given value to be added to list
 /// Relies on the linked list add code doing
@@ -103,4 +103,37 @@ impl<'e, E: ExecutionState<'e>> DetectListAdd<'e, E> {
             tail: ctx.memory(&self.tail?),
         })
     }
+}
+
+/// Detects storing to list head/tail globals
+pub fn detect_list_remove<'e, A>(
+    ctrl: &mut Control<'e, '_, '_, A>,
+    op: &Operation<'e>,
+    unit: Operand<'e>,
+) -> Option<(Operand<'e>, u32)>
+where A: Analyzer<'e>,
+{
+    if let Operation::Move(DestOperand::Memory(ref dest), value, None) = *op {
+        let word_size = <A::Exec as ExecutionState<'e>>::WORD_SIZE;
+        let va_size = <A::Exec as ExecutionState<'e>>::VirtualAddress::SIZE;
+
+        let ctx = ctrl.ctx();
+        if dest.size != word_size || dest.address().0 == ctx.register(4) {
+            return None;
+        }
+        let value = ctrl.resolve(value);
+        if let Some(mem) = ctrl.if_mem_word(value) {
+            let (base, offset) = mem.address();
+            if base == unit && offset <= va_size as u64 {
+                let dest = ctrl.resolve_mem(&dest);
+                if dest.is_global() {
+                    if offset == 0 || offset == va_size as u64 {
+                        let val = ctx.memory(&dest);
+                        return Some((val, offset as u32));
+                    }
+                }
+            }
+        }
+    }
+    None
 }

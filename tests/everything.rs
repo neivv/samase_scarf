@@ -1671,7 +1671,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 LastHiddenUnit | LastRevealer | LurkerHitsPos | LurkerHitsFrame |
                 OrderTimerResetCounter | SecondaryOrderTimerResetCounter | StepAiRegionsRegion |
                 StepAiRegionsPlayer | AiTargetIgnoreResetCounter | AiTargetIgnoreResetCounter2 |
-                AiTargetIgnoreRequestReset | AiMilitaryUpdateCounter =>
+                AiTargetIgnoreRequestReset | AiMilitaryUpdateCounter | PathArray | FirstFreePath |
+                LastActiveUnit =>
             {
                 check_global_opt(result, binary, op.name());
             }

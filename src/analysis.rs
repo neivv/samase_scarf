@@ -445,6 +445,8 @@ results! {
         HideUnit => hide_unit => cache_order_nuke_launch,
         MoveUnit => move_unit => cache_order_nuke_launch,
         StopMoving => stop_moving => cache_order_nuke_launch,
+        RemoveReferences => remove_references => cache_hide_unit,
+        EndCollisionTracking => end_collision_tracking => cache_hide_unit,
     }
 }
 
@@ -706,6 +708,9 @@ results! {
         LurkerHits => lurker_hits => cache_splash_lurker,
         LurkerHitsFrame => lurker_hits_frame => cache_splash_lurker,
         LurkerHitsPos => lurker_hits_pos => cache_splash_lurker,
+        LastActiveUnit => last_active_unit => cache_hide_unit,
+        PathArray => path_array => cache_hide_unit,
+        FirstFreePath => first_free_path => cache_hide_unit,
     }
 }
 
@@ -4072,6 +4077,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             });
     }
 
+    fn hide_unit(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::HideUnit, |s| s.cache_order_nuke_launch(actx))
+    }
+
     fn cache_render_screen(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
@@ -4384,6 +4393,24 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let func = s.splash_lurker(actx)?;
                 let r = bullets::analyze_splash_lurker(actx, func);
                 Some(([], [r.lurker_hits, r.lurker_hits_frame, r.lurker_hits_pos]))
+            })
+    }
+
+    fn cache_hide_unit(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[RemoveReferences, EndCollisionTracking], &[LastActiveUnit, PathArray, FirstFreePath],
+            |s| {
+                let func = s.hide_unit(actx)?;
+                let r = units::analyze_hide_unit(actx, func);
+                #[cfg(feature = "test_assertions")]
+                {
+                    let first_active = s.first_active_unit(actx);
+                    assert_eq!(r.first_active_unit, first_active);
+                }
+                Some(([r.remove_references, r.end_collision_tracking],
+                    [r.last_active_unit, r.path_array, r.first_free_path]))
             })
     }
 }

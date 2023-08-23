@@ -59,6 +59,7 @@ draw_image: 00552950
 draw_minimap_units: 006df750
 draw_tooltip_layer: 005df0c0
 duplicate_sprite: 00553a80
+end_collision_tracking: 0055c570
 file_exists: 00521cf0
 find_fow_sprite_for_click: 00729940
 find_unit_borders_rect: 005792d0
@@ -153,6 +154,7 @@ receive_storm_turns: 006fb000
 refresh_ui: 0076b260
 remove_from_client_selection: 00584210
 remove_from_selections: 0074f540
+remove_references: 00584360
 render_screen: 00902a60
 replay_end: 00730890
 reset_ui_event_handlers: 0068bf10
@@ -298,6 +300,7 @@ first_free_fow_sprite: Mem32[ddd85c]
 first_free_image: Mem32[dd01a8]
 first_free_lone_sprite: Mem32[ddd84c]
 first_free_order: Mem32[ddcbb8]
+first_free_path: Mem32[fe3f48]
 first_free_selection_circle: Mem32[dd148c]
 first_free_sprite: Mem32[ddcbe0]
 first_free_unit: Mem32[ddda88]
@@ -346,6 +349,7 @@ is_selecting: Mem8[fec670]
 is_targeting: Mem8[fe6495]
 iscript_bin: Mem32[dd01e4]
 last_active_bullet: Mem32[dcece8]
+last_active_unit: Mem32[dddad8]
 last_bullet_spawner: Mem32[dcecec]
 last_dying_unit: Mem32[ddda80]
 last_fow_sprite: Mem32[ddd868]
@@ -394,6 +398,7 @@ on_clip_cursor_end: Mem32[faa4c0]
 order_timer_reset_counter: Mem32[ddda74]
 original_chk_player_types: fd3b6c
 palette_set: 100d628
+path_array: Mem32[fe3f3c]
 pathing: Mem32[fdaa44]
 player_ai: ddf750
 player_ai_towns: dfdc40

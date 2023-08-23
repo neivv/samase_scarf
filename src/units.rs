@@ -9,7 +9,7 @@ use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, entry_of_until, FunctionFinder};
 use crate::add_terms::collect_arith_add_terms;
 use crate::call_tracker::CallTracker;
-use crate::linked_list::DetectListAdd;
+use crate::linked_list::{self, DetectListAdd};
 use crate::struct_layouts;
 use crate::switch::CompleteSwitch;
 use crate::util::{
@@ -97,6 +97,15 @@ pub(crate) struct FinishUnitPost<'e> {
     pub last_revealer: Option<Operand<'e>>,
     pub first_hidden_unit: Option<Operand<'e>>,
     pub last_hidden_unit: Option<Operand<'e>>,
+}
+
+pub(crate) struct HideUnit<'e, Va: VirtualAddress> {
+    pub remove_references: Option<Va>,
+    pub end_collision_tracking: Option<Va>,
+    pub path_array: Option<Operand<'e>>,
+    pub first_free_path: Option<Operand<'e>>,
+    pub first_active_unit: Option<Operand<'e>>,
+    pub last_active_unit: Option<Operand<'e>>,
 }
 
 pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
@@ -2816,36 +2825,22 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FinishUnitPostAna
         }
         match self.state {
             FinishUnitPostState::RemoveFromHiddenUnits => {
-                if let Operation::Move(DestOperand::Memory(ref dest), value, None) = *op {
-                    if dest.size != E::WORD_SIZE || dest.address().0 == ctx.register(4) {
-                        return;
+                let result = linked_list::detect_list_remove(ctrl, op, ctx.register(1));
+                if let Some((val, offset)) = result {
+                    let result = &mut self.result;
+                    if offset == 0 {
+                        // last_hidden = this.prev
+                        result.last_hidden_unit = Some(val);
+                    } else {
+                        // first_hidden = this.next
+                        result.first_hidden_unit = Some(val);
                     }
-                    let value = ctrl.resolve(value);
-                    if let Some(mem) = ctrl.if_mem_word(value) {
-                        let (base, offset) = mem.address();
-                        if base == ctx.register(1) && offset <= E::VirtualAddress::SIZE as u64 {
-                            let dest = ctrl.resolve_mem(&dest);
-                            if dest.is_global() {
-                                let val = ctx.memory(&dest);
-                                let result = &mut self.result;
-                                if offset == 0 {
-                                    // last_hidden = this.prev
-                                    result.last_hidden_unit = Some(val);
-                                } else if offset == E::VirtualAddress::SIZE as u64 {
-                                    // first_hidden = this.next
-                                    result.first_hidden_unit = Some(val);
-                                }
-                                if result.last_hidden_unit.is_some() &&
-                                    result.first_hidden_unit.is_some()
-                                {
-                                    self.state = FinishUnitPostState::AddToRevealers;
-                                    if self.inline_depth != 0 {
-                                        ctrl.end_analysis();
-                                    } else {
-                                        ctrl.clear_unchecked_branches();
-                                    }
-                                }
-                            }
+                    if result.last_hidden_unit.is_some() && result.first_hidden_unit.is_some() {
+                        self.state = FinishUnitPostState::AddToRevealers;
+                        if self.inline_depth != 0 {
+                            ctrl.end_analysis();
+                        } else {
+                            ctrl.clear_unchecked_branches();
                         }
                     }
                 }
@@ -2869,6 +2864,246 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FinishUnitPostAna
                 self.result.first_revealer = Some(result.head);
                 self.result.last_revealer = Some(result.tail);
                 ctrl.end_analysis();
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_hide_unit<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    hide_unit: E::VirtualAddress,
+) -> HideUnit<'e, E::VirtualAddress> {
+    let mut result = HideUnit {
+        remove_references: None,
+        end_collision_tracking: None,
+        path_array: None,
+        first_free_path: None,
+        first_active_unit: None,
+        last_active_unit: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, hide_unit);
+    let mut analyzer = HideUnitAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        state: HideUnitState::IsHiddenJump,
+        inline_depth: 0,
+        inline_limit: 0,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct HideUnitAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut HideUnit<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: HideUnitState,
+    inline_depth: u8,
+    inline_limit: u8,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum HideUnitState {
+    /// Find is_hidden() jump, follow false branch
+    IsHiddenJump,
+    /// find remove_references(this, 0)
+    RemoveReferences,
+    EndCollisionTracking,
+    /// Should start with this.unit_search_index < 0 check
+    VerifyEndCollisionTracking,
+    /// Inline up to 3 times, with either this = this or arg1 = this.path
+    /// Find Mem32[this.path] = (first_free_path - path_array) + 1
+    Paths,
+    /// Find removal from active unit list (Inline once with this = this)
+    ActiveUnits,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for HideUnitAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            HideUnitState::IsHiddenJump => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((val, _)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                        // undefined for uninlined call
+                        if Operand::and_masked(val).0.is_undefined() ||
+                            val.if_arithmetic_and().is_some()
+                        {
+                            if let Some(to) = ctrl.resolve_va(to) {
+                                ctrl.assign_to_unresolved_on_eq_branch(condition, to);
+                                self.state = HideUnitState::RemoveReferences;
+                            }
+                        }
+                    }
+                }
+            }
+            HideUnitState::RemoveReferences => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ok = ctrl.resolve_register(1) == ctx.register(1) &&
+                            ctx.and_const(
+                                ctrl.resolve(self.arg_cache.on_thiscall_call(0)),
+                                0xff,
+                            ) == ctx.const_0();
+                        if ok {
+                            self.result.remove_references = Some(dest);
+                            self.state = HideUnitState::EndCollisionTracking;
+                        }
+                    }
+                }
+            }
+            HideUnitState::EndCollisionTracking => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if ctrl.resolve_register(1) == ctx.register(1) {
+                            self.state = HideUnitState::VerifyEndCollisionTracking;
+                            self.inline_limit = 5;
+                            ctrl.analyze_with_current_state(self, dest);
+                            if self.result.end_collision_tracking.is_some() {
+                                self.result.end_collision_tracking = Some(dest);
+                                self.state = HideUnitState::Paths;
+                            } else {
+                                self.state = HideUnitState::EndCollisionTracking;
+                            }
+                        }
+                    }
+                }
+            }
+            HideUnitState::VerifyEndCollisionTracking => {
+                if let Operation::Call(dest) = *op {
+                    if self.inline_depth < 2 {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let inline = ctrl.resolve_register(1) == ctx.register(1);
+                            if inline {
+                                self.inline_depth += 1;
+                                let old_limit = self.inline_limit;
+                                self.inline_limit = 5;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_limit = old_limit;
+                                self.inline_depth -= 1;
+                                if self.result.end_collision_tracking.is_some() {
+                                    ctrl.end_analysis();
+                                } else {
+                                    ctrl.end_branch();
+                                }
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    // Scarf canonicalizes int(Mem32[x] < 0) to `Mem8[x + 3] >> 7`
+                    // or `(Mem8[x + 3] & 80) == 0` .__.
+                    let offset = struct_layouts::unit_search_indices::<E::VirtualAddress>();
+                    let ok = condition.if_arithmetic_rsh_const(7)
+                        .or_else(|| {
+                            condition.if_arithmetic_eq_const(0)
+                                .and_then(|x| x.if_arithmetic_and_const(0x80))
+                        })
+                        .and_then(|x| x.if_mem8_offset(offset + 3)) == Some(ctx.register(1));
+                    if ok {
+                        self.result.end_collision_tracking = Some(E::VirtualAddress::from_u64(0));
+                        ctrl.end_analysis();
+                    } else {
+                        if self.inline_limit == 0 {
+                            ctrl.end_analysis();
+                        } else {
+                            self.inline_limit -= 1;
+                        }
+                    }
+                }
+            }
+            HideUnitState::Paths => {
+                let path_offset = struct_layouts::unit_path::<E::VirtualAddress>();
+                if let Operation::Call(dest) = *op {
+                    if self.inline_depth < 4 {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let inline = ctrl.resolve_register(1) == ctx.register(1) || {
+                                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                                ctrl.if_mem_word_offset(arg1, path_offset) ==
+                                    Some(ctx.register(1))
+                            };
+                            if inline {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.state != HideUnitState::Paths && self.inline_depth != 0 {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size == MemAccessSize::Mem32 && mem.address().0 != ctx.register(4) {
+                        let mem = ctrl.resolve_mem(mem);
+                        let (base, offset) = mem.address();
+                        let is_path_field0 = offset == 0 &&
+                            ctrl.if_mem_word_offset(base, path_offset) == Some(ctx.register(1));
+                        if is_path_field0 {
+                            let value = ctrl.resolve(value);
+                            // The value is int(first_free_path - path_array) >> 7 + 1
+                            // Signed right shift is pain to match against
+                            // But on 64bit it is just normal right shift;
+                            // (intptr_t & ffff_ffff) probably
+                            let result = Operand::and_masked(value).0
+                                .if_arithmetic_add_const(1)
+                                .and_then(|x| {
+                                    x.if_arithmetic_or()
+                                        .and_either(|x| {
+                                            Operand::and_masked(x).0.if_arithmetic_rsh_const(7)?
+                                                .if_arithmetic_sub()
+                                        })
+                                        .map(|x| x.0)
+                                        .or_else(|| {
+                                            x.if_arithmetic_rsh_const(7)?.if_arithmetic_sub()
+                                        })
+                                });
+                            if let Some((free, array)) = result {
+                                self.result.first_free_path = Some(free);
+                                self.result.path_array = Some(array);
+                                self.state = HideUnitState::ActiveUnits;
+                                if self.inline_depth != 0 {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            HideUnitState::ActiveUnits => {
+                if let Operation::Call(dest) = *op {
+                    if self.inline_depth < 2 {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let inline = ctrl.resolve_register(1) == ctx.register(1);
+                            if inline {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.result.first_active_unit.is_some() {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let result = linked_list::detect_list_remove(ctrl, op, ctx.register(1));
+                    if let Some((val, offset)) = result {
+                        let result = &mut self.result;
+                        if offset == 0 {
+                            result.last_active_unit = Some(val);
+                        } else {
+                            result.first_active_unit = Some(val);
+                        }
+                        if result.last_active_unit.is_some() &&
+                            result.first_active_unit.is_some()
+                        {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
             }
         }
     }

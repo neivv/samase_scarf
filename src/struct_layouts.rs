@@ -237,6 +237,13 @@ pub fn unit_next_pylon<Va: VirtualAddress>() -> u64 {
     }
 }
 
+pub fn unit_path<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x100,
+        false => 0x188,
+    }
+}
+
 pub fn unit_lockdown_timer<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x117,
@@ -276,6 +283,13 @@ pub fn unit_ground_strength<Va: VirtualAddress>() -> u64 {
     match Va::SIZE == 4 {
         true => 0x13a,
         false => 0x1d2,
+    }
+}
+
+pub fn unit_search_indices<Va: VirtualAddress>() -> u64 {
+    match Va::SIZE == 4 {
+        true => 0x13c,
+        false => 0x1d4,
     }
 }
 
