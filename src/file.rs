@@ -3,11 +3,11 @@ use bumpalo::collections::Vec as BumpVec;
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{Operand};
-use scarf::{BinaryFile, BinarySection, DestOperand, Operation};
+use scarf::{BinaryFile, BinarySection, DestOperand, MemAccessSize, Operation};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{FunctionFinder};
-use crate::util::{if_callable_const, single_result_assign, is_global, ControlExt};
+use crate::util::{if_callable_const, single_result_assign, is_global, ControlExt, OperandExt};
 
 pub(crate) struct OpenFile<Va: VirtualAddress> {
     pub file_exists: Option<Va>,
@@ -279,6 +279,86 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOpenFile<'
                     self.result.file_exists = Some(dest);
                     ctrl.end_analysis();
                 }
+            }
+        }
+    }
+}
+
+pub(crate) fn read_fatal_error<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    load_dat: E::VirtualAddress,
+) -> Option<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analysis = FuncAnalysis::new(binary, ctx, load_dat);
+    let mut analyzer = AnalyzeLoadDat {
+        result: None,
+        arg_cache: &actx.arg_cache,
+        custom_jump_seen: false,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct AnalyzeLoadDat<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    custom_jump_seen: bool,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeLoadDat<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        // Assume that arg2 == 0 on jumps,
+        // when calling read_file_x(arg1, 0, &mut out_size, ...) set out_size to custom
+        // Find jump with custom != 0
+        if let Operation::Jump { condition, to } = *op {
+            let ctx = ctrl.ctx();
+            let condition = ctrl.resolve(condition);
+            if let Some((var, eq)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                if ctrl.if_mem_word(var).map(|x| x.address()) ==
+                    Some((self.arg_cache.on_entry(1), 0))
+                {
+                    ctrl.continue_at_eq_address(eq, to);
+                } else if Operand::and_masked(var).0.if_custom().is_some() {
+                    ctrl.clear_unchecked_branches();
+                    ctrl.continue_at_neq_address(eq, to);
+                    self.custom_jump_seen = true;
+                }
+            }
+        } else if let Operation::Call(dest) = *op {
+            let ctx = ctrl.ctx();
+            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+            if arg1 == self.arg_cache.on_entry(0) {
+                if self.custom_jump_seen {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.result = Some(dest);
+                        ctrl.end_analysis();
+                        return;
+                    }
+                } else {
+                    let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                    ctrl.write_memory(
+                        &ctx.mem_access(arg3, 0, MemAccessSize::Mem32),
+                        ctx.custom(0),
+                    );
+                }
+            }
+            if dest.if_constant().is_none() {
+                // May have inlined that read_file_x, detect
+                // file.vtbl.get_file_size(file) call too and assign custom.
+                let dest = ctrl.resolve(dest);
+                let ecx = ctrl.resolve_register(1);
+                let is_vtable_call = ctrl.if_mem_word(dest)
+                    .and_then(|x| ctrl.if_mem_word(x.address().0)) ==
+                    Some(&ctx.mem_access(ecx, 0, E::WORD_SIZE));
+                if is_vtable_call {
+                    ctrl.do_call_with_result(ctx.custom(0));
+                }
+            }
+            if self.custom_jump_seen {
+                self.custom_jump_seen = false;
             }
         }
     }

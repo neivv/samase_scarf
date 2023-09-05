@@ -449,6 +449,7 @@ results! {
         EndCollisionTracking => end_collision_tracking => cache_hide_unit,
         DropPowerup => drop_powerup => cache_kill_unit,
         RemoveUnitAi => remove_unit_ai => cache_kill_unit,
+        FileReadFatalError => file_read_fatal_error,
     }
 }
 
@@ -1455,6 +1456,10 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
 
     pub fn join_param_variant_type_offset(&mut self) -> Option<usize> {
         self.enter(AnalysisCache::join_param_variant_type_offset)
+    }
+
+    pub fn file_read_fatal_error(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(AnalysisCache::file_read_fatal_error)
     }
 
     /// Mainly for tests/dump
@@ -4423,6 +4428,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let r = units::analyze_kill_unit(actx, func);
                 Some(([r.drop_powerup, r.remove_unit_ai], []))
             })
+    }
+
+    fn file_read_fatal_error(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_single_address(AddressAnalysis::FileReadFatalError, |s| {
+            let load_dat = s.load_dat(actx)?;
+            file::read_fatal_error(actx, load_dat)
+        })
     }
 }
 
