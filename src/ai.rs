@@ -748,6 +748,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnal
 pub(crate) struct AiStepFrameFuncs<'e, Va: VirtualAddressTrait> {
     pub ai_step_region: Option<Va>,
     pub ai_spend_money: Option<Va>,
+    pub step_ai_scripts: Option<Va>,
     pub step_ai_script: Option<Va>,
     pub players: Option<Operand<'e>>,
     pub first_ai_script: Option<Operand<'e>>,
@@ -773,6 +774,7 @@ pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
     let mut result = AiStepFrameFuncs {
         ai_step_region: None,
         ai_spend_money: None,
+        step_ai_scripts: None,
         step_ai_script: None,
         first_ai_script: None,
         players: None,
@@ -858,6 +860,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                     self.entry = entry;
                                     self.inline_depth -= 1;
                                     if self.result.first_ai_script.is_some() {
+                                        if self.inline_depth > 1 &&
+                                            self.result.step_ai_scripts.is_none()
+                                        {
+                                            self.result.step_ai_scripts = Some(entry);
+                                        }
                                         if self.inline_depth > 1 || self.inline_depth == 0 {
                                             ctrl.end_analysis();
                                         }

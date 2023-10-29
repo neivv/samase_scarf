@@ -311,6 +311,7 @@ results! {
         ProcessCommands => process_commands => cache_step_network,
         ProcessLobbyCommands => process_lobby_commands => cache_step_network,
         StepAiScript => step_ai_script => cache_ai_step_frame,
+        StepAiScripts => step_ai_scripts => cache_ai_step_frame,
         StepGameLoop => step_game_loop => cache_game_loop,
         StepGameLogic => step_game_logic => cache_game_loop,
         ProcessEvents => process_events => cache_game_loop,
@@ -2893,7 +2894,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
         self.cache_many(
-            &[AiStepRegion, AiSpendMoney, StepAiScript], &[FirstAiScript, Players,
+            &[AiStepRegion, AiSpendMoney, StepAiScript, StepAiScripts], &[FirstAiScript, Players,
                 StepAiRegionsRegion, StepAiRegionsPlayer, ResourceAreas,
                 AiTargetIgnoreResetCounter, AiTargetIgnoreResetCounter2,
                 AiTargetIgnoreRequestReset, AiMilitaryUpdateCounter],
@@ -2902,7 +2903,8 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let game = s.game(actx)?;
                 let result = ai::step_frame_funcs(actx, step_objects, game);
                 s.aiscript_hook = result.hook;
-                Some(([result.ai_step_region, result.ai_spend_money, result.step_ai_script],
+                Some(([result.ai_step_region, result.ai_spend_money, result.step_ai_script,
+                    result.step_ai_scripts],
                     [result.first_ai_script, result.players, result.step_ai_regions_region,
                     result.step_ai_regions_player, result.resource_areas,
                     result.ai_target_ignore_reset_counter, result.ai_target_ignore_reset_counter2,
