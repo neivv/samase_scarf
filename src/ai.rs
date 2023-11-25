@@ -1744,3 +1744,94 @@ pub(crate) fn ai_spell_cast<'e, E: ExecutionState<'e>>(
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
+
+pub(crate) struct AiRemoveUnit<Va: VirtualAddressTrait> {
+    pub military: Option<Va>,
+    pub town: Option<Va>,
+}
+
+pub(crate) fn analyze_ai_remove_unit<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    ai_remove_unit: E::VirtualAddress,
+) -> AiRemoveUnit<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let mut result = AiRemoveUnit {
+        military: None,
+        town: None,
+    };
+
+    let arg_cache = &analysis.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, ai_remove_unit);
+    let mut analyzer = AiRemoveUnitAnalyzer {
+        result: &mut result,
+        arg_cache,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AiRemoveUnitAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut AiRemoveUnit<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiRemoveUnitAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        // Just expecting first call to be military remove (a1 = a1, a2 = a2),
+        // second town remove (a1 = a1, a2 = 0)
+        // No jumps even with assertion builds
+        match *op {
+            Operation::Call(dest) => {
+                let ctx = ctrl.ctx();
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    if arg1 != self.arg_cache.on_entry(0) {
+                        self.fail(ctrl);
+                        return;
+                    }
+                    let arg2 = ctx.and_const(ctrl.resolve(self.arg_cache.on_call(1)), 0xff);
+                    if self.result.military.is_none() {
+                        if arg2 != ctx.and_const(self.arg_cache.on_entry(1), 0xff) {
+                            self.fail(ctrl);
+                            return;
+                        } else {
+                            self.result.military = Some(dest);
+                        }
+                    } else {
+                        if arg2 != ctx.const_0() {
+                            self.fail(ctrl);
+                            return;
+                        } else {
+                            self.result.town = Some(dest);
+                            ctrl.end_analysis();
+                        }
+                    }
+                } else {
+                    self.fail(ctrl);
+                }
+            }
+            Operation::Move(DestOperand::Memory(ref mem), _, _) => {
+                let ctx = ctrl.ctx();
+                if mem.address().0 != ctx.register(4) {
+                    self.fail(ctrl);
+                }
+            }
+            Operation::Jump { .. } => {
+                self.fail(ctrl);
+            }
+            _ => (),
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> AiRemoveUnitAnalyzer<'a, 'e, E> {
+    fn fail(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        self.result.military = None;
+        self.result.town = None;
+        ctrl.end_analysis();
+    }
+}

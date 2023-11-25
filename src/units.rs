@@ -3194,15 +3194,31 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             KillUnitState::RemoveUnitAi => {
-                if let Operation::Call(dest) = *op {
-                    let ok = ctrl.resolve(self.arg_cache.on_call(0)) == ctx.register(1) &&
-                        ctx.and_const(ctrl.resolve(self.arg_cache.on_call(1)), 0xff) ==
-                            ctx.const_1();
-                    if ok {
-                        if let Some(dest) = ctrl.resolve_va(dest) {
-                            self.result.remove_unit_ai = Some(dest);
-                            ctrl.end_analysis();
-                        }
+                let arg1;
+                let arg2;
+                let dest;
+                if let Operation::Call(dest_) = *op {
+                    dest = dest_;
+                    arg1 = self.arg_cache.on_call(0);
+                    arg2 = self.arg_cache.on_call(1);
+                } else if let Operation::Jump { condition, to } = *op {
+                    if condition == ctx.const_1() && ctrl.resolve_register(4) == ctx.register(4) {
+                        // Tail call
+                        dest = to;
+                        arg1 = self.arg_cache.on_entry(0);
+                        arg2 = self.arg_cache.on_entry(1);
+                    } else {
+                        return;
+                    }
+                } else {
+                    return;
+                }
+                let ok = ctrl.resolve(arg1) == ctx.register(1) &&
+                    ctx.and_const(ctrl.resolve(arg2), 0xff) == ctx.const_1();
+                if ok {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.result.remove_unit_ai = Some(dest);
+                        ctrl.end_analysis();
                     }
                 }
             }

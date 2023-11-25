@@ -449,8 +449,10 @@ results! {
         RemoveReferences => remove_references => cache_hide_unit,
         EndCollisionTracking => end_collision_tracking => cache_hide_unit,
         DropPowerup => drop_powerup => cache_kill_unit,
-        RemoveUnitAi => remove_unit_ai => cache_kill_unit,
+        AiRemoveUnit => ai_remove_unit => cache_kill_unit,
         FileReadFatalError => file_read_fatal_error,
+        AiRemoveUnitMilitary => ai_remove_unit_military => cache_ai_remove_unit,
+        AiRemoveUnitTown => ai_remove_unit_town => cache_ai_remove_unit,
     }
 }
 
@@ -4424,7 +4426,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     fn cache_kill_unit(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(
-            &[DropPowerup, RemoveUnitAi], &[],
+            &[DropPowerup, AiRemoveUnit], &[],
             |s| {
                 let func = s.kill_unit(actx)?;
                 let r = units::analyze_kill_unit(actx, func);
@@ -4432,11 +4434,27 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             })
     }
 
+    fn ai_remove_unit(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::AiRemoveUnit, |s| s.cache_kill_unit(actx))
+    }
+
+
     fn file_read_fatal_error(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::FileReadFatalError, |s| {
             let load_dat = s.load_dat(actx)?;
             file::read_fatal_error(actx, load_dat)
         })
+    }
+
+    fn cache_ai_remove_unit(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[AiRemoveUnitMilitary, AiRemoveUnitTown], &[],
+            |s| {
+                let func = s.ai_remove_unit(actx)?;
+                let r = ai::analyze_ai_remove_unit(actx, func);
+                Some(([r.military, r.town], []))
+            })
     }
 }
 
