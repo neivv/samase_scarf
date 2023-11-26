@@ -16,7 +16,7 @@ use crate::hash_map::HashSet;
 use crate::switch::CompleteSwitch;
 use crate::util::{
     MemAccessExt, OptionExt, OperandExt, single_result_assign, ControlExt, bumpvec_with_capacity,
-    is_global, ExecStateExt,
+    is_global, ExecStateExt, seems_assertion_call,
 };
 
 pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
@@ -1833,5 +1833,169 @@ impl<'a, 'e, E: ExecutionState<'e>> AiRemoveUnitAnalyzer<'a, 'e, E> {
         self.result.military = None;
         self.result.town = None;
         ctrl.end_analysis();
+    }
+}
+
+pub(crate) struct AddAiToTrainedUnit<Va: VirtualAddressTrait> {
+    pub change_ai_region_state: Option<Va>,
+    pub add_building_ai: Option<Va>,
+    pub add_military_ai: Option<Va>,
+}
+
+pub(crate) fn analyze_add_ai_to_trained_unit<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    add_ai_to_trained_unit: E::VirtualAddress,
+) -> AddAiToTrainedUnit<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let mut result = AddAiToTrainedUnit {
+        change_ai_region_state: None,
+        add_building_ai: None,
+        add_military_ai: None,
+    };
+
+    let arg_cache = &analysis.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, add_ai_to_trained_unit);
+    let mut analyzer = AddAiToTrainedAnalyzer {
+        result: &mut result,
+        arg_cache,
+        state: AddAiToTrainedState::OverlordJump,
+        inline_depth: 0,
+        overlord_neq_branch: None,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum AddAiToTrainedState {
+    /// Check for x == 0x2a jump
+    OverlordJump,
+    /// On eq branch, function call to add_building_ai(a1 = a1, a2)
+    /// May be tail call.
+    AddBuildingAi,
+    /// On overlord neq branch, check for x == 0x28 jump
+    BroodlingJump,
+    /// On broodling eq branch, inline once to make_military_in_current_region(a1 = a1, a2),
+    /// find add_military(a1 = ai_regions + id * 0x34, a2, 1u8)
+    /// May be tail call.
+    AddMilitaryAi,
+}
+
+struct AddAiToTrainedAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut AddAiToTrainedUnit<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: AddAiToTrainedState,
+    inline_depth: u8,
+    overlord_neq_branch: Option<(E::VirtualAddress, E)>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AddAiToTrainedAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match self.state {
+            AddAiToTrainedState::OverlordJump | AddAiToTrainedState::BroodlingJump => {
+                if let Operation::Jump { condition, to } = *op {
+                    let unit_id = match self.state {
+                        AddAiToTrainedState::OverlordJump => 0x2a,
+                        _ => 0x28,
+                    };
+                    let condition = ctrl.resolve(condition);
+                    let ok = condition.if_arithmetic_eq_neq()
+                        .filter(|x| x.1.if_constant() == Some(unit_id))
+                        .map(|x| x.2);
+                    if let Some(jump_if_eq) = ok {
+                        if self.state == AddAiToTrainedState::OverlordJump {
+                            if let Some(to) = ctrl.resolve_va(to) {
+                                let no_jump = ctrl.current_instruction_end();
+                                let (eq_branch, neq_branch) = match jump_if_eq {
+                                    true => (to, no_jump),
+                                    false => (no_jump, to),
+                                };
+                                let state = ctrl.exec_state();
+                                self.overlord_neq_branch = Some((neq_branch, state.clone()));
+                                ctrl.clear_unchecked_branches();
+                                ctrl.continue_at_address(eq_branch);
+                                self.state = AddAiToTrainedState::AddBuildingAi;
+                            }
+                        } else {
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_eq_address(jump_if_eq, to);
+                            self.state = AddAiToTrainedState::AddMilitaryAi;
+                        }
+                    }
+                }
+            }
+            AddAiToTrainedState::AddBuildingAi | AddAiToTrainedState::AddMilitaryAi => {
+                let ctx = ctrl.ctx();
+                let arg_cache = self.arg_cache;
+                if let Some((dest, is_tail)) = ctrl.call_or_tail_call(op, ctx.register(4)) {
+                    let arg1 = if is_tail { arg_cache.on_entry(0) } else { arg_cache.on_call(0) };
+                    let arg2 = if is_tail { arg_cache.on_entry(1) } else { arg_cache.on_call(1) };
+                    let arg3 = if is_tail { arg_cache.on_entry(2) } else { arg_cache.on_call(2) };
+                    if self.state == AddAiToTrainedState::AddBuildingAi {
+                        let ok = ctrl.resolve(arg1) == arg_cache.on_entry(0) &&
+                            ctrl.resolve(arg2) == arg_cache.on_entry(1);
+                        if ok {
+                            self.result.add_building_ai = Some(dest);
+                            ctrl.clear_unchecked_branches();
+                            ctrl.end_branch();
+                            if let Some((addr, state)) = self.overlord_neq_branch.take() {
+                                ctrl.add_branch_with_state(addr, state, Default::default());
+                                self.state = AddAiToTrainedState::BroodlingJump;
+                            }
+                        }
+                    } else {
+                        let arg1 = ctrl.resolve(arg1);
+                        let ai_region_size = E::struct_layouts().ai_region_size();
+                        let a1_ok = arg1.if_arithmetic_add()
+                            .and_either_other(|x| x.if_arithmetic_mul_const(ai_region_size))
+                            .and_then(|x| ctrl.if_mem_word(x))
+                            .is_some();
+                        if a1_ok {
+                            let arg2 = ctrl.resolve(arg2);
+                            if arg2 == arg_cache.on_entry(1) {
+                                let arg3 = ctrl.resolve(arg3);
+                                if ctx.and_const(arg3, 0xff) == ctx.const_1() {
+                                    self.result.add_military_ai = Some(dest);
+                                    ctrl.end_analysis();
+                                }
+                            } else if ctx.and_const(arg2, 0xff) == ctx.const_1() {
+                                single_result_assign(
+                                    Some(dest),
+                                    &mut self.result.change_ai_region_state,
+                                );
+                            }
+                        }
+                    }
+                }
+
+                if self.state == AddAiToTrainedState::AddMilitaryAi {
+                    if let Operation::Call(dest) = *op {
+                        if seems_assertion_call(ctrl, arg_cache) {
+                            ctrl.end_branch();
+                            return;
+                        }
+                        if self.inline_depth == 0 {
+                            let inline =
+                                ctrl.resolve(arg_cache.on_call(0)) == arg_cache.on_entry(0) &&
+                                ctrl.resolve(arg_cache.on_call(1)) == arg_cache.on_entry(1);
+                            if inline {
+                                if let Some(dest) = ctrl.resolve_va(dest) {
+                                    self.inline_depth = 1;
+                                    ctrl.analyze_with_current_state(self, dest);
+                                    self.inline_depth = 0;
+                                    if self.result.add_military_ai.is_some() {
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

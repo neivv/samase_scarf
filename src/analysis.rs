@@ -453,6 +453,8 @@ results! {
         FileReadFatalError => file_read_fatal_error,
         AiRemoveUnitMilitary => ai_remove_unit_military => cache_ai_remove_unit,
         AiRemoveUnitTown => ai_remove_unit_town => cache_ai_remove_unit,
+        AddBuildingAi => add_building_ai => cache_add_ai_to_trained_unit,
+        AddMilitaryAi => add_military_ai => cache_add_ai_to_trained_unit,
     }
 }
 
@@ -1886,6 +1888,11 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             let result = pathing::regions(actx, aiscript_hook.as_ref()?);
             Some(([result.get_region, result.change_ai_region_state], [result.ai_regions]))
         })
+    }
+
+    #[cfg(feature = "test_assertions")]
+    fn change_ai_region_state(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::ChangeAiRegionState, |s| s.cache_regions(actx))
     }
 
     fn get_region(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
@@ -3968,6 +3975,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             });
     }
 
+    fn add_ai_to_trained_unit(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::AddAiToTrainedUnit, |s| s.cache_order_train(actx))
+    }
+
     fn cache_order_matrix(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(
@@ -4438,7 +4449,6 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::AiRemoveUnit, |s| s.cache_kill_unit(actx))
     }
 
-
     fn file_read_fatal_error(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_single_address(AddressAnalysis::FileReadFatalError, |s| {
             let load_dat = s.load_dat(actx)?;
@@ -4454,6 +4464,22 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let func = s.ai_remove_unit(actx)?;
                 let r = ai::analyze_ai_remove_unit(actx, func);
                 Some(([r.military, r.town], []))
+            })
+    }
+
+    fn cache_add_ai_to_trained_unit(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[AddBuildingAi, AddMilitaryAi], &[],
+            |s| {
+                let func = s.add_ai_to_trained_unit(actx)?;
+                let r = ai::analyze_add_ai_to_trained_unit(actx, func);
+                #[cfg(feature = "test_assertions")]
+                {
+                    let change_ai_region_state = s.change_ai_region_state(actx);
+                    assert_eq!(r.change_ai_region_state, change_ai_region_state);
+                }
+                Some(([r.add_building_ai, r.add_military_ai], []))
             })
     }
 }

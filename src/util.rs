@@ -479,6 +479,13 @@ pub trait ControlExt<'e, E: ExecutionState<'e>> {
     fn continue_at_eq_address(&mut self, eq_zero: bool, jump_dest: Operand<'e>) {
         self.continue_at_neq_address(!eq_zero, jump_dest);
     }
+    /// Return true => tail_call, false => call.
+    /// Also does resolve_va() for call dest.
+    fn call_or_tail_call(
+        &mut self,
+        operation: &scarf::Operation<'e>,
+        entry_esp: Operand<'e>,
+    ) -> Option<(E::VirtualAddress, bool)>;
 }
 
 impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
@@ -672,6 +679,26 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
             }
         };
         self.continue_at_address(dest);
+    }
+
+    fn call_or_tail_call(
+        &mut self,
+        operation: &scarf::Operation<'e>,
+        entry_esp: Operand<'e>,
+    ) -> Option<(<A::Exec as ExecutionState<'e>>::VirtualAddress, bool)> {
+        match *operation {
+            scarf::Operation::Call(dest) => {
+                Some((self.resolve_va(dest)?, false))
+            }
+            scarf::Operation::Jump { condition, to } => {
+                if self.resolve_register(4) == entry_esp && condition == self.ctx().const_1() {
+                    Some((self.resolve_va(to)?, true))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 }
 
