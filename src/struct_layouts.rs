@@ -364,6 +364,10 @@ impl StructLayouts {
     pub const fn dcreep_x(self) -> u64 {
         self.pair(0x10, 0x20)
     }
+
+    pub const fn building_ai_town(self) -> u64 {
+        self.pair(0x14, 0x20)
+    }
 }
 
 pub fn button_set_index_to_action<Va: VirtualAddress>(

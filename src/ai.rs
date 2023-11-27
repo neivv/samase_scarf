@@ -1999,3 +1999,57 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AddAiToTrainedAna
         }
     }
 }
+
+pub(crate) struct AddBuildingAi<Va: VirtualAddressTrait> {
+    pub add_town_unit_ai: Option<Va>,
+}
+
+pub(crate) fn analyze_add_building_ai<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    add_building_ai: E::VirtualAddress,
+) -> AddBuildingAi<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let mut result = AddBuildingAi {
+        add_town_unit_ai: None,
+    };
+
+    let arg_cache = &analysis.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, add_building_ai);
+    let mut analyzer = AddBuildingAiAnalyzer {
+        result: &mut result,
+        arg_cache,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct AddBuildingAiAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut AddBuildingAi<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AddBuildingAiAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            // Just add_town_unit_ai(a1 = a1.ai.town, a2)
+            // arg1.ai access may be outlined so just check BuildingAi.town deref
+            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+            let ok =
+                ctrl.if_mem_word_offset(
+                    arg1,
+                    E::struct_layouts().building_ai_town(),
+                ).is_some() &&
+                ctrl.resolve(self.arg_cache.on_call(1)) == self.arg_cache.on_entry(1);
+            if ok {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    self.result.add_town_unit_ai = Some(dest);
+                    ctrl.end_analysis();
+                }
+            }
+        }
+    }
+}

@@ -455,6 +455,7 @@ results! {
         AiRemoveUnitTown => ai_remove_unit_town => cache_ai_remove_unit,
         AddBuildingAi => add_building_ai => cache_add_ai_to_trained_unit,
         AddMilitaryAi => add_military_ai => cache_add_ai_to_trained_unit,
+        AddTownUnitAi => add_town_unit_ai => cache_add_building_ai,
     }
 }
 
@@ -4480,6 +4481,24 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     assert_eq!(r.change_ai_region_state, change_ai_region_state);
                 }
                 Some(([r.add_building_ai, r.add_military_ai], []))
+            })
+    }
+
+    fn add_building_ai(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::AddBuildingAi,
+            |s| s.cache_add_ai_to_trained_unit(actx),
+        )
+    }
+
+    fn cache_add_building_ai(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[AddTownUnitAi], &[],
+            |s| {
+                let func = s.add_building_ai(actx)?;
+                let r = ai::analyze_add_building_ai(actx, func);
+                Some(([r.add_town_unit_ai], []))
             })
     }
 }
