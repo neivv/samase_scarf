@@ -2337,6 +2337,20 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         check_global_struct_opt(map_names, binary, "campaign_map_names")
     }
 
+    // Bug was introduced in 64bit (struct layout independent) save code,
+    // which was started to be used in 32bit too from patch 1.23.3g
+    // which fixed sprite deserialization bug in 32bit that was
+    // introduced with sprite x/y position changes in 1.23.3c.
+    if E::VirtualAddress::SIZE == 4 && (
+        minor_version < 23 ||
+        (minor_version == 23 && patch_version < 3) ||
+        (minor_version == 23 && patch_version == 3 && revision < b'g')
+    ) {
+        assert!(analysis.deserialize_lone_sprite_patch().is_none());
+    } else {
+        assert!(analysis.deserialize_lone_sprite_patch().is_some());
+    }
+
     let dump_text = samase_scarf::dump::dump_all(analysis);
     let compare_path = if E::VirtualAddress::SIZE == 4 {
         format!("tests/compare/{}-32.txt", filename_str)

@@ -234,6 +234,11 @@ pub fn dump<'e, E: ExecutionState<'e>>(
             &mut out, "replay_minimap_unexplored_fog_patch: {:x?}",
             patch.as_ref().map(|x| (x.address, &x.data)),
         );
+        let patch = analysis.deserialize_lone_sprite_patch();
+        out!(
+            &mut out, "deserialize_lone_sprite_patch: {:x?}",
+            patch.as_ref().map(|x| (x.address, &x.data)),
+        );
 
         out!(&mut out, "crt_fastfail: {:?}", analysis.crt_fastfail());
         for i in 0..0xbc {

@@ -766,6 +766,7 @@ pub struct AnalysisCache<'e, E: ExecutionState<'e>> {
     run_triggers: Cached<RunTriggers<E::VirtualAddress>>,
     trigger_unit_count_caches: Cached<TriggerUnitCountCaches<'e>>,
     replay_minimap_unexplored_fog_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
+    deserialize_lone_sprite_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
     crt_fastfail: Cached<Rc<Vec<E::VirtualAddress>>>,
     unwind_functions: Cached<Rc<x86_64_unwind::UnwindFunctions>>,
     dat_tables: DatTables<'e>,
@@ -984,6 +985,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
                 run_triggers: Default::default(),
                 trigger_unit_count_caches: Default::default(),
                 replay_minimap_unexplored_fog_patch: Default::default(),
+                deserialize_lone_sprite_patch: Default::default(),
                 crt_fastfail: Default::default(),
                 unwind_functions: Default::default(),
                 dat_tables: DatTables::new(),
@@ -1391,6 +1393,11 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         &mut self,
     ) -> Option<Rc<Patch<E::VirtualAddress>>> {
         self.enter(AnalysisCache::replay_minimap_unexplored_fog_patch)
+    }
+
+    /// A patch to fix orr-by-one in loading save when lone/fow sprite array is full
+    pub fn deserialize_lone_sprite_patch(&mut self) -> Option<Rc<Patch<E::VirtualAddress>>> {
+        self.enter(AnalysisCache::deserialize_lone_sprite_patch)
     }
 
     pub fn draw_minimap_units(&mut self) -> Option<E::VirtualAddress> {
@@ -2791,6 +2798,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    fn deserialize_sprites(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::DeserializeSprites,
+            |s| s.cache_sprite_serialization(actx),
+        )
+    }
+
     fn limits(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Limits<'e, E::VirtualAddress>> {
         if let Some(cached) = self.limits.cached() {
             return cached;
@@ -3305,6 +3319,23 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             self.replay_minimap_unexplored_fog_patch(actx);
         }
         self.cache_single_address(AddressAnalysis::DrawMinimapUnits, |_| None)
+    }
+
+    fn deserialize_lone_sprite_patch(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<Rc<Patch<E::VirtualAddress>>> {
+        if let Some(cached) = self.deserialize_lone_sprite_patch.cached() {
+            return cached;
+        }
+        let result = Some(()).and_then(|()| {
+            let deserialize_sprites = self.deserialize_sprites(actx)?;
+            let funcs = self.function_finder();
+            save::deserialize_lone_sprite_patch(actx, deserialize_sprites, &funcs)
+        });
+        let patch = result.map(Rc::new);
+        self.deserialize_lone_sprite_patch.cache(&patch);
+        patch
     }
 
     fn step_replay_commands(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {

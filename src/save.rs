@@ -3,9 +3,9 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::add_terms::collect_arith_add_terms;
-use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis::{AnalysisCtx, ArgCache, Patch};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
-use crate::util::{single_result_assign, bumpvec_with_capacity, OperandExt};
+use crate::util::{single_result_assign, bumpvec_with_capacity, ControlExt, OperandExt};
 
 #[derive(Clone)]
 pub struct SpriteSerialization<Va: VirtualAddress> {
@@ -199,5 +199,122 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteSerializationAnalysis<'a, 'e, E>
         terms.remove_one(|op, _neg| {
             op.if_arithmetic_mul_const(4) == Some(self.map_height_tiles)
         })
+    }
+}
+
+pub(crate) fn deserialize_lone_sprite_patch<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    deserialize_sprites: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> Option<Patch<E::VirtualAddress>> {
+    // Caller of deserialize_sprites should call deserialize_fow_lone_sprites after that,
+    // which then calls to deserialize_fow_sprite_arr that contains
+    // jump x >= arg3, patch it to x > arg3
+    let callers = functions.find_callers(actx, deserialize_sprites);
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let arg_cache = &actx.arg_cache;
+    let funcs = functions.functions();
+
+    for &caller in &callers {
+        let val = entry_of_until(binary, funcs, caller, |entry| {
+            let mut analyzer = DeserializeLoneSpriteAnalyzer::<E> {
+                entry_of: EntryOf::Retry,
+                inline_depth: 0,
+                limit: 10,
+                deserialize_sprites,
+                deserialize_sprites_seen: false,
+                arg_cache,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.entry_of
+        }).into_option();
+        if val.is_some() {
+            return val;
+        }
+    }
+    None
+}
+
+struct DeserializeLoneSpriteAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    entry_of: EntryOf<Patch<E::VirtualAddress>>,
+    inline_depth: u8,
+    limit: u8,
+    deserialize_sprites: E::VirtualAddress,
+    deserialize_sprites_seen: bool,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    DeserializeLoneSpriteAnalyzer<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.inline_depth == 0 {
+            if let Operation::Call(dest) = *op {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    if !self.deserialize_sprites_seen {
+                        if dest == self.deserialize_sprites {
+                            self.deserialize_sprites_seen = true;
+                            ctrl.clear_unchecked_branches();
+                        }
+                    } else {
+                        self.entry_of = EntryOf::Stop;
+                        self.inline_depth = 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+        } else if self.inline_depth == 1 {
+            if let Operation::Call(dest) = *op {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    self.inline_depth = 2;
+                    let binary = ctrl.binary();
+                    let ctx = ctrl.ctx();
+                    let mut analysis = FuncAnalysis::new(binary, ctx, dest);
+                    analysis.analyze(self);
+                    ctrl.end_analysis();
+                }
+            }
+        } else {
+            if let Operation::Jump { condition, .. } = *op {
+                if self.limit == 0 {
+                    ctrl.end_analysis();
+                    return;
+                }
+                self.limit -= 1;
+                let ctx = ctrl.ctx();
+                let condition = ctrl.resolve(condition);
+                let ok = condition.if_arithmetic_eq_const(0)
+                    .and_then(|x| x.if_arithmetic_gt())
+                    .filter(|&x| {
+                        ctx.and_const(x.0, 0xffff) ==
+                            ctx.and_const(self.arg_cache.on_entry(2), 0xffff)
+                    })
+                    .is_some();
+                if ok {
+                    let address = ctrl.address();
+                    let binary = ctrl.binary();
+                    if let Ok(bytes) = binary.slice_from_address_to_end(address) {
+                        // jae (short, long) to ja
+                        if bytes.starts_with(&[0x0f, 0x83]) {
+                            self.entry_of = EntryOf::Ok(Patch {
+                                address: address + 1,
+                                data: vec![0x87],
+                            })
+                        } else if bytes.starts_with(&[0x73]) {
+                            self.entry_of = EntryOf::Ok(Patch {
+                                address: address + 1,
+                                data: vec![0x77],
+                            })
+                        }
+                    }
+                    ctrl.end_analysis();
+                }
+            }
+        }
     }
 }
