@@ -2098,6 +2098,7 @@ MapData array patches:
 1403d0e48:9 = [41, 81, bc, 85, ff, ff, ff, ff, 3c, 00, 00, 00]
 1403d0e8c:2 = [3d, 82, 00, 00, 00]
 1403d0eba:2 = [3d, 82, 00, 00, 00]
+1403d8435:7 = [48, 89, c1, 48, 8b, bd, 98, 00, 00, 00]
 1403e12fa:2 = [3d, 82, 00, 00, 00]
 1403e154a:4 = [40, 81, fe, 82, 00, 00, 00]
 1403e1588:4 = [40, 81, fe, 82, 00, 00, 00]
@@ -2209,6 +2210,10 @@ MapData array patches:
 14027e9de: [(0, 14)]
 14027e9f2: [(0, 13)]
 --- Grp texture hooks ---
+1403cb675:4: rcx <= 140e90b68, (rdx * 8)
+1403cde9d:4: rcx <= 140e90b80, (rdx * 8)
+1403d844a:4: r15 <= rcx, (r11 * 8)
+1403d91f6:4: rcx <= rax, (rdx * 8)
 Grp index hooks: ["1403cafd9", "1403cd724", "1403d8a7f"]
 --- Func replaces ---
 1401a0b00 = SelfOrSubunitAirWeapon

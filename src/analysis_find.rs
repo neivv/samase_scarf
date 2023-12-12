@@ -38,7 +38,7 @@ fn first_definite_entry<Va: VirtualAddress>(
                 first_bytes == [0x55, 0x8b, 0xec] ||
                 first_bytes == [0x55, 0x89, 0xe5]
         } else {
-            let first_bytes: &[u8; 48] = match binary.slice_from(relative..relative + 48) {
+            let first_bytes: &[u8; 64] = match binary.slice_from(relative..relative + 64) {
                 Ok(o) => match o.try_into() {
                     Ok(o) => o,
                     Err(_) => return false,
@@ -115,11 +115,13 @@ fn check_rsp_move(bytes: &[u8; 3]) -> Option<u8> {
     }
 }
 
-fn complex_x86_64_entry_check(bytes: &[u8; 48]) -> Option<bool> {
+fn complex_x86_64_entry_check(bytes: &[u8; 64]) -> Option<bool> {
     use RegisterState::*;
     // Accepts following
     //   mov volatilereg, rsp
     //      (optional)
+    //   mov [rsp | volatilereg + C], non-volatile or arg
+    //      (Optional; moves to 4-word shadow space)
     //   push 0~7 non-volatile registers
     //   lea rbp, [volatilereg - C]
     //      (Optional; only if rsp was copied to volatilereg and rbp was pushed)
@@ -138,7 +140,7 @@ fn complex_x86_64_entry_check(bytes: &[u8; 48]) -> Option<bool> {
         Any, Any, Any, Any,
         Caller, Caller, Caller, Caller,
     ];
-    let mut next = slice_to_arr_ref::<45>(bytes)?;
+    let mut next = slice_to_arr_ref::<61>(bytes)?;
 
     // -- mov volatilereg, rsp --
     if let Some(dest) = check_rsp_move(slice_to_arr_ref(bytes)?) {
@@ -149,10 +151,37 @@ fn complex_x86_64_entry_check(bytes: &[u8; 48]) -> Option<bool> {
         register_state[dest] = Stack;
         next = slice_to_arr_ref(&bytes[3..])?;
     }
-    // -- pushes --
+    // -- Moves to shadow space --
     let bytes = next;
-    let mut push_count = 0;
     let mut pos = 0usize;
+    for _ in 0..4 {
+        if let Some(slice) = bytes.get(pos..pos.wrapping_add(4)) {
+            if slice[0] & 0xf0 == 0x40 && slice[1] == 0x89 && slice[2] & 0xc0 == 0x40 {
+                let offset = slice[3];
+                if offset & 0x7 != 0 || offset.wrapping_sub(8) > 0x20 {
+                    return Some(false);
+                }
+                let dest_base = (slice[2] & 0x7) | ((slice[0] & 0x1) << 3);
+                let dest_base = (dest_base & 0xf) as usize;
+                let reg = ((slice[2] >> 3) & 0x7) | ((slice[0] & 0x4) << 1);
+                let reg = (reg & 0xf) as usize;
+                if register_state[dest_base] != Stack {
+                    return Some(false);
+                }
+                if register_state[reg] != Caller && matches!(reg, 1 | 2 | 8 | 9) == false {
+                    return Some(false);
+                }
+                register_state[reg] = Any;
+                pos += 4;
+            } else {
+                break;
+            }
+        }
+    }
+    let bytes = slice_to_arr_ref::<45>(&bytes[pos..])?;
+    let mut pos = 0usize;
+    // -- pushes --
+    let mut push_count = 0;
     for _ in 0..8 {
         if let Some(slice) = bytes.get(pos..pos.wrapping_add(2)) {
             if slice[0] & 0xf8 == 0x50 {
@@ -254,7 +283,7 @@ fn complex_x86_64_entry_check(bytes: &[u8; 48]) -> Option<bool> {
 #[test]
 fn test_complex_x86_64_entry() {
     fn do_test(input: &[u8]) -> bool {
-        let mut buf = [0u8; 48];
+        let mut buf = [0u8; 64];
         (&mut buf[..input.len()]).copy_from_slice(input);
         complex_x86_64_entry_check(&buf) == Some(true)
     }
@@ -292,6 +321,20 @@ fn test_complex_x86_64_entry() {
         0xb8, 0xb0, 0x29, 0x00, 0x00, // mov eax, 29b0
         0xe8, 0x00, 0xff, 0xff, 0xff, // call x
         0x48, 0x2b, 0xe0, // sub rsp, rax
+    ]));
+    assert!(do_test(&[
+        0x48, 0x8b, 0xc4, // mov rax, rsp
+        0x48, 0x89, 0x58, 0x08, // mov [rax + 8], rbx
+        0x44, 0x89, 0x48, 0x20, // mov [rax + 20], r9d
+        0x55, // push rbp
+        0x56, // push rsi
+        0x57, // push rdi
+        0x41, 0x54, // push r12
+        0x41, 0x55, // push r13
+        0x41, 0x56, // push r14
+        0x41, 0x57, // push r15
+        0x48, 0x8d, 0x68, 0x98, // lea rbp, [rax - 68]
+        0x48, 0x81, 0xec, 0x30, 0x01, 0x00, 0x00, // sub rsp, 130
     ]));
 }
 

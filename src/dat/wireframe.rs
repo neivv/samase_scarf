@@ -2,12 +2,12 @@ use bumpalo::collections::Vec as BumpVec;
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{OperandHashByAddress};
-use scarf::{Operand, Operation};
+use scarf::{Operand, Operation, OperandCtx};
 
 use crate::analysis_find::{entry_of_until, EntryOf};
 use crate::hash_map::{HashMap, HashSet};
 use crate::unresolve::unresolve;
-use crate::util::{ControlExt, OptionExt, OperandExt, bumpvec_with_capacity};
+use crate::util::{ControlExt, ExecStateExt, OptionExt, OperandExt, bumpvec_with_capacity};
 use super::{DatPatchContext, DatPatch, GrpTexturePatch, reloc_address_of_instruction};
 
 pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
@@ -93,6 +93,7 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
                 inline_limit: 0,
                 inline_fail: false,
                 inline_this: ctx.const_0(),
+                after_current_custom_10_call: E::VirtualAddress::from_u64(0),
             };
             let mut func_analysis = FuncAnalysis::new(binary, ctx, entry);
             func_analysis.analyze(&mut analyzer);
@@ -137,6 +138,13 @@ struct GrpIndexAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     inline_limit: u8,
     inline_fail: bool,
     inline_this: Operand<'e>,
+    /// Usually 0, when call results in Custom(10) (Assuming function call that returns
+    /// &DdsGrpSet.dds_grps[..]), store the next instruction after that.
+    /// Sometimes the function return value ddsgrp is no longer available, e.g
+    /// code does `mov rax, [rax + 8]` to access textures, overwriting `rax`, in
+    /// which case this will be patched to inject `mov rcx, rax` instruction to have
+    /// ddsgrp still available in some register.
+    after_current_custom_10_call: E::VirtualAddress,
 }
 
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
@@ -145,14 +153,11 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        fn is_stack(op: Operand<'_>) -> bool {
-            op.if_arithmetic_sub()
-                .filter(|x| x.1.if_constant().is_some())
-                .map(|x| Operand::and_masked(x.0).0)
-                .and_then(|x| x.if_register())
-                .filter(|&x| x == 4)
-                .is_some()
+        fn is_stack<'e>(op: Operand<'e>, ctx: OperandCtx<'e>) -> bool {
+            op.if_sub_with_const()
+                .map(|x| Operand::and_masked(x.0).0) == Some(ctx.register(4))
         }
+
         let ctx = ctrl.ctx();
         if self.inlining {
             match *op {
@@ -227,7 +232,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Some(_grp) = arg_match {
                     let arg3 = ctrl.resolve(arg_cache.on_call(2));
                     let arg4 = ctrl.resolve(arg_cache.on_call(3));
-                    if is_stack(arg3) && is_stack(arg4) {
+                    if is_stack(arg3, ctx) && is_stack(arg4, ctx) {
                         let binary = self.dat_ctx.binary;
                         let reloc_addr = arg1.if_memory()
                             .and_then(|x| x.if_constant_address())
@@ -256,12 +261,20 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             // Custom(10) for potentially useful DdsGrpSet deref
                             let custom = ctx.custom(0x10);
                             ctrl.set_register(0, custom);
+                            self.after_current_custom_10_call = ctrl.current_instruction_end();
+                            // Set rcx and rdx to custom; if after_current_custom_10_call
+                            // is needed since rax is clobbered, rdx or rcx still storing
+                            // Custom(12) means that they are safe to use as copy of rax.
+                            let custom = ctx.custom(0x12);
+                            ctrl.set_register(1, custom);
+                            ctrl.set_register(2, custom);
                         }
                     }
                 }
             }
             Operation::Move(ref dest, val, None) => {
                 let val = ctrl.resolve(val);
+                let texture_size = E::struct_layouts().texture_struct_size();
                 let texture_index = val.if_arithmetic_add()
                     .and_either(|x| {
                         ctrl.if_mem_word(x)
@@ -283,12 +296,25 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                     })
                             })
                     })
-                    .filter(|&(_, x)| x.if_arithmetic_mul_const(0x10).is_some());
+                    .filter(|&(_, x)| x.if_arithmetic_mul_const(texture_size).is_some());
                 if let Some((base, index)) = texture_index {
-                    let base = match unresolve(ctx, ctrl.exec_state(), base) {
+                    let base = match unresolve(ctx, ctrl.exec_state(), base)
+                        .or_else(|| {
+                            if base.if_custom() == Some(0x10) {
+                                self.try_add_patch_for_ddsgrp_set_deref(ctrl)
+                            } else {
+                                None
+                            }
+                        })
+                    {
                         Some(s) => s,
                         None => {
-                            dat_warn!(self.dat_ctx, "Can't unresolve ddsgrp texture op {}", base);
+                            if base.if_custom() == Some(0x10) {
+                            }
+                            dat_warn!(
+                                self.dat_ctx, "Can't unresolve ddsgrp texture op {} @ {:?}",
+                                base, ctrl.address(),
+                            );
                             return;
                         }
                     };
@@ -296,8 +322,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         Some(s) => s,
                         None => {
                             dat_warn!(
-                                self.dat_ctx, "Can't unresolve ddsgrp texture op {}",
-                                index,
+                                self.dat_ctx, "Can't unresolve ddsgrp texture op {} @ {:?}",
+                                index, ctrl.address(),
                             );
                             return;
                         }
@@ -337,6 +363,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 
     fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        self.after_current_custom_10_call = E::VirtualAddress::from_u64(0);
         if self.inlining && self.inline_limit == 0 {
             self.inline_fail = true;
             ctrl.end_analysis();
@@ -346,5 +373,34 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     fn branch_end(&mut self, _ctrl: &mut Control<'e, '_, '_, Self>) {
         self.first_branch = false;
         self.inline_limit = self.inline_limit.saturating_sub(1);
+    }
+}
+
+impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GrpIndexAnalyzer<'a, 'b, 'acx, 'e, E> {
+    fn try_add_patch_for_ddsgrp_set_deref(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+    ) -> Option<Operand<'e>> {
+        let patch_addr = self.after_current_custom_10_call;
+        if patch_addr == E::VirtualAddress::from_u64(0) {
+            return None;
+        }
+        self.after_current_custom_10_call = E::VirtualAddress::from_u64(0);
+        let binary = ctrl.binary();
+        let ctx = ctrl.ctx();
+        let skip = super::min_instruction_length(binary, patch_addr, 5)?;
+        if patch_addr + skip > ctrl.address() {
+            return None;
+        }
+        let extra_reg = (1..2).find(|&i| ctrl.resolve_register(i).if_custom() == Some(0x12))?;
+        let code = binary.slice_from_address(patch_addr, skip).ok()?;
+
+        let result = &mut self.dat_ctx.result;
+        let code_offset = result.code_bytes.len() as u32;
+        // mov extra_reg, rax
+        result.code_bytes.extend_from_slice(&[0x48, 0x89, 0xc0 | extra_reg]);
+        result.code_bytes.extend_from_slice(code);
+        result.patches.push(DatPatch::Hook(patch_addr, code_offset, skip as u8 + 3, skip as u8));
+        Some(ctx.register(extra_reg))
     }
 }

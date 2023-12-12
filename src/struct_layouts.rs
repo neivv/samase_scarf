@@ -368,6 +368,10 @@ impl StructLayouts {
     pub const fn building_ai_town(self) -> u64 {
         self.pair(0x14, 0x20)
     }
+
+    pub const fn texture_struct_size(self) -> u64 {
+        self.pair(0x10, 0x18)
+    }
 }
 
 pub fn button_set_index_to_action<Va: VirtualAddress>(
