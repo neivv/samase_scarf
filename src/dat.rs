@@ -622,6 +622,8 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     required_stable_addresses: RequiredStableAddressesMap<'acx, E::VirtualAddress>,
     rdtsc_tracker: util::RdtscTracker<'e>,
     unwind_functions: Rc<x86_64_unwind::UnwindFunctions>,
+    /// Flag to check that one specialcased workaround is only hit at most once.
+    skipped_unit_flingy_widen: bool,
 }
 
 /// Selects handling of memory accesses in widen_instruction()
@@ -865,6 +867,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 ctx.and_const(ctx.custom(RDTSC_CUSTOM), 0xffff_ffff)
             ),
             unwind_functions,
+            skipped_unit_flingy_widen: false,
         })
     }
 
@@ -1512,6 +1515,7 @@ struct DatFuncAnalysisState<'acx, 'e, E: ExecutionState<'e>> {
     /// So buffer 2step hooks and do them last.
     pending_hooks: BumpVec<'acx, (E::VirtualAddress, u32, u8, u8)>,
     detect_tail_call: DetectTailCall<'e, E>,
+    current_func_skipped_unit_flingy_widen: bool,
 }
 
 impl<'acx, 'e, E: ExecutionState<'e>> DatFuncAnalysisState<'acx, 'e, E> {
@@ -1848,6 +1852,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 ),
                 detect_tail_call: DetectTailCall::new(entry),
                 pending_hooks: bumpvec_with_capacity(8, bump),
+                current_func_skipped_unit_flingy_widen: false,
             }),
         }
     }
@@ -1985,6 +1990,15 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         };
         let addr = E::VirtualAddress::from_u64(base);
         if let Some(&(dat, field_id)) = self.dat_ctx.array_lookup.get(&addr) {
+            if self.state.current_func_skipped_unit_flingy_widen {
+                // Skip flingy_dat_sprite access here
+                // (See below for units_dat_flingy check)
+                if dat == DatType::Flingy && field_id == 0 &&
+                    index.if_mem8().is_some_and(|x| x.address().0.is_undefined())
+                {
+                    return None;
+                }
+            }
             self.reached_array_ref_32(ctrl, addr);
             let array_itself_needs_widen = match (dat, field_id) {
                 // Unit flingy
@@ -2001,18 +2015,49 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 _ => false,
             };
             if array_itself_needs_widen {
-                // This instruction can be array indexed read (the usual case; Default),
-                // but also case where the indexed variable was spilled to stack and
-                // read back (StackAccess)
-                let widen_mode = Self::select_widen_mode_array_index(
-                    ctrl,
-                    dest_unresolved,
-                    value_unresolved,
-                    addr,
-                    dat,
-                    field_id,
-                );
-                self.widen_instruction(ctrl.address(), widen_mode);
+                let ctx = self.dat_ctx.analysis.ctx;
+                if dat == DatType::Units && field_id == 0 && index == ctx.const_0() {
+                    // Skip units.dat flingy widening to skip awkward code in
+                    // sprite_include_in_vision_sync doing
+                    //
+                    //    lea rax [units_dat_flingy]
+                    // loop:
+                    //    movzx ecx, byte [rax]
+                    //    ... ; May set sprite_include_in_vision_sync[i] to 1
+                    //    inc rax
+                    //    ...
+                    //    jbe loop
+                    //
+                    // If the movzx is widened to mov ecx, dword [rax],
+                    // then inc rax would have also be patched to add rax, 4
+                    // but finding that is annoying, so leave this movzx there,
+                    // and skip flingy_dat_sprite[x] access -- doesn't matter that
+                    // much but removes an warning.
+                    // sprite_include_in_vision_sync has garbage written to it,
+                    // so it has to be fixed afterwards.
+                    if self.dat_ctx.skipped_unit_flingy_widen {
+                        dat_warn!(
+                            self, "Second undefined units.dat flingy widening seen @ {:?}",
+                            ctrl.address(),
+                        );
+                    }
+                    self.state.current_func_skipped_unit_flingy_widen = true;
+                    self.dat_ctx.skipped_unit_flingy_widen = true;
+                    return None;
+                } else {
+                    // This instruction can be array indexed read (the usual case; Default),
+                    // but also case where the indexed variable was spilled to stack and
+                    // read back (StackAccess)
+                    let widen_mode = Self::select_widen_mode_array_index(
+                        ctrl,
+                        dest_unresolved,
+                        value_unresolved,
+                        addr,
+                        dat,
+                        field_id,
+                    );
+                    self.widen_instruction(ctrl.address(), widen_mode);
+                }
             }
             if dat == DatType::Orders {
                 // Probs never reason to increase order limit

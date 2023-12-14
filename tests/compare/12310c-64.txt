@@ -1557,7 +1557,6 @@ order_bb: Some(VirtualAddress(1401bf330))
 190913d8:4 = 14102db4c (00000000)
 
 -- Dat patches --
-WARN Unknown Flingy dat offset @ VirtualAddress(140191f94): Mem8[Undefined]
 WARN Can't widen instruction @ VirtualAddress(1401e2480)
 WARN Unknown Upgrades dat offset @ VirtualAddress(1403ebbac): Mem8[Mem64[rdx + 58] + 1a]
 WARN Unknown Upgrades dat offset @ VirtualAddress(1403ebbc4): Mem8[Mem64[rdx + 58] + 1a]
@@ -1753,7 +1752,6 @@ MapData array patches:
 14018b53b = [0f, 84, 99, f7, ff, ff]
 14018b568 = [90, 8b, d0]
 14018b5ba = [90, 8b, c0]
-140191f90 = [90, 41, 8b, 09]
 14019c612 = [90, e9, 19, 0e, 00, 00]
 14019d76d = [90, 8b, 94, 81, ff, ff, ff, ff]
 14019e2d8 = [90, 8b, c0]
