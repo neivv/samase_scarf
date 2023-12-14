@@ -5,7 +5,10 @@ use scarf::{DestOperand, Operation, Rva};
 use crate::analysis_find::{entry_of_until, EntryOf};
 use crate::util::{ControlExt};
 
-use super::{DatType, DatPatch, DatEntryCountPatch, DatPatchContext};
+use super::{
+    DatType, DatArrayPatch, DatPatch, DatEntryCountPatch, DatPatchContext,
+    reloc_address_of_instruction,
+};
 
 /// init_hp_bar_texture() has hardcoded constant of 183 which should be replaced
 /// with sprite entry count. Find by the function also referring to sprites_dat_hp_bar (Arr 1)
@@ -28,6 +31,7 @@ pub(crate) fn patch_hp_bar_init<'a, 'e, E: ExecutionState<'e>>(
                 dat_ctx,
                 result: EntryOf::Retry,
                 use_address: global.use_address,
+                sprites_dat_hp_bar_end: sprites_dat_hp_bar + 0x183,
                 jump_limit: 15,
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -59,6 +63,7 @@ pub struct HpBarInitAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
     result: EntryOf<()>,
     use_address: E::VirtualAddress,
+    sprites_dat_hp_bar_end: E::VirtualAddress,
     jump_limit: u8,
 }
 
@@ -69,7 +74,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if ctrl.instruction_contains_address(self.use_address) {
-            self.result = EntryOf::Stop;
+            if !matches!(self.result, EntryOf::Ok(())) {
+                self.result = EntryOf::Stop;
+            }
         }
         match *op {
             Operation::Jump { .. } | Operation::Call(..) => {
@@ -80,7 +87,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 self.jump_limit -= 1;
             }
             Operation::Move(ref dest, value, None) => {
-                if ctrl.resolve(value).if_constant() == Some(0x183) {
+                let value = ctrl.resolve(value);
+                if value.if_constant() == Some(0x183) {
                     let address = ctrl.address();
                     let mut patched = false;
                     match *dest {
@@ -137,11 +145,41 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if !patched {
                         dat_warn!(self, "Unable to patch sprite hpbar move @ {:?}", address);
                     }
+                    // End analysis on branch end, but check still for move of
+                    // sprites_dat_hp_bar + 183
                     self.result = EntryOf::Ok(());
-                    ctrl.end_analysis();
+                } else if value.if_constant() == Some(self.sprites_dat_hp_bar_end.as_u64()) {
+                    // Codegen may use array end pointer here; it could overlap with another
+                    // array start, so usual array analysis couldn't know this to be array end.
+                    // With 32bit the code works without this due to above "non-mov to mov"
+                    // change, 64bit code is different so it needs the end pointer be corrected.
+                    let binary = ctrl.binary();
+                    if let Some(patch_addr) = reloc_address_of_instruction(
+                        ctrl,
+                        binary,
+                        self.sprites_dat_hp_bar_end,
+                    ) {
+                        self.dat_ctx.add_or_override_dat_array_patch(DatArrayPatch {
+                            dat: DatType::Sprites,
+                            field_id: 0x1,
+                            address: patch_addr,
+                            entry: i32::MIN,
+                            orig_entry: 0x183,
+                            byte_offset: 0,
+                        });
+                        if matches!(self.result, EntryOf::Ok(())) {
+                            ctrl.end_analysis();
+                        }
+                    }
                 }
             }
             _ => (),
+        }
+    }
+
+    fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if matches!(self.result, EntryOf::Ok(())) {
+            ctrl.end_analysis();
         }
     }
 }

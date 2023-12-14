@@ -317,6 +317,8 @@ pub struct DatArrayPatch<Va: VirtualAddress> {
     pub address: Va,
     /// Offset from start of the array in entries.
     /// i32::MIN for special value of end of array.
+    /// (General array analysis does not try to add end-of-array values since they
+    /// have high chance of overlapping with another array's start)
     pub entry: i32,
     /// What entry the BW code referred to.
     /// Almost always same as entry, but differs for one sprite hp array use
