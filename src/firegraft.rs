@@ -4,7 +4,7 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis, RelocValues};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{DestOperand, MemAccess, Operation, Operand, OperandType};
+use scarf::{DestOperand, MemAccess, Operation, Operand};
 
 use crate::analysis::{AnalysisCtx};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until, find_bytes};
@@ -195,6 +195,7 @@ fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
     let data = analysis.binary_sections.data;
     let table_addresses = find_bytes(bump, &data.data, signature);
     let mut result = Vec::with_capacity(16);
+    let mut value_ranges = bumpvec_with_capacity(4, bump);
     let mut address = E::VirtualAddress::from_u64(u64::MAX);
     for &table_rva in &table_addresses {
         let table_va = data.virtual_address + table_rva.0;
@@ -202,17 +203,26 @@ fn find_requirement_table_refs<'e, E: ExecutionState<'e>>(
             true => Ordering::Greater,
             false => Ordering::Less,
         }).unwrap_err();
+        let mut last_value = table_va;
+        let start_index = index;
         while let Some(reloc) = relocs.get(index) {
             let offset = reloc.value.as_u64().wrapping_sub(table_va.as_u64());
             if offset >= 0x100 {
+                // If had at least one result added, add range.
+                if index != start_index {
+                    // Add 4 bytes of leeway as there are arr[i + 1] accesses that
+                    // scarf folds to (arr + 1)[i]
+                    value_ranges.push((table_va, last_value + 5));
+                }
                 break;
             }
+            last_value = reloc.value;
             address = table_va;
             result.push((reloc.address, offset as u32));
             index += 1;
         }
     }
-    filter_requirement_results(analysis, functions, &mut result);
+    filter_requirement_results(analysis, functions, &mut result, &value_ranges);
     RequirementTable {
         references: result,
         address,
@@ -223,6 +233,7 @@ fn filter_requirement_results<'e, E: ExecutionState<'e>>(
     actx: &AnalysisCtx<'e, E>,
     functions: &FunctionFinder<'_, 'e, E>,
     result: &mut Vec<(E::VirtualAddress, u32)>,
+    value_ranges: &[(E::VirtualAddress, E::VirtualAddress)]
 ) {
     // Verify that the result address is actually instruction accessing memory.
     // Could also have the table address be passed in here, but currently it is not
@@ -232,9 +243,6 @@ fn filter_requirement_results<'e, E: ExecutionState<'e>>(
     let binary = actx.binary;
     let ctx = actx.ctx;
     let functions = functions.functions();
-    let binary_end = binary.sections().map(|x| x.virtual_address + x.virtual_size).max()
-        .unwrap_or(E::VirtualAddress::from_u64(0));
-    let binary_base = binary.base();
     let code_section = binary.code_section();
     let code_section_start = code_section.virtual_address;
     let code_section_end = code_section_start + code_section.virtual_size;
@@ -253,10 +261,9 @@ fn filter_requirement_results<'e, E: ExecutionState<'e>>(
                 result,
                 result_pos,
                 other_ok: 0,
-                binary_base,
-                binary_end,
                 false_result_seen: false,
                 last_result_addr: E::VirtualAddress::from_u64(0),
+                value_ranges,
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             analysis.analyze(&mut analyzer);
@@ -278,14 +285,14 @@ struct RequirementResultFilter<'a, 'e, E: ExecutionState<'e>> {
     result_pos: usize,
     // Bitmask if other results after result_pos are found ok before result
     other_ok: u32,
-    binary_base: E::VirtualAddress,
-    binary_end: E::VirtualAddress,
     // These two are for handling multi-operation instructions (Such as push)
     // Any operation that is before "main" operation and doesn't pass sets false_result_seen,
     // main operation will clear it on success and set last_result_addr which makes all later
     // instructions be skipped.
     false_result_seen: bool,
     last_result_addr: E::VirtualAddress,
+    // Valid ranges in which a valid memory address should be
+    value_ranges: &'a [(E::VirtualAddress, E::VirtualAddress)],
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
@@ -369,20 +376,22 @@ impl<'a, 'e, E: ExecutionState<'e>> RequirementResultFilter<'a, 'e, E> {
         let resolved = ctrl.resolve_mem(unresolved);
         let (_, offset) = resolved.address();
         let address = E::VirtualAddress::from_u64(offset);
-        address > self.binary_base && address < self.binary_end
+        self.value_ranges.iter().any(|x| x.0 <= address && address < x.1)
     }
 
     fn check_resolved(&self, resolved: Operand<'e>) -> bool {
-        if let Some(c) = resolved.if_constant() {
-            let address = E::VirtualAddress::from_u64(c);
-            return address > self.binary_base && address < self.binary_end;
-        }
-        if let Some(mem) = resolved.if_memory() {
+        let addr = if let Some(c) = resolved.if_constant() {
+            Some(E::VirtualAddress::from_u64(c))
+        } else if let Some(mem) = resolved.if_memory() {
             let (_, offset) = mem.address();
-            let address = E::VirtualAddress::from_u64(offset);
-            return address > self.binary_base && address < self.binary_end;
+            Some(E::VirtualAddress::from_u64(offset))
+        } else {
+            None
+        };
+        if let Some(address) = addr {
+            return self.value_ranges.iter().any(|x| x.0 <= address && address < x.1);
         }
-        if let OperandType::Arithmetic(a) = resolved.ty() {
+        if let Some(a) = resolved.if_arithmetic_any() {
             return self.check_resolved(a.left) || self.check_resolved(a.right);
         }
         false
