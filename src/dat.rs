@@ -48,7 +48,7 @@ use lde::Isa;
 
 use scarf::analysis::{self, Cfg, Control, FuncAnalysis, RelocValues};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::operand::{ArithOpType, MemAccessSize, OperandType, OperandHashByAddress};
+use scarf::operand::{ArithOperand, ArithOpType, MemAccessSize, OperandType, OperandHashByAddress};
 use scarf::{
     BinaryFile, BinarySection, DestOperand, FlagArith, FlagUpdate, Operand, OperandCtx,
     MemAccess, Operation, Rva
@@ -1563,6 +1563,24 @@ fn entry_limit_to_dat(entries: u32) -> Option<(DatType, bool)> {
     })
 }
 
+fn is_widened_dat_field(dat: DatType, field_id: u8) -> bool {
+    match (dat, field_id) {
+        // units_dat_flingy
+        (DatType::Units, 0x00) => true,
+        // Ground/air weapons
+        (DatType::Units, 0x11) => true,
+        (DatType::Units, 0x13) => true,
+        // Upgrades
+        (DatType::Units, 0x19) => true,
+        (DatType::Weapons, 0x06) => true,
+        // Order weapon
+        (DatType::Orders, 0x0d) => true,
+        // Order tech
+        (DatType::Orders, 0x0e) => true,
+        _ => false,
+    }
+}
+
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E>
 {
@@ -1702,6 +1720,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 let state = ctrl.exec_state();
                                 let new = ctx.arithmetic(arith.ty, left, right);
                                 state.move_resolved(dest, new);
+                            } else {
+                                self.check_widened_pointer_add(ctrl, arith, left, right);
                             }
                         }
                     }
@@ -2002,20 +2022,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 }
             }
             self.reached_array_ref_32(ctrl, addr);
-            let array_itself_needs_widen = match (dat, field_id) {
-                // Unit flingy
-                (DatType::Units, 0x0) => true,
-                // Weapons
-                (DatType::Units, 0x11) => true,
-                (DatType::Units, 0x13) => true,
-                (DatType::Orders, 0x0d) => true,
-                // Upgrades
-                (DatType::Units, 0x19) => true,
-                (DatType::Weapons, 0x06) => true,
-                // Tech
-                (DatType::Orders, 0x0e) => true,
-                _ => false,
-            };
+            let array_itself_needs_widen = is_widened_dat_field(dat, field_id);
             if array_itself_needs_widen {
                 let ctx = self.dat_ctx.analysis.ctx;
                 if dat == DatType::Units && field_id == 0 && index == ctx.const_0() {
@@ -2506,22 +2513,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                 .map(|x| E::VirtualAddress::from_u64(x))
                 .filter(|&x| {
                     let ok = self.dat_ctx.array_lookup.get(&x)
-                        .filter(|x| match **x {
-                            // units_dat_flingy is u8 for now
-                            (DatType::Units, 0x00) => true,
-                            // Ground/air weapons
-                            (DatType::Units, 0x11) => true,
-                            (DatType::Units, 0x13) => true,
-                            // Upgrades
-                            (DatType::Units, 0x19) => true,
-                            (DatType::Weapons, 0x06) => true,
-                            // Order weapon
-                            (DatType::Orders, 0x0d) => true,
-                            // Order tech
-                            (DatType::Orders, 0x0e) => true,
-                            _ => false,
-                        })
-                        .is_some();
+                        .is_some_and(|x| is_widened_dat_field(x.0, x.1));
                     if ok {
                         return true;
                     }
@@ -2582,6 +2574,32 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
         if let Some(imm_addr) = reloc_address_of_instruction(ctrl, self.binary, array_addr) {
             let rva = Rva((imm_addr.as_u64() - self.binary.base.as_u64()) as u32);
             self.dat_ctx.unchecked_refs.remove(rva);
+        }
+    }
+
+    /// Checks if this Operation::Move is doing
+    /// `dat_array + index` on dat array that used u8 indices but will now be widened to u32,
+    /// and adds patch on the instruction to multiply index register by 4 before adding
+    /// (And then return it back to what it was)
+    fn check_widened_pointer_add(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        arith_unres: &ArithOperand<'e>,
+        resolved_left: Operand<'e>,
+        resolved_right: Operand<'e>,
+    ) {
+        if arith_unres.ty != ArithOpType::Add {
+            return;
+        }
+        if let Some((c, _)) = Operand::either(resolved_left, resolved_right, |x| x.if_constant()) {
+            let addr = E::VirtualAddress::from_u64(c);
+            if addr > self.binary.base() {
+                if let Some(&(dat, field_id)) = self.dat_ctx.array_lookup.get(&addr) {
+                    if is_widened_dat_field(dat, field_id) {
+                        self.widen_pointer_add(ctrl, dat, field_id);
+                    }
+                }
+            }
         }
     }
 
@@ -2800,39 +2818,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             return;
         }
 
-        let imm_bytes = match self.binary.slice_from_address(address, 0x18) {
-            Ok(o) => o,
-            Err(_) => {
-                dat_warn!(self, "Can't widen instruction @ {:?}", address);
-                return;
-            }
-        };
-        let ins_len = if E::VirtualAddress::SIZE == 4 {
-            lde::X86::ld(imm_bytes) as u8
-        } else {
-            lde::X64::ld(imm_bytes) as u8
-        };
-        if ins_len >= 16 {
-            dat_warn!(self, "Instruction is too long ({})", ins_len);
-            return;
-        }
-        let imm_bytes = &imm_bytes[..16];
         let mut full_bytes = [0x90u8; 16];
-        for i in 0..ins_len {
-            full_bytes[i as usize] = imm_bytes[i as usize];
-        }
-        let (rex_off, bytes) =
-            if E::VirtualAddress::SIZE == 8 && full_bytes[0] & 0xf0 == 0x40
+        let (rex_off, bytes, ins_len) =
+            match self.init_instruction_patch(address, &mut full_bytes)
         {
-            (1, &mut full_bytes[1..])
-        } else {
-            (0, &mut full_bytes[..])
+            Some(s) => s,
+            None => return,
         };
-        // To hopefully remove later range checks
-        if bytes.len() < 15 || rex_off > 1 {
-            debug_assert!(false);
-            return;
-        }
+        let rex_off = rex_off as usize;
         match *bytes {
             // movzx to mov
             [0x0f, 0xb6, ..] => {
@@ -2863,7 +2856,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
             // add rm8, r8; cmp r8, rm8; cmp rm8, r8
             [0x00, ..] | [0x3a, ..] | [0x38, ..] => {
-                if !is_struct_field_rm(&bytes) {
+                if !is_struct_field_rm(&bytes[..]) {
                     bytes[0] += 1;
                     self.add_rm_patch(
                         address,
@@ -2909,7 +2902,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
             // mov r8, rm8, to mov r32, rm32
             [0x8a, ..] => {
-                if is_struct_field_rm(&bytes) {
+                if is_struct_field_rm(&bytes[..]) {
                     // Convert to movzx r32, rm8
                     full_bytes.copy_within(rex_off..15, rex_off + 1);
                     full_bytes[rex_off + 0] = 0x0f;
@@ -2929,7 +2922,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
             // mov rm8, r8
             [0x88, ..] => {
-                if !is_struct_field_rm(&bytes) {
+                if !is_struct_field_rm(&bytes[..]) {
                     bytes[0] = 0x89;
                     self.add_rm_patch(
                         address,
@@ -2943,7 +2936,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
             // mov rm8, const8
             [0xc6, ..] => {
-                if !is_struct_field_rm(&bytes) {
+                if !is_struct_field_rm(&bytes[..]) {
                     bytes[0] = 0xc7;
                     for i in ins_len..(ins_len + 3) {
                         full_bytes[i as usize] = 0x00;
@@ -3257,6 +3250,138 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
             }
         }
         dat_warn!(self, "Don't know how to widen array index @ {address:?}");
+    }
+
+    fn widen_pointer_add(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        dat: DatType,
+        field_id: u8,
+    ) {
+        let address = ctrl.address();
+        if !self.dat_ctx.patched_addresses.insert(address) {
+            return;
+        }
+
+        let mut full_bytes = [0x90u8; 16];
+        let (rex_off, bytes, ins_len) =
+            match self.init_instruction_patch(address, &mut full_bytes)
+        {
+            Some(s) => s,
+            None => return,
+        };
+        if E::VirtualAddress::SIZE != 4 && !rex_off {
+            // Pointer additions should always be full sized regs
+            dat_warn!(self, "Can't widen pointer add @ {:?}", address);
+            return;
+        }
+        let rex_off = rex_off as usize;
+        match *bytes {
+            [0x01 | 0x03, second, ..] if second & 0xc0 == 0xc0 => {
+                // add reg, reg
+                // Determine which register has index and which arr
+                // (arr is constant >= binary.base)
+                // Then add patch
+                // ```
+                // shl index_reg, 2
+                // mov ...
+                // shr index_reg, 2 ; if index_reg wasn't written by mov
+                // ```
+                let opcode = bytes[0];
+                let rex = if rex_off == 0 { 0 } else { full_bytes[0] };
+                let rm = (second & 7) | ((rex & 1) << 3);
+                let r = ((second >> 3) & 7) | ((rex & 4) << 1);
+                let (dest, other) = match opcode == 1 {
+                    true => (rm, r),
+                    false => (r, rm),
+                };
+                let index_reg = if ctrl.resolve_register(dest)
+                    .if_constant()
+                    .is_some_and(|x| x >= self.binary.base().as_u64())
+                {
+                    other
+                } else {
+                    dest
+                };
+                if E::VirtualAddress::SIZE == 4 {
+                    dat_warn!(self, "Unimplemented for 32bit @ {:?}", address);
+                    return;
+                }
+                let patch = [
+                    // shl index_reg, 2
+                    0x48 | ((index_reg & 8) >> 3), 0xc1, 0xe0 | (index_reg & 7), 0x02,
+                    // orig instruction
+                    rex, opcode, second,
+                    // shr index_reg, 2 (Not included in patch if index_reg == dest)
+                    0x48 | ((index_reg & 8) >> 3), 0xc1, 0xe8 | (index_reg & 7), 0x02,
+                ];
+                let patch = if index_reg == dest {
+                    &patch[..7]
+                } else {
+                    &patch[..11]
+                };
+                self.add_hook(address, ins_len, patch);
+            }
+            [0x05, ..] if E::VirtualAddress::SIZE == 4 => {
+                // add eax, u32 (Still u32 on 64bit so not used there)
+                let patch = [
+                    // shl eax, 2
+                    0xc1, 0xe0, 0x02,
+                    // orig instruction
+                    0x05, 0xff, 0xff, 0xff, 0xff,
+                ];
+                let result = &mut self.dat_ctx.result;
+                let offset = result.code_bytes.len() + 4;
+                result.arrays_in_code_bytes.push((offset, dat, field_id));
+                self.add_hook(address, ins_len, &patch);
+            }
+            [0xff, second, ..] if second & 0xf8 == 0xc0 => {
+                // (64bit) register inc
+                // Convert to add reg, 4
+                bytes[0] = 0x83;
+                bytes[2] = 0x04;
+                self.add_hook(address, ins_len, &full_bytes[..(rex_off + 3)]);
+            }
+            _ => dat_warn!(self, "Can't widen pointer add @ {:?}", address),
+        }
+    }
+
+    /// Shared code for widen_instruction and widen_pointer_add; reads instruction to
+    /// mutable u8 buffer, returns
+    /// 0: Does instruction have REX byte
+    /// 1: 15 bytes of instruction without REX byte
+    /// 2: instruction length
+    fn init_instruction_patch<'x>(
+        &mut self,
+        address: E::VirtualAddress,
+        full_bytes: &'x mut [u8; 16],
+    ) -> Option<(bool, &'x mut [u8; 15], u8)> {
+        let imm_bytes = match self.binary.slice_from_address(address, 0x18) {
+            Ok(o) => o,
+            Err(_) => {
+                dat_warn!(self, "Can't widen instruction @ {:?}", address);
+                return None;
+            }
+        };
+        let ins_len = if E::VirtualAddress::SIZE == 4 {
+            lde::X86::ld(imm_bytes) as u8
+        } else {
+            lde::X64::ld(imm_bytes) as u8
+        };
+        if ins_len >= 16 {
+            dat_warn!(self, "Instruction is too long ({})", ins_len);
+            return None;
+        }
+
+        let imm_bytes = &imm_bytes[..16];
+        for i in 0..ins_len {
+            full_bytes[i as usize] = imm_bytes[i as usize];
+        }
+        if E::VirtualAddress::SIZE == 8 && full_bytes[0] & 0xf0 == 0x40 {
+            Some((true, (&mut full_bytes[1..16]).try_into().unwrap(), ins_len))
+        } else {
+            Some((false, (&mut full_bytes[..15]).try_into().unwrap(), ins_len))
+        }
     }
 
     /// NOTE: Address should be start of a instruction, and the patch should be long
