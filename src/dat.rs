@@ -2184,21 +2184,23 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
                             }
                             None
                         }).or_else(|| {
-                            if let Some((_, sub_r)) = right_inner.if_arithmetic_sub() {
-                                if sub_r.if_constant().is_some() {
-                                    // c1 > (x - c2) is a range check,
-                                    // assuming that you never get dat id by subtracting a
-                                    // constant and then checking if it's less than invalid
-                                    // Repair order check does check 0x6a..0x80 range which
-                                    // shouldn't be (just) removed
-                                    return None;
-                                }
+                            if right_inner.if_sub_with_const().is_some() {
+                                // c1 > (x - c2) is a range check,
+                                // assuming that you never get dat id by subtracting a
+                                // constant and then checking if it's less than invalid
+                                // Repair order check does check 0x6a..0x80 range which
+                                // shouldn't be (just) removed
+                                return None;
                             }
                             let dat = entry_limit_to_dat(c.try_into().ok()?)?;
                             Some((true, r, dat))
                         })
                     })
                     .or_else(|| {
+                        if l.if_sub_with_const().is_some() {
+                            // Range check
+                            return None;
+                        }
                         // value > last_valid should never jump
                         let c = r.if_constant()?;
                         let c = u32::try_from(c).ok()?
