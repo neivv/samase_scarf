@@ -1211,6 +1211,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             for &address in &callers {
                 entry_of_until(binary, &functions, address, |entry| {
                     if entry == self.update_status_screen_tooltip {
+                        // This is bit iffy since this may be needed for func args,
+                        // but update_status_screen_tooltip shouldn't have cfg analysis
+                        // required outside of the weapon tooltip code..
                         return EntryOf::Ok(());
                     }
                     let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
@@ -1262,9 +1265,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                     continue;
                 }
                 entry_of_until(binary, &functions, address, |entry| {
-                    if entry == self.update_status_screen_tooltip {
-                        return EntryOf::Ok(());
-                    }
+                    // As long as update_status_screen_tooltip is not fully patched,
+                    // func args are needed for widening func calls using scarab / interceptor
+                    // weapon ids.
                     self.analyze_function(entry, address, DatFuncAnalysisMode::FuncArg);
                     if self.found_func_arg_widen_refs.contains(&address) {
                         EntryOf::Ok(())
