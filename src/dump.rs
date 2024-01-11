@@ -342,11 +342,19 @@ pub fn dump_dat_patches<'e, E: ExecutionState<'e>>(
             out!(&mut out, "{:08x}: {:?}", addr.as_u64(), args);
         }
         out!(&mut out, "--- Grp texture hooks ---");
-        for (addr, len, dest, base, index) in dat_patches.grp_texture_hooks {
-            out!(
-                &mut out, "{:08x}:{:x}: {} <= {}, {}",
-                addr.as_u64(), len, dest, base, index,
-            );
+        for (addr, len, dest, base, index, mem_size, mem_offset) in dat_patches.grp_texture_hooks {
+            if mem_size == 0 {
+                out!(
+                    &mut out, "{:08x}:{:x}: {} <= {}, {}",
+                    addr.as_u64(), len, dest, base, index,
+                );
+            } else {
+                let mem_size = mem_size * 8;
+                out!(
+                    &mut out, "{:08x}:{:x}: {} <= Mem{mem_size}[{}, {} + {mem_offset:x}]",
+                    addr.as_u64(), len, dest, base, index,
+                );
+            }
         }
         let mapped = dat_patches.grp_index_hooks.iter()
             .map(|x| format!("{:08x}", x.as_u64()))

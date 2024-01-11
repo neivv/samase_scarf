@@ -94,6 +94,7 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
                 inline_fail: false,
                 inline_this: ctx.const_0(),
                 after_current_custom_10_call: E::VirtualAddress::from_u64(0),
+                current_custom10_register: None,
             };
             let mut func_analysis = FuncAnalysis::new(binary, ctx, entry);
             func_analysis.analyze(&mut analyzer);
@@ -145,6 +146,9 @@ struct GrpIndexAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     /// which case this will be patched to inject `mov rcx, rax` instruction to have
     /// ddsgrp still available in some register.
     after_current_custom_10_call: E::VirtualAddress,
+    /// Register used to store this copy of `rax` on this current branch, when
+    /// the `mov rcx, rax` was injected (In that case it would be `rcx`)
+    current_custom10_register: Option<Operand<'e>>,
 }
 
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
@@ -274,61 +278,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             Operation::Move(ref dest, val, None) => {
                 let val = ctrl.resolve(val);
-                let texture_size = E::struct_layouts().texture_struct_size();
-                let texture_index = val.if_arithmetic_add()
-                    .and_either(|x| {
-                        ctrl.if_mem_word(x)
-                            .and_then(|x| {
-                                // DdsGrpSet
-                                Some(x.address().0)
-                                    .filter(|x| x.if_custom() == Some(0x10))
-                            })
-                            .or_else(|| {
-                                // DdsGrp.textures
-                                ctrl.if_mem_word(x)
-                                    .map(|x| {
-                                        ctx.mem_sub_const_op(x, E::VirtualAddress::SIZE as u64)
-                                    })
-                                    .filter(|x| {
-                                        self.grp_operands.get(&x.hash_by_address())
-                                            .filter(|&&y| y == GrpType::DdsGrp)
-                                            .is_some()
-                                    })
-                            })
-                    })
-                    .filter(|&(_, x)| x.if_arithmetic_mul_const(texture_size).is_some());
-                if let Some((base, index)) = texture_index {
-                    let base = match unresolve(ctx, ctrl.exec_state(), base)
-                        .or_else(|| {
-                            if base.if_custom() == Some(0x10) {
-                                self.try_add_patch_for_ddsgrp_set_deref(ctrl)
-                            } else {
-                                None
-                            }
-                        })
-                    {
-                        Some(s) => s,
-                        None => {
-                            if base.if_custom() == Some(0x10) {
-                            }
-                            dat_warn!(
-                                self.dat_ctx, "Can't unresolve ddsgrp texture op {} @ {:?}",
-                                base, ctrl.address(),
-                            );
-                            return;
-                        }
-                    };
-                    let index = match unresolve(ctx, ctrl.exec_state(), index) {
-                        Some(s) => s,
-                        None => {
-                            dat_warn!(
-                                self.dat_ctx, "Can't unresolve ddsgrp texture op {} @ {:?}",
-                                index, ctrl.address(),
-                            );
-                            return;
-                        }
-                    };
-
+                if let Some((base, index)) = self.texture_index_from_op(val, ctrl)
+                    .and_then(|(base, index)| self.unresolve_base_index(base, index, ctrl))
+                {
                     // Move a custom oper instead so that later instructions don't get
                     // caught by this same check
                     ctrl.skip_operation();
@@ -343,10 +295,44 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             dest: dest.as_operand(ctx),
                             base,
                             index_bytes: index,
+                            mem_offset: 0,
+                            mem_size: 0,
                         };
                         self.dat_ctx.result.patches.push(DatPatch::GrpTextureHook(patch));
                     }
                     return;
+                }
+                if let Some(mem) = val.unwrap_sext().if_memory() {
+                    let (base, offset) = mem.address();
+                    if let Ok(offset) = u8::try_from(offset) {
+                        if let Some((base, index)) = self.texture_index_from_op(base, ctrl)
+                            .and_then(|(base, index)| self.unresolve_base_index(base, index, ctrl))
+                        {
+                            // Move a custom oper instead so that later instructions don't get
+                            // caught by this same check
+                            // (Maybe should add sign extend if it was in original `val`..)
+                            ctrl.skip_operation();
+                            let custom = ctx.custom(0x13);
+                            ctrl.move_unresolved(dest, custom);
+                            if self.dat_ctx.patched_addresses.insert(address) {
+                                let instruction_len =
+                                    (ctrl.current_instruction_end().as_u64() as u8)
+                                        .wrapping_sub(address.as_u64() as u8);
+                                let patch = GrpTexturePatch {
+                                    address,
+                                    instruction_len,
+                                    // Assuming that (rax & ffff_ffff) can just use
+                                    // rax instead. Makes patching bit simpler.
+                                    dest: Operand::and_masked(dest.as_operand(ctx)).0,
+                                    base,
+                                    index_bytes: index,
+                                    mem_offset: offset,
+                                    mem_size: mem.size.bytes() as u8,
+                                };
+                                self.dat_ctx.result.patches.push(DatPatch::GrpTextureHook(patch));
+                            }
+                        }
+                    }
                 }
             }
             Operation::Return(..) => {
@@ -364,6 +350,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 
     fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
         self.after_current_custom_10_call = E::VirtualAddress::from_u64(0);
+        self.current_custom10_register = None;
         if self.inlining && self.inline_limit == 0 {
             self.inline_fail = true;
             ctrl.end_analysis();
@@ -381,6 +368,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GrpIndexAnalyzer<'a, 'b, 'acx, 'e,
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
     ) -> Option<Operand<'e>> {
+        if let Some(op) = self.current_custom10_register {
+            return Some(op);
+        }
         let patch_addr = self.after_current_custom_10_call;
         if patch_addr == E::VirtualAddress::from_u64(0) {
             return None;
@@ -401,6 +391,79 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GrpIndexAnalyzer<'a, 'b, 'acx, 'e,
         result.code_bytes.extend_from_slice(&[0x48, 0x89, 0xc0 | extra_reg]);
         result.code_bytes.extend_from_slice(code);
         result.patches.push(DatPatch::Hook(patch_addr, code_offset, skip as u8 + 3, skip as u8));
-        Some(ctx.register(extra_reg))
+        let reg = ctx.register(extra_reg);
+        self.current_custom10_register = Some(reg);
+        Some(reg)
+    }
+
+    /// Return `base, index` for
+    /// `base + index * TEXTURE_SIZE`
+    fn texture_index_from_op(
+        &self,
+        val: Operand<'e>,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+    ) -> Option<(Operand<'e>, Operand<'e>)> {
+        let texture_size = E::struct_layouts().texture_struct_size();
+        val.if_arithmetic_add()
+            .and_either(|x| {
+                ctrl.if_mem_word(x)
+                    .and_then(|x| {
+                        // DdsGrpSet
+                        Some(x.address().0)
+                            .filter(|x| x.if_custom() == Some(0x10))
+                    })
+                    .or_else(|| {
+                        // DdsGrp.textures
+                        ctrl.if_mem_word(x)
+                            .map(|x| {
+                                let ctx = ctrl.ctx();
+                                ctx.mem_sub_const_op(x, E::VirtualAddress::SIZE as u64)
+                            })
+                            .filter(|x| {
+                                self.grp_operands.get(&x.hash_by_address())
+                                    .is_some_and(|&y| y == GrpType::DdsGrp)
+                            })
+                    })
+            })
+            .filter(|&(_, x)| x.if_arithmetic_mul_const(texture_size).is_some())
+    }
+
+    /// May add the patch for additional ddsgrp deref if needed.
+    fn unresolve_base_index(
+        &mut self,
+        base: Operand<'e>,
+        index: Operand<'e>,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+    ) -> Option<(Operand<'e>, Operand<'e>)> {
+        let ctx = ctrl.ctx();
+        let base = match unresolve(ctx, ctrl.exec_state(), base)
+            .or_else(|| {
+                if base.if_custom() == Some(0x10) {
+                    self.try_add_patch_for_ddsgrp_set_deref(ctrl)
+                } else {
+                    None
+                }
+            })
+        {
+            Some(s) => s,
+            None => {
+                dat_warn!(
+                    self.dat_ctx, "Can't unresolve ddsgrp texture op {} @ {:?}",
+                    base, ctrl.address(),
+                );
+                return None;
+            }
+        };
+        let index = match unresolve(ctx, ctrl.exec_state(), index) {
+            Some(s) => s,
+            None => {
+                dat_warn!(
+                    self.dat_ctx, "Can't unresolve ddsgrp texture op {} @ {:?}",
+                    index, ctrl.address(),
+                );
+                return None;
+            }
+        };
+        Some((base, index))
     }
 }

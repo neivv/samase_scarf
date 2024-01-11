@@ -2203,6 +2203,7 @@ MapData array patches:
 --- Grp texture hooks ---
 1403e9904:4: rcx <= 140f5be08, (rdx * 8)
 1403ebcbe:4: rcx <= 140f5be20, (rdx * 8)
+1403f96b4:6: rbx <= Mem16[rcx, (r11 * 8) + 6]
 1403f96ba:4: r15 <= rcx, (r11 * 8)
 1403fa3cf:4: rcx <= rax, (rdx * 8)
 Grp index hooks: ["1403e92c9", "1403eb5d4", "1403f9cef"]

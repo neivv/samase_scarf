@@ -1542,7 +1542,8 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
                 }
                 DatPatch::GrpTextureHook(ref a) => {
                     grp_texture_hooks.push(
-                        (a.address, a.instruction_len, a.dest, a.base, a.index_bytes)
+                        (a.address, a.instruction_len, a.dest, a.base, a.index_bytes, a.mem_size,
+                            a.mem_offset)
                     );
                 }
             }
@@ -4544,7 +4545,7 @@ pub struct DatPatchesDebug<'e, Va: VirtualAddress> {
     pub ext_array_patches: Vec<(Va, Option<Va>, u8, u32, Operand<'e>)>,
     pub ext_array_args: Vec<(Va, Vec<(usize, u8)>)>,
     pub grp_index_hooks: Vec<Va>,
-    pub grp_texture_hooks: Vec<(Va, u8, Operand<'e>, Operand<'e>, Operand<'e>)>,
+    pub grp_texture_hooks: Vec<(Va, u8, Operand<'e>, Operand<'e>, Operand<'e>, u8, u8)>,
     pub campaign_map_names: Option<(Operand<'e>, Va)>,
 }
 

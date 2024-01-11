@@ -348,12 +348,20 @@ pub struct ExtArrayPatch<'e, Va: VirtualAddress> {
     pub two_step: Option<Va>,
 }
 
+/// Fixes access to `grp_texture + unit_id` to
+/// `grp_texture + extdat_frame[unit_id]`.
 pub struct GrpTexturePatch<'e, Va: VirtualAddress> {
     pub address: Va,
     pub instruction_len: u8,
     pub dest: Operand<'e>,
     pub base: Operand<'e>,
     pub index_bytes: Operand<'e>,
+    /// If zero, this is a mov/lea -like instruction
+    /// `dest = base + index_bytes`
+    /// If nonzero (1/2/4/8), this is a memory read
+    /// `dest = Mem[base + index_bytes + mem_offset]`.
+    pub mem_size: u8,
+    pub mem_offset: u8,
 }
 
 pub(crate) fn dat_table<'e, E: ExecutionState<'e>>(
