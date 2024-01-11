@@ -5,7 +5,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
 
 use crate::analysis_find::{entry_of_until, EntryOf};
-use crate::util::{bumpvec_with_capacity, ControlExt, OperandExt};
+use crate::util::{bumpvec_with_capacity, ControlExt, ExecStateExt, OperandExt};
 use super::{DatType, DatPatchContext, DatArrayPatch, reloc_address_of_instruction};
 
 pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
@@ -225,7 +225,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Move(_, val, None) => {
                 if let Some(mem) = val.if_mem8() {
                     let mem = ctrl.resolve_mem(mem);
-                    if mem.address().1 == 0xc {
+                    if mem.address().1 == E::struct_layouts().button_condition_param() {
                         self.candidate_instruction = Some(ctrl.address());
                     }
                 }
@@ -233,13 +233,15 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Call(dest) => {
                 if let Some(cand) = self.candidate_instruction {
                     let dest = ctrl.resolve(dest);
-                    let is_button_cond = ctrl.if_mem_word_offset(dest, 0x4)
-                        .is_some();
+                    let is_button_cond =
+                        ctrl.if_mem_word_offset(dest, E::struct_layouts().button_condition_func())
+                            .is_some();
                     if is_button_cond {
                         let arg_cache = &self.dat_ctx.analysis.arg_cache;
                         let arg1 = ctrl.resolve(arg_cache.on_call(0));
-                        let needs_widen = arg1.if_mem8_offset(0xc)
-                            .is_some();
+                        let needs_widen =
+                            arg1.if_mem8_offset(E::struct_layouts().button_condition_param())
+                                .is_some();
                         if needs_widen {
                             self.widen_instruction(cand);
                             self.result = EntryOf::Ok(());
@@ -277,6 +279,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> ButtonUseAnalyzer<'a, 'b, 'acx, 'e
             // movzx u8 to movzx u16
             [0x0f, 0xb6, ..] => {
                 self.dat_ctx.add_replace_patch(address + 1, &[0xb7]);
+            }
+            // movzx u8 to movzx u16 (With rex prefix)
+            [first, 0x0f, 0xb6, ..] if first & 0xf0 == 0x40 && E::VirtualAddress::SIZE == 8 => {
+                self.dat_ctx.add_replace_patch(address + 2, &[0xb7]);
             }
             _ => dat_warn!(self.dat_ctx, "Can't widen instruction @ {:?}", address),
         }

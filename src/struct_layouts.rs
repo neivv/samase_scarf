@@ -280,8 +280,16 @@ impl StructLayouts {
         self.pair(0x14, 0x20) as u32
     }
 
+    pub const fn button_condition_func(self) -> u64 {
+        self.pair(0x4, 0x8)
+    }
+
     pub const fn button_action_func(self) -> u32 {
         self.pair(0x8, 0x10) as u32
+    }
+
+    pub const fn button_condition_param(self) -> u64 {
+        self.pair(0xc, 0x18)
     }
 
     pub const fn button_linked(self) -> u32 {
