@@ -2184,8 +2184,8 @@ MapData array patches:
 0b: VirtualAddress(14026b736):5 = (rsi * 4)
 0b: VirtualAddress(14026b869):3 = (rax * 8)
 0b: VirtualAddress(14026b879):3 = ((rax * 8) + 4)
-0b: VirtualAddress(14026ba67):7 = 0
-0b: VirtualAddress(14026ba79):3 = 4
+0b: VirtualAddress(14026ba67):7 = (((((r14 - 140d48920) / 4) % e4) * 8) + ((((r14 - 140d48920) / 4) / e4) * 4))
+0b: VirtualAddress(14026ba79):3 = (((((r14 - 140d48590) / 4) / e4) * 4) + ((((r14 - 140d48590) / 4) % e4) * 8))
 0c: VirtualAddress(14024d774):3 (Two step VirtualAddress(14024d760)) = (((r8 & ffffffff) * c) + ((rcx - (r8 & ffffffff)) / 6e8))
 0c: VirtualAddress(14024e4f9):4 = (rdi + (rbx * c))
 0c: VirtualAddress(14024e541):4 = (rdi + (rbx * c))

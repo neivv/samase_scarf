@@ -484,7 +484,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                     if offset < len {
                         let index = ctx.add_const(index, offset);
                         if start == self.game_ctx.unit_strength {
-                            self.patch_unit_strength(ctrl, index);
+                            self.patch_unit_strength(ctrl, index, mem_unres);
                         } else if start == self.game_ctx.ai_build_limit {
                             self.patch_ai_unit_limit(ctrl, index);
                         } else if start == self.game_ctx.trigger_all_units ||
@@ -1048,6 +1048,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
         index: Operand<'e>,
+        mem_unres: &MemAccess<'e>,
     ) {
         let ctx = ctrl.ctx();
         let id_ground_from_index = |index: Operand<'e>| {
@@ -1078,44 +1079,58 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                     (unit_id, is_ground)
                 })
         };
-        let (unit_id, is_ground) = id_ground_from_index(index);
-        let (unit_id, is_ground) =
-            match (self.unresolve(ctrl, unit_id), self.unresolve(ctrl, is_ground))
+
+        let (unit_id, is_ground) = if index.if_constant()
+            .is_some_and(|c| c == 0 || c == 0xe4 * 4)
         {
-            (Some(a), Some(b)) => (a, b),
-            (Some(unit_id), None) => {
-                if let Some(index_unres) = self.unresolve(ctrl, index) {
-                    let is_ground = ctx.div(
-                        ctx.sub(
-                            index_unres,
-                            ctx.mul_const(unit_id, 4),
-                        ),
-                        ctx.constant(0xe4 * 4),
-                    );
-                    (unit_id, is_ground)
-                } else {
+            // Hackfix for 64bit unit strength init loop, which does
+            //     mov reg, strength_array
+            //     mov [reg], result
+            //     reg += 4
+            // instead of `mov [base + index], result`
+            //
+            // If index is constant to index 0 or 0xe4 * 4,
+            // assume index to be instead an variable based on mem_unres
+            let index_unres = ctx.mem_sub_op(mem_unres, self.game_ctx.unit_strength);
+            id_ground_from_index(index_unres)
+        } else {
+            let (unit_id, is_ground) = id_ground_from_index(index);
+            match (self.unresolve(ctrl, unit_id), self.unresolve(ctrl, is_ground)) {
+                (Some(a), Some(b)) => (a, b),
+                (Some(unit_id), None) => {
+                    if let Some(index_unres) = self.unresolve(ctrl, index) {
+                        let is_ground = ctx.div(
+                            ctx.sub(
+                                index_unres,
+                                ctx.mul_const(unit_id, 4),
+                            ),
+                            ctx.constant(0xe4 * 4),
+                        );
+                        (unit_id, is_ground)
+                    } else {
+                        dat_warn!(self, "Unable to find operands for is_ground/id");
+                        return;
+                    }
+                }
+                (None, Some(is_ground)) => {
+                    if let Some(index_unres) = self.unresolve(ctrl, index) {
+                        let unit_id = ctx.div(
+                            ctx.sub(
+                                index_unres,
+                                ctx.mul_const(is_ground, 0xe4 * 4),
+                            ),
+                            ctx.constant(4),
+                        );
+                        (unit_id, is_ground)
+                    } else {
+                        dat_warn!(self, "Unable to find operands for is_ground/id");
+                        return;
+                    }
+                }
+                _ => {
                     dat_warn!(self, "Unable to find operands for is_ground/id");
                     return;
                 }
-            }
-            (None, Some(is_ground)) => {
-                if let Some(index_unres) = self.unresolve(ctrl, index) {
-                    let unit_id = ctx.div(
-                        ctx.sub(
-                            index_unres,
-                            ctx.mul_const(is_ground, 0xe4 * 4),
-                        ),
-                        ctx.constant(4),
-                    );
-                    (unit_id, is_ground)
-                } else {
-                    dat_warn!(self, "Unable to find operands for is_ground/id");
-                    return;
-                }
-            }
-            _ => {
-                dat_warn!(self, "Unable to find operands for is_ground/id");
-                return;
             }
         };
         // Convert to (unit_id * 2 + is_ground) * 4
