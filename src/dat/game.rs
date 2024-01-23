@@ -31,6 +31,8 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
     let player_ai = cache.player_ai(analysis)?;
     let trigger_all_units = cache.trigger_all_units_cache(analysis)?;
     let trigger_completed_units = cache.trigger_completed_units_cache(analysis)?;
+    let scmain_state = cache.scmain_state(analysis)
+        .and_then(|x| x.if_memory());
     let game_address = game.iter_no_mem_addr()
         .filter_map(|x| {
             x.if_memory()
@@ -57,6 +59,7 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
         ai_build_limit: ctx.add_const(player_ai, ai_build_limit_offset),
         trigger_all_units,
         trigger_completed_units,
+        scmain_state,
     };
     game_ctx.do_analysis(required_stable_addresses);
     debug_assert!(game_ctx.unchecked_refs.is_empty());
@@ -147,6 +150,7 @@ pub struct GameContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     ai_build_limit: Operand<'e>,
     trigger_all_units: Operand<'e>,
     trigger_completed_units: Operand<'e>,
+    scmain_state: Option<&'e MemAccess<'e>>,
 }
 
 impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
@@ -302,12 +306,27 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             } else {
                                 None
                             }
+                        })
+                        .or_else(|| {
+                            if let DestOperand::Memory(ref mem) = *dest {
+                                mem.if_constant_address()
+                                    .map(|x| E::VirtualAddress::from_u64(x))
+                            } else {
+                                None
+                            }
                         });
                     if let Some(const_addr) = const_addr {
                         if const_addr == self.game_ctx.game_address {
                             self.reached_game_ref(ctrl);
                             self.game_ref_seen = true;
                         }
+                    }
+                }
+                if let DestOperand::Memory(ref mem) = *dest {
+                    // Allowing writing intial constant to scmain_state breaks things
+                    if Some(mem) == self.game_ctx.scmain_state {
+                        ctrl.skip_operation();
+                        return;
                     }
                 }
                 if !self.game_ref_seen {

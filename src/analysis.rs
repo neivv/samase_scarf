@@ -2432,7 +2432,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::RunMenus, |s| s.cache_game_init(actx))
     }
 
-    fn scmain_state(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+    pub fn scmain_state(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_many_op(OperandAnalysis::ScMainState, |s| s.cache_game_init(actx))
     }
 
