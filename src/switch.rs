@@ -1,5 +1,3 @@
-use std::convert::TryInto;
-
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{ArithOpType, BinaryFile, MemAccess, MemAccessSize, Operand, OperandCtx, OperandType};
 

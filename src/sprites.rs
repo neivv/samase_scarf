@@ -1,5 +1,3 @@
-use std::convert::{TryFrom};
-
 use bumpalo::collections::Vec as BumpVec;
 
 use scarf::{MemAccessSize, Operand, Operation, DestOperand, Rva, BinaryFile, OperandCtx};

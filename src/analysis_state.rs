@@ -7,7 +7,7 @@ use bumpalo::Bump;
 use bumpalo::boxed::Box as BumpBox;
 use scarf::Operand;
 
-pub struct AnalysisState<'acx, 'e> {
+pub struct AnalysisState<'acx, 'e: 'acx> {
     state: BumpBox<'acx, StateEnum<'e>>,
     bump: &'acx Bump,
 }
@@ -40,7 +40,7 @@ pub enum StateEnum<'e> {
     HandleTargetedClick(HandleTargetedClickState),
 }
 
-impl<'acx, 'e> AnalysisState<'acx, 'e> {
+impl<'acx, 'e: 'acx> AnalysisState<'acx, 'e> {
     pub fn new(bump: &'acx Bump, state: StateEnum<'e>) -> AnalysisState<'acx, 'e> {
         AnalysisState {
             state: BumpBox::new_in(state, bump),

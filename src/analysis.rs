@@ -360,9 +360,14 @@ results! {
         FindUnitForClick => find_unit_for_click => cache_targeting_lclick,
         FindFowSpriteForClick => find_fow_sprite_for_click => cache_targeting_lclick,
         HandleTargetedClick => handle_targeted_click => cache_targeting_lclick,
+        // this = unit, a1 weapon_id, a2 target
         CheckWeaponTargetingFlags => check_weapon_targeting_flags => cache_handle_targeted_click,
+        // this = unit, a1 tech_id, a2 target_unit, a3 fow_unit_id, a4 x, a5 y,
+        // a6 u16 *opt_error_string_id
         CheckTechTargeting => check_tech_targeting => cache_handle_targeted_click,
+        // this = unit, a1 order, a2 target, a3 x, a4 y, a5 u16 *opt_error_string_id
         CheckOrderTargeting => check_order_targeting => cache_handle_targeted_click,
+        // this = unit, a1 order, a2 fow_unit_id, a3 x, a4 y, a5 u16 *opt_error_string_id
         CheckFowOrderTargeting => check_fow_order_targeting => cache_handle_targeted_click,
         AiFocusDisabled => ai_focus_disabled => cache_step_order,
         AiFocusAir => ai_focus_air => cache_step_order,

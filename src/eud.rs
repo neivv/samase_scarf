@@ -1,5 +1,3 @@
-use std::convert::TryFrom;
-
 use bumpalo::Bump;
 use bumpalo::collections::Vec as BumpVec;
 

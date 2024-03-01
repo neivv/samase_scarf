@@ -581,7 +581,7 @@ impl<'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-impl<'acx, 'e, E: ExecutionState<'e>> AiTownAnalyzer<'acx, 'e, E> {
+impl<'acx, 'e: 'acx, E: ExecutionState<'e>> AiTownAnalyzer<'acx, 'e, E> {
     fn ai_towns_check(
         &self,
         val: Operand<'e>,

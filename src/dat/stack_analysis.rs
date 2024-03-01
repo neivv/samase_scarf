@@ -1,5 +1,3 @@
-use std::convert::TryFrom;
-
 use arrayvec::ArrayVec;
 use bumpalo::collections::Vec as BumpVec;
 use byteorder::{ByteOrder, LittleEndian};

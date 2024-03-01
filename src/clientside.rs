@@ -633,7 +633,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
     }
 }
 
-impl<'a, 'acx, 'e, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'acx, 'e, E> {
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> MiscClientSideAnalyzer<'a, 'acx, 'e, E> {
     fn state_begin(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         use MiscClientSideAnalyzerState as State;
         // Check for the this.vtable_fn() call and

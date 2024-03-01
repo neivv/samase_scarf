@@ -1,8 +1,6 @@
 use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashMap;
 
-use std::convert::{TryInto, TryFrom};
-
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, MemAccessSize};
