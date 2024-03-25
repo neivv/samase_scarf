@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0065b9c0
 init_game_before_map_load_hook: 0065c8b5
 init_game_network: 006c3b30
+init_images: 00548dc0
 init_ingame_ui: 0072b670
 init_map_from_path: 0069d670
 init_net_player: 006d5000
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[d3d2d4]
 first_fow_sprite: Mem32[d3d1e8]
 first_free_bullet: Mem32[d2e6e0]
 first_free_fow_sprite: Mem32[d3d1e0]
+first_free_hp_bar: Mem32[d35c98]
 first_free_image: Mem32[d30754]
 first_free_lone_sprite: Mem32[d3d1d0]
 first_free_order: Mem32[d3c570]
 first_free_path: Mem32[f34290]
+first_free_placement_image: Mem32[d38150]
+first_free_placement_rect: Mem32[d39158]
 first_free_selection_circle: Mem32[d37148]
 first_free_sprite: Mem32[d3c580]
 first_free_unit: Mem32[d3d280]
@@ -345,8 +349,11 @@ global_event_handlers: efa270
 graphic_layers: f5e300
 grpwire_ddsgrp: f42268
 grpwire_grp: Mem32[f42250]
+hp_bar_images: d35998
+hp_bar_state: d35ca0
 image_grps: d2f7b8
 image_overlays: d30778
+images: Mem32[d35980]
 images_loaded: Mem8[f01189]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[f490d0]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[d3d278]
 last_fow_sprite: Mem32[d3d1ec]
 last_free_bullet: Mem32[d2e6e4]
 last_free_fow_sprite: Mem32[d3d1e4]
+last_free_hp_bar: Mem32[d35c9c]
 last_free_image: Mem32[d30758]
 last_free_lone_sprite: Mem32[d3d1d4]
 last_free_order: Mem32[d3c574]
+last_free_placement_image: Mem32[d38154]
+last_free_placement_rect: Mem32[d3915c]
 last_free_selection_circle: Mem32[d3714c]
 last_free_sprite: Mem32[d3c584]
 last_free_unit: Mem32[d3d27c]
@@ -409,6 +419,8 @@ original_chk_player_types: f24098
 palette_set: f5ed50
 path_array: Mem32[f34294]
 pathing: Mem32[f2ae18]
+placement_images: d37150
+placement_rects: d38158
 player_ai: d3ece0
 player_ai_towns: d5d198
 player_skins: f24250
@@ -439,6 +451,7 @@ screen_y: Mem32[d76ae8]
 secondary_order_timer_reset_counter: Mem32[d3d270]
 select_start_x: Mem16[f490d8]
 select_start_y: Mem16[f490da]
+selection_circles: d35d48
 selections: f343e8
 sfx_data: None
 skins: ce6670

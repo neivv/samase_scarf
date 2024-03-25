@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0064b490
 init_game_before_map_load_hook: 0064b500
 init_game_network: 006a5250
+init_images: 00547e70
 init_ingame_ui: 0070bd90
 init_map_from_path: 0067d3a0
 init_net_player: 006b9010
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[e04f80]
 first_fow_sprite: Mem32[e04e70]
 first_free_bullet: Mem32[df6384]
 first_free_fow_sprite: Mem32[e04e68]
+first_free_hp_bar: Mem32[df880c]
 first_free_image: Mem32[df8804]
 first_free_lone_sprite: Mem32[e04e58]
 first_free_order: Mem32[e041f8]
 first_free_path: Mem32[100913c]
+first_free_placement_image: Mem32[df9fc4]
+first_free_placement_rect: Mem32[dfafcc]
 first_free_selection_circle: Mem32[df8b14]
 first_free_sprite: Mem32[e04208]
 first_free_unit: Mem32[e04f2c]
@@ -345,8 +349,11 @@ global_event_handlers: fcfb90
 graphic_layers: 1028b10
 grpwire_ddsgrp: 100a7e4
 grpwire_grp: Mem32[100a7dc]
+hp_bar_images: df8810
+hp_bar_state: df8b18
 image_grps: df7868
 image_overlays: dfc358
+images: Mem32[df7850]
 images_loaded: Mem8[fd60e2]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[10116e8]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[e04f24]
 last_fow_sprite: Mem32[e04e74]
 last_free_bullet: Mem32[df6388]
 last_free_fow_sprite: Mem32[e04e6c]
+last_free_hp_bar: Mem32[df8b10]
 last_free_image: Mem32[df8808]
 last_free_lone_sprite: Mem32[e04e5c]
 last_free_order: Mem32[e041fc]
+last_free_placement_image: Mem32[dfafc8]
+last_free_placement_rect: Mem32[dfbfd0]
 last_free_selection_circle: Mem32[df9fc0]
 last_free_sprite: Mem32[e0420c]
 last_free_unit: Mem32[e04f28]
@@ -409,6 +419,8 @@ original_chk_player_types: ff8fec
 palette_set: 1029578
 path_array: Mem32[1009130]
 pathing: Mem32[fffcb8]
+placement_images: df9fc8
+placement_rects: dfafd0
 player_ai: e06998
 player_ai_towns: e24e50
 player_skins: ff91a8
@@ -439,6 +451,7 @@ screen_y: Mem32[e3e80c]
 secondary_order_timer_reset_counter: Mem32[e04f1c]
 select_start_x: Mem16[10116f0]
 select_start_y: Mem16[10116f2]
+selection_circles: df8bc0
 selections: 1009288
 sfx_data: Mem32[e26324]
 skins: dab0e0

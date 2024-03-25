@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0073ccb0
 init_game_before_map_load_hook: 0073cd20
 init_game_network: 007afe30
+init_images: 006600b0
 init_ingame_ui: 00820860
 init_map_from_path: 0078e160
 init_net_player: 007c5960
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[f350bc]
 first_fow_sprite: Mem32[e98f70]
 first_free_bullet: Mem32[e16da4]
 first_free_fow_sprite: Mem32[e98f68]
+first_free_hp_bar: Mem32[e691e0]
 first_free_image: Mem32[e19d3c]
 first_free_lone_sprite: Mem32[e97018]
 first_free_order: Mem32[e7e500]
 first_free_path: Mem32[f5df1c]
+first_free_placement_image: Mem32[e6b698]
+first_free_placement_rect: Mem32[e6c6a0]
 first_free_selection_circle: Mem32[e6a690]
 first_free_sprite: Mem32[e947b0]
 first_free_unit: Mem32[f350c4]
@@ -345,8 +349,11 @@ global_event_handlers: 10f6820
 graphic_layers: 115a258
 grpwire_ddsgrp: 113e960
 grpwire_grp: Mem32[113e9bc]
+hp_bar_images: e68ee0
+hp_bar_state: e691e8
 image_grps: e19d40
 image_overlays: e6ca28
+images: e1ace0
 images_loaded: Mem8[10fd6f1]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[1145778]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[f350c0]
 last_fow_sprite: Mem32[e98f74]
 last_free_bullet: Mem32[e16da8]
 last_free_fow_sprite: Mem32[e98f6c]
+last_free_hp_bar: Mem32[e691e4]
 last_free_image: Mem32[e1acdc]
 last_free_lone_sprite: Mem32[e9701c]
 last_free_order: Mem32[e7e504]
+last_free_placement_image: Mem32[e6b69c]
+last_free_placement_rect: Mem32[e6c6a4]
 last_free_selection_circle: Mem32[e6a694]
 last_free_sprite: Mem32[e947b4]
 last_free_unit: Mem32[f350c8]
@@ -409,6 +419,8 @@ original_chk_player_types: 1120750
 palette_set: 115ace8
 path_array: Mem32[f5df10]
 pathing: Mem32[11273c4]
+placement_images: e6a698
+placement_rects: e6b6a0
 player_ai: f3e590
 player_ai_towns: f5ca48
 player_skins: 1120908
@@ -439,6 +451,7 @@ screen_y: Mem32[f76394]
 secondary_order_timer_reset_counter: Mem32[ea996c]
 select_start_x: Mem16[1145780]
 select_start_y: Mem16[1145782]
+selection_circles: e69290
 selections: 1130978
 sfx_data: None
 skins: 1130c50

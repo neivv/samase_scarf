@@ -102,6 +102,7 @@ init_consoles: 00655f70
 init_game: 00687510
 init_game_before_map_load_hook: 00687580
 init_game_network: 006fb160
+init_images: 0055f5f0
 init_ingame_ui: 0075bc70
 init_map_from_path: 006dadb0
 init_net_player: 007103a0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[e0b8fc]
 first_fow_sprite: Mem32[e0b810]
 first_free_bullet: Mem32[dfccec]
 first_free_fow_sprite: Mem32[e0b808]
+first_free_hp_bar: Mem32[dff194]
 first_free_image: Mem32[dfe1b8]
 first_free_lone_sprite: Mem32[e0b7f8]
 first_free_order: Mem32[e0ab70]
 first_free_path: Mem32[1016628]
+first_free_placement_image: Mem32[e0094c]
+first_free_placement_rect: Mem32[e01954]
 first_free_selection_circle: Mem32[dff49c]
 first_free_sprite: Mem32[e0ab90]
 first_free_unit: Mem32[e0b8a8]
@@ -345,8 +349,11 @@ global_event_handlers: fddc90
 graphic_layers: 103c028
 grpwire_ddsgrp: 101829c
 grpwire_grp: Mem32[1018294]
+hp_bar_images: dff198
+hp_bar_state: dff4a0
 image_grps: dfe1f8
 image_overlays: e02ce0
+images: Mem32[dfe1e0]
 images_loaded: Mem8[fe34a2]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[101ef28]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[e0b8a0]
 last_fow_sprite: Mem32[e0b814]
 last_free_bullet: Mem32[dfccf0]
 last_free_fow_sprite: Mem32[e0b80c]
+last_free_hp_bar: Mem32[dff498]
 last_free_image: Mem32[dfe1bc]
 last_free_lone_sprite: Mem32[e0b7fc]
 last_free_order: Mem32[e0ab74]
+last_free_placement_image: Mem32[e01950]
+last_free_placement_rect: Mem32[e02958]
 last_free_selection_circle: Mem32[e00948]
 last_free_sprite: Mem32[e0ab94]
 last_free_unit: Mem32[e0b8a4]
@@ -409,6 +419,8 @@ original_chk_player_types: 10063ac
 palette_set: 103ca80
 path_array: Mem32[101662c]
 pathing: Mem32[100d1b8]
+placement_images: e00950
+placement_rects: e01958
 player_ai: e12948
 player_ai_towns: e30e00
 player_skins: 1006568
@@ -439,6 +451,7 @@ screen_y: Mem32[e4caf8]
 secondary_order_timer_reset_counter: Mem32[e0b898]
 select_start_x: Mem16[101ef30]
 select_start_y: Mem16[101ef32]
+selection_circles: dff548
 selections: 10167e0
 sfx_data: Mem32[e322dc]
 skins: d9e288

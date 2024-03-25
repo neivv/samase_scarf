@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 00642490
 init_game_before_map_load_hook: 00643c8e
 init_game_network: 006a9cb0
+init_images: 00546290
 init_ingame_ui: 00704150
 init_map_from_path: 00689b10
 init_net_player: 006bb6b0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[ccd14c]
 first_fow_sprite: Mem32[ccd068]
 first_free_bullet: Mem32[cbe53c]
 first_free_fow_sprite: Mem32[ccd060]
+first_free_hp_bar: Mem32[cc67ac]
 first_free_image: Mem32[cc09bc]
 first_free_lone_sprite: Mem32[ccd050]
 first_free_order: Mem32[ccc3f0]
 first_free_path: Mem32[ec40f8]
+first_free_placement_image: Mem32[cc7f64]
+first_free_placement_rect: Mem32[cc8f6c]
 first_free_selection_circle: Mem32[cc6ab4]
 first_free_sprite: Mem32[ccc400]
 first_free_unit: Mem32[ccd0f8]
@@ -345,8 +349,11 @@ global_event_handlers: e8a2b0
 graphic_layers: ef0718
 grpwire_ddsgrp: ed2240
 grpwire_grp: Mem32[ed2228]
+hp_bar_images: cc67b0
+hp_bar_state: cc6ab8
 image_grps: cbfa20
 image_overlays: cc09e0
+images: Mem32[cc6794]
 images_loaded: Mem8[e910ce]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[ed9138]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[ccd0f0]
 last_fow_sprite: Mem32[ccd06c]
 last_free_bullet: Mem32[cbe540]
 last_free_fow_sprite: Mem32[ccd064]
+last_free_hp_bar: Mem32[cc6ab0]
 last_free_image: Mem32[cc09c0]
 last_free_lone_sprite: Mem32[ccd054]
 last_free_order: Mem32[ccc3f4]
+last_free_placement_image: Mem32[cc8f68]
+last_free_placement_rect: Mem32[cc9f70]
 last_free_selection_circle: Mem32[cc7f60]
 last_free_sprite: Mem32[ccc404]
 last_free_unit: Mem32[ccd0f4]
@@ -409,6 +419,8 @@ original_chk_player_types: eb3fc8
 palette_set: ef1180
 path_array: Mem32[ec40fc]
 pathing: Mem32[ebac80]
+placement_images: cc7f68
+placement_rects: cc8f70
 player_ai: cceb60
 player_ai_towns: ced018
 player_skins: eb4180
@@ -439,6 +451,7 @@ screen_y: Mem32[d069f0]
 secondary_order_timer_reset_counter: Mem32[ccd0e8]
 select_start_x: Mem16[ed9140]
 select_start_y: Mem16[ed9142]
+selection_circles: cc6b60
 selections: ec4250
 sfx_data: None
 skins: ec4528

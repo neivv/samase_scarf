@@ -102,6 +102,7 @@ init_consoles: 00657800
 init_game: 00687980
 init_game_before_map_load_hook: 006879f0
 init_game_network: 006db7a0
+init_images: 0055aa40
 init_ingame_ui: 0073c710
 init_map_from_path: 006b4c50
 init_net_player: 006ecf20
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[dfa198]
 first_fow_sprite: Mem32[dfa0b0]
 first_free_bullet: Mem32[deb58c]
 first_free_fow_sprite: Mem32[dfa0a8]
+first_free_hp_bar: Mem32[deda34]
 first_free_image: Mem32[deca58]
 first_free_lone_sprite: Mem32[dfa098]
 first_free_order: Mem32[df9410]
 first_free_path: Mem32[1004668]
+first_free_placement_image: Mem32[def1ec]
+first_free_placement_rect: Mem32[df01f4]
 first_free_selection_circle: Mem32[dedd3c]
 first_free_sprite: Mem32[df9430]
 first_free_unit: Mem32[dfa144]
@@ -345,8 +349,11 @@ global_event_handlers: fcbd08
 graphic_layers: 102a260
 grpwire_ddsgrp: 10062dc
 grpwire_grp: Mem32[10062d4]
+hp_bar_images: deda38
+hp_bar_state: dedd40
 image_grps: deca98
 image_overlays: df1580
+images: Mem32[deca80]
 images_loaded: Mem8[fd14fe]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[100cf68]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[dfa13c]
 last_fow_sprite: Mem32[dfa0b4]
 last_free_bullet: Mem32[deb590]
 last_free_fow_sprite: Mem32[dfa0ac]
+last_free_hp_bar: Mem32[dedd38]
 last_free_image: Mem32[deca5c]
 last_free_lone_sprite: Mem32[dfa09c]
 last_free_order: Mem32[df9414]
+last_free_placement_image: Mem32[df01f0]
+last_free_placement_rect: Mem32[df11f8]
 last_free_selection_circle: Mem32[def1e8]
 last_free_sprite: Mem32[df9434]
 last_free_unit: Mem32[dfa140]
@@ -409,6 +419,8 @@ original_chk_player_types: ff43f4
 palette_set: 102acb8
 path_array: Mem32[100466c]
 pathing: Mem32[ffb1f8]
+placement_images: def1f0
+placement_rects: df01f8
 player_ai: e011e0
 player_ai_towns: e1f698
 player_skins: ff45b0
@@ -439,6 +451,7 @@ screen_y: Mem32[e3ab70]
 secondary_order_timer_reset_counter: Mem32[dfa134]
 select_start_x: Mem16[100cf70]
 select_start_y: Mem16[100cf72]
+selection_circles: dedde8
 selections: 1004820
 sfx_data: Mem32[e20b6c]
 skins: d8d288

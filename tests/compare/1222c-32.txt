@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0068f980
 init_game_before_map_load_hook: 0068f9f0
 init_game_network: 00712850
+init_images: 0054f640
 init_ingame_ui: 00785c30
 init_map_from_path: 006e9b10
 init_net_player: 007214f0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[e20b18]
 first_fow_sprite: Mem32[e2088c]
 first_free_bullet: Mem32[e11cc4]
 first_free_fow_sprite: Mem32[e20884]
+first_free_hp_bar: Mem32[e14194]
 first_free_image: Mem32[e131b8]
 first_free_lone_sprite: Mem32[e20874]
 first_free_order: Mem32[e1fbe0]
 first_free_path: Mem32[1025758]
+first_free_placement_image: Mem32[e1594c]
+first_free_placement_rect: Mem32[e16954]
 first_free_selection_circle: Mem32[e1449c]
 first_free_sprite: Mem32[e1fc08]
 first_free_unit: Mem32[e20ac4]
@@ -345,8 +349,11 @@ global_event_handlers: febbd8
 graphic_layers: 104e3e8
 grpwire_ddsgrp: 1026e68
 grpwire_grp: Mem32[1026e60]
+hp_bar_images: e14198
+hp_bar_state: e144a0
 image_grps: e131f8
 image_overlays: e17ce0
+images: Mem32[e131e0]
 images_loaded: Mem8[ff23c2]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[102de70]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[e20abc]
 last_fow_sprite: Mem32[e20890]
 last_free_bullet: Mem32[e11cc8]
 last_free_fow_sprite: Mem32[e20888]
+last_free_hp_bar: Mem32[e14498]
 last_free_image: Mem32[e131bc]
 last_free_lone_sprite: Mem32[e20878]
 last_free_order: Mem32[e1fbe4]
+last_free_placement_image: Mem32[e16950]
+last_free_placement_rect: Mem32[e17958]
 last_free_selection_circle: Mem32[e15948]
 last_free_sprite: Mem32[e1fc0c]
 last_free_unit: Mem32[e20ac0]
@@ -409,6 +419,8 @@ original_chk_player_types: 1015374
 palette_set: 104ee60
 path_array: Mem32[102574c]
 pathing: Mem32[101c254]
+placement_images: e15950
+placement_rects: e16958
 player_ai: e22768
 player_ai_towns: e40c58
 player_skins: 1015588
@@ -439,6 +451,7 @@ screen_y: Mem32[e5a874]
 secondary_order_timer_reset_counter: Mem32[e20ab4]
 select_start_x: Mem16[102de84]
 select_start_y: Mem16[102de86]
+selection_circles: e14548
 selections: 10258d8
 sfx_data: Mem32[e421c8]
 skins: dc7208

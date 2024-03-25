@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 00692620
 init_game_before_map_load_hook: 00692690
 init_game_network: 00726a50
+init_images: 0056d1f0
 init_ingame_ui: 0078bc80
 init_map_from_path: 00700940
 init_net_player: 00738a40
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[db6ffc]
 first_fow_sprite: Mem32[db6f40]
 first_free_bullet: Mem32[da8400]
 first_free_fow_sprite: Mem32[db6f38]
+first_free_hp_bar: Mem32[daf6e4]
 first_free_image: Mem32[daa898]
 first_free_lone_sprite: Mem32[db6f28]
 first_free_order: Mem32[db62c0]
 first_free_path: Mem32[fadd50]
+first_free_placement_image: Mem32[db0e9c]
+first_free_placement_rect: Mem32[db1ea4]
 first_free_selection_circle: Mem32[daf9ec]
 first_free_sprite: Mem32[db62d0]
 first_free_unit: Mem32[db6fd8]
@@ -345,8 +349,11 @@ global_event_handlers: f73cb8
 graphic_layers: fd77f0
 grpwire_ddsgrp: fbbe98
 grpwire_grp: Mem32[fbbe90]
+hp_bar_images: daf6e8
+hp_bar_state: daf9f0
 image_grps: da9508
 image_overlays: daa8b8
+images: Mem32[daf6cc]
 images_loaded: Mem8[f7abd1]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[fc2cf8]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[db6fd0]
 last_fow_sprite: Mem32[db6f44]
 last_free_bullet: Mem32[da8404]
 last_free_fow_sprite: Mem32[db6f3c]
+last_free_hp_bar: Mem32[daf9e8]
 last_free_image: Mem32[daa89c]
 last_free_lone_sprite: Mem32[db6f2c]
 last_free_order: Mem32[db62c4]
+last_free_placement_image: Mem32[db1ea0]
+last_free_placement_rect: Mem32[db2ea8]
 last_free_selection_circle: Mem32[db0e98]
 last_free_sprite: Mem32[db62d4]
 last_free_unit: Mem32[db6fd4]
@@ -409,6 +419,8 @@ original_chk_player_types: f9dc28
 palette_set: fd8258
 path_array: Mem32[fadd54]
 pathing: Mem32[fa48d8]
+placement_images: db0ea0
+placement_rects: db1ea8
 player_ai: db9038
 player_ai_towns: dd74f0
 player_skins: f9dde0
@@ -439,6 +451,7 @@ screen_y: Mem32[df0e38]
 secondary_order_timer_reset_counter: Mem32[db6fc8]
 select_start_x: Mem16[fc2d00]
 select_start_y: Mem16[fc2d02]
+selection_circles: dafa98
 selections: fadea8
 sfx_data: None
 skins: fae180

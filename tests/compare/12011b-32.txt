@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0075c6f0
 init_game_before_map_load_hook: 0075c760
 init_game_network: 007c1f30
+init_images: 00669180
 init_ingame_ui: 0082e1b0
 init_map_from_path: 007a1900
 init_net_player: 007d9040
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[f240b4]
 first_fow_sprite: Mem32[e87f58]
 first_free_bullet: Mem32[e05d84]
 first_free_fow_sprite: Mem32[e87f50]
+first_free_hp_bar: Mem32[e581c8]
 first_free_image: Mem32[e08d24]
 first_free_lone_sprite: Mem32[e86000]
 first_free_order: Mem32[e6d4e8]
 first_free_path: Mem32[f4cf8c]
+first_free_placement_image: Mem32[e5a680]
+first_free_placement_rect: Mem32[e5b688]
 first_free_selection_circle: Mem32[e59678]
 first_free_sprite: Mem32[e83798]
 first_free_unit: Mem32[f240bc]
@@ -345,8 +349,11 @@ global_event_handlers: 10e58c8
 graphic_layers: 1149398
 grpwire_ddsgrp: 112da50
 grpwire_grp: Mem32[112daac]
+hp_bar_images: e57ec8
+hp_bar_state: e581d0
 image_grps: e08d28
 image_overlays: e5ba10
+images: e09cc8
 images_loaded: Mem8[10ec7d1]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[11348a8]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[f240b8]
 last_fow_sprite: Mem32[e87f5c]
 last_free_bullet: Mem32[e05d88]
 last_free_fow_sprite: Mem32[e87f54]
+last_free_hp_bar: Mem32[e581cc]
 last_free_image: Mem32[e09cc4]
 last_free_lone_sprite: Mem32[e86004]
 last_free_order: Mem32[e6d4ec]
+last_free_placement_image: Mem32[e5a684]
+last_free_placement_rect: Mem32[e5b68c]
 last_free_selection_circle: Mem32[e5967c]
 last_free_sprite: Mem32[e8379c]
 last_free_unit: Mem32[f240c0]
@@ -409,6 +419,8 @@ original_chk_player_types: 110f830
 palette_set: 1149e00
 path_array: Mem32[f4cf80]
 pathing: Mem32[11164b4]
+placement_images: e59680
+placement_rects: e5a688
 player_ai: f2d600
 player_ai_towns: f4bab8
 player_skins: 110f9f0
@@ -439,6 +451,7 @@ screen_y: Mem32[f65438]
 secondary_order_timer_reset_counter: Mem32[e98960]
 select_start_x: Mem16[11348b0]
 select_start_y: Mem16[11348b2]
+selection_circles: e58278
 selections: 111fa68
 sfx_data: None
 skins: 111fd40

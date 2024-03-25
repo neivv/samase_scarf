@@ -22,6 +22,7 @@ use crate::firegraft::{self, RequirementTables};
 use crate::game::{self, Limits};
 use crate::game_init;
 use crate::iscript::{self, StepIscriptHook};
+use crate::images;
 use crate::map::{self, RunTriggers, TriggerUnitCountCaches};
 use crate::minimap;
 use crate::network::{self, SnpDefinitions};
@@ -461,6 +462,7 @@ results! {
         AddBuildingAi => add_building_ai => cache_add_ai_to_trained_unit,
         AddMilitaryAi => add_military_ai => cache_add_ai_to_trained_unit,
         AddTownUnitAi => add_town_unit_ai => cache_add_building_ai,
+        InitImages => init_images => cache_init_images,
     }
 }
 
@@ -725,6 +727,18 @@ results! {
         LastActiveUnit => last_active_unit => cache_hide_unit,
         PathArray => path_array => cache_hide_unit,
         FirstFreePath => first_free_path => cache_hide_unit,
+        Images => images => cache_init_images,
+        HpBarImages => hp_bar_images => cache_init_images,
+        HpBarState => hp_bar_state => cache_init_images,
+        SelectionCircles => selection_circles => cache_init_images,
+        PlacementImages => placement_images => cache_init_images,
+        PlacementRects => placement_rects => cache_init_images,
+        FirstFreeHpBar => first_free_hp_bar => cache_init_images,
+        LastFreeHpBar => last_free_hp_bar => cache_init_images,
+        FirstFreePlacementImage => first_free_placement_image => cache_init_images,
+        LastFreePlacementImage => last_free_placement_image => cache_init_images,
+        FirstFreePlacementRect => first_free_placement_rect => cache_init_images,
+        LastFreePlacementRect => last_free_placement_rect => cache_init_images,
     }
 }
 
@@ -3869,6 +3883,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    fn first_free_selection_circle(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(
+            OperandAnalysis::FirstFreeSelectionCircle,
+            |s| s.cache_update_unit_visibility(actx),
+        )
+    }
+
     fn cache_init_map_from_path(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
@@ -4536,6 +4557,27 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let func = s.add_building_ai(actx)?;
                 let r = ai::analyze_add_building_ai(actx, func);
                 Some(([r.add_town_unit_ai], []))
+            })
+    }
+
+    fn cache_init_images(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[InitImages],
+            &[Images, HpBarImages, HpBarState, SelectionCircles, PlacementImages, PlacementRects,
+                FirstFreeHpBar, LastFreeHpBar, FirstFreePlacementImage, LastFreePlacementImage,
+                FirstFreePlacementRect, LastFreePlacementRect],
+            |s| {
+                let circle = s.first_free_selection_circle(actx)?;
+                let funcs = s.function_finder();
+                let r = images::init_images(actx, circle, &funcs);
+                Some(([r.init_images], [r.images, r.hp_bar_images, r.hp_bar_state,
+                    r.selection_circles, r.placement_images, r.placement_rects,
+                    r.first_free_hp_bar, r.last_free_hp_bar,
+                    r.first_free_placement_image, r.last_free_placement_image,
+                    r.first_free_placement_rect, r.last_free_placement_rect,
+                ]))
             })
     }
 }

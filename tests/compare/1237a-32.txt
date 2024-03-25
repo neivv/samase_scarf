@@ -102,6 +102,7 @@ init_consoles: 0068eaa0
 init_game: 006c27a0
 init_game_before_map_load_hook: 006c3cf5
 init_game_network: 00732fb0
+init_images: 005769c0
 init_ingame_ui: 007a3000
 init_map_from_path: 0070db80
 init_net_player: 0074bc90
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[fd0260]
 first_fow_sprite: Mem32[fd00a0]
 first_free_bullet: Mem32[fc1580]
 first_free_fow_sprite: Mem32[fd0098]
+first_free_hp_bar: Mem32[fc3a4c]
 first_free_image: Mem32[fc2a70]
 first_free_lone_sprite: Mem32[fd0088]
 first_free_order: Mem32[fcf400]
 first_free_path: Mem32[11dc6a8]
+first_free_placement_image: Mem32[fc5204]
+first_free_placement_rect: Mem32[fc620c]
 first_free_selection_circle: Mem32[fc3d54]
 first_free_sprite: Mem32[fcf420]
 first_free_unit: Mem32[fd020c]
@@ -345,8 +349,11 @@ global_event_handlers: 11a3a68
 graphic_layers: 11f8678
 grpwire_ddsgrp: 11de384
 grpwire_grp: Mem32[11de37c]
+hp_bar_images: fc3a50
+hp_bar_state: fc3d58
 image_grps: fc2ab0
 image_overlays: fc7598
+images: Mem32[fc2a98]
 images_loaded: Mem8[11a9571]
 in_lobby_or_game: Mem32[11cdcfc]
 is_custom_single_player: Mem32[11e54ac]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[fd0204]
 last_fow_sprite: Mem32[fd00a4]
 last_free_bullet: Mem32[fc1584]
 last_free_fow_sprite: Mem32[fd009c]
+last_free_hp_bar: Mem32[fc3d50]
 last_free_image: Mem32[fc2a74]
 last_free_lone_sprite: Mem32[fd008c]
 last_free_order: Mem32[fcf404]
+last_free_placement_image: Mem32[fc6208]
+last_free_placement_rect: Mem32[fc7210]
 last_free_selection_circle: Mem32[fc5200]
 last_free_sprite: Mem32[fcf424]
 last_free_unit: Mem32[fd0208]
@@ -409,6 +419,8 @@ original_chk_player_types: 11cc47c
 palette_set: 11f90d0
 path_array: Mem32[11dc6ac]
 pathing: Mem32[11d3238]
+placement_images: fc5208
+placement_rects: fc6210
 player_ai: fd6e18
 player_ai_towns: ff52d0
 player_skins: 11cc5d8
@@ -439,6 +451,7 @@ screen_y: Mem32[1012838]
 secondary_order_timer_reset_counter: Mem32[fd01fc]
 select_start_x: Mem16[11e54b8]
 select_start_y: Mem16[11e54ba]
+selection_circles: fc3e00
 selections: 11dc878
 sfx_data: Mem32[ff67ac]
 skins: f4ec88

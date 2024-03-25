@@ -35,6 +35,7 @@ mod float_cmp;
 mod game;
 mod game_init;
 mod hash_map;
+mod images;
 mod inline_hook;
 mod iscript;
 mod linked_list;

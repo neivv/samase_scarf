@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0065a350
 init_game_before_map_load_hook: 0065a3c0
 init_game_network: 006afb10
+init_images: 005604d0
 init_ingame_ui: 007113a0
 init_map_from_path: 0068b700
 init_net_player: 006bda50
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[e240bc]
 first_fow_sprite: Mem32[d87f58]
 first_free_bullet: Mem32[d05d84]
 first_free_fow_sprite: Mem32[d87f50]
+first_free_hp_bar: Mem32[d581c8]
 first_free_image: Mem32[d08d24]
 first_free_lone_sprite: Mem32[d86000]
 first_free_order: Mem32[d6d4e8]
 first_free_path: Mem32[e4cf8c]
+first_free_placement_image: Mem32[d5a680]
+first_free_placement_rect: Mem32[d5b688]
 first_free_selection_circle: Mem32[d59678]
 first_free_sprite: Mem32[d83798]
 first_free_unit: Mem32[e240c4]
@@ -345,8 +349,11 @@ global_event_handlers: fe58c8
 graphic_layers: 1049388
 grpwire_ddsgrp: 102da48
 grpwire_grp: Mem32[102daa4]
+hp_bar_images: d57ec8
+hp_bar_state: d581d0
 image_grps: d08d28
 image_overlays: d5ba10
+images: d09cc8
 images_loaded: Mem8[fec7d1]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[10348a0]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[e240c0]
 last_fow_sprite: Mem32[d87f5c]
 last_free_bullet: Mem32[d05d88]
 last_free_fow_sprite: Mem32[d87f54]
+last_free_hp_bar: Mem32[d581cc]
 last_free_image: Mem32[d09cc4]
 last_free_lone_sprite: Mem32[d86004]
 last_free_order: Mem32[d6d4ec]
+last_free_placement_image: Mem32[d5a684]
+last_free_placement_rect: Mem32[d5b68c]
 last_free_selection_circle: Mem32[d5967c]
 last_free_sprite: Mem32[d8379c]
 last_free_unit: Mem32[e240c8]
@@ -409,6 +419,8 @@ original_chk_player_types: 100f830
 palette_set: 1049df0
 path_array: Mem32[e4cf80]
 pathing: Mem32[10164ac]
+placement_images: d59680
+placement_rects: d5a688
 player_ai: e2d600
 player_ai_towns: e4bab8
 player_skins: 100f9e8
@@ -439,6 +451,7 @@ screen_y: Mem32[e6540c]
 secondary_order_timer_reset_counter: Mem32[d98968]
 select_start_x: Mem16[10348a8]
 select_start_y: Mem16[10348aa]
+selection_circles: d58278
 selections: 101fa60
 sfx_data: None
 skins: 101fd38

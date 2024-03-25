@@ -102,6 +102,7 @@ init_consoles: 14029f2c0
 init_game: 1402d7ed0
 init_game_before_map_load_hook: 1402d7f46
 init_game_network: 14034dd30
+init_images: 14017b190
 init_ingame_ui: 1403bc380
 init_map_from_path: 14031d2a0
 init_net_player: 14035e000
@@ -306,10 +307,13 @@ first_dying_unit: Mem64[140c6db98]
 first_fow_sprite: Mem64[140c6da00]
 first_free_bullet: Mem64[140c551f8]
 first_free_fow_sprite: Mem64[140c6d9f0]
+first_free_hp_bar: Mem64[140c577a8]
 first_free_image: Mem64[140c57340]
 first_free_lone_sprite: Mem64[140c6d9d0]
 first_free_order: Mem64[140c6c4d0]
 first_free_path: Mem64[140e954e0]
+first_free_placement_image: Mem64[140c5b778]
+first_free_placement_rect: Mem64[140c5cd88]
 first_free_selection_circle: Mem64[140c59be8]
 first_free_sprite: Mem64[140c6c510]
 first_free_unit: Mem64[140c6daf8]
@@ -345,8 +349,11 @@ global_event_handlers: 140e5b430
 graphic_layers: 140ec49d0
 grpwire_ddsgrp: 140e974b8
 grpwire_grp: Mem64[140e974a8]
+hp_bar_images: 140c596f0
+hp_bar_state: 140c59b10
 image_grps: 140c577b0
 image_overlays: 140c5e820
+images: Mem64[140c57778]
 images_loaded: Mem8[140e612ba]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[140ea43c8]
@@ -364,9 +371,12 @@ last_dying_unit: Mem64[140c6dae8]
 last_fow_sprite: Mem64[140c6da08]
 last_free_bullet: Mem64[140c55200]
 last_free_fow_sprite: Mem64[140c6d9f8]
+last_free_hp_bar: Mem64[140c596e8]
 last_free_image: Mem64[140c57348]
 last_free_lone_sprite: Mem64[140c6d9d8]
 last_free_order: Mem64[140c6c4d8]
+last_free_placement_image: Mem64[140c5cd80]
+last_free_placement_rect: Mem64[140c5e390]
 last_free_selection_circle: Mem64[140c5b770]
 last_free_sprite: Mem64[140c6c518]
 last_free_unit: Mem64[140c6daf0]
@@ -409,6 +419,8 @@ original_chk_player_types: 140e84358
 palette_set: 140ec54d0
 path_array: Mem64[140e954e8]
 pathing: Mem64[140e8b3b0]
+placement_images: 140c5b780
+placement_rects: 140c5cd90
 player_ai: 140c75b90
 player_ai_towns: 140ca2fe0
 player_skins: 140e84570
@@ -439,6 +451,7 @@ screen_y: Mem32[140cc7cf4]
 secondary_order_timer_reset_counter: Mem32[140c6dad8]
 select_start_x: Mem16[140ea43d4]
 select_start_y: Mem16[140ea43d6]
+selection_circles: 140c59bf0
 selections: 140e95770
 sfx_data: Mem64[140ca4cf0]
 skins: 140bdc234

@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 00646e80
 init_game_before_map_load_hook: 00647b13
 init_game_network: 006a5010
+init_images: 0054b500
 init_ingame_ui: 00709b00
 init_map_from_path: 00684ac0
 init_net_player: 006b6bd0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[d1e324]
 first_fow_sprite: Mem32[d1e228]
 first_free_bullet: Mem32[d0f6d4]
 first_free_fow_sprite: Mem32[d1e220]
+first_free_hp_bar: Mem32[d1795c]
 first_free_image: Mem32[d11b6c]
 first_free_lone_sprite: Mem32[d1e210]
 first_free_order: Mem32[d1d5b0]
 first_free_path: Mem32[f152e8]
+first_free_placement_image: Mem32[d19114]
+first_free_placement_rect: Mem32[d1a11c]
 first_free_selection_circle: Mem32[d17c64]
 first_free_sprite: Mem32[d1d5c0]
 first_free_unit: Mem32[d1e2d0]
@@ -345,8 +349,11 @@ global_event_handlers: edb388
 graphic_layers: f41ad0
 grpwire_ddsgrp: f23434
 grpwire_grp: Mem32[f2341c]
+hp_bar_images: d17960
+hp_bar_state: d17c68
 image_grps: d10bd0
 image_overlays: d11b90
+images: Mem32[d17944]
 images_loaded: Mem8[ee22b6]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[f2a328]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[d1e2c8]
 last_fow_sprite: Mem32[d1e22c]
 last_free_bullet: Mem32[d0f6d8]
 last_free_fow_sprite: Mem32[d1e224]
+last_free_hp_bar: Mem32[d17c60]
 last_free_image: Mem32[d11b70]
 last_free_lone_sprite: Mem32[d1e214]
 last_free_order: Mem32[d1d5b4]
+last_free_placement_image: Mem32[d1a118]
+last_free_placement_rect: Mem32[d1b120]
 last_free_selection_circle: Mem32[d19110]
 last_free_sprite: Mem32[d1d5c4]
 last_free_unit: Mem32[d1e2cc]
@@ -409,6 +419,8 @@ original_chk_player_types: f051b0
 palette_set: f42538
 path_array: Mem32[f152ec]
 pathing: Mem32[f0be70]
+placement_images: d19118
+placement_rects: d1a120
 player_ai: d1fd38
 player_ai_towns: d3e1f0
 player_skins: f05368
@@ -439,6 +451,7 @@ screen_y: Mem32[d57b38]
 secondary_order_timer_reset_counter: Mem32[d1e2c0]
 select_start_x: Mem16[f2a330]
 select_start_y: Mem16[f2a332]
+selection_circles: d17d10
 selections: f15440
 sfx_data: None
 skins: f15718

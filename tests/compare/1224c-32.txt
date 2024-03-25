@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0068b500
 init_game_before_map_load_hook: 0068b570
 init_game_network: 0070dd10
+init_images: 0053f920
 init_ingame_ui: 0077e220
 init_map_from_path: 006e73b0
 init_net_player: 00721680
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[df4ec4]
 first_fow_sprite: Mem32[df4c44]
 first_free_bullet: Mem32[de6094]
 first_free_fow_sprite: Mem32[df4c3c]
+first_free_hp_bar: Mem32[de8564]
 first_free_image: Mem32[de7588]
 first_free_lone_sprite: Mem32[df4c2c]
 first_free_order: Mem32[df3f98]
 first_free_path: Mem32[ffb3f0]
+first_free_placement_image: Mem32[de9d1c]
+first_free_placement_rect: Mem32[dead24]
 first_free_selection_circle: Mem32[de886c]
 first_free_sprite: Mem32[df3fc0]
 first_free_unit: Mem32[df4e70]
@@ -345,8 +349,11 @@ global_event_handlers: fc18d8
 graphic_layers: 1024088
 grpwire_ddsgrp: ffcb20
 grpwire_grp: Mem32[ffcb18]
+hp_bar_images: de8568
+hp_bar_state: de8870
 image_grps: de75c8
 image_overlays: dec0b0
+images: Mem32[de75b0]
 images_loaded: Mem8[fc7fe6]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[1003b28]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[df4e68]
 last_fow_sprite: Mem32[df4c48]
 last_free_bullet: Mem32[de6098]
 last_free_fow_sprite: Mem32[df4c40]
+last_free_hp_bar: Mem32[de8868]
 last_free_image: Mem32[de758c]
 last_free_lone_sprite: Mem32[df4c30]
 last_free_order: Mem32[df3f9c]
+last_free_placement_image: Mem32[dead20]
+last_free_placement_rect: Mem32[debd28]
 last_free_selection_circle: Mem32[de9d18]
 last_free_sprite: Mem32[df3fc4]
 last_free_unit: Mem32[df4e6c]
@@ -409,6 +419,8 @@ original_chk_player_types: feaf84
 palette_set: 1024af8
 path_array: Mem32[ffb3e4]
 pathing: Mem32[ff1ef0]
+placement_images: de9d20
+placement_rects: dead28
 player_ai: df6b40
 player_ai_towns: e15030
 player_skins: feb190
@@ -439,6 +451,7 @@ screen_y: Mem32[e30480]
 secondary_order_timer_reset_counter: Mem32[df4e60]
 select_start_x: Mem16[1003b3c]
 select_start_y: Mem16[1003b3e]
+selection_circles: de8918
 selections: ffb570
 sfx_data: Mem32[e165a0]
 skins: d94270

@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 00694330
 init_game_before_map_load_hook: 006943a0
 init_game_network: 006f6a50
+init_images: 0054dff0
 init_ingame_ui: 0076d280
 init_map_from_path: 006d14a0
 init_net_player: 0070b650
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[dff7c8]
 first_fow_sprite: Mem32[dff52c]
 first_free_bullet: Mem32[df0964]
 first_free_fow_sprite: Mem32[dff524]
+first_free_hp_bar: Mem32[df2e34]
 first_free_image: Mem32[df1e58]
 first_free_lone_sprite: Mem32[dff514]
 first_free_order: Mem32[dfe880]
 first_free_path: Mem32[1004420]
+first_free_placement_image: Mem32[df45ec]
+first_free_placement_rect: Mem32[df55f4]
 first_free_selection_circle: Mem32[df313c]
 first_free_sprite: Mem32[dfe8a8]
 first_free_unit: Mem32[dff774]
@@ -345,8 +349,11 @@ global_event_handlers: fca898
 graphic_layers: 102d078
 grpwire_ddsgrp: 1005b30
 grpwire_grp: Mem32[1005b28]
+hp_bar_images: df2e38
+hp_bar_state: df3140
 image_grps: df1e98
 image_overlays: df6980
+images: Mem32[df1e80]
 images_loaded: Mem8[fd108a]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[100cb38]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[dff76c]
 last_fow_sprite: Mem32[dff530]
 last_free_bullet: Mem32[df0968]
 last_free_fow_sprite: Mem32[dff528]
+last_free_hp_bar: Mem32[df3138]
 last_free_image: Mem32[df1e5c]
 last_free_lone_sprite: Mem32[dff518]
 last_free_order: Mem32[dfe884]
+last_free_placement_image: Mem32[df55f0]
+last_free_placement_rect: Mem32[df65f8]
 last_free_selection_circle: Mem32[df45e8]
 last_free_sprite: Mem32[dfe8ac]
 last_free_unit: Mem32[dff770]
@@ -409,6 +419,8 @@ original_chk_player_types: ff403c
 palette_set: 102daf0
 path_array: Mem32[1004414]
 pathing: Mem32[ffaf1c]
+placement_images: df45f0
+placement_rects: df55f8
 player_ai: e01420
 player_ai_towns: e1f910
 player_skins: ff4250
@@ -439,6 +451,7 @@ screen_y: Mem32[e39534]
 secondary_order_timer_reset_counter: Mem32[dff764]
 select_start_x: Mem16[100cb4c]
 select_start_y: Mem16[100cb4e]
+selection_circles: df31e8
 selections: 10045a0
 sfx_data: Mem32[e20e80]
 skins: da6208

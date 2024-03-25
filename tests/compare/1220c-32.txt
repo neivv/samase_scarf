@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0064bd20
 init_game_before_map_load_hook: 0064bd90
 init_game_network: 006b1840
+init_images: 00549f20
 init_ingame_ui: 00714d20
 init_map_from_path: 00693b80
 init_net_player: 006bfb10
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[dd5f80]
 first_fow_sprite: Mem32[dd5ea0]
 first_free_bullet: Mem32[dc73a4]
 first_free_fow_sprite: Mem32[dd5e98]
+first_free_hp_bar: Mem32[dc983c]
 first_free_image: Mem32[dc9834]
 first_free_lone_sprite: Mem32[dd5e88]
 first_free_order: Mem32[dd5228]
 first_free_path: Mem32[fdabec]
+first_free_placement_image: Mem32[dcaff4]
+first_free_placement_rect: Mem32[dcbffc]
 first_free_selection_circle: Mem32[dc9b44]
 first_free_sprite: Mem32[dd5238]
 first_free_unit: Mem32[dd5f2c]
@@ -345,8 +349,11 @@ global_event_handlers: fa1650
 graphic_layers: ffa5c0
 grpwire_ddsgrp: fdc294
 grpwire_grp: Mem32[fdc28c]
+hp_bar_images: dc9840
+hp_bar_state: dc9b48
 image_grps: dc8898
 image_overlays: dcd388
+images: Mem32[dc8880]
 images_loaded: Mem8[fa7ba2]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[fe3198]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[dd5f24]
 last_fow_sprite: Mem32[dd5ea4]
 last_free_bullet: Mem32[dc73a8]
 last_free_fow_sprite: Mem32[dd5e9c]
+last_free_hp_bar: Mem32[dc9b40]
 last_free_image: Mem32[dc9838]
 last_free_lone_sprite: Mem32[dd5e8c]
 last_free_order: Mem32[dd522c]
+last_free_placement_image: Mem32[dcbff8]
+last_free_placement_rect: Mem32[dcd000]
 last_free_selection_circle: Mem32[dcaff0]
 last_free_sprite: Mem32[dd523c]
 last_free_unit: Mem32[dd5f28]
@@ -409,6 +419,8 @@ original_chk_player_types: fcaaa8
 palette_set: ffb028
 path_array: Mem32[fdabe0]
 pathing: Mem32[fd1768]
+placement_images: dcaff8
+placement_rects: dcc000
 player_ai: dd79a8
 player_ai_towns: df5e60
 player_skins: fcac60
@@ -439,6 +451,7 @@ screen_y: Mem32[e0f81c]
 secondary_order_timer_reset_counter: Mem32[dd5f1c]
 select_start_x: Mem16[fe31a0]
 select_start_y: Mem16[fe31a2]
+selection_circles: dc9bf0
 selections: fdad38
 sfx_data: Mem32[df7334]
 skins: d7c0e8

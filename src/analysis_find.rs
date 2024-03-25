@@ -377,6 +377,13 @@ pub enum EntryOfResult<R, Va: VirtualAddress> {
 }
 
 impl<R, Va: VirtualAddress> EntryOfResult<R, Va> {
+    pub fn is_ok(&self) -> bool {
+        match self {
+            EntryOfResult::Ok(..) => true,
+            _ => false,
+        }
+    }
+
     pub fn into_option(self) -> Option<R> {
         match self {
             EntryOfResult::Ok(_, b) => Some(b),

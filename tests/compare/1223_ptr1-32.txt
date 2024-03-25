@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 00687670
 init_game_before_map_load_hook: 006876e0
 init_game_network: 006fd4e0
+init_images: 0054dec0
 init_ingame_ui: 0076b880
 init_map_from_path: 006d77a0
 init_net_player: 0070ff50
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[dddadc]
 first_fow_sprite: Mem32[ddd864]
 first_free_bullet: Mem32[dcecb4]
 first_free_fow_sprite: Mem32[ddd85c]
+first_free_hp_bar: Mem32[dd1184]
 first_free_image: Mem32[dd01a8]
 first_free_lone_sprite: Mem32[ddd84c]
 first_free_order: Mem32[ddcbb8]
 first_free_path: Mem32[fe3f48]
+first_free_placement_image: Mem32[dd293c]
+first_free_placement_rect: Mem32[dd3944]
 first_free_selection_circle: Mem32[dd148c]
 first_free_sprite: Mem32[ddcbe0]
 first_free_unit: Mem32[ddda88]
@@ -345,8 +349,11 @@ global_event_handlers: faa4c8
 graphic_layers: 100cbb0
 grpwire_ddsgrp: fe5658
 grpwire_grp: Mem32[fe5650]
+hp_bar_images: dd1188
+hp_bar_state: dd1490
 image_grps: dd01e8
 image_overlays: dd4cd0
+images: Mem32[dd01d0]
 images_loaded: Mem8[fb0bce]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[fec660]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[ddda80]
 last_fow_sprite: Mem32[ddd868]
 last_free_bullet: Mem32[dcecb8]
 last_free_fow_sprite: Mem32[ddd860]
+last_free_hp_bar: Mem32[dd1488]
 last_free_image: Mem32[dd01ac]
 last_free_lone_sprite: Mem32[ddd850]
 last_free_order: Mem32[ddcbbc]
+last_free_placement_image: Mem32[dd3940]
+last_free_placement_rect: Mem32[dd4948]
 last_free_selection_circle: Mem32[dd2938]
 last_free_sprite: Mem32[ddcbe4]
 last_free_unit: Mem32[ddda84]
@@ -409,6 +419,8 @@ original_chk_player_types: fd3b6c
 palette_set: 100d628
 path_array: Mem32[fe3f3c]
 pathing: Mem32[fdaa44]
+placement_images: dd2940
+placement_rects: dd3948
 player_ai: ddf750
 player_ai_towns: dfdc40
 player_skins: fd3d78
@@ -439,6 +451,7 @@ screen_y: Mem32[e19064]
 secondary_order_timer_reset_counter: Mem32[ddda78]
 select_start_x: Mem16[fec674]
 select_start_y: Mem16[fec676]
+selection_circles: dd1538
 selections: fe40c8
 sfx_data: Mem32[dff1b0]
 skins: d84240

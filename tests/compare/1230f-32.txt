@@ -102,6 +102,7 @@ init_consoles: 00659100
 init_game: 006898b0
 init_game_before_map_load_hook: 0068ab0e
 init_game_network: 006e0c40
+init_images: 00558920
 init_ingame_ui: 00735d30
 init_map_from_path: 006c1930
 init_net_player: 006ee280
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[ddc004]
 first_fow_sprite: Mem32[ddbf20]
 first_free_bullet: Mem32[dcd3fc]
 first_free_fow_sprite: Mem32[ddbf18]
+first_free_hp_bar: Mem32[dcf8a4]
 first_free_image: Mem32[dce8c8]
 first_free_lone_sprite: Mem32[ddbf08]
 first_free_order: Mem32[ddb280]
 first_free_path: Mem32[fe6530]
+first_free_placement_image: Mem32[dd105c]
+first_free_placement_rect: Mem32[dd2064]
 first_free_selection_circle: Mem32[dcfbac]
 first_free_sprite: Mem32[ddb2a0]
 first_free_unit: Mem32[ddbfb0]
@@ -345,8 +349,11 @@ global_event_handlers: fadb98
 graphic_layers: 100c128
 grpwire_ddsgrp: fe81a4
 grpwire_grp: Mem32[fe819c]
+hp_bar_images: dcf8a8
+hp_bar_state: dcfbb0
 image_grps: dce908
 image_overlays: dd33f0
+images: Mem32[dce8f0]
 images_loaded: Mem8[fb33aa]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[feee30]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[ddbfa8]
 last_fow_sprite: Mem32[ddbf24]
 last_free_bullet: Mem32[dcd400]
 last_free_fow_sprite: Mem32[ddbf1c]
+last_free_hp_bar: Mem32[dcfba8]
 last_free_image: Mem32[dce8cc]
 last_free_lone_sprite: Mem32[ddbf0c]
 last_free_order: Mem32[ddb284]
+last_free_placement_image: Mem32[dd2060]
+last_free_placement_rect: Mem32[dd3068]
 last_free_selection_circle: Mem32[dd1058]
 last_free_sprite: Mem32[ddb2a4]
 last_free_unit: Mem32[ddbfac]
@@ -409,6 +419,8 @@ original_chk_player_types: fd62b4
 palette_set: 100cb80
 path_array: Mem32[fe6534]
 pathing: Mem32[fdd0c0]
+placement_images: dd1060
+placement_rects: dd2068
 player_ai: de3058
 player_ai_towns: e01510
 player_skins: fd6470
@@ -439,6 +451,7 @@ screen_y: Mem32[e1ca00]
 secondary_order_timer_reset_counter: Mem32[ddbfa0]
 select_start_x: Mem16[feee38]
 select_start_y: Mem16[feee3a]
+selection_circles: dcfc58
 selections: fe66e8
 sfx_data: Mem32[e029e4]
 skins: d6f288

@@ -205,6 +205,10 @@ impl StructLayouts {
         self.pair(0x13c, 0x1d4)
     }
 
+    pub const fn image_size(self) -> u64 {
+        self.pair(0x40, 0x58)
+    }
+
     pub fn if_mul_image_size<'e>(self, op: Operand<'e>) -> Option<Operand<'e>> {
         if !self.is_64bit {
             op.if_arithmetic_lsh_const(0x6)
@@ -219,6 +223,10 @@ impl StructLayouts {
 
     pub const fn image_iscript(self) -> u64 {
         self.pair(0x10, 0x18)
+    }
+
+    pub const fn image_grp(self) -> u64 {
+        self.pair(0x2c, 0x38)
     }
 
     pub const fn image_parent(self) -> u64 {

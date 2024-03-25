@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 006419e0
 init_game_before_map_load_hook: 00641a50
 init_game_network: 006aa0a0
+init_images: 00547c90
 init_ingame_ui: 00704470
 init_map_from_path: 0068c030
 init_net_player: 006b9810
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[d05320]
 first_fow_sprite: Mem32[d05228]
 first_free_bullet: Mem32[cf66ec]
 first_free_fow_sprite: Mem32[d05220]
+first_free_hp_bar: Mem32[cfe95c]
 first_free_image: Mem32[cf8b6c]
 first_free_lone_sprite: Mem32[d05210]
 first_free_order: Mem32[d045b0]
 first_free_path: Mem32[efc2f8]
+first_free_placement_image: Mem32[d00114]
+first_free_placement_rect: Mem32[d0111c]
 first_free_selection_circle: Mem32[cfec64]
 first_free_sprite: Mem32[d045c0]
 first_free_unit: Mem32[d052cc]
@@ -345,8 +349,11 @@ global_event_handlers: ec2498
 graphic_layers: f28ae0
 grpwire_ddsgrp: f0a444
 grpwire_grp: Mem32[f0a42c]
+hp_bar_images: cfe960
+hp_bar_state: cfec68
 image_grps: cf7bd0
 image_overlays: cf8b90
+images: Mem32[cfe944]
 images_loaded: Mem8[ec92ba]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[f11338]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[d052c4]
 last_fow_sprite: Mem32[d0522c]
 last_free_bullet: Mem32[cf66f0]
 last_free_fow_sprite: Mem32[d05224]
+last_free_hp_bar: Mem32[cfec60]
 last_free_image: Mem32[cf8b70]
 last_free_lone_sprite: Mem32[d05214]
 last_free_order: Mem32[d045b4]
+last_free_placement_image: Mem32[d01118]
+last_free_placement_rect: Mem32[d02120]
 last_free_selection_circle: Mem32[d00110]
 last_free_sprite: Mem32[d045c4]
 last_free_unit: Mem32[d052c8]
@@ -409,6 +419,8 @@ original_chk_player_types: eec1c8
 palette_set: f29548
 path_array: Mem32[efc2fc]
 pathing: Mem32[ef2e80]
+placement_images: d00118
+placement_rects: d01120
 player_ai: d06d48
 player_ai_towns: d25200
 player_skins: eec380
@@ -439,6 +451,7 @@ screen_y: Mem32[d3eb48]
 secondary_order_timer_reset_counter: Mem32[d052bc]
 select_start_x: Mem16[f11340]
 select_start_y: Mem16[f11342]
+selection_circles: cfed10
 selections: efc450
 sfx_data: None
 skins: efc728

@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 00672670
 init_game_before_map_load_hook: 006726e0
 init_game_network: 006e1d90
+init_images: 00567700
 init_ingame_ui: 007451f0
 init_map_from_path: 006bdaf0
 init_net_player: 006f35a0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[d63844]
 first_fow_sprite: Mem32[d63790]
 first_free_bullet: Mem32[d4b018]
 first_free_fow_sprite: Mem32[d63788]
+first_free_hp_bar: Mem32[d52304]
 first_free_image: Mem32[d4d4b8]
 first_free_lone_sprite: Mem32[d63778]
 first_free_order: Mem32[d62b18]
 first_free_path: Mem32[f5a1d0]
+first_free_placement_image: Mem32[d53abc]
+first_free_placement_rect: Mem32[d54ac4]
 first_free_selection_circle: Mem32[d5260c]
 first_free_sprite: Mem32[d62b28]
 first_free_unit: Mem32[d6381c]
@@ -345,8 +349,11 @@ global_event_handlers: f20258
 graphic_layers: f83c78
 grpwire_ddsgrp: f68320
 grpwire_grp: Mem32[f68308]
+hp_bar_images: d52308
+hp_bar_state: d52610
 image_grps: d4c128
 image_overlays: d4d4d8
+images: Mem32[d522ec]
 images_loaded: Mem8[f27059]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[f6f180]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[d63848]
 last_fow_sprite: Mem32[d63794]
 last_free_bullet: Mem32[d4b01c]
 last_free_fow_sprite: Mem32[d6378c]
+last_free_hp_bar: Mem32[d52608]
 last_free_image: Mem32[d4d4bc]
 last_free_lone_sprite: Mem32[d6377c]
 last_free_order: Mem32[d62b1c]
+last_free_placement_image: Mem32[d54ac0]
+last_free_placement_rect: Mem32[d55ac8]
 last_free_selection_circle: Mem32[d53ab8]
 last_free_sprite: Mem32[d62b2c]
 last_free_unit: Mem32[d63818]
@@ -409,6 +419,8 @@ original_chk_player_types: f4a0b0
 palette_set: f846e0
 path_array: Mem32[f5a1d4]
 pathing: Mem32[f50d5c]
+placement_images: d53ac0
+placement_rects: d54ac8
 player_ai: d65890
 player_ai_towns: d83d48
 player_skins: f4a268
@@ -439,6 +451,7 @@ screen_y: Mem32[d9d724]
 secondary_order_timer_reset_counter: Mem32[d63828]
 select_start_x: Mem16[f6f188]
 select_start_y: Mem16[f6f18a]
+selection_circles: d526b8
 selections: f5a328
 sfx_data: None
 skins: f5a600

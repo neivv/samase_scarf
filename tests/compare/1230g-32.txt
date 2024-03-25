@@ -102,6 +102,7 @@ init_consoles: 0065ccf0
 init_game: 0068f0a0
 init_game_before_map_load_hook: 0068f110
 init_game_network: 006edc90
+init_images: 0055c9b0
 init_ingame_ui: 007496e0
 init_map_from_path: 006cf770
 init_net_player: 006ffea0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[e1a8dc]
 first_fow_sprite: Mem32[e1a7f0]
 first_free_bullet: Mem32[e0bccc]
 first_free_fow_sprite: Mem32[e1a7e8]
+first_free_hp_bar: Mem32[e0e174]
 first_free_image: Mem32[e0d198]
 first_free_lone_sprite: Mem32[e1a7d8]
 first_free_order: Mem32[e19b50]
 first_free_path: Mem32[1024e00]
+first_free_placement_image: Mem32[e0f92c]
+first_free_placement_rect: Mem32[e10934]
 first_free_selection_circle: Mem32[e0e47c]
 first_free_sprite: Mem32[e19b70]
 first_free_unit: Mem32[e1a888]
@@ -345,8 +349,11 @@ global_event_handlers: fec470
 graphic_layers: 104aa00
 grpwire_ddsgrp: 1026a74
 grpwire_grp: Mem32[1026a6c]
+hp_bar_images: e0e178
+hp_bar_state: e0e480
 image_grps: e0d1d8
 image_overlays: e11cc0
+images: Mem32[e0d1c0]
 images_loaded: Mem8[ff1c96]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[102d700]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[e1a880]
 last_fow_sprite: Mem32[e1a7f4]
 last_free_bullet: Mem32[e0bcd0]
 last_free_fow_sprite: Mem32[e1a7ec]
+last_free_hp_bar: Mem32[e0e478]
 last_free_image: Mem32[e0d19c]
 last_free_lone_sprite: Mem32[e1a7dc]
 last_free_order: Mem32[e19b54]
+last_free_placement_image: Mem32[e10930]
+last_free_placement_rect: Mem32[e11938]
 last_free_selection_circle: Mem32[e0f928]
 last_free_sprite: Mem32[e19b74]
 last_free_unit: Mem32[e1a884]
@@ -409,6 +419,8 @@ original_chk_player_types: 1014b8c
 palette_set: 104b458
 path_array: Mem32[1024e04]
 pathing: Mem32[101b990]
+placement_images: e0f930
+placement_rects: e10938
 player_ai: e21930
 player_ai_towns: e3fde8
 player_skins: 1014d48
@@ -439,6 +451,7 @@ screen_y: Mem32[e5b2d8]
 secondary_order_timer_reset_counter: Mem32[e1a878]
 select_start_x: Mem16[102d708]
 select_start_y: Mem16[102d70a]
+selection_circles: e0e528
 selections: 1024fb8
 sfx_data: Mem32[e412bc]
 skins: dad288

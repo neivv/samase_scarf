@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 00643460
 init_game_before_map_load_hook: 006434d0
 init_game_network: 0068eec0
+init_images: 00534400
 init_ingame_ui: 006eb9f0
 init_map_from_path: 00670bf0
 init_net_player: 006a1970
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[cbdb9c]
 first_fow_sprite: Mem32[cbdab0]
 first_free_bullet: Mem32[caef84]
 first_free_fow_sprite: Mem32[cbdaa8]
+first_free_hp_bar: Mem32[cb71f4]
 first_free_image: Mem32[cb1404]
 first_free_lone_sprite: Mem32[cbda98]
 first_free_order: Mem32[cbce38]
 first_free_path: Mem32[eb4c38]
+first_free_placement_image: Mem32[cb89ac]
+first_free_placement_rect: Mem32[cb99b4]
 first_free_selection_circle: Mem32[cb74fc]
 first_free_sprite: Mem32[cbce48]
 first_free_unit: Mem32[cbdb80]
@@ -345,8 +349,11 @@ global_event_handlers: e7ad00
 graphic_layers: ee11b0
 grpwire_ddsgrp: ec2d84
 grpwire_grp: Mem32[ec2d6c]
+hp_bar_images: cb71f8
+hp_bar_state: cb7500
 image_grps: cb0468
 image_overlays: cb1428
+images: Mem32[cb71dc]
 images_loaded: Mem8[e81b26]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[ec9be0]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[cbdb78]
 last_fow_sprite: Mem32[cbdab4]
 last_free_bullet: Mem32[caef88]
 last_free_fow_sprite: Mem32[cbdaac]
+last_free_hp_bar: Mem32[cb74f8]
 last_free_image: Mem32[cb1408]
 last_free_lone_sprite: Mem32[cbda9c]
 last_free_order: Mem32[cbce3c]
+last_free_placement_image: Mem32[cb99b0]
+last_free_placement_rect: Mem32[cba9b8]
 last_free_selection_circle: Mem32[cb89a8]
 last_free_sprite: Mem32[cbce4c]
 last_free_unit: Mem32[cbdb7c]
@@ -409,6 +419,8 @@ original_chk_player_types: ea4a20
 palette_set: ee1c00
 path_array: Mem32[eb4c3c]
 pathing: Mem32[eab7c4]
+placement_images: cb89b0
+placement_rects: cb99b8
 player_ai: cbf5b8
 player_ai_towns: cdda70
 player_skins: ea4be8
@@ -439,6 +451,7 @@ screen_y: Mem32[cf7440]
 secondary_order_timer_reset_counter: Mem32[cbdb70]
 select_start_x: Mem16[ec9be8]
 select_start_y: Mem16[ec9bea]
+selection_circles: cb75a8
 selections: eb4d90
 sfx_data: None
 skins: eb5068

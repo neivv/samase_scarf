@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0064cef0
 init_game_before_map_load_hook: 0064cf60
 init_game_network: 006adaf0
+init_images: 005418e0
 init_ingame_ui: 00712510
 init_map_from_path: 00690d60
 init_net_player: 006c0da0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[ddd2e0]
 first_fow_sprite: Mem32[ddd1e8]
 first_free_bullet: Mem32[dce6fc]
 first_free_fow_sprite: Mem32[ddd1e0]
+first_free_hp_bar: Mem32[dd0b84]
 first_free_image: Mem32[dd0b7c]
 first_free_lone_sprite: Mem32[ddd1d0]
 first_free_order: Mem32[ddc570]
 first_free_path: Mem32[fe14e4]
+first_free_placement_image: Mem32[dd233c]
+first_free_placement_rect: Mem32[dd3344]
 first_free_selection_circle: Mem32[dd0e8c]
 first_free_sprite: Mem32[ddc580]
 first_free_unit: Mem32[ddd28c]
@@ -345,8 +349,11 @@ global_event_handlers: fa7f00
 graphic_layers: 1000f20
 grpwire_ddsgrp: fe2b8c
 grpwire_grp: Mem32[fe2b84]
+hp_bar_images: dd0b88
+hp_bar_state: dd0e90
 image_grps: dcfbe0
 image_overlays: dd46d0
+images: Mem32[dcfbc8]
 images_loaded: Mem8[fae492]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[fe9a90]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[ddd284]
 last_fow_sprite: Mem32[ddd1ec]
 last_free_bullet: Mem32[dce700]
 last_free_fow_sprite: Mem32[ddd1e4]
+last_free_hp_bar: Mem32[dd0e88]
 last_free_image: Mem32[dd0b80]
 last_free_lone_sprite: Mem32[ddd1d4]
 last_free_order: Mem32[ddc574]
+last_free_placement_image: Mem32[dd3340]
+last_free_placement_rect: Mem32[dd4348]
 last_free_selection_circle: Mem32[dd2338]
 last_free_sprite: Mem32[ddc584]
 last_free_unit: Mem32[ddd288]
@@ -409,6 +419,8 @@ original_chk_player_types: fd1398
 palette_set: 1001988
 path_array: Mem32[fe14d8]
 pathing: Mem32[fd8060]
+placement_images: dd2340
+placement_rects: dd3348
 player_ai: dded08
 player_ai_towns: dfd1c0
 player_skins: fd1550
@@ -439,6 +451,7 @@ screen_y: Mem32[e16b7c]
 secondary_order_timer_reset_counter: Mem32[ddd27c]
 select_start_x: Mem16[fe9a98]
 select_start_y: Mem16[fe9a9a]
+selection_circles: dd0f38
 selections: fe1630
 sfx_data: Mem32[dfe694]
 skins: d830e0

@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 00661bb0
 init_game_before_map_load_hook: 00661c20
 init_game_network: 006d56a0
+init_images: 00569f50
 init_ingame_ui: 00737270
 init_map_from_path: 006ae710
 init_net_player: 006e56b0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[e4b64c]
 first_fow_sprite: Mem32[daf4f8]
 first_free_bullet: Mem32[d2d324]
 first_free_fow_sprite: Mem32[daf4f0]
+first_free_hp_bar: Mem32[d7f760]
 first_free_image: Mem32[d302bc]
 first_free_lone_sprite: Mem32[dad5a0]
 first_free_order: Mem32[d94a80]
 first_free_path: Mem32[e744a4]
+first_free_placement_image: Mem32[d81c18]
+first_free_placement_rect: Mem32[d82c20]
 first_free_selection_circle: Mem32[d80c10]
 first_free_sprite: Mem32[daad30]
 first_free_unit: Mem32[e4b654]
@@ -345,8 +349,11 @@ global_event_handlers: 100cea8
 graphic_layers: 10707f0
 grpwire_ddsgrp: 1054ee8
 grpwire_grp: Mem32[1054f44]
+hp_bar_images: d7f460
+hp_bar_state: d7f768
 image_grps: d302c0
 image_overlays: d82fa8
+images: d31260
 images_loaded: Mem8[1013c79]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[105bd00]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[e4b650]
 last_fow_sprite: Mem32[daf4fc]
 last_free_bullet: Mem32[d2d328]
 last_free_fow_sprite: Mem32[daf4f4]
+last_free_hp_bar: Mem32[d7f764]
 last_free_image: Mem32[d3125c]
 last_free_lone_sprite: Mem32[dad5a4]
 last_free_order: Mem32[d94a84]
+last_free_placement_image: Mem32[d81c1c]
+last_free_placement_rect: Mem32[d82c24]
 last_free_selection_circle: Mem32[d80c14]
 last_free_sprite: Mem32[daad34]
 last_free_unit: Mem32[e4b658]
@@ -409,6 +419,8 @@ original_chk_player_types: 1036cd0
 palette_set: 1071280
 path_array: Mem32[e74498]
 pathing: Mem32[103d94c]
+placement_images: d80c18
+placement_rects: d81c20
 player_ai: e54b18
 player_ai_towns: e72fd0
 player_skins: 1036e88
@@ -439,6 +451,7 @@ screen_y: Mem32[e8c91c]
 secondary_order_timer_reset_counter: Mem32[dbfefc]
 select_start_x: Mem16[105bd08]
 select_start_y: Mem16[105bd0a]
+selection_circles: d7f810
 selections: 1046f00
 sfx_data: None
 skins: 10471d8

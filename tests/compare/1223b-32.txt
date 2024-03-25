@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 00691180
 init_game_before_map_load_hook: 006911f0
 init_game_network: 007024b0
+init_images: 00542410
 init_ingame_ui: 00773930
 init_map_from_path: 006d9c00
 init_net_player: 00713ce0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[e0fb0c]
 first_fow_sprite: Mem32[e0f89c]
 first_free_bullet: Mem32[e00ce4]
 first_free_fow_sprite: Mem32[e0f894]
+first_free_hp_bar: Mem32[e031b4]
 first_free_image: Mem32[e021d8]
 first_free_lone_sprite: Mem32[e0f884]
 first_free_order: Mem32[e0ebf0]
 first_free_path: Mem32[1015f80]
+first_free_placement_image: Mem32[e0496c]
+first_free_placement_rect: Mem32[e05974]
 first_free_selection_circle: Mem32[e034bc]
 first_free_sprite: Mem32[e0ec18]
 first_free_unit: Mem32[e0fab8]
@@ -345,8 +349,11 @@ global_event_handlers: fdc3f0
 graphic_layers: 103ebe0
 grpwire_ddsgrp: 1017690
 grpwire_grp: Mem32[1017688]
+hp_bar_images: e031b8
+hp_bar_state: e034c0
 image_grps: e02218
 image_overlays: e06d00
+images: Mem32[e02200]
 images_loaded: Mem8[fe2bea]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[101e698]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[e0fab0]
 last_fow_sprite: Mem32[e0f8a0]
 last_free_bullet: Mem32[e00ce8]
 last_free_fow_sprite: Mem32[e0f898]
+last_free_hp_bar: Mem32[e034b8]
 last_free_image: Mem32[e021dc]
 last_free_lone_sprite: Mem32[e0f888]
 last_free_order: Mem32[e0ebf4]
+last_free_placement_image: Mem32[e05970]
+last_free_placement_rect: Mem32[e06978]
 last_free_selection_circle: Mem32[e04968]
 last_free_sprite: Mem32[e0ec1c]
 last_free_unit: Mem32[e0fab4]
@@ -409,6 +419,8 @@ original_chk_player_types: 1005b9c
 palette_set: 103f658
 path_array: Mem32[1015f74]
 pathing: Mem32[100ca7c]
+placement_images: e04970
+placement_rects: e05978
 player_ai: e11778
 player_ai_towns: e2fc68
 player_skins: 1005db0
@@ -439,6 +451,7 @@ screen_y: Mem32[e4b08c]
 secondary_order_timer_reset_counter: Mem32[e0faa8]
 select_start_x: Mem16[101e6ac]
 select_start_y: Mem16[101e6ae]
+selection_circles: e03568
 selections: 1016100
 sfx_data: Mem32[e311d8]
 skins: db6230

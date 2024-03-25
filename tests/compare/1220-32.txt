@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0063bba0
 init_game_before_map_load_hook: 0063c78a
 init_game_network: 006a4e20
+init_images: 005367b0
 init_ingame_ui: 00704530
 init_map_from_path: 00677340
 init_net_player: 006b4590
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[dd0fb0]
 first_fow_sprite: Mem32[dd0ea0]
 first_free_bullet: Mem32[dc23b4]
 first_free_fow_sprite: Mem32[dd0e98]
+first_free_hp_bar: Mem32[dc4834]
 first_free_image: Mem32[dc482c]
 first_free_lone_sprite: Mem32[dd0e88]
 first_free_order: Mem32[dd0228]
 first_free_path: Mem32[fd5c1c]
+first_free_placement_image: Mem32[dc5fec]
+first_free_placement_rect: Mem32[dc6ff4]
 first_free_selection_circle: Mem32[dc4b3c]
 first_free_sprite: Mem32[dd0238]
 first_free_unit: Mem32[dd0f5c]
@@ -345,8 +349,11 @@ global_event_handlers: f9c678
 graphic_layers: ff55f0
 grpwire_ddsgrp: fd72c4
 grpwire_grp: Mem32[fd72bc]
+hp_bar_images: dc4838
+hp_bar_state: dc4b40
 image_grps: dc3890
 image_overlays: dc8380
+images: Mem32[dc3878]
 images_loaded: Mem8[fa2bca]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[fde1c8]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[dd0f54]
 last_fow_sprite: Mem32[dd0ea4]
 last_free_bullet: Mem32[dc23b8]
 last_free_fow_sprite: Mem32[dd0e9c]
+last_free_hp_bar: Mem32[dc4b38]
 last_free_image: Mem32[dc4830]
 last_free_lone_sprite: Mem32[dd0e8c]
 last_free_order: Mem32[dd022c]
+last_free_placement_image: Mem32[dc6ff0]
+last_free_placement_rect: Mem32[dc7ff8]
 last_free_selection_circle: Mem32[dc5fe8]
 last_free_sprite: Mem32[dd023c]
 last_free_unit: Mem32[dd0f58]
@@ -409,6 +419,8 @@ original_chk_player_types: fc5ad4
 palette_set: ff6058
 path_array: Mem32[fd5c10]
 pathing: Mem32[fcc798]
+placement_images: dc5ff0
+placement_rects: dc6ff8
 player_ai: dd29d0
 player_ai_towns: df0e88
 player_skins: fc5c90
@@ -439,6 +451,7 @@ screen_y: Mem32[e0a844]
 secondary_order_timer_reset_counter: Mem32[dd0f4c]
 select_start_x: Mem16[fde1d0]
 select_start_y: Mem16[fde1d2]
+selection_circles: dc4be8
 selections: fd5d68
 sfx_data: Mem32[df235c]
 skins: d770e8

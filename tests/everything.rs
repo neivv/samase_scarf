@@ -1635,7 +1635,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
             Units | PlayerUnitSkins | VertexBuffer | Sprites | ReplayBfix | ReplayGcfg |
                 AntiTroll | MouseX | MouseY | NetUserLatency | MapHistory | MpqLocale |
                 UiConsoles | StatResIconsDdsGrp | UseRgbColors | InLobbyOrGame | GameLobby |
-                RgbColors | DisableColorChoice | UseMapSetRgbColor | SfxData | SoundChannels =>
+                RgbColors | DisableColorChoice | UseMapSetRgbColor | SfxData | SoundChannels |
+                Images =>
             {
                 continue;
             }
@@ -1678,7 +1679,9 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 OrderTimerResetCounter | SecondaryOrderTimerResetCounter | StepAiRegionsRegion |
                 StepAiRegionsPlayer | AiTargetIgnoreResetCounter | AiTargetIgnoreResetCounter2 |
                 AiTargetIgnoreRequestReset | AiMilitaryUpdateCounter | PathArray | FirstFreePath |
-                LastActiveUnit =>
+                LastActiveUnit | FirstFreeHpBar | LastFreeHpBar |
+                FirstFreePlacementImage | LastFreePlacementImage | FirstFreePlacementRect |
+                LastFreePlacementRect =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1693,7 +1696,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 UnitSkinMap | SpriteSkinMap | GrpWireDdsGrp | TranWireDdsGrp |
                 SpriteIncludeInVisionSync | DrawCommands | CreepFuncs | DcreepLookup |
                 DcreepListBegin | DcreepListSize | ReplayHeader | GameScreenRectWinPx |
-                RunDialogStack | LurkerHits | ResourceAreas =>
+                RunDialogStack | LurkerHits | ResourceAreas | HpBarImages | HpBarState |
+                SelectionCircles | PlacementImages | PlacementRects =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }
@@ -1817,10 +1821,13 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     assert!(command_lengths.len() >= 0x59);
 
     let units = analysis.units().unwrap();
+    let images = analysis.images().unwrap();
     if extended_limits {
         check_global(units, binary, "units");
+        check_global(images, binary, "images");
     } else {
         check_global_struct(units, binary, "units");
+        check_global_struct(images, binary, "images");
     }
 
     assert!(analysis.step_iscript_hook().is_some());

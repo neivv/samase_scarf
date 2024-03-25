@@ -102,6 +102,7 @@ init_consoles: 00651720
 init_game: 006831c0
 init_game_before_map_load_hook: 00683230
 init_game_network: 006cfff0
+init_images: 005530a0
 init_ingame_ui: 007254b0
 init_map_from_path: 006b3a00
 init_net_player: 006dd610
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[ddf1a4]
 first_fow_sprite: Mem32[ddf0b8]
 first_free_bullet: Mem32[dd0594]
 first_free_fow_sprite: Mem32[ddf0b0]
+first_free_hp_bar: Mem32[dd2a3c]
 first_free_image: Mem32[dd1a60]
 first_free_lone_sprite: Mem32[ddf0a0]
 first_free_order: Mem32[dde418]
 first_free_path: Mem32[fe9680]
+first_free_placement_image: Mem32[dd41f4]
+first_free_placement_rect: Mem32[dd51fc]
 first_free_selection_circle: Mem32[dd2d44]
 first_free_sprite: Mem32[dde438]
 first_free_unit: Mem32[ddf150]
@@ -345,8 +349,11 @@ global_event_handlers: fb0d20
 graphic_layers: 100f278
 grpwire_ddsgrp: feb2f4
 grpwire_grp: Mem32[feb2ec]
+hp_bar_images: dd2a40
+hp_bar_state: dd2d48
 image_grps: dd1aa0
 image_overlays: dd6588
+images: Mem32[dd1a88]
 images_loaded: Mem8[fb6516]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[ff1f80]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[ddf148]
 last_fow_sprite: Mem32[ddf0bc]
 last_free_bullet: Mem32[dd0598]
 last_free_fow_sprite: Mem32[ddf0b4]
+last_free_hp_bar: Mem32[dd2d40]
 last_free_image: Mem32[dd1a64]
 last_free_lone_sprite: Mem32[ddf0a4]
 last_free_order: Mem32[dde41c]
+last_free_placement_image: Mem32[dd51f8]
+last_free_placement_rect: Mem32[dd6200]
 last_free_selection_circle: Mem32[dd41f0]
 last_free_sprite: Mem32[dde43c]
 last_free_unit: Mem32[ddf14c]
@@ -409,6 +419,8 @@ original_chk_player_types: fd940c
 palette_set: 100fcd0
 path_array: Mem32[fe9684]
 pathing: Mem32[fe0210]
+placement_images: dd41f8
+placement_rects: dd5200
 player_ai: de61f8
 player_ai_towns: e046b0
 player_skins: fd95c8
@@ -439,6 +451,7 @@ screen_y: Mem32[e1fb88]
 secondary_order_timer_reset_counter: Mem32[ddf140]
 select_start_x: Mem16[ff1f88]
 select_start_y: Mem16[ff1f8a]
+selection_circles: dd2df0
 selections: fe9838
 sfx_data: Mem32[e05b84]
 skins: d72288

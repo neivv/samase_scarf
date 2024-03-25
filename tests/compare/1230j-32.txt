@@ -102,6 +102,7 @@ init_consoles: 006534e0
 init_game: 00683020
 init_game_before_map_load_hook: 00683090
 init_game_network: 006dbec0
+init_images: 00560200
 init_ingame_ui: 0073b770
 init_map_from_path: 006b6aa0
 init_net_player: 006eb390
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[df1ad4]
 first_fow_sprite: Mem32[df19f0]
 first_free_bullet: Mem32[de2ecc]
 first_free_fow_sprite: Mem32[df19e8]
+first_free_hp_bar: Mem32[de5374]
 first_free_image: Mem32[de4398]
 first_free_lone_sprite: Mem32[df19d8]
 first_free_order: Mem32[df0d50]
 first_free_path: Mem32[ffc898]
+first_free_placement_image: Mem32[de6b2c]
+first_free_placement_rect: Mem32[de7b34]
 first_free_selection_circle: Mem32[de567c]
 first_free_sprite: Mem32[df0d70]
 first_free_unit: Mem32[df1a80]
@@ -345,8 +349,11 @@ global_event_handlers: fc3ee8
 graphic_layers: 1022350
 grpwire_ddsgrp: ffe56c
 grpwire_grp: Mem32[ffe564]
+hp_bar_images: de5378
+hp_bar_state: de5680
 image_grps: de43d8
 image_overlays: de8ec0
+images: Mem32[de43c0]
 images_loaded: Mem8[fc9712]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[1005250]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[df1a78]
 last_fow_sprite: Mem32[df19f4]
 last_free_bullet: Mem32[de2ed0]
 last_free_fow_sprite: Mem32[df19ec]
+last_free_hp_bar: Mem32[de5678]
 last_free_image: Mem32[de439c]
 last_free_lone_sprite: Mem32[df19dc]
 last_free_order: Mem32[df0d54]
+last_free_placement_image: Mem32[de7b30]
+last_free_placement_rect: Mem32[de8b38]
 last_free_selection_circle: Mem32[de6b28]
 last_free_sprite: Mem32[df0d74]
 last_free_unit: Mem32[df1a7c]
@@ -409,6 +419,8 @@ original_chk_player_types: fec61c
 palette_set: 1022da8
 path_array: Mem32[ffc89c]
 pathing: Mem32[ff3428]
+placement_images: de6b30
+placement_rects: de7b38
 player_ai: df8b20
 player_ai_towns: e16fd8
 player_skins: fec7d8
@@ -439,6 +451,7 @@ screen_y: Mem32[e32d2c]
 secondary_order_timer_reset_counter: Mem32[df1a70]
 select_start_x: Mem16[1005258]
 select_start_y: Mem16[100525a]
+selection_circles: de5728
 selections: ffca60
 sfx_data: Mem32[e184ac]
 skins: d84280

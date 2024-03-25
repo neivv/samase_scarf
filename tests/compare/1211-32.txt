@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0078f920
 init_game_before_map_load_hook: 0078f990
 init_game_network: 007fe3b0
+init_images: 0066d0e0
 init_ingame_ui: 00861020
 init_map_from_path: 007d8280
 init_net_player: 0080df70
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[e84f14]
 first_fow_sprite: Mem32[e84e58]
 first_free_bullet: Mem32[e76308]
 first_free_fow_sprite: Mem32[e84e50]
+first_free_hp_bar: Mem32[e7d604]
 first_free_image: Mem32[e787b8]
 first_free_lone_sprite: Mem32[e84e40]
 first_free_order: Mem32[e841e0]
 first_free_path: Mem32[107bc50]
+first_free_placement_image: Mem32[e7edbc]
+first_free_placement_rect: Mem32[e7fdc4]
 first_free_selection_circle: Mem32[e7d90c]
 first_free_sprite: Mem32[e841f0]
 first_free_unit: Mem32[e84ee4]
@@ -345,8 +349,11 @@ global_event_handlers: 1041bd8
 graphic_layers: 10a56f0
 grpwire_ddsgrp: 1089d98
 grpwire_grp: Mem32[1089d90]
+hp_bar_images: e7d608
+hp_bar_state: e7d910
 image_grps: e77428
 image_overlays: e787d8
+images: Mem32[e7d5ec]
 images_loaded: Mem8[1048af5]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[1090bf8]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[e84edc]
 last_fow_sprite: Mem32[e84e5c]
 last_free_bullet: Mem32[e7630c]
 last_free_fow_sprite: Mem32[e84e54]
+last_free_hp_bar: Mem32[e7d908]
 last_free_image: Mem32[e787bc]
 last_free_lone_sprite: Mem32[e84e44]
 last_free_order: Mem32[e841e4]
+last_free_placement_image: Mem32[e7fdc0]
+last_free_placement_rect: Mem32[e80dc8]
 last_free_selection_circle: Mem32[e7edb8]
 last_free_sprite: Mem32[e841f4]
 last_free_unit: Mem32[e84ee0]
@@ -409,6 +419,8 @@ original_chk_player_types: 106bb38
 palette_set: 10a6158
 path_array: Mem32[107bc54]
 pathing: Mem32[10727d8]
+placement_images: e7edc0
+placement_rects: e7fdc8
 player_ai: e86f58
 player_ai_towns: ea5410
 player_skins: 106bcf0
@@ -439,6 +451,7 @@ screen_y: Mem32[ebed5c]
 secondary_order_timer_reset_counter: Mem32[e84efc]
 select_start_x: Mem16[1090c00]
 select_start_y: Mem16[1090c02]
+selection_circles: e7d9b8
 selections: 107bda8
 sfx_data: None
 skins: 107c080

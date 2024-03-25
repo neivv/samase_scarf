@@ -102,6 +102,7 @@ init_consoles: 1402cd770
 init_game: 1403075f0
 init_game_before_map_load_hook: 140307666
 init_game_network: 14038d950
+init_images: 14018b410
 init_ingame_ui: 1403fffb0
 init_map_from_path: 140360730
 init_net_player: 14039f990
@@ -306,10 +307,13 @@ first_dying_unit: Mem64[140d34408]
 first_fow_sprite: Mem64[140d34190]
 first_free_bullet: Mem64[140d1b988]
 first_free_fow_sprite: Mem64[140d34180]
+first_free_hp_bar: Mem64[140d1df38]
 first_free_image: Mem64[140d1ded8]
 first_free_lone_sprite: Mem64[140d34160]
 first_free_order: Mem64[140d32c60]
 first_free_path: Mem64[140f5d868]
+first_free_placement_image: Mem64[140d21f08]
+first_free_placement_rect: Mem64[140d23518]
 first_free_selection_circle: Mem64[140d20378]
 first_free_sprite: Mem64[140d32ca0]
 first_free_unit: Mem64[140d34360]
@@ -345,8 +349,11 @@ global_event_handlers: 140f23230
 graphic_layers: 140f87bd0
 grpwire_ddsgrp: 140f5f908
 grpwire_grp: Mem64[140f5f8f8]
+hp_bar_images: 140d1fe80
+hp_bar_state: 140d202a0
 image_grps: 140d1df40
 image_overlays: 140d24fb0
+images: Mem64[140d1df08]
 images_loaded: Mem8[140f2961a]
 in_lobby_or_game: Mem32[140f4e014]
 is_custom_single_player: Mem32[140f6cdf0]
@@ -364,9 +371,12 @@ last_dying_unit: Mem64[140d34350]
 last_fow_sprite: Mem64[140d34198]
 last_free_bullet: Mem64[140d1b990]
 last_free_fow_sprite: Mem64[140d34188]
+last_free_hp_bar: Mem64[140d1fe78]
 last_free_image: Mem64[140d1dee0]
 last_free_lone_sprite: Mem64[140d34168]
 last_free_order: Mem64[140d32c68]
+last_free_placement_image: Mem64[140d23510]
+last_free_placement_rect: Mem64[140d24b20]
 last_free_selection_circle: Mem64[140d21f00]
 last_free_sprite: Mem64[140d32ca8]
 last_free_unit: Mem64[140d34358]
@@ -409,6 +419,8 @@ original_chk_player_types: 140f4c6c0
 palette_set: 140f886d0
 path_array: Mem64[140f5d850]
 pathing: Mem64[140f53718]
+placement_images: 140d21f10
+placement_rects: 140d23520
 player_ai: 140d3bf60
 player_ai_towns: 140d693b0
 player_skins: 140f4c8d0
@@ -439,6 +451,7 @@ screen_y: Mem32[140d8f8f4]
 secondary_order_timer_reset_counter: Mem32[140d34344]
 select_start_x: Mem16[140f6cdfc]
 select_start_y: Mem16[140f6cdfe]
+selection_circles: 140d20380
 selections: 140f5db10
 sfx_data: Mem64[140d6b0d0]
 skins: 140c976e4

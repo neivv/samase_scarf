@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0064cc70
 init_game_before_map_load_hook: 0064d9c0
 init_game_network: 006a5910
+init_images: 0054add0
 init_ingame_ui: 00700de0
 init_map_from_path: 00683ab0
 init_net_player: 006b3d10
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[d35538]
 first_fow_sprite: Mem32[d35438]
 first_free_bullet: Mem32[d26914]
 first_free_fow_sprite: Mem32[d35430]
+first_free_hp_bar: Mem32[d2eb84]
 first_free_image: Mem32[d28d94]
 first_free_lone_sprite: Mem32[d35420]
 first_free_order: Mem32[d347c0]
 first_free_path: Mem32[f2c530]
+first_free_placement_image: Mem32[d3033c]
+first_free_placement_rect: Mem32[d31344]
 first_free_selection_circle: Mem32[d2ee8c]
 first_free_sprite: Mem32[d347d0]
 first_free_unit: Mem32[d354e4]
@@ -345,8 +349,11 @@ global_event_handlers: ef25b8
 graphic_layers: f58b58
 grpwire_ddsgrp: f3a4fc
 grpwire_grp: Mem32[f3a4f4]
+hp_bar_images: d2eb88
+hp_bar_state: d2ee90
 image_grps: d27df8
 image_overlays: d28db8
+images: Mem32[d2eb6c]
 images_loaded: Mem8[ef94fe]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[f41400]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[d354dc]
 last_fow_sprite: Mem32[d3543c]
 last_free_bullet: Mem32[d26918]
 last_free_fow_sprite: Mem32[d35434]
+last_free_hp_bar: Mem32[d2ee88]
 last_free_image: Mem32[d28d98]
 last_free_lone_sprite: Mem32[d35424]
 last_free_order: Mem32[d347c4]
+last_free_placement_image: Mem32[d31340]
+last_free_placement_rect: Mem32[d32348]
 last_free_selection_circle: Mem32[d30338]
 last_free_sprite: Mem32[d347d4]
 last_free_unit: Mem32[d354e0]
@@ -409,6 +419,8 @@ original_chk_player_types: f1c3f8
 palette_set: f595c0
 path_array: Mem32[f2c534]
 pathing: Mem32[f230b8]
+placement_images: d30340
+placement_rects: d31348
 player_ai: d36f68
 player_ai_towns: d55420
 player_skins: f1c5b0
@@ -439,6 +451,7 @@ screen_y: Mem32[d6ed68]
 secondary_order_timer_reset_counter: Mem32[d354d4]
 select_start_x: Mem16[f41408]
 select_start_y: Mem16[f4140a]
+selection_circles: d2ef38
 selections: f2c688
 sfx_data: None
 skins: cdbef0

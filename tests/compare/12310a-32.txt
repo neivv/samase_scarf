@@ -102,6 +102,7 @@ init_consoles: 00684730
 init_game: 006b6a80
 init_game_before_map_load_hook: 006b6af5
 init_game_network: 00726f20
+init_images: 00572d50
 init_ingame_ui: 0078fef0
 init_map_from_path: 00703580
 init_net_player: 0073a5c0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[fc86e4]
 first_fow_sprite: Mem32[fc8534]
 first_free_bullet: Mem32[fb9a28]
 first_free_fow_sprite: Mem32[fc852c]
+first_free_hp_bar: Mem32[fbbef4]
 first_free_image: Mem32[fbaf18]
 first_free_lone_sprite: Mem32[fc851c]
 first_free_order: Mem32[fc78a8]
 first_free_path: Mem32[11d48ac]
+first_free_placement_image: Mem32[fbd6ac]
+first_free_placement_rect: Mem32[fbe6b4]
 first_free_selection_circle: Mem32[fbc1fc]
 first_free_sprite: Mem32[fc78c0]
 first_free_unit: Mem32[fc8694]
@@ -345,8 +349,11 @@ global_event_handlers: 119bd78
 graphic_layers: 11f04f0
 grpwire_ddsgrp: 11d6564
 grpwire_grp: Mem32[11d655c]
+hp_bar_images: fbbef8
+hp_bar_state: fbc200
 image_grps: fbaf58
 image_overlays: fbfa40
+images: Mem32[fbaf40]
 images_loaded: Mem8[11a1804]
 in_lobby_or_game: Mem32[11c5f60]
 is_custom_single_player: Mem32[11dd65c]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[fc868c]
 last_fow_sprite: Mem32[fc8538]
 last_free_bullet: Mem32[fb9a2c]
 last_free_fow_sprite: Mem32[fc8530]
+last_free_hp_bar: Mem32[fbc1f8]
 last_free_image: Mem32[fbaf1c]
 last_free_lone_sprite: Mem32[fc8520]
 last_free_order: Mem32[fc78ac]
+last_free_placement_image: Mem32[fbe6b0]
+last_free_placement_rect: Mem32[fbf6b8]
 last_free_selection_circle: Mem32[fbd6a8]
 last_free_sprite: Mem32[fc78c4]
 last_free_unit: Mem32[fc8690]
@@ -409,6 +419,8 @@ original_chk_player_types: 11c46ec
 palette_set: 11f0f48
 path_array: Mem32[11d48b0]
 pathing: Mem32[11cb460]
+placement_images: fbd6b0
+placement_rects: fbe6b8
 player_ai: fcf1e0
 player_ai_towns: fed690
 player_skins: 11c4840
@@ -439,6 +451,7 @@ screen_y: Mem32[100ab74]
 secondary_order_timer_reset_counter: Mem32[fc8684]
 select_start_x: Mem16[11dd664]
 select_start_y: Mem16[11dd666]
+selection_circles: fbc2a8
 selections: 11d4a70
 sfx_data: Mem32[feeb5c]
 skins: f50c98

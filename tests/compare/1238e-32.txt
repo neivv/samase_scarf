@@ -102,6 +102,7 @@ init_consoles: 00797810
 init_game: 007488d0
 init_game_before_map_load_hook: 00748945
 init_game_network: 007f3e80
+init_images: 00832250
 init_ingame_ui: 007ad650
 init_map_from_path: 0070db80
 init_net_player: 00813aa0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[11b4764]
 first_fow_sprite: Mem32[11b4878]
 first_free_bullet: Mem32[11b4a74]
 first_free_fow_sprite: Mem32[11b4870]
+first_free_hp_bar: Mem32[1027724]
 first_free_image: Mem32[1026748]
 first_free_lone_sprite: Mem32[11b4860]
 first_free_order: Mem32[11b5ac0]
 first_free_path: Mem32[13ce270]
+first_free_placement_image: Mem32[1028edc]
+first_free_placement_rect: Mem32[1029ee4]
 first_free_selection_circle: Mem32[1027a2c]
 first_free_sprite: Mem32[10330f0]
 first_free_unit: Mem32[11b4714]
@@ -345,8 +349,11 @@ global_event_handlers: 1009918
 graphic_layers: 1370278
 grpwire_ddsgrp: 101985c
 grpwire_grp: Mem32[1019854]
+hp_bar_images: 1027728
+hp_bar_state: 1027a30
 image_grps: 1026788
 image_overlays: 102b270
+images: Mem32[1026770]
 images_loaded: Mem8[10025b4]
 in_lobby_or_game: Mem32[1021114]
 is_custom_single_player: Mem32[10025bc]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[11b470c]
 last_fow_sprite: Mem32[11b487c]
 last_free_bullet: Mem32[11b4a78]
 last_free_fow_sprite: Mem32[11b4874]
+last_free_hp_bar: Mem32[1027a28]
 last_free_image: Mem32[102674c]
 last_free_lone_sprite: Mem32[11b4864]
 last_free_order: Mem32[11b5ac4]
+last_free_placement_image: Mem32[1029ee0]
+last_free_placement_rect: Mem32[102aee8]
 last_free_selection_circle: Mem32[1028ed8]
 last_free_sprite: Mem32[10330f4]
 last_free_unit: Mem32[11b4710]
@@ -409,6 +419,8 @@ original_chk_player_types: 1021b20
 palette_set: 1371780
 path_array: Mem32[13ce274]
 pathing: Mem32[13ce268]
+placement_images: 1028ee0
+placement_rects: 1029ee8
 player_ai: 13ca6a0
 player_ai_towns: 13ea708
 player_skins: 101f5c8
@@ -439,6 +451,7 @@ screen_y: Mem32[1033d7c]
 secondary_order_timer_reset_counter: Mem32[11b4704]
 select_start_x: Mem16[101196c]
 select_start_y: Mem16[101196e]
+selection_circles: 1027ad8
 selections: 1019300
 sfx_data: Mem32[1342844]
 skins: 1007828

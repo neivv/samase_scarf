@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 006314b0
 init_game_before_map_load_hook: 00631520
 init_game_network: 0068fbc0
+init_images: 005372b0
 init_ingame_ui: 006e9420
 init_map_from_path: 006709a0
 init_net_player: 0069f310
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[cc2bb0]
 first_fow_sprite: Mem32[cc2ab0]
 first_free_bullet: Mem32[cb3f84]
 first_free_fow_sprite: Mem32[cc2aa8]
+first_free_hp_bar: Mem32[cbc1fc]
 first_free_image: Mem32[cb640c]
 first_free_lone_sprite: Mem32[cc2a98]
 first_free_order: Mem32[cc1e38]
 first_free_path: Mem32[eb9c30]
+first_free_placement_image: Mem32[cbd9b4]
+first_free_placement_rect: Mem32[cbe9bc]
 first_free_selection_circle: Mem32[cbc504]
 first_free_sprite: Mem32[cc1e48]
 first_free_unit: Mem32[cc2b50]
@@ -345,8 +349,11 @@ global_event_handlers: e7fd18
 graphic_layers: ee61a8
 grpwire_ddsgrp: ec7d7c
 grpwire_grp: Mem32[ec7d64]
+hp_bar_images: cbc200
+hp_bar_state: cbc508
 image_grps: cb5470
 image_overlays: cb6430
+images: Mem32[cbc1e4]
 images_loaded: Mem8[e86b35]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[ecebd8]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[cc2b48]
 last_fow_sprite: Mem32[cc2ab4]
 last_free_bullet: Mem32[cb3f88]
 last_free_fow_sprite: Mem32[cc2aac]
+last_free_hp_bar: Mem32[cbc500]
 last_free_image: Mem32[cb6410]
 last_free_lone_sprite: Mem32[cc2a9c]
 last_free_order: Mem32[cc1e3c]
+last_free_placement_image: Mem32[cbe9b8]
+last_free_placement_rect: Mem32[cbf9c0]
 last_free_selection_circle: Mem32[cbd9b0]
 last_free_sprite: Mem32[cc1e4c]
 last_free_unit: Mem32[cc2b4c]
@@ -409,6 +419,8 @@ original_chk_player_types: ea9a30
 palette_set: ee6bf8
 path_array: Mem32[eb9c34]
 pathing: Mem32[eb07bc]
+placement_images: cbd9b8
+placement_rects: cbe9c0
 player_ai: cc45c8
 player_ai_towns: ce2a80
 player_skins: ea9be8
@@ -439,6 +451,7 @@ screen_y: Mem32[cfc458]
 secondary_order_timer_reset_counter: Mem32[cc2b98]
 select_start_x: Mem16[ecebe0]
 select_start_y: Mem16[ecebe2]
+selection_circles: cbc5b0
 selections: eb9d88
 sfx_data: None
 skins: eba060

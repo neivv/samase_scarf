@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0069af00
 init_game_before_map_load_hook: 0069bbaf
 init_game_network: 0070ffe0
+init_images: 00555e50
 init_ingame_ui: 00788ab0
 init_map_from_path: 006e9840
 init_net_player: 00725c90
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[e3aec4]
 first_fow_sprite: Mem32[e3ac44]
 first_free_bullet: Mem32[e2c094]
 first_free_fow_sprite: Mem32[e3ac3c]
+first_free_hp_bar: Mem32[e2e564]
 first_free_image: Mem32[e2d588]
 first_free_lone_sprite: Mem32[e3ac2c]
 first_free_order: Mem32[e39f98]
 first_free_path: Mem32[10413e8]
+first_free_placement_image: Mem32[e2fd1c]
+first_free_placement_rect: Mem32[e30d24]
 first_free_selection_circle: Mem32[e2e86c]
 first_free_sprite: Mem32[e39fc0]
 first_free_unit: Mem32[e3ae70]
@@ -345,8 +349,11 @@ global_event_handlers: 10078d0
 graphic_layers: 106a080
 grpwire_ddsgrp: 1042b18
 grpwire_grp: Mem32[1042b10]
+hp_bar_images: e2e568
+hp_bar_state: e2e870
 image_grps: e2d5c8
 image_overlays: e320b0
+images: Mem32[e2d5b0]
 images_loaded: Mem8[100dfde]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[1049b20]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[e3ae68]
 last_fow_sprite: Mem32[e3ac48]
 last_free_bullet: Mem32[e2c098]
 last_free_fow_sprite: Mem32[e3ac40]
+last_free_hp_bar: Mem32[e2e868]
 last_free_image: Mem32[e2d58c]
 last_free_lone_sprite: Mem32[e3ac30]
 last_free_order: Mem32[e39f9c]
+last_free_placement_image: Mem32[e30d20]
+last_free_placement_rect: Mem32[e31d28]
 last_free_selection_circle: Mem32[e2fd18]
 last_free_sprite: Mem32[e39fc4]
 last_free_unit: Mem32[e3ae6c]
@@ -409,6 +419,8 @@ original_chk_player_types: 1030f7c
 palette_set: 106aaf0
 path_array: Mem32[10413dc]
 pathing: Mem32[1037ee8]
+placement_images: e2fd20
+placement_rects: e30d28
 player_ai: e3cb38
 player_ai_towns: e5b028
 player_skins: 1031188
@@ -439,6 +451,7 @@ screen_y: Mem32[e76478]
 secondary_order_timer_reset_counter: Mem32[e3ae60]
 select_start_x: Mem16[1049b34]
 select_start_y: Mem16[1049b36]
+selection_circles: e2e918
 selections: 1041568
 sfx_data: Mem32[e5c598]
 skins: dda270

@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0062d830
 init_game_before_map_load_hook: 0062d8a0
 init_game_network: 0068cb00
+init_images: 0053f5f0
 init_ingame_ui: 006ebc80
 init_map_from_path: 00666ef0
 init_net_player: 0069fe90
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[cf22e8]
 first_fow_sprite: Mem32[cf2208]
 first_free_bullet: Mem32[ce36c4]
 first_free_fow_sprite: Mem32[cf2200]
+first_free_hp_bar: Mem32[ceb954]
 first_free_image: Mem32[ce5b64]
 first_free_lone_sprite: Mem32[cf21f0]
 first_free_order: Mem32[cf1590]
 first_free_path: Mem32[ee92a8]
+first_free_placement_image: Mem32[ced10c]
+first_free_placement_rect: Mem32[cee114]
 first_free_selection_circle: Mem32[cebc5c]
 first_free_sprite: Mem32[cf15a0]
 first_free_unit: Mem32[cf2294]
@@ -345,8 +349,11 @@ global_event_handlers: eaf348
 graphic_layers: f15a90
 grpwire_ddsgrp: ef73f4
 grpwire_grp: Mem32[ef73dc]
+hp_bar_images: ceb958
+hp_bar_state: cebc60
 image_grps: ce4bc8
 image_overlays: ce5b88
+images: Mem32[ceb93c]
 images_loaded: Mem8[eb6276]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[efe2e8]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[cf228c]
 last_fow_sprite: Mem32[cf220c]
 last_free_bullet: Mem32[ce36c8]
 last_free_fow_sprite: Mem32[cf2204]
+last_free_hp_bar: Mem32[cebc58]
 last_free_image: Mem32[ce5b68]
 last_free_lone_sprite: Mem32[cf21f4]
 last_free_order: Mem32[cf1594]
+last_free_placement_image: Mem32[cee110]
+last_free_placement_rect: Mem32[cef118]
 last_free_selection_circle: Mem32[ced108]
 last_free_sprite: Mem32[cf15a4]
 last_free_unit: Mem32[cf2290]
@@ -409,6 +419,8 @@ original_chk_player_types: ed9170
 palette_set: f164f8
 path_array: Mem32[ee92ac]
 pathing: Mem32[edfe30]
+placement_images: ced110
+placement_rects: cee118
 player_ai: cf3cf8
 player_ai_towns: d121b0
 player_skins: ed9328
@@ -439,6 +451,7 @@ screen_y: Mem32[d2baf8]
 secondary_order_timer_reset_counter: Mem32[cf2284]
 select_start_x: Mem16[efe2f0]
 select_start_y: Mem16[efe2f2]
+selection_circles: cebd08
 selections: ee9400
 sfx_data: None
 skins: ee96d8

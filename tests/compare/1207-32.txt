@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 00739f40
 init_game_before_map_load_hook: 00739fb0
 init_game_network: 007cad10
+init_images: 00655270
 init_ingame_ui: 00831550
 init_map_from_path: 00797620
 init_net_player: 007dc740
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[f36684]
 first_fow_sprite: Mem32[e9a520]
 first_free_bullet: Mem32[e18354]
 first_free_fow_sprite: Mem32[e9a518]
+first_free_hp_bar: Mem32[e6a790]
 first_free_image: Mem32[e1b2ec]
 first_free_lone_sprite: Mem32[e985c8]
 first_free_order: Mem32[e7fab0]
 first_free_path: Mem32[f5f4d4]
+first_free_placement_image: Mem32[e6cc48]
+first_free_placement_rect: Mem32[e6dc50]
 first_free_selection_circle: Mem32[e6bc40]
 first_free_sprite: Mem32[e95d60]
 first_free_unit: Mem32[f3668c]
@@ -345,8 +349,11 @@ global_event_handlers: 10f7de0
 graphic_layers: 115b820
 grpwire_ddsgrp: 113ff28
 grpwire_grp: Mem32[113ff84]
+hp_bar_images: e6a490
+hp_bar_state: e6a798
 image_grps: e1b2f0
 image_overlays: e6dfd8
+images: e1c290
 images_loaded: Mem8[10fecbd]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[1146d40]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[f36688]
 last_fow_sprite: Mem32[e9a524]
 last_free_bullet: Mem32[e18358]
 last_free_fow_sprite: Mem32[e9a51c]
+last_free_hp_bar: Mem32[e6a794]
 last_free_image: Mem32[e1c28c]
 last_free_lone_sprite: Mem32[e985cc]
 last_free_order: Mem32[e7fab4]
+last_free_placement_image: Mem32[e6cc4c]
+last_free_placement_rect: Mem32[e6dc54]
 last_free_selection_circle: Mem32[e6bc44]
 last_free_sprite: Mem32[e95d64]
 last_free_unit: Mem32[f36690]
@@ -409,6 +419,8 @@ original_chk_player_types: 1121d0c
 palette_set: 115c2b0
 path_array: Mem32[f5f4c8]
 pathing: Mem32[112898c]
+placement_images: e6bc48
+placement_rects: e6cc50
 player_ai: f3fb48
 player_ai_towns: f5e000
 player_skins: 1121ec8
@@ -439,6 +451,7 @@ screen_y: Mem32[f7794c]
 secondary_order_timer_reset_counter: Mem32[eaaf30]
 select_start_x: Mem16[1146d48]
 select_start_y: Mem16[1146d4a]
+selection_circles: e6a840
 selections: 1131f40
 sfx_data: None
 skins: 1132218

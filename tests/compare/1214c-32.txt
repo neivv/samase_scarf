@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 00622420
 init_game_before_map_load_hook: 00622f97
 init_game_network: 00692690
+init_images: 005356e0
 init_ingame_ui: 006e8440
 init_map_from_path: 00671610
 init_net_player: 006a0ff0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[ca014c]
 first_fow_sprite: Mem32[ca0058]
 first_free_bullet: Mem32[c91534]
 first_free_fow_sprite: Mem32[ca0050]
+first_free_hp_bar: Mem32[c997a4]
 first_free_image: Mem32[c939b4]
 first_free_lone_sprite: Mem32[ca0040]
 first_free_order: Mem32[c9f3e0]
 first_free_path: Mem32[e97110]
+first_free_placement_image: Mem32[c9af5c]
+first_free_placement_rect: Mem32[c9bf64]
 first_free_selection_circle: Mem32[c99aac]
 first_free_sprite: Mem32[c9f3f0]
 first_free_unit: Mem32[ca00ec]
@@ -345,8 +349,11 @@ global_event_handlers: e5d2b8
 graphic_layers: ec3730
 grpwire_ddsgrp: ea5258
 grpwire_grp: Mem32[ea5240]
+hp_bar_images: c997a8
+hp_bar_state: c99ab0
 image_grps: c92a18
 image_overlays: c939d8
+images: Mem32[c9978c]
 images_loaded: Mem8[e640c2]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[eac150]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[ca00e4]
 last_fow_sprite: Mem32[ca005c]
 last_free_bullet: Mem32[c91538]
 last_free_fow_sprite: Mem32[ca0054]
+last_free_hp_bar: Mem32[c99aa8]
 last_free_image: Mem32[c939b8]
 last_free_lone_sprite: Mem32[ca0044]
 last_free_order: Mem32[c9f3e4]
+last_free_placement_image: Mem32[c9bf60]
+last_free_placement_rect: Mem32[c9cf68]
 last_free_selection_circle: Mem32[c9af58]
 last_free_sprite: Mem32[c9f3f4]
 last_free_unit: Mem32[ca00e8]
@@ -409,6 +419,8 @@ original_chk_player_types: e86fd0
 palette_set: ec4198
 path_array: Mem32[e97114]
 pathing: Mem32[e8dc98]
+placement_images: c9af60
+placement_rects: c9bf68
 player_ai: ca1b68
 player_ai_towns: cc0020
 player_skins: e87190
@@ -439,6 +451,7 @@ screen_y: Mem32[cd99f8]
 secondary_order_timer_reset_counter: Mem32[ca0134]
 select_start_x: Mem16[eac158]
 select_start_y: Mem16[eac15a]
+selection_circles: c99b58
 selections: e97268
 sfx_data: None
 skins: e97540

@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 00656c30
 init_game_before_map_load_hook: 00656ca0
 init_game_network: 006b4a60
+init_images: 00568620
 init_ingame_ui: 0070ec80
 init_map_from_path: 0068a7e0
 init_net_player: 006c25f0
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[e4364c]
 first_fow_sprite: Mem32[da74f8]
 first_free_bullet: Mem32[d25324]
 first_free_fow_sprite: Mem32[da74f0]
+first_free_hp_bar: Mem32[d77760]
 first_free_image: Mem32[d282bc]
 first_free_lone_sprite: Mem32[da55a0]
 first_free_order: Mem32[d8ca80]
 first_free_path: Mem32[e6c4a4]
+first_free_placement_image: Mem32[d79c18]
+first_free_placement_rect: Mem32[d7ac20]
 first_free_selection_circle: Mem32[d78c10]
 first_free_sprite: Mem32[da2d30]
 first_free_unit: Mem32[e43654]
@@ -345,8 +349,11 @@ global_event_handlers: 1004db0
 graphic_layers: 1068808
 grpwire_ddsgrp: 104cf08
 grpwire_grp: Mem32[104cf64]
+hp_bar_images: d77460
+hp_bar_state: d77768
 image_grps: d282c0
 image_overlays: d7afa8
+images: d29260
 images_loaded: Mem8[100bc95]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[1053d20]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[e43650]
 last_fow_sprite: Mem32[da74fc]
 last_free_bullet: Mem32[d25328]
 last_free_fow_sprite: Mem32[da74f4]
+last_free_hp_bar: Mem32[d77764]
 last_free_image: Mem32[d2925c]
 last_free_lone_sprite: Mem32[da55a4]
 last_free_order: Mem32[d8ca84]
+last_free_placement_image: Mem32[d79c1c]
+last_free_placement_rect: Mem32[d7ac24]
 last_free_selection_circle: Mem32[d78c14]
 last_free_sprite: Mem32[da2d34]
 last_free_unit: Mem32[e43658]
@@ -409,6 +419,8 @@ original_chk_player_types: 102ece0
 palette_set: 1069298
 path_array: Mem32[e6c498]
 pathing: Mem32[103596c]
+placement_images: d78c18
+placement_rects: d79c20
 player_ai: e4cb10
 player_ai_towns: e6afc8
 player_skins: 102eea8
@@ -439,6 +451,7 @@ screen_y: Mem32[e84924]
 secondary_order_timer_reset_counter: Mem32[db7ef8]
 select_start_x: Mem16[1053d28]
 select_start_y: Mem16[1053d2a]
+selection_circles: d77810
 selections: 103ef20
 sfx_data: None
 skins: 103f1f8

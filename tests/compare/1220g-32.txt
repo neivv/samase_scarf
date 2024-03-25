@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 006444e0
 init_game_before_map_load_hook: 00645220
 init_game_network: 006bf6d0
+init_images: 005470c0
 init_ingame_ui: 0071a580
 init_map_from_path: 0069d020
 init_net_player: 006ce450
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[e03348]
 first_fow_sprite: Mem32[e03250]
 first_free_bullet: Mem32[df476c]
 first_free_fow_sprite: Mem32[e03248]
+first_free_hp_bar: Mem32[df6bec]
 first_free_image: Mem32[df6be4]
 first_free_lone_sprite: Mem32[e03238]
 first_free_order: Mem32[e025d8]
 first_free_path: Mem32[10074fc]
+first_free_placement_image: Mem32[df83a4]
+first_free_placement_rect: Mem32[df93ac]
 first_free_selection_circle: Mem32[df6ef4]
 first_free_sprite: Mem32[e025e8]
 first_free_unit: Mem32[e032f4]
@@ -345,8 +349,11 @@ global_event_handlers: fcdf60
 graphic_layers: 1026f38
 grpwire_ddsgrp: 1008ba4
 grpwire_grp: Mem32[1008b9c]
+hp_bar_images: df6bf0
+hp_bar_state: df6ef8
 image_grps: df5c48
 image_overlays: dfa738
+images: Mem32[df5c30]
 images_loaded: Mem8[fd44a2]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[100faa8]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[e032ec]
 last_fow_sprite: Mem32[e03254]
 last_free_bullet: Mem32[df4770]
 last_free_fow_sprite: Mem32[e0324c]
+last_free_hp_bar: Mem32[df6ef0]
 last_free_image: Mem32[df6be8]
 last_free_lone_sprite: Mem32[e0323c]
 last_free_order: Mem32[e025dc]
+last_free_placement_image: Mem32[df93a8]
+last_free_placement_rect: Mem32[dfa3b0]
 last_free_selection_circle: Mem32[df83a0]
 last_free_sprite: Mem32[e025ec]
 last_free_unit: Mem32[e032f0]
@@ -409,6 +419,8 @@ original_chk_player_types: ff73a8
 palette_set: 10279a0
 path_array: Mem32[10074f0]
 pathing: Mem32[ffe078]
+placement_images: df83a8
+placement_rects: df93b0
 player_ai: e04d68
 player_ai_towns: e23220
 player_skins: ff7568
@@ -439,6 +451,7 @@ screen_y: Mem32[e3cbdc]
 secondary_order_timer_reset_counter: Mem32[e032e4]
 select_start_x: Mem16[100fab0]
 select_start_y: Mem16[100fab2]
+selection_circles: df6fa0
 selections: 1007648
 sfx_data: Mem32[e246f4]
 skins: da90e0

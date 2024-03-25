@@ -102,6 +102,7 @@ init_consoles: None
 init_game: 0063c100
 init_game_before_map_load_hook: 0063d135
 init_game_network: 006caad0
+init_images: 00545190
 init_ingame_ui: 00729280
 init_map_from_path: 006a8d10
 init_net_player: 006de910
@@ -306,10 +307,13 @@ first_dying_unit: Mem32[d26340]
 first_fow_sprite: Mem32[d26248]
 first_free_bullet: Mem32[d17724]
 first_free_fow_sprite: Mem32[d26240]
+first_free_hp_bar: Mem32[d1f994]
 first_free_image: Mem32[d19ba4]
 first_free_lone_sprite: Mem32[d26230]
 first_free_order: Mem32[d255d0]
 first_free_path: Mem32[f1d320]
+first_free_placement_image: Mem32[d2114c]
+first_free_placement_rect: Mem32[d22154]
 first_free_selection_circle: Mem32[d1fc9c]
 first_free_sprite: Mem32[d255e0]
 first_free_unit: Mem32[d262ec]
@@ -345,8 +349,11 @@ global_event_handlers: ee34c0
 graphic_layers: f49b08
 grpwire_ddsgrp: f2b46c
 grpwire_grp: Mem32[f2b454]
+hp_bar_images: d1f998
+hp_bar_state: d1fca0
 image_grps: d18c08
 image_overlays: d19bc8
+images: Mem32[d1f97c]
 images_loaded: Mem8[eea2d2]
 in_lobby_or_game: None
 is_custom_single_player: Mem32[f32360]
@@ -364,9 +371,12 @@ last_dying_unit: Mem32[d262e4]
 last_fow_sprite: Mem32[d2624c]
 last_free_bullet: Mem32[d17728]
 last_free_fow_sprite: Mem32[d26244]
+last_free_hp_bar: Mem32[d1fc98]
 last_free_image: Mem32[d19ba8]
 last_free_lone_sprite: Mem32[d26234]
 last_free_order: Mem32[d255d4]
+last_free_placement_image: Mem32[d22150]
+last_free_placement_rect: Mem32[d23158]
 last_free_selection_circle: Mem32[d21148]
 last_free_sprite: Mem32[d255e4]
 last_free_unit: Mem32[d262e8]
@@ -409,6 +419,8 @@ original_chk_player_types: f0d1e0
 palette_set: f4a570
 path_array: Mem32[f1d324]
 pathing: Mem32[f13ea8]
+placement_images: d21150
+placement_rects: d22158
 player_ai: d27d70
 player_ai_towns: d46228
 player_skins: f0d398
@@ -439,6 +451,7 @@ screen_y: Mem32[d5fb70]
 secondary_order_timer_reset_counter: Mem32[d262dc]
 select_start_x: Mem16[f32368]
 select_start_y: Mem16[f3236a]
+selection_circles: d1fd48
 selections: f1d478
 sfx_data: None
 skins: f1d750
