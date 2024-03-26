@@ -356,11 +356,11 @@ impl<'e, E: ExecutionState<'e>> ExecStateExt<'e> for E {
     }
 }
 
-pub trait MemAccessExt {
+pub trait MemAccessExt<'e> {
     fn is_global(&self) -> bool;
 }
 
-impl<'e> MemAccessExt for scarf::MemAccess<'e> {
+impl<'e> MemAccessExt<'e> for scarf::MemAccess<'e> {
     fn is_global(&self) -> bool {
         if let Some(c) = self.if_constant_address() {
             c > 0x1000

@@ -1636,7 +1636,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 AntiTroll | MouseX | MouseY | NetUserLatency | MapHistory | MpqLocale |
                 UiConsoles | StatResIconsDdsGrp | UseRgbColors | InLobbyOrGame | GameLobby |
                 RgbColors | DisableColorChoice | UseMapSetRgbColor | SfxData | SoundChannels |
-                Images =>
+                Images | TilesetCv5 | TilesetData | TilesetVx4Ex | TileDefaultFlags |
+                MinitileGraphics | MinitileData | FoliageState =>
             {
                 continue;
             }
@@ -1681,7 +1682,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 AiTargetIgnoreRequestReset | AiMilitaryUpdateCounter | PathArray | FirstFreePath |
                 LastActiveUnit | FirstFreeHpBar | LastFreeHpBar |
                 FirstFreePlacementImage | LastFreePlacementImage | FirstFreePlacementRect |
-                LastFreePlacementRect =>
+                LastFreePlacementRect | TilesetIndexedMapTiles | Vx4MapTiles | RepulseState |
+                TerrainFramebuf =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -2143,14 +2145,36 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
 
     // Became a thing since 1.23.0 (carbot)
     let skins = analysis.player_unit_skins();
+    let tileset_data = analysis.tileset_data();
     // Technically existed but wasn't similar before carbot
     let init_skins = analysis.init_skins();
+    // Analysis relies on tileset_data being found for these
+    let tileset_cv5 = analysis.tileset_cv5();
+    let tileset_vx4ex = analysis.tileset_vx4ex();
+    let tile_default_flags = analysis.tile_default_flags();
+    let minitile_graphics = analysis.minitile_graphics();
+    let minitile_data = analysis.minitile_data();
+    let foliage_state = analysis.foliage_state();
     if minor_version >= 23 {
         check_global_struct_opt(skins, binary, "player_unit_skins");
         assert!(init_skins.is_some());
+        check_global_struct_opt(tileset_data, binary, "tileset_data");
+        check_global_opt(tileset_cv5, binary, "tileset_cv5");
+        check_global_opt(tileset_vx4ex, binary, "tileset_vx4ex");
+        check_global_opt(tile_default_flags, binary, "tile_default_flags");
+        check_global_opt(minitile_graphics, binary, "minitile_graphics");
+        check_global_opt(minitile_data, binary, "minitile_data");
+        check_global_struct_opt(foliage_state, binary, "foliage_state");
     } else {
         assert!(skins.is_none());
         assert!(init_skins.is_none());
+        assert!(tileset_data.is_none());
+        assert!(tileset_cv5.is_none());
+        assert!(tileset_vx4ex.is_none());
+        assert!(tile_default_flags.is_none());
+        assert!(minitile_graphics.is_none());
+        assert!(minitile_data.is_none());
+        assert!(foliage_state.is_none());
     }
 
     // The vertex buffer funcs / struct layout changed slightly in 1.21.2,

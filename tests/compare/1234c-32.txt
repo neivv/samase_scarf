@@ -114,6 +114,7 @@ init_statlb: 00651fe0
 init_statres: 007aad00
 init_status_screen: 0079e470
 init_storm_networking: 0074a3b0
+init_terrain: 00611790
 init_units: 005a8760
 is_outside_game_screen: 0069f600
 join_game: 008b7160
@@ -335,6 +336,7 @@ flingy_x_new: Mem16[ee10bc]
 flingy_x_old: Mem16[ee10c4]
 flingy_y_new: Mem16[ee10c0]
 flingy_y_old: Mem16[ee10c8]
+foliage_state: f30bdc
 fonts: 111bdb4
 game: (Mem32[e52298] ^ 8e124e2e)
 game_data: 10ebf60
@@ -402,6 +404,8 @@ map_tile_flags: Mem32[ef4b44]
 map_width_pixels: Mem16[f30af0]
 menu_screen_id: (((b108dda4 - Mem32[ecacd4]) ^ Mem32[10c4e24]) & ffffffff)
 minimap_cursor_type: Mem16[10c2474]
+minitile_data: Mem32[ef4b3c]
+minitile_graphics: Mem32[f30b1c]
 mouse_x: None
 mouse_y: None
 mpq_locale: Mem16[e835c0]
@@ -440,6 +444,7 @@ replay_scenario_chk_size: Mem32[10efdb8]
 replay_seek_frame: Mem32[10ef6a4]
 replay_show_entire_map: Mem32[10ef6ac]
 replay_visions: Mem8[10ef6a8]
+repulse_state: Mem32[10f14a8]
 resource_areas: 10f7a78
 rgb_colors: eeebd0
 rng_enable: Mem32[10ed950]
@@ -474,7 +479,13 @@ targeted_order_fow: Mem8[10fd69d]
 targeted_order_ground: Mem8[10fd69c]
 targeted_order_unit: Mem8[10fd69b]
 team_game_teams: Mem8[10ebfdd]
+terrain_framebuf: Mem32[f30b18]
 tfontgam: 111bde8
+tile_default_flags: Mem32[ef4b40]
+tileset_cv5: Mem32[1123868]
+tileset_data: ef1910
+tileset_indexed_map_tiles: Mem32[ef4b38]
+tileset_vx4ex: Mem32[f30b0c]
 tooltip_draw_func: Mem32[eeeffc]
 tranwire_ddsgrp: 10fc718
 tranwire_grp: Mem32[10fc700]
@@ -492,6 +503,7 @@ use_rgb_colors: Mem8[eeebb8]
 vertex_buffer: e889b8
 vision_update_counter: Mem32[10c24e4]
 vision_updated: Mem8[10c24bc]
+vx4_map_tiles: Mem32[f30b14]
 wirefram_ddsgrp: 10fd234
 zoom: Mem32[e50bb0]
 zoom_action_active: Mem8[e50bbc]

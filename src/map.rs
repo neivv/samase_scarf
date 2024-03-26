@@ -4,7 +4,10 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until_with_limit};
-use crate::util::{ControlExt, ExecStateExt, OperandExt, single_result_assign};
+use crate::call_tracker::{CallTracker};
+use crate::util::{
+    ControlExt, ExecStateExt, MemAccessExt, OperandExt, OptionExt, is_global, single_result_assign,
+};
 
 pub struct MapTileFlags<'e, Va: VirtualAddress> {
     pub map_tile_flags: Option<Operand<'e>>,
@@ -487,6 +490,317 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CountCacheAnalyze
                 }
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) struct InitTerrain<'e, Va: VirtualAddress> {
+    pub init_terrain: Option<Va>,
+    pub tileset_indexed_map_tiles: Option<Operand<'e>>,
+    pub vx4_map_tiles: Option<Operand<'e>>,
+    pub terrain_framebuf: Option<Operand<'e>>,
+    pub repulse_state: Option<Operand<'e>>,
+    pub tileset_data: Option<Operand<'e>>,
+    pub tile_default_flags: Option<Operand<'e>>,
+    pub tileset_cv5: Option<Operand<'e>>,
+    pub tileset_vx4ex: Option<Operand<'e>>,
+    pub minitile_graphics: Option<Operand<'e>>,
+    pub minitile_data: Option<Operand<'e>>,
+    pub foliage_state: Option<Operand<'e>>,
+}
+
+pub(crate) fn init_terrain<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    init_game: E::VirtualAddress,
+    init_images: E::VirtualAddress,
+) -> InitTerrain<'e, E::VirtualAddress> {
+    let mut result = InitTerrain {
+        init_terrain: None,
+        tileset_indexed_map_tiles: None,
+        vx4_map_tiles: None,
+        terrain_framebuf: None,
+        repulse_state: None,
+        tileset_data: None,
+        tile_default_flags: None,
+        tileset_cv5: None,
+        tileset_vx4ex: None,
+        minitile_graphics: None,
+        minitile_data: None,
+        foliage_state: None,
+    };
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let arg_cache = &actx.arg_cache;
+    let mut analyzer = InitTerrainAnalyzer::<E> {
+        result: &mut result,
+        arg_cache,
+        state: InitTerrainState::FindInitTerrain,
+        previous_call: E::VirtualAddress::from_u64(0),
+        init_images,
+        malloc: E::VirtualAddress::from_u64(0),
+        inline_depth: 0,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+        entry_esp: ctx.register(4),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, init_game);
+    analysis.analyze(&mut analyzer);
+    let init_terrain_candidate = analyzer.previous_call;
+    if init_terrain_candidate != E::VirtualAddress::from_u64(0) {
+        analyzer.state = InitTerrainState::AllocatedBuffers;
+        let mut analysis = FuncAnalysis::new(binary, ctx, init_terrain_candidate);
+        analysis.analyze(&mut analyzer);
+        if result.tileset_indexed_map_tiles.is_some() {
+            result.init_terrain = Some(init_terrain_candidate);
+        }
+    }
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum InitTerrainState {
+    /// Walk init_game until init_images call, init_terrain should be the one before.
+    FindInitTerrain,
+    /// init_terrain should allocate the following buffers:
+    /// tileset_indexed_map_tiles(0x20000)
+    /// vx4_tile_ids(0x20000)
+    /// terrain_framebuf(variable)
+    /// map_tile_flags(0x40000) (Not needed)
+    /// repulse(0x7239) (May need inlining)
+    AllocatedBuffers,
+    /// Get tileset_data + 0x520 (0x540 on 64bit) * tileset_id
+    /// Inline once, make tileset_date pointer Custom for later checks
+    TilesetData,
+    /// Reads from tileset_data fields to globals
+    TilesetBuffers,
+    /// Find 0x180008 byte memset in foliage struct
+    Foliage,
+}
+
+struct InitTerrainAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    /// Kept as 0 in init_terrain, even though analysis starts with init_game
+    inline_depth: u8,
+    result: &'a mut InitTerrain<'e, E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    previous_call: E::VirtualAddress,
+    init_images: E::VirtualAddress,
+    /// Set at first allocation, later ones are checked to be same call
+    malloc: E::VirtualAddress,
+    state: InitTerrainState,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    entry_esp: Operand<'e>,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    InitTerrainAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            InitTerrainState::FindInitTerrain => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if dest == self.init_images {
+                            ctrl.end_analysis();
+                        } else {
+                            self.previous_call = dest;
+                        }
+                    }
+                }
+            }
+            InitTerrainState::AllocatedBuffers => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1_c = arg1.if_constant().unwrap_or(u64::MAX);
+                        let ok = if self.malloc != E::VirtualAddress::from_u64(0) {
+                            dest == self.malloc
+                        } else {
+                            arg1_c == 0x20000
+                        };
+                        if ok {
+                            if self.malloc == E::VirtualAddress::from_u64(0) {
+                                self.malloc = dest;
+                            }
+                            let custom_id = if arg1_c == 0x20000 {
+                                0
+                            } else if arg1_c == u64::MAX {
+                                1
+                            } else if arg1_c == 0x7239 {
+                                2
+                            } else {
+                                return;
+                            };
+                            ctrl.do_call_with_result(ctx.custom(custom_id));
+                        } else if self.malloc != E::VirtualAddress::from_u64(0) {
+                            // Inline a bit once one malloc has been seen
+                            if self.inline_depth == 0 {
+                                self.inline_depth = 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth = 0;
+                            } else {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size != E::WORD_SIZE {
+                        return;
+                    }
+                    let value = ctrl.resolve(value);
+                    if let Some(custom) = value.if_custom() {
+                        let mem = ctrl.resolve_mem(mem);
+                        let dest_op = ctx.memory(&mem);
+                        let result = &mut self.result;
+                        if custom == 0 {
+                            if result.tileset_indexed_map_tiles.is_none() {
+                                result.tileset_indexed_map_tiles = Some(dest_op);
+                            } else {
+                                result.vx4_map_tiles = Some(dest_op);
+                            }
+                        } else if custom == 1 {
+                            result.terrain_framebuf = Some(dest_op);
+                        } else {
+                            result.repulse_state = Some(dest_op);
+                        }
+                        let all_done = result.tileset_indexed_map_tiles.is_some() &&
+                            result.vx4_map_tiles.is_some() &&
+                            result.terrain_framebuf.is_some() &&
+                            result.repulse_state.is_some();
+                        if all_done {
+                            self.state = InitTerrainState::TilesetData;
+                        }
+                    }
+                }
+                if self.inline_depth != 0 {
+                    if let Operation::Jump { .. } = *op {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            InitTerrainState::TilesetData => {
+                if self.inline_depth == 0 {
+                    if let Operation::Call(dest) = *op {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.inline_depth = 1;
+                            ctrl.inline(self, dest);
+                            ctrl.skip_operation();
+                            self.inline_depth = 0;
+                        }
+                    }
+                } else {
+                    if let Operation::Jump { .. } = *op {
+                        ctrl.end_analysis();
+                    }
+                }
+                if let Operation::Move(ref dest, value, None) = *op {
+                    let value = ctrl.resolve(value);
+                    let size = E::struct_layouts().tileset_data_size();
+                    let result = value.if_arithmetic_add()
+                        .and_either_other(|x| x.if_arithmetic_mul_const(size));
+                    if let Some(result) = result {
+                        self.result.tileset_data = Some(result);
+                        ctrl.skip_operation();
+                        ctrl.move_unresolved(dest, ctx.custom(8));
+                        self.state = InitTerrainState::TilesetBuffers;
+                    }
+                }
+            }
+            InitTerrainState::TilesetBuffers => {
+                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size != E::WORD_SIZE {
+                        return;
+                    }
+                    let value = ctrl.resolve(value);
+                    let offset = ctrl.if_mem_word(value)
+                        .filter(|x| x.address().0.if_custom() == Some(8))
+                        .map(|x| x.address().1)
+                        .filter(|&x| x < 0x580);
+                    if let Some(offset) = offset {
+                        let mem = ctrl.resolve_mem(mem);
+                        if !mem.is_global() {
+                            return;
+                        }
+                        let dest_op = ctx.memory(&mem);
+                        let word_size = E::VirtualAddress::SIZE as u64;
+                        let result = &mut self.result;
+                        if offset == 0 {
+                            result.minitile_graphics = Some(dest_op);
+                        } else if offset == 1 * word_size {
+                            result.minitile_data = Some(dest_op);
+                        } else if offset == 3 * word_size {
+                            result.tileset_cv5 = Some(dest_op);
+                        } else if offset == 5 * word_size {
+                            result.tileset_vx4ex = Some(dest_op);
+                        } else if offset == E::struct_layouts().tileset_data_tile_default_flags() {
+                            result.tile_default_flags = Some(dest_op);
+                        };
+                        let all_done = result.minitile_graphics.is_some() &&
+                            result.minitile_data.is_some() &&
+                            result.tileset_cv5.is_some() &&
+                            result.tileset_vx4ex.is_some() &&
+                            result.tile_default_flags.is_some();
+                        if all_done {
+                            self.state = InitTerrainState::Foliage;
+                        }
+                    }
+                }
+            }
+            InitTerrainState::Foliage => {
+                let is_call = matches!(*op, Operation::Call(..));
+                let dest = match *op {
+                    Operation::Call(dest) => ctrl.resolve_va(dest),
+                    Operation::Jump { condition, to } => {
+                        if condition == ctx.const_1() &&
+                            ctrl.resolve_register(4) == self.entry_esp
+                        {
+                            ctrl.resolve_va(to)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(dest) = dest {
+                    let arg_fn = if is_call {
+                        ArgCache::on_call
+                    } else {
+                        ArgCache::on_entry
+                    };
+                    let arg1 = ctrl.resolve(arg_fn(&self.arg_cache, 0));
+                    let arg3 = ctrl.resolve(arg_fn(&self.arg_cache, 2));
+                    if arg3.if_constant() == Some(0x180008) {
+                        let arg1 = self.call_tracker.resolve_calls(arg1);
+                        if is_global(arg1) {
+                            self.result.foliage_state = Some(
+                                ctx.sub_const(arg1, E::struct_layouts().foliage_tile_data())
+                            );
+                            ctrl.end_analysis();
+                            return;
+                        }
+                    }
+                    if self.inline_depth == 0 && is_call {
+                        if arg1.if_custom().is_some() || is_global(arg1) {
+                            self.inline_depth = 1;
+                            self.entry_esp = ctrl.get_new_esp_for_call();
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = 0;
+                            self.entry_esp = ctx.register(4);
+                            if self.result.foliage_state.is_some() {
+                                ctrl.end_analysis();
+                                return;
+                            }
+                        }
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                }
+                if self.inline_depth != 0 {
+                    if let Operation::Jump { .. } = *op {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
         }
     }
 }

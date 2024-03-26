@@ -463,6 +463,7 @@ results! {
         AddMilitaryAi => add_military_ai => cache_add_ai_to_trained_unit,
         AddTownUnitAi => add_town_unit_ai => cache_add_building_ai,
         InitImages => init_images => cache_init_images,
+        InitTerrain => init_terrain => cache_init_terrain,
     }
 }
 
@@ -739,6 +740,22 @@ results! {
         LastFreePlacementImage => last_free_placement_image => cache_init_images,
         FirstFreePlacementRect => first_free_placement_rect => cache_init_images,
         LastFreePlacementRect => last_free_placement_rect => cache_init_images,
+        TilesetIndexedMapTiles => tileset_indexed_map_tiles => cache_init_terrain,
+        Vx4MapTiles => vx4_map_tiles => cache_init_terrain,
+        TerrainFramebuf => terrain_framebuf => cache_init_terrain,
+        // Air units per 0x30 x 0x30 pixel tiles (For unstacking)
+        RepulseState => repulse_state => cache_init_terrain,
+        // SC:R array indexed by tileset id that contains various per-tileset data buffers
+        // (Not sure if more than one is still loaded at once) in one point.
+        TilesetData => tileset_data => cache_init_terrain,
+        TileDefaultFlags => tile_default_flags => cache_init_terrain,
+        TilesetCv5 => tileset_cv5 => cache_init_terrain,
+        TilesetVx4Ex => tileset_vx4ex => cache_init_terrain,
+        // tileset.vr4
+        MinitileGraphics => minitile_graphics => cache_init_terrain,
+        // tileset.vf4
+        MinitileData => minitile_data => cache_init_terrain,
+        FoliageState => foliage_state => cache_init_terrain,
     }
 }
 
@@ -4577,6 +4594,33 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     r.first_free_hp_bar, r.last_free_hp_bar,
                     r.first_free_placement_image, r.last_free_placement_image,
                     r.first_free_placement_rect, r.last_free_placement_rect,
+                ]))
+            })
+    }
+
+    fn init_images(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::InitImages,
+            |s| s.cache_init_images(actx),
+        )
+    }
+
+    fn cache_init_terrain(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[InitTerrain],
+            &[TilesetIndexedMapTiles, Vx4MapTiles, TerrainFramebuf, RepulseState,
+                TilesetData, TileDefaultFlags, TilesetCv5, TilesetVx4Ex,
+                MinitileGraphics, MinitileData, FoliageState],
+            |s| {
+                let init_game = s.init_game(actx)?;
+                let init_images = s.init_images(actx)?;
+                let r = map::init_terrain(actx, init_game, init_images);
+                Some(([r.init_terrain], [r.tileset_indexed_map_tiles, r.vx4_map_tiles,
+                    r.terrain_framebuf, r.repulse_state, r.tileset_data, r.tile_default_flags,
+                    r.tileset_cv5, r.tileset_vx4ex, r.minitile_graphics, r.minitile_data,
+                    r.foliage_state,
                 ]))
             })
     }

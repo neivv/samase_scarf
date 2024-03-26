@@ -388,6 +388,18 @@ impl StructLayouts {
     pub const fn texture_struct_size(self) -> u64 {
         self.pair(0x10, 0x18)
     }
+
+    pub const fn tileset_data_size(self) -> u64 {
+        self.pair(0x520, 0x540)
+    }
+
+    pub const fn tileset_data_tile_default_flags(self) -> u64 {
+        self.pair(0x518, 0x530)
+    }
+
+    pub const fn foliage_tile_data(self) -> u64 {
+        self.pair(0xdc, 0x170)
+    }
 }
 
 pub fn button_set_index_to_action<Va: VirtualAddress>(
