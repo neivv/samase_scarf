@@ -174,6 +174,8 @@ pub trait OperandExt<'e> {
     fn add_sub_offset(self) -> (Operand<'e>, u64);
     /// If `self` is SignExtend(x), returns `x`. Otherwise resturns `self`
     fn unwrap_sext(self) -> Operand<'e>;
+    /// If `self` is x & C, returns `x`. Otherwise resturns `self`
+    fn unwrap_and_mask(self) -> Operand<'e>;
     fn if_constant_or_read_binary<Va: VirtualAddress>(
         self,
         binary: &BinaryFile<Va>,
@@ -294,6 +296,10 @@ impl<'e> OperandExt<'e> for Operand<'e> {
 
     fn unwrap_sext(self) -> Operand<'e> {
         self.if_sign_extend().map(|x| x.0).unwrap_or(self)
+    }
+
+    fn unwrap_and_mask(self) -> Operand<'e> {
+        Operand::and_masked(self).0
     }
 
     fn if_constant_or_read_binary<Va: VirtualAddress>(

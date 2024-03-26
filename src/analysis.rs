@@ -465,6 +465,13 @@ results! {
         AddTownUnitAi => add_town_unit_ai => cache_add_building_ai,
         InitImages => init_images => cache_init_images,
         InitTerrain => init_terrain => cache_init_terrain,
+        // this = stack object, int, tile_id, vec4 *out
+        // Returns u32 pointer to page texture id, and writes out for the texture coordinates
+        // on success.
+        // May also return null on invalid tile (Segfault due to caller not checking),
+        // or pointer to -1 to make caller skip the tile.
+        GetAtlasPageCoordsForTerrainTile => get_atlas_page_coords_for_terrain_tile =>
+            cache_draw_terrain,
     }
 }
 
@@ -2636,6 +2643,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             })
     }
 
+    fn draw_terrain(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::DrawTerrain, |s| s.cache_draw_game_layer(actx))
+    }
+
     fn draw_image(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::DrawImage, |s| s.cache_draw_game_layer(actx))
     }
@@ -4633,6 +4644,19 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     r.tileset_cv5, r.tileset_vx4ex, r.minitile_graphics, r.minitile_data,
                     r.foliage_state,
                 ]))
+            })
+    }
+
+    fn cache_draw_terrain(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[GetAtlasPageCoordsForTerrainTile],
+            &[],
+            |s| {
+                let draw_terrain = s.draw_terrain(actx)?;
+                let is_paused = s.is_paused(actx)?;
+                let r = renderer::analyze_draw_terrain(actx, draw_terrain, is_paused);
+                Some(([r.get_atlas_page_coords_for_terrain_tile], []))
             })
     }
 }

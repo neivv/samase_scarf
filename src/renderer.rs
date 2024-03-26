@@ -2,7 +2,10 @@ use std::rc::Rc;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use scarf::{ArithOpType, BinaryFile, BinarySection, DestOperand, Operand, OperandType, Operation};
+use scarf::{
+    ArithOpType, BinaryFile, BinarySection, DestOperand, MemAccessSize, Operand, OperandType,
+    Operation,
+};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::operand::{OperandHashByAddress};
@@ -548,6 +551,10 @@ pub(crate) struct RenderScreen<'e, E: ExecutionState<'e>> {
     pub clear_render_target: Option<E::VirtualAddress>,
     pub renderer: Option<Operand<'e>>,
     pub draw_commands: Option<Operand<'e>>,
+}
+
+pub(crate) struct DrawTerrain<'e, E: ExecutionState<'e>> {
+    pub get_atlas_page_coords_for_terrain_tile: Option<E::VirtualAddress>,
 }
 
 pub(crate) fn analyze_draw_game_layer<'e, E: ExecutionState<'e>>(
@@ -1123,6 +1130,181 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                                 ctrl.end_analysis();
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_draw_terrain<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    draw_terrain: E::VirtualAddress,
+    is_paused: Operand<'e>,
+) -> DrawTerrain<'e, E> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut result = DrawTerrain {
+        get_atlas_page_coords_for_terrain_tile: None,
+    };
+
+    let mut analyzer = AnalyzeDrawTerrain::<E> {
+        result: &mut result,
+        state: DrawTerrainState::FindIsPausedCheck,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+        inline_depth: 0,
+        draw_tiles_depth: 0,
+        arg_cache: &actx.arg_cache,
+        is_paused,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, draw_terrain);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum DrawTerrainState {
+    /// Find jump checking is_paused, follow true branch (Skip over water animation code)
+    FindIsPausedCheck,
+    /// Inline once to draw_terrain_tiles, verify from
+    /// vx4_tiles_ids + game.screen_y * game_map_width + game.screen_x being calculated
+    /// but not used before first jump.
+    DrawTiles,
+    /// Inline to
+    /// -> draw_terrain_tile_row with arg3 = tile_ptr
+    /// -> draw_terrain_tile with arg3 = tile
+    /// (From same vx4 array), then find
+    /// get_atlas_page_coords_for_terrain_tile(
+    ///     this = stack object,
+    ///     a1 = is_creep ? 5 : 1 (1 : 5?)
+    ///     a2 = tile
+    ///     a3 = stack vec4 { 0, 0, 0, 0 }
+    /// )
+    DrawTilesVerified,
+}
+
+struct AnalyzeDrawTerrain<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut DrawTerrain<'e, E>,
+    state: DrawTerrainState,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    inline_depth: u8,
+    draw_tiles_depth: u8,
+    arg_cache: &'a ArgCache<'e, E>,
+    is_paused: Operand<'e>,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    AnalyzeDrawTerrain<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            DrawTerrainState::FindIsPausedCheck => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((val, eq)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                        let val =
+                            self.call_tracker.resolve_calls_with_branch_limit(val, 4);
+                        if val == self.is_paused {
+                            ctrl.continue_at_neq_address(eq, to);
+                            self.state = DrawTerrainState::DrawTiles;
+                        }
+                    }
+                } else if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                }
+            }
+            DrawTerrainState::DrawTiles => {
+                if let Operation::Call(dest) = *op {
+                    if self.inline_depth == 0 {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.inline_depth = 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = 0;
+                            if self.state != DrawTerrainState::DrawTiles {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { .. } = *op {
+                    if self.inline_depth != 0 {
+                        ctrl.end_analysis();
+                    }
+                } else if let Operation::Move(ref dest, value, None) = *op {
+                    let value = ctrl.resolve(value);
+                    // vx4_map_tiles + ([game_e0] + [game_e4] * [game_e2]) * 2
+                    let is_game_screen_xy_ptr = value.if_arithmetic_add()
+                        .and_either(|x| {
+                            // Scarf doesn't currently remove mask from sext_32_64(x & ffff_ffff)
+                            // Maybe it should?
+                            x.if_arithmetic_mul_const(2)?
+                                .unwrap_sext()
+                                .unwrap_and_mask()
+                                .if_arithmetic_add()
+                                .and_either(|x| {
+                                    x.if_arithmetic_mul()
+                                        .and_either_other(|x| x.if_mem16_offset(0xe2))?
+                                        .if_mem16_offset(0xe4)
+                                })
+                        })
+                        .is_some();
+                    if is_game_screen_xy_ptr {
+                        ctrl.skip_operation();
+                        ctrl.move_unresolved(dest, ctx.custom(0));
+                        self.draw_tiles_depth = self.inline_depth;
+                        self.state = DrawTerrainState::DrawTilesVerified;
+                    }
+                }
+            }
+            DrawTerrainState::DrawTilesVerified => {
+                fn is_tile<'e>(op: Operand<'e>) -> bool {
+                    op.if_arithmetic_and_const(0x7fff)
+                        .and_then(|x| x.if_mem16()?.address().0.if_custom()) == Some(0)
+                }
+
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ok = {
+                                let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
+                                let mem = ctx.mem_access(arg3, 0, MemAccessSize::Mem64);
+                                ctrl.read_memory(&mem) == ctx.const_0()
+                            } &&
+                            is_tile(ctrl.resolve(self.arg_cache.on_thiscall_call(1)));
+                        if ok {
+                            self.result.get_atlas_page_coords_for_terrain_tile = Some(dest);
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        let inline_depth = self.inline_depth - self.draw_tiles_depth;
+                        if inline_depth < 2 {
+                            let mut inline = false;
+                            if inline_depth < 1 {
+                                // draw_terrain_tile_row
+                                let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                                inline = arg2.if_custom() == Some(0);
+                            }
+                            if !inline {
+                                // draw_terrain_tile inlining
+                                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                                inline = is_tile(arg3);
+                            }
+                            if inline {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.result.get_atlas_page_coords_for_terrain_tile.is_some() {
+                                    ctrl.end_analysis();
+                                }
+                                return;
+                            }
+                        }
+
                     }
                 }
             }
