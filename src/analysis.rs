@@ -394,6 +394,7 @@ results! {
         ClearRenderTarget => clear_render_target => cache_render_screen,
         MoveScreen => move_screen => cache_center_view_action,
         UpdateGameScreenSize => update_game_screen_size => cache_draw_game_layer,
+        DrawTerrain => draw_terrain => cache_draw_game_layer,
         StepMovingBulletFrame => step_moving_bullet_frame => cache_step_bullet_frame,
         FlingyUpdateTargetDir => flingy_update_target_dir => cache_step_moving_bullet_frame,
         StepFlingySpeed => step_flingy_speed => cache_step_moving_bullet_frame,
@@ -2484,6 +2485,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    fn is_paused(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::IsPaused, |s| s.cache_misc_clientside(actx))
+    }
+
     fn is_placing_building(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_many_op(OperandAnalysis::IsPlacingBuilding, |s| s.cache_misc_clientside(actx))
     }
@@ -2610,15 +2615,21 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
         self.cache_many(
-            &[PrepareDrawImage, DrawImage, UpdateGameScreenSize],
+            &[PrepareDrawImage, DrawImage, UpdateGameScreenSize, DrawTerrain],
             &[CursorMarker, ZoomActionActive, ZoomActionMode, ZoomActionStart, ZoomActionTarget,
                 ZoomActionCompletion],
             |s| {
+                let is_paused = s.is_paused(actx)?;
                 let draw_game_layer = s.draw_game_layer(actx)?;
                 let sprite_size = s.sprite_array(actx)?.1;
-                let result = renderer::analyze_draw_game_layer(actx, draw_game_layer, sprite_size);
+                let result = renderer::analyze_draw_game_layer(
+                    actx,
+                    draw_game_layer,
+                    sprite_size,
+                    is_paused,
+                );
                 Some(([result.prepare_draw_image, result.draw_image,
-                    result.update_game_screen_size], [result.cursor_marker,
+                    result.update_game_screen_size, result.draw_terrain], [result.cursor_marker,
                     result.zoom_action_active, result.zoom_action_mode,
                     result.zoom_action_start, result.zoom_action_target,
                     result.zoom_action_completion]))

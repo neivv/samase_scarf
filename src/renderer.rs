@@ -532,6 +532,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDrawGameLayer<'e, E>
 pub(crate) struct DrawGameLayer<'e, E: ExecutionState<'e>> {
     pub prepare_draw_image: Option<E::VirtualAddress>,
     pub draw_image: Option<E::VirtualAddress>,
+    pub draw_terrain: Option<E::VirtualAddress>,
     pub cursor_marker: Option<Operand<'e>>,
     pub update_game_screen_size: Option<E::VirtualAddress>,
     pub zoom_action_active: Option<Operand<'e>>,
@@ -553,6 +554,7 @@ pub(crate) fn analyze_draw_game_layer<'e, E: ExecutionState<'e>>(
     actx: &AnalysisCtx<'e, E>,
     draw_game_layer: E::VirtualAddress,
     sprite_size: u32,
+    is_paused: Operand<'e>,
 ) -> DrawGameLayer<'e, E> {
     let binary = actx.binary;
     let ctx = actx.ctx;
@@ -560,6 +562,7 @@ pub(crate) fn analyze_draw_game_layer<'e, E: ExecutionState<'e>>(
     let mut result = DrawGameLayer {
         prepare_draw_image: None,
         draw_image: None,
+        draw_terrain: None,
         cursor_marker: None,
         update_game_screen_size: None,
         zoom_action_active: None,
@@ -582,6 +585,10 @@ pub(crate) fn analyze_draw_game_layer<'e, E: ExecutionState<'e>>(
         arg_cache: &actx.arg_cache,
         rdata: actx.binary_sections.rdata,
         call_seen: false,
+        first_jump: false,
+        is_paused,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+        current_func: draw_game_layer,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, draw_game_layer);
     analysis.analyze(&mut analyzer);
@@ -589,7 +596,7 @@ pub(crate) fn analyze_draw_game_layer<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct AnalyzeDrawGameLayer<'a, 'e, E: ExecutionState<'e>> {
+struct AnalyzeDrawGameLayer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     state: DrawGameLayerState,
     result: &'a mut DrawGameLayer<'e, E>,
     inline_depth: u8,
@@ -598,6 +605,10 @@ struct AnalyzeDrawGameLayer<'a, 'e, E: ExecutionState<'e>> {
     arg_cache: &'a ArgCache<'e, E>,
     rdata: &'a BinarySection<E::VirtualAddress>,
     call_seen: bool,
+    first_jump: bool,
+    is_paused: Operand<'e>,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    current_func: E::VirtualAddress,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -613,11 +624,17 @@ enum DrawGameLayerState {
     ZoomCompletion,
     /// Find (target - start) * x
     ZoomStartTarget,
+    /// prepare_draw_image and draw_image are from functions which are called
+    /// with this = some_sprite.first_overlay and some_sprite.last_overlay
+    /// draw_terrain is called in between those two, so detect it here as well
+    /// from jump based on is_paused
     DrawImage,
     CursorMarker,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer<'a, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    AnalyzeDrawGameLayer<'a, 'acx, 'e, E>
+{
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -750,8 +767,6 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer
                 }
             }
             DrawGameLayerState::DrawImage => {
-                // prepare_draw_image and draw_image are from functions which are called
-                // with this = some_sprite.first_overlay and some_sprite.last_overlay
                 match *op {
                     Operation::Call(dest) => {
                         if let Some(dest) = ctrl.resolve_va(dest) {
@@ -776,9 +791,34 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AnalyzeDrawGameLayer
                             } else if self.inline_depth == 0 {
                                 self.inline_depth = 1;
                                 self.inline_limit = 12;
+                                self.first_jump = true;
+                                self.current_func = dest;
                                 ctrl.analyze_with_current_state(self, dest);
+                                self.first_jump = false;
                                 self.inline_limit = 0;
                                 self.inline_depth = 0;
+                            } else if self.result.prepare_draw_image.is_some() {
+                                // Track calls for draw_terrain
+                                self.call_tracker.add_call(ctrl, dest);
+                            }
+                        }
+                    }
+                    Operation::Jump { condition, .. } => {
+                        // Check for draw_terrain (Jump on is_paused)
+                        if self.first_jump &&
+                            self.result.prepare_draw_image.is_some() &&
+                            self.inline_depth == 1
+                        {
+                            self.first_jump = false;
+                            let ctx = ctrl.ctx();
+                            let condition = ctrl.resolve(condition);
+                            if let Some((val, _)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                                let val =
+                                    self.call_tracker.resolve_calls_with_branch_limit(val, 4);
+                                if val == self.is_paused {
+                                    self.result.draw_terrain = Some(self.current_func);
+                                    ctrl.end_analysis();
+                                }
                             }
                         }
                     }

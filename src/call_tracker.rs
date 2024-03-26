@@ -113,13 +113,12 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         ctrl.do_call_with_result(val)
     }
 
-    /// Converts any `Custom` (which are from `add_call()`) in `val` to
-    /// **resolved function return value relative to start of the called function**.
-    ///
-    /// That is, if the function returns anything depending on arguments, to resolve it
-    /// in context of the parent function, you'll need to have kept state at point of the
-    /// call and resolve on that (After fixing stack to consider offset from call instruction).
-    pub fn resolve_calls(&mut self, val: Operand<'e>) -> Operand<'e> {
+    /// Like resolve_calls but allows limiting analysis to only for shorter functions.
+    pub fn resolve_calls_with_branch_limit(
+        &mut self,
+        val: Operand<'e>,
+        limit: u32,
+    ) -> Operand<'e> {
         self.ctx.transform(val, 8, |op| {
             if let Some(idx) = op.if_custom() {
                 let ctx = self.ctx;
@@ -128,7 +127,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
                     .and_then(|x| self.id_to_func.get_mut(x as usize))
                 {
                     *result.get_or_insert_with(|| {
-                        analyze_func_return_c::<E>(*addr, ctx, binary, *constraint)
+                        analyze_func_return_c::<E>(*addr, ctx, binary, *constraint, limit)
                     })
                 } else {
                     None
@@ -137,6 +136,16 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
                 None
             }
         })
+    }
+
+    /// Converts any `Custom` (which are from `add_call()`) in `val` to
+    /// **resolved function return value relative to start of the called function**.
+    ///
+    /// That is, if the function returns anything depending on arguments, to resolve it
+    /// in context of the parent function, you'll need to have kept state at point of the
+    /// call and resolve on that (After fixing stack to consider offset from call instruction).
+    pub fn resolve_calls(&mut self, val: Operand<'e>) -> Operand<'e> {
+        self.resolve_calls_with_branch_limit(val, u32::MAX)
     }
 
     pub fn custom_id_to_func(&self, val: u32) -> Option<E::VirtualAddress> {
@@ -150,7 +159,7 @@ pub(crate) fn analyze_func_return<'e, E: ExecutionState<'e>>(
     ctx: OperandCtx<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
 ) -> Option<Operand<'e>> {
-    analyze_func_return_c::<E>(func, ctx, binary, None)
+    analyze_func_return_c::<E>(func, ctx, binary, None, u32::MAX)
 }
 
 fn analyze_func_return_c<'e, E: ExecutionState<'e>>(
@@ -158,12 +167,14 @@ fn analyze_func_return_c<'e, E: ExecutionState<'e>>(
     ctx: OperandCtx<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     constraint: Option<Operand<'e>>,
+    branch_limit: u32,
 ) -> Option<Operand<'e>> {
     struct Analyzer<'e, E: ExecutionState<'e>> {
         result: Option<Operand<'e>>,
         phantom: std::marker::PhantomData<(*const E, &'e ())>,
         prev_ins_address: E::VirtualAddress,
         constraint: Option<Operand<'e>>,
+        branch_limit: u32,
     }
 
     impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
@@ -215,7 +226,13 @@ fn analyze_func_return_c<'e, E: ExecutionState<'e>>(
             self.prev_ins_address = ctrl.address();
         }
 
-        fn branch_start(&mut self, _ctrl: &mut Control<'e, '_, '_, Self>) {
+        fn branch_start(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+            if self.branch_limit == 0 {
+                ctrl.end_analysis();
+                self.result = None;
+                return;
+            }
+            self.branch_limit -= 1;
             self.prev_ins_address = E::VirtualAddress::from_u64(0);
         }
     }
@@ -224,6 +241,7 @@ fn analyze_func_return_c<'e, E: ExecutionState<'e>>(
         phantom: Default::default(),
         prev_ins_address: E::VirtualAddress::from_u64(0),
         constraint,
+        branch_limit,
     };
 
     let mut analysis = FuncAnalysis::new(binary, ctx, func);
