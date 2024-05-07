@@ -804,10 +804,19 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         let player_tech_from_index = |index| {
             // player = (byte_offset + index) / arr_size
             // tech = (byte_offset + index) % arr_size
+            let bw_offset = if array_size == 0x14 {
+                0x18u32.wrapping_sub(start_index)
+            } else {
+                0
+            };
             let arr_size = ctx.constant(array_size.into());
             let index = ctx.add_const(index, u64::from(byte_offset));
-            let player = ctx.div(index, arr_size);
-            let tech = ctx.modulo(index, arr_size);
+            let offset = ctx.sub_const(index, bw_offset as u64);
+            let player = ctx.div(offset, arr_size);
+            let tech = ctx.add_const(
+                ctx.modulo(offset, arr_size),
+                bw_offset as u64,
+            );
             (player, tech)
         };
 

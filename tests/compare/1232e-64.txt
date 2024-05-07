@@ -2168,7 +2168,7 @@ MapData array patches:
 01: VirtualAddress(1403ba918):8 = (r8 + (r9 * c))
 01: VirtualAddress(1403ba928):8 = (r8 + (r9 * c))
 02: VirtualAddress(1403ba6ec):8 = ((rax * c) + (((rax + rcx) - (Mem64[140c2e430] ^ d7c3bbe15e498330)) / 18))
-02: VirtualAddress(1403ba713):8 = ((rax * c) + ((rax + (rdx * 4)) / 14))
+02: VirtualAddress(1403ba713):8 = ((rax * c) + (((rax + (rdx * 4)) - 18) / 14))
 02: VirtualAddress(1403ba888):8 = (r8 + (r9 * c))
 02: VirtualAddress(1403ba895):8 = (r8 + (r9 * c))
 03: VirtualAddress(1403ba6a8):8 = (r9 + (r10 * c))
