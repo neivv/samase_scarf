@@ -113,6 +113,14 @@ pub(crate) struct KillUnit<Va: VirtualAddress> {
     pub remove_unit_ai: Option<Va>,
 }
 
+pub(crate) struct OrderUnitMorph<Va: VirtualAddress> {
+    pub transform_unit: Option<Va>,
+    pub add_ai_to_trained_unit: Option<Va>,
+    pub show_finished_unit_notification: Option<Va>,
+    pub switch_construction_image: Option<Va>,
+    pub check_resources_for_building: Option<Va>,
+}
+
 pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     orders_dat: (E::VirtualAddress, u32),
@@ -3221,6 +3229,176 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         ctrl.end_analysis();
                     }
                 }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_order_unit_morph<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    order_unit_morph: E::VirtualAddress,
+) -> OrderUnitMorph<E::VirtualAddress> {
+    let mut result = OrderUnitMorph {
+        transform_unit: None,
+        add_ai_to_trained_unit: None,
+        show_finished_unit_notification: None,
+        switch_construction_image: None,
+        check_resources_for_building: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut exec_state = E::initial_state(ctx, binary);
+    let order_state = ctx.mem_access(
+        ctx.register(1),
+        E::struct_layouts().unit_order_state(),
+        MemAccessSize::Mem8,
+    );
+
+    // Order state 2
+    exec_state.write_memory(&order_state, ctx.constant(2));
+    let mut analysis = FuncAnalysis::custom_state(
+        binary,
+        ctx,
+        order_unit_morph,
+        exec_state.clone(),
+        Default::default(),
+    );
+    let mut analyzer = UnitMorphAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        state: UnitMorphState::TransformUnit,
+        jump_seen: false,
+        call_tracker: CallTracker::with_capacity(actx, 0, 16),
+    };
+    analysis.analyze(&mut analyzer);
+
+    // Order state 0
+    exec_state.write_memory(&order_state, ctx.constant(0));
+    let mut analysis = FuncAnalysis::custom_state(
+        binary,
+        ctx,
+        order_unit_morph,
+        exec_state,
+        Default::default(),
+    );
+    analyzer.state = UnitMorphState::CheckResourcesForBuilding;
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct UnitMorphAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OrderUnitMorph<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: UnitMorphState,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    jump_seen: bool,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum UnitMorphState {
+    /// On order state 2
+    /// transform_unit(this = this, this.build_queue_first)
+    TransformUnit,
+    /// add_ai_to_trained_unit(a1 = this, a2 = this)
+    AddAiToTrainedUnit,
+    /// a1 = this, right after add_ai_to_trained_unit, before any jumps
+    ShowFinishedUnitNotification,
+    /// Follow jump Mem32[units_dat_construction_image] != 0 path,
+    /// switch_to_construction_image(this = this, a1 = 1u8)
+    SwitchToConstructionImage,
+    /// On order state 0
+    /// a1 = this.player, a2 = this.build_queue_first, a3 = 1u8
+    CheckResourcesForBuilding,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    UnitMorphAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                let this = ctrl.resolve_register(1);
+                let this_resolved = ctx.register(1);
+                match self.state {
+                    UnitMorphState::TransformUnit => {
+                        if this == this_resolved {
+                            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                            let arg1 = self.call_tracker.resolve_simple(arg1);
+                            let ok = arg1.if_mem16_offset(E::struct_layouts().unit_build_queue())
+                                .is_some();
+                            if ok {
+                                self.result.transform_unit = Some(dest);
+                                self.state = UnitMorphState::AddAiToTrainedUnit;
+                                ctrl.clear_unchecked_branches();
+                                return;
+                            }
+                        }
+                        self.call_tracker.add_call_preserve_esp(ctrl, dest);
+                    }
+                    UnitMorphState::AddAiToTrainedUnit => {
+                        let ok = ctrl.resolve(self.arg_cache.on_call(0)) == this_resolved &&
+                            ctrl.resolve(self.arg_cache.on_call(1)) == this_resolved;
+                        if ok {
+                            self.result.add_ai_to_trained_unit = Some(dest);
+                            self.state = UnitMorphState::ShowFinishedUnitNotification;
+                            ctrl.clear_unchecked_branches();
+                        }
+                    }
+                    UnitMorphState::ShowFinishedUnitNotification => {
+                        let ok = ctrl.resolve(self.arg_cache.on_call(0)) == this_resolved;
+                        if ok {
+                            self.result.show_finished_unit_notification = Some(dest);
+                            self.state = UnitMorphState::SwitchToConstructionImage;
+                        }
+                    }
+                    UnitMorphState::SwitchToConstructionImage => {
+                        if self.jump_seen && this == this_resolved {
+                            let ok = ctrl.resolve(self.arg_cache.on_thiscall_call_u8(0)) ==
+                                ctx.const_1();
+                            if ok {
+                                self.result.switch_construction_image = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                    UnitMorphState::CheckResourcesForBuilding => {
+                        let ok = ctrl.resolve(self.arg_cache.on_call_u8(0))
+                            .if_mem8_offset(E::struct_layouts().unit_player()) ==
+                                Some(this_resolved) && {
+                            let arg1 = ctrl.resolve(self.arg_cache.on_call(1));
+                            let arg1 = self.call_tracker.resolve_simple(arg1);
+                            arg1.if_mem16_offset(E::struct_layouts().unit_build_queue()).is_some()
+                        } && ctrl.resolve(self.arg_cache.on_call_u8(2)) == ctx.const_1();
+                        if ok {
+                            self.result.check_resources_for_building = Some(dest);
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        if this == this_resolved {
+                            self.call_tracker.add_call_preserve_esp(ctrl, dest);
+                        }
+                    }
+                }
+            }
+        } else if let Operation::Jump { condition, to } = *op {
+            match self.state {
+                UnitMorphState::ShowFinishedUnitNotification => {
+                    ctrl.end_analysis();
+                    return;
+                }
+                UnitMorphState::SwitchToConstructionImage => {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((other, eq)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                        if other.if_mem32().is_some() {
+                            ctrl.continue_at_neq_address(eq, to);
+                            self.jump_seen = true;
+                        }
+                    }
+                }
+                _ => (),
             }
         }
     }

@@ -472,6 +472,12 @@ results! {
         // or pointer to -1 to make caller skip the tile.
         GetAtlasPageCoordsForTerrainTile => get_atlas_page_coords_for_terrain_tile =>
             cache_draw_terrain,
+        // a1 = unit
+        ShowFinishedUnitNotification => show_finished_unit_notification => cache_unit_morph,
+        // this = unit, a1 bool use_construction_image (If false switches back to default image)
+        SwitchConstructionImage => switch_construction_image => cache_unit_morph,
+        // a1 = player, a2 unit_id, a3 show_error
+        CheckResourcesForBuilding => check_resources_for_building => cache_unit_morph,
     }
 }
 
@@ -873,6 +879,11 @@ impl<'e, E: ExecutionState<'e>> ArgCache<'e, E> {
         }
     }
 
+    pub fn on_call_u8(&self, index: u8) -> Operand<'e> {
+        let val = self.on_call(index);
+        self.ctx.and_const(val, 0xff)
+    }
+
     pub fn on_call_f32(&self, index: u8) -> Operand<'e> {
         if E::VirtualAddress::SIZE == 8 {
             if index < 4 {
@@ -894,6 +905,11 @@ impl<'e, E: ExecutionState<'e>> ArgCache<'e, E> {
         } else {
             self.on_call(index + 1)
         }
+    }
+
+    pub fn on_thiscall_call_u8(&self, index: u8) -> Operand<'e> {
+        let val = self.on_thiscall_call(index);
+        self.ctx.and_const(val, 0xff)
     }
 
     /// Returns operand corresponding to location of argument *on function entry*.
@@ -4182,6 +4198,14 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             });
     }
 
+    #[cfg(feature = "test_assertions")]
+    fn transform_unit(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::TransformUnit,
+            |s| s.cache_order_zerg_build_self(actx),
+        )
+    }
+
     fn cache_order_nuke_launch(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(
@@ -4657,6 +4681,26 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let is_paused = s.is_paused(actx)?;
                 let r = renderer::analyze_draw_terrain(actx, draw_terrain, is_paused);
                 Some(([r.get_atlas_page_coords_for_terrain_tile], []))
+            })
+    }
+
+    fn cache_unit_morph(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[ShowFinishedUnitNotification, SwitchConstructionImage, CheckResourcesForBuilding],
+            &[],
+            |s| {
+                let order = s.order_function(0x2a, actx)?;
+                let r = units::analyze_order_unit_morph(actx, order);
+                #[cfg(feature = "test_assertions")]
+                {
+                    let transform_unit = s.transform_unit(actx);
+                    assert_eq!(r.transform_unit, transform_unit);
+                    let add_ai_to_trained_unit = s.add_ai_to_trained_unit(actx);
+                    assert_eq!(r.add_ai_to_trained_unit, add_ai_to_trained_unit);
+                }
+                Some(([r.show_finished_unit_notification, r.switch_construction_image,
+                    r.check_resources_for_building], []))
             })
     }
 }

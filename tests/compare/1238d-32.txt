@@ -31,6 +31,7 @@ change_ai_region_state: 00b6a960
 check_dat_requirements: 007bb060
 check_fow_order_targeting: 0087fd70
 check_order_targeting: 0087fe20
+check_resources_for_building: 007ec620
 check_tech_targeting: 00873b50
 check_unit_requirements: 007ba9f0
 check_weapon_targeting_flags: 0088d060
@@ -189,6 +190,7 @@ sfile_close_archive: 00ad72f0
 sfile_close_file: 00ad74f0
 sfile_open_file_ex: 00ad8930
 sfile_read_file_ex: 00ad8d00
+show_finished_unit_notification: 0092a6e0
 show_mission_glue: 00765d50
 show_shield_overlay: 00843810
 show_shield_overlay_for_direction: 0089bcf0
@@ -229,6 +231,7 @@ step_unit_movement: 0087e050
 stop_creep_disappearing_at_building: 007cca40
 stop_moving: 0087c780
 stop_targeting: 007cf190
+switch_construction_image: 0089c0e0
 targeting_lclick: 00758c30
 targeting_rclick: 007aab50
 transform_unit: 00858a40

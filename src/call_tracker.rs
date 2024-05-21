@@ -121,20 +121,20 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
     ) -> Operand<'e> {
         self.ctx.transform(val, 8, |op| {
             if let Some(idx) = op.if_custom() {
-                let ctx = self.ctx;
-                let binary = self.binary;
-                if let Some((addr, constraint, result)) = idx.checked_sub(self.first_custom)
-                    .and_then(|x| self.id_to_func.get_mut(x as usize))
-                {
-                    *result.get_or_insert_with(|| {
-                        analyze_func_return_c::<E>(*addr, ctx, binary, *constraint, limit)
-                    })
-                } else {
-                    None
-                }
+                self.resolve_custom(idx, limit)
             } else {
                 None
             }
+        })
+    }
+
+    fn resolve_custom(&mut self, custom_id: u32, limit: u32) -> Option<Operand<'e>> {
+        let ctx = self.ctx;
+        let binary = self.binary;
+        let index = custom_id.checked_sub(self.first_custom)? as usize;
+        let &mut (addr, constraint, ref mut result) = self.id_to_func.get_mut(index)?;
+        *result.get_or_insert_with(|| {
+            analyze_func_return_c::<E>(addr, ctx, binary, constraint, limit)
         })
     }
 
@@ -146,6 +146,23 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
     /// call and resolve on that (After fixing stack to consider offset from call instruction).
     pub fn resolve_calls(&mut self, val: Operand<'e>) -> Operand<'e> {
         self.resolve_calls_with_branch_limit(val, u32::MAX)
+    }
+
+    /// If `val` is `Custom(x)` or `Custom(x) & mask`, resolves val (Discarding mask if any),
+    /// otherwise just returns `val`.
+    ///
+    /// Can be used as a faster alternative to resolve_calls that doesn't have to walk through
+    /// operand tree, when it is known that the value may be just a return value of a function.
+    ///
+    /// Also limits branch limit of inner function to be very low.
+    pub fn resolve_simple(&mut self, val: Operand<'e>) -> Operand<'e> {
+        let inner = Operand::and_masked(val).0;
+        if let Some(idx) = inner.if_custom() {
+            if let Some(result) = self.resolve_custom(idx, 4) {
+                return result;
+            }
+        }
+        val
     }
 
     pub fn custom_id_to_func(&self, val: u32) -> Option<E::VirtualAddress> {
