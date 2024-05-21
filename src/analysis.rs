@@ -271,7 +271,13 @@ results! {
         UnitBuffedAcceleration => unit_buffed_acceleration => cache_unit_speed,
         UnitBuffedTurnSpeed => unit_buffed_turn_speed => cache_unit_speed,
         StartUdpServer => start_udp_server,
+        // this = Anim *, a1 use_file_type, a2 file_type, a3 flags
+        // this = Anim *, a2 file_type_u64, a3 flags on 64bit
         OpenAnimSingleFile => open_anim_single_file => cache_image_loading,
+        // this = Anim *, a1 first_image_id, a2 image_count (0x3e7), a3_4 file_type, a5 flags,
+        //      a6 u8 *out?
+        // this = Anim *, a2 first_image_id, a3 image_count (0x3e7), a4 file_type_u64, a5 flags,
+        //      a6 u8 *out?
         OpenAnimMultiFile => open_anim_multi_file => cache_image_loading,
         InitSkins => init_skins => cache_image_loading,
         AddAssetChangeCallback => add_asset_change_callback => cache_image_loading,

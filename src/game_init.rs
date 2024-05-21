@@ -2851,8 +2851,16 @@ fn check_actual_open_anim_multi_file<'e, E: ExecutionState<'e>>(
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     let ctx = ctrl.ctx();
                     if ctx.register(1) == ctrl.resolve_register(1) {
-                        if (0..5).all(|i| {
-                            self.arg_cache.on_entry(i) == ctrl.resolve(self.arg_cache.on_call(i))
+                        // one arg is split to 2 slots on 32bit, 1 on 64bit
+                        let argc = match E::VirtualAddress::SIZE == 4 {
+                            true => 5,
+                            false => 4,
+                        };
+                        if (0..argc).all(|i| {
+                            let on_entry = self.arg_cache.on_thiscall_entry(i);
+                            let arg = ctrl.resolve(self.arg_cache.on_thiscall_call(i));
+                            on_entry == arg || ctx.and_const(on_entry, 0xffff_ffff) ==
+                                ctx.and_const(arg, 0xffff_ffff)
                         }) {
                             self.result = Some(dest);
                         }
