@@ -484,6 +484,9 @@ results! {
         SwitchConstructionImage => switch_construction_image => cache_unit_morph,
         // a1 = player, a2 unit_id, a3 show_error
         CheckResourcesForBuilding => check_resources_for_building => cache_unit_morph,
+        // this = player_unit_skins, a1 player, a2 unit_id, a3 image_id
+        // Return null when using default anim
+        GetUnitSkin => get_unit_skin => cache_draw_image,
     }
 }
 
@@ -533,7 +536,7 @@ results! {
         OriginalChkPlayerTypes => original_chk_player_types,
         AiTransportReachabilityCachedRegion => ai_transport_reachability_cached_region,
         // u16 array [0xe4 * 0xc]
-        PlayerUnitSkins => player_unit_skins,
+        PlayerUnitSkins => player_unit_skins => cache_draw_image,
         ReplayData => replay_data,
         VertexBuffer => vertex_buffer,
         RngSeed => rng_seed => cache_rng,
@@ -1452,10 +1455,6 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
 
     pub fn ai_transport_reachability_cached_region(&mut self) -> Option<Operand<'e>> {
         self.enter(AnalysisCache::ai_transport_reachability_cached_region)
-    }
-
-    pub fn player_unit_skins(&mut self) -> Option<Operand<'e>> {
-        self.enter(AnalysisCache::player_unit_skins)
     }
 
     /// A patch to show resource fog sprites on minimap in replays even if they're
@@ -3370,9 +3369,12 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn player_unit_skins(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.cache_single_operand(OperandAnalysis::PlayerUnitSkins, |s| {
-            renderer::player_unit_skins(actx, s.draw_image(actx)?)
+    fn cache_draw_image(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[GetUnitSkin], &[PlayerUnitSkins], |s| {
+            let result = renderer::analyze_draw_image(actx, s.draw_image(actx)?);
+            Some(([result.get_unit_skin], [result.player_unit_skins]))
         })
     }
 

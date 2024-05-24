@@ -261,27 +261,31 @@ fn is_vertex_shader_name<'e, Va: VirtualAddress>(
     false
 }
 
-pub(crate) fn player_unit_skins<'e, E: ExecutionState<'e>>(
+pub(crate) fn analyze_draw_image<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     draw_image: E::VirtualAddress,
-) -> Option<Operand<'e>> {
+) -> DrawImage<'e, E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     let arg_cache = &analysis.arg_cache;
     // Search for a child function of draw_image
-    // thiscall f(player_unit_skins, player, unit_id, image_id)
+    // thiscall get_unit_skin(player_unit_skins, player, unit_id, image_id)
+    let mut result = DrawImage {
+        player_unit_skins: None,
+        get_unit_skin: None,
+    };
     let mut analyzer = PlayerUnitSkins::<E> {
         arg_cache,
-        result: None,
+        result: &mut result,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, draw_image);
     analysis.analyze(&mut analyzer);
-    analyzer.result
+    result
 }
 
 struct PlayerUnitSkins<'a, 'e, E: ExecutionState<'e>> {
     arg_cache: &'a ArgCache<'e, E>,
-    result: Option<Operand<'e>>,
+    result: &'a mut DrawImage<'e, E::VirtualAddress>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 'e, E> {
@@ -289,7 +293,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
-            Operation::Call(_) => {
+            Operation::Call(dest) => {
                 let ctx = ctrl.ctx();
                 let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                 let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
@@ -300,7 +304,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 
                 if ok {
                     let ecx = ctrl.resolve_register(1);
                     if ecx.if_constant().is_some() || ctrl.if_mem_word(ecx).is_some() {
-                        if single_result_assign(Some(ecx), &mut self.result) {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            single_result_assign(Some(dest), &mut self.result.get_unit_skin);
+                        }
+                        if single_result_assign(Some(ecx), &mut self.result.player_unit_skins) {
                             ctrl.end_analysis();
                         }
                     }
@@ -530,6 +537,11 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDrawGameLayer<'e, E>
             _ => (),
         }
     }
+}
+
+pub(crate) struct DrawImage<'e, Va: VirtualAddress> {
+    pub get_unit_skin: Option<Va>,
+    pub player_unit_skins: Option<Operand<'e>>,
 }
 
 pub(crate) struct DrawGameLayer<'e, E: ExecutionState<'e>> {

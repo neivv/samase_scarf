@@ -1617,7 +1617,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 GetMouseX | GetMouseY | NetFormatTurnRate | ReadWholeMpqFile |
                 ReadWholeMpqFile2 | StepBulletFrame | FlingyUpdateTargetDir |
                 LookupSoundId | SFileOpenFileEx | SFileReadFileEx | SFileCloseFile |
-                LoadConsoles | InitConsoles | GetUiConsoles | GetStatResIconsDdsGrp => continue,
+                LoadConsoles | InitConsoles | GetUiConsoles | GetStatResIconsDdsGrp |
+                GetUnitSkin => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -2145,6 +2146,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
 
     // Became a thing since 1.23.0 (carbot)
     let skins = analysis.player_unit_skins();
+    let get_unit_skin = analysis.get_unit_skin();
     let tileset_data = analysis.tileset_data();
     // Technically existed but wasn't similar before carbot
     let init_skins = analysis.init_skins();
@@ -2158,6 +2160,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     if minor_version >= 23 {
         check_global_struct_opt(skins, binary, "player_unit_skins");
         assert!(init_skins.is_some());
+        assert!(get_unit_skin.is_some());
         check_global_struct_opt(tileset_data, binary, "tileset_data");
         check_global_opt(tileset_cv5, binary, "tileset_cv5");
         check_global_opt(tileset_vx4ex, binary, "tileset_vx4ex");
@@ -2168,6 +2171,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     } else {
         assert!(skins.is_none());
         assert!(init_skins.is_none());
+        assert!(get_unit_skin.is_none());
         assert!(tileset_data.is_none());
         assert!(tileset_cv5.is_none());
         assert!(tileset_vx4ex.is_none());
