@@ -3396,13 +3396,13 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnaly
                         self.result.anti_troll = anti_troll;
                     }
                     // Check for game.frame_count >= replay_seek_frame
-                    // (x >= y should be (x > y) | (x == y)
-                    let replay_seek_frame = condition.if_arithmetic_or()
-                        .and_either(|x| x.if_arithmetic_eq())
-                        .map(|x| x.0)
-                        .and_either_other(|x| {
+                    // (x >= y) should be (y > x) == 0
+                    let replay_seek_frame = condition.if_arithmetic_eq_const(0)
+                        .and_then(|x| {
+                            let (y, x) = x.if_arithmetic_gt()?;
                             x.if_mem32_offset(0x14c)
-                                .filter(|&x| x == self.game)
+                                .filter(|&x| x == self.game)?;
+                            Some(y)
                         });
                     if let Some(replay_seek_frame) = replay_seek_frame {
                         self.result.step_game_logic = self.current_entry;

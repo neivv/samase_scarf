@@ -309,7 +309,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
             val.if_memory()?
                 .if_add_either_other(ctx, |x| {
                     x.if_arithmetic_mul_const(Va::SIZE.into())
-                        .filter(|idx| idx.is_undefined() || idx.if_custom().is_some())
+                        .filter(|&idx| {
+                            idx.is_undefined() || Operand::and_masked(idx).0.if_custom().is_some()
+                        })
                 })
         }
 
