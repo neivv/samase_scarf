@@ -590,6 +590,7 @@ results! {
         BaseAnimSet => base_anim_set => cache_image_loading,
         ImageGrps => image_grps => cache_image_loading,
         ImageOverlays => image_overlays => cache_image_loading,
+        ShieldOverlays => shield_overlays => cache_image_loading,
         FireOverlayMax => fire_overlay_max => cache_image_loading,
         AssetScale => asset_scale => cache_images_loaded,
         ImagesLoaded => images_loaded => cache_images_loaded,
@@ -3666,7 +3667,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             OpenAnimSingleFile, OpenAnimMultiFile, InitSkins,
             AddAssetChangeCallback, AnimAssetChangeCb,
         ], &[
-            BaseAnimSet, ImageGrps, ImageOverlays, FireOverlayMax,
+            BaseAnimSet, ImageGrps, ImageOverlays, ShieldOverlays, FireOverlayMax,
         ], |s| {
             let load_images = s.load_images(actx)?;
             let load_dat = s.load_dat(actx)?;
@@ -3683,7 +3684,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 result.add_asset_change_cb, result.anim_asset_change_cb,
             ], [
                 result.base_anim_set, result.image_grps,
-                result.image_overlays, result.fire_overlay_max,
+                result.image_overlays, result.shield_overlays, result.fire_overlay_max,
             ]))
         })
     }

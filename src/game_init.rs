@@ -81,6 +81,7 @@ pub(crate) struct LoadImagesAnalysis<'e, Va: VirtualAddress> {
     pub base_anim_set: Option<Operand<'e>>,
     pub image_grps: Option<Operand<'e>>,
     pub image_overlays: Option<Operand<'e>>,
+    pub shield_overlays: Option<Operand<'e>>,
     pub fire_overlay_max: Option<Operand<'e>>,
     pub anim_struct_size: u16,
 }
@@ -2330,6 +2331,7 @@ pub(crate) fn analyze_load_images<'e, E: ExecutionState<'e>>(
         base_anim_set: None,
         image_grps: None,
         image_overlays: None,
+        shield_overlays: None,
         fire_overlay_max: None,
         anim_struct_size: 0,
     };
@@ -2339,7 +2341,10 @@ pub(crate) fn analyze_load_images<'e, E: ExecutionState<'e>>(
         Ok(o) => ctx.constant(o.as_u64()),
         Err(_) => return result,
     };
-    // This isn't actually attack overlay, but can't bother to figure out which this is.
+    let images_dat_shield_overlay = match binary.read_address(images_dat.0 + images_dat.1 * 0x8) {
+        Ok(o) => ctx.constant(o.as_u64()),
+        Err(_) => return result,
+    };
     let images_dat_attack_overlay = match binary.read_address(images_dat.0 + images_dat.1 * 0x9) {
         Ok(o) => ctx.constant(o.as_u64()),
         Err(_) => return result,
@@ -2355,6 +2360,7 @@ pub(crate) fn analyze_load_images<'e, E: ExecutionState<'e>>(
         custom_to_func_addr: bumpvec_with_capacity(32, &actx.bump),
         images_dat_grp,
         images_dat_attack_overlay,
+        images_dat_shield_overlay,
         rdata: actx.binary_sections.rdata,
         text: actx.binary_sections.text,
         min_state: LoadImagesAnalysisState::BeforeLoadDat,
@@ -2377,6 +2383,7 @@ struct LoadImagesAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     checking_init_skins: bool,
     images_dat_grp: Operand<'e>,
     images_dat_attack_overlay: Operand<'e>,
+    images_dat_shield_overlay: Operand<'e>,
     func_addr_to_return_custom: FxHashMap<E::VirtualAddress, u32>,
     // Operand is this arg, set when open_anim_single_file candidate
     custom_to_func_addr: BumpVec<'acx, (E::VirtualAddress, Option<Operand<'e>>)>,
@@ -2496,30 +2503,48 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             {
                 // load_grps(image_grps, images_dat_grp, &mut out, 999)
                 // load_lo_set(&image_overlays[0], images_dat_attack_overlay, &mut out, 999)
+                // load_lo_set(&shield_overlays, images_dat_shield_overlay, &mut out, 999)
                 if let Operation::Call(_) = *op {
                     let is_find_grps = state == LoadImagesAnalysisState::FindImageGrps;
-                    let dat_arr = match is_find_grps {
-                        true => self.images_dat_grp,
-                        false => self.images_dat_attack_overlay,
-                    };
-                    let result = Some(())
-                        .and_then(|_| ctrl.resolve(self.arg_cache.on_call(3)).if_constant())
-                        .filter(|&c| c == 999)
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
-                        .filter(|&x| x == dat_arr)
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(0)));
-                    if let Some(result) = result {
+                    let arg_cache = self.arg_cache;
+                    let out = &mut self.result;
+                    let result = Some(()).and_then(|()| {
+                        ctrl.resolve(arg_cache.on_call(3))
+                            .if_constant().filter(|&c| c == 999)?;
+                        let arg2 = ctrl.resolve(arg_cache.on_call(1));
+                        let out = if is_find_grps {
+                            if arg2 == self.images_dat_grp {
+                                &mut out.image_grps
+                            } else {
+                                return None;
+                            }
+                        } else {
+                            if arg2 == self.images_dat_attack_overlay {
+                                &mut out.image_overlays
+                            } else if arg2 == self.images_dat_shield_overlay {
+                                &mut out.shield_overlays
+                            } else {
+                                return None;
+                            }
+                        };
+                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        Some((out, arg1))
+                    });
+                    if let Some((out_var, result)) = result {
+                        single_result_assign(Some(result), out_var);
                         if is_find_grps {
-                            self.result.image_grps = Some(result);
                             ctrl.user_state().set(LoadImagesAnalysisState::FindImageOverlays);
                             self.min_state = LoadImagesAnalysisState::FindImageOverlays;
                         } else {
-                            self.result.image_overlays = Some(result);
-                            ctrl.user_state().set(LoadImagesAnalysisState::FindFireOverlayMax);
-                            self.min_state = LoadImagesAnalysisState::FindFireOverlayMax;
-                            if self.inline_depth != 0 {
-                                // Go back to outer load_images
-                                ctrl.end_analysis();
+                            if out.image_overlays.is_some() &&
+                                out.shield_overlays.is_some()
+                            {
+                                ctrl.user_state().set(LoadImagesAnalysisState::FindFireOverlayMax);
+                                self.min_state = LoadImagesAnalysisState::FindFireOverlayMax;
+                                if self.inline_depth != 0 {
+                                    // Go back to outer load_images
+                                    ctrl.end_analysis();
+                                }
                             }
                         }
                     }
