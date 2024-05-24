@@ -21,7 +21,7 @@ use crate::add_terms::collect_arith_add_terms;
 use crate::call_tracker::{self, CallTracker};
 use crate::switch::CompleteSwitch;
 use crate::util::{
-    ControlExt, OperandExt, OptionExt, MemAccessExt, is_global, is_stack_address,
+    ControlExt, ExecStateExt, OperandExt, OptionExt, MemAccessExt, is_global, is_stack_address,
     bumpvec_with_capacity, single_result_assign,
 };
 use crate::vtables::Vtables;
@@ -986,26 +986,18 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     };
 
                     if let Some((dest, addr)) = dest_from {
-                        let index_base = dest.if_add_either(ctx, |x| x.if_arithmetic_mul());
+                        let index_base = dest.if_add_either(ctx, |x| x.if_mul_with_const());
                         if let Some((index, base)) = index_base {
-                            if let Some(size) = index.1.if_constant() {
-                                if let Some(storm_id) = result.local_storm_player_id {
-                                    if index.0.unwrap_sext() == storm_id {
-                                        let addr = ctx.mem_sub_const_op(&addr, 0x14);
-                                        if size > 16 {
-                                            single_result_assign(
-                                                Some(addr),
-                                                &mut result.skins,
-                                            );
-                                            single_result_assign(
-                                                Some(base),
-                                                &mut result.player_skins,
-                                            );
-                                            result.skins_size = size as u32;
-                                            if !crate::test_assertions() {
-                                                ctrl.end_analysis();
-                                            }
-                                        }
+                            let size = index.1;
+                            if Some(index.0.unwrap_sext()) == result.local_storm_player_id {
+                                let offset = E::struct_layouts().local_skin_unit_skins();
+                                let addr = ctx.mem_sub_const_op(&addr, offset);
+                                if size > 16 {
+                                    single_result_assign(Some(addr), &mut result.skins);
+                                    single_result_assign(Some(base), &mut result.player_skins);
+                                    result.skins_size = size as u32;
+                                    if !crate::test_assertions() {
+                                        ctrl.end_analysis();
                                     }
                                 }
                             }

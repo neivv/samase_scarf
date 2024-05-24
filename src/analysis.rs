@@ -532,6 +532,7 @@ results! {
         ChkInitPlayers => chk_init_players,
         OriginalChkPlayerTypes => original_chk_player_types,
         AiTransportReachabilityCachedRegion => ai_transport_reachability_cached_region,
+        // u16 array [0xe4 * 0xc]
         PlayerUnitSkins => player_unit_skins,
         ReplayData => replay_data,
         VertexBuffer => vertex_buffer,
@@ -580,7 +581,10 @@ results! {
         NetPlayerToGame => net_player_to_game => cache_single_player_start,
         NetPlayerToUnique => net_player_to_unique => cache_single_player_start,
         GameData => game_data => cache_single_player_start,
+        // Local skins? Has some linked list etc and then u16 array of 0xab first units
         Skins => skins => cache_single_player_start,
+        // u16 array [0xab * 0x10] Only first 0xab units are included, so player_unit_skins
+        // is usually used instead.
         PlayerSkins => player_skins => cache_single_player_start,
         IsPaused => is_paused => cache_misc_clientside,
         IsPlacingBuilding => is_placing_building => cache_misc_clientside,

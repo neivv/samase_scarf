@@ -400,6 +400,10 @@ impl StructLayouts {
     pub const fn foliage_tile_data(self) -> u64 {
         self.pair(0xdc, 0x170)
     }
+
+    pub const fn local_skin_unit_skins(self) -> u64 {
+        self.pair(0x14, 0x28)
+    }
 }
 
 pub fn button_set_index_to_action<Va: VirtualAddress>(
