@@ -206,7 +206,8 @@ results! {
         // (Should be Win32 HeapAlloc with a specific heap)
         TtfMalloc => ttf_malloc,
         DrawGraphicLayers => draw_graphic_layers,
-        AiAttackPrepare => ai_attack_prepare,
+        AiAttackPrepare => ai_attack_prepare => cache_aiscript_switch,
+        AiAttackClear => ai_attack_clear => cache_aiscript_switch,
         JoinGame => join_game,
         SnetInitializeProvider => snet_initialize_provider,
         CheckDatRequirements => check_dat_requirements,
@@ -898,6 +899,11 @@ impl<'e, E: ExecutionState<'e>> ArgCache<'e, E> {
         self.ctx.and_const(val, 0xff)
     }
 
+    pub fn on_call_u32(&self, index: u8) -> Operand<'e> {
+        let val = self.on_call(index);
+        self.ctx.and_const(val, 0xffff_ffff)
+    }
+
     pub fn on_call_f32(&self, index: u8) -> Operand<'e> {
         if E::VirtualAddress::SIZE == 8 {
             if index < 4 {
@@ -1350,10 +1356,6 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
 
     pub fn prism_pixel_shaders(&mut self) -> Rc<Vec<E::VirtualAddress>> {
         self.enter(AnalysisCache::prism_pixel_shaders)
-    }
-
-    pub fn ai_attack_prepare(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(AnalysisCache::ai_attack_prepare)
     }
 
     pub fn join_game(&mut self) -> Option<E::VirtualAddress> {
@@ -2992,11 +2994,16 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.prism_shaders(actx).pixel_shaders
     }
 
-    fn ai_attack_prepare(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.cache_single_address(AddressAnalysis::AiAttackPrepare, |s| {
-            let aiscript_switch = s.aiscript_switch_table(actx)?;
-            ai::attack_prepare(actx, aiscript_switch)
-        })
+    fn cache_aiscript_switch(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[AiAttackPrepare, AiAttackClear], &[],
+            |s| {
+                let aiscript_switch = s.aiscript_switch_table(actx)?;
+                let r = ai::aiscript_switch_analysis(actx, aiscript_switch);
+                Some(([r.ai_attack_prepare, r.ai_attack_clear], []))
+            },
+        )
     }
 
     fn cache_ai_step_frame(&mut self, actx: &AnalysisCtx<'e, E>) {

@@ -684,28 +684,63 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlayerAiAnalyzer<'e, 
     }
 }
 
-pub(crate) fn attack_prepare<'e, E: ExecutionState<'e>>(
+#[derive(Copy, Clone)]
+pub(crate) struct AiscriptSwitchAnalysis<Va: VirtualAddressTrait> {
+    pub ai_attack_prepare: Option<Va>,
+    pub ai_attack_clear: Option<Va>,
+}
+
+pub(crate) fn aiscript_switch_analysis<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     aiscript_switch_table: E::VirtualAddress,
-) -> Option<E::VirtualAddress> {
+) -> AiscriptSwitchAnalysis<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let attack_prepare = crate::switch::simple_switch_branch(binary, aiscript_switch_table, 0xd)?;
+    let mut result = AiscriptSwitchAnalysis {
+        ai_attack_prepare: None,
+        ai_attack_clear: None,
+    };
 
     let arg_cache = &analysis.arg_cache;
-    let mut analysis = FuncAnalysis::new(binary, ctx, attack_prepare);
     let mut analyzer = AttackPrepareAnalyzer {
-        result: None,
+        result: &mut result,
         arg_cache,
+        state: AiscriptSwitchState::AttackPrepare,
     };
+
+    let attack_prepare =
+        match crate::switch::simple_switch_branch(binary, aiscript_switch_table, 0xd)
+    {
+        Some(s) => s,
+        None => return result,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, attack_prepare);
     analysis.analyze(&mut analyzer);
-    analyzer.result
+
+    analyzer.state = AiscriptSwitchState::AttackClear;
+    let attack_clear = match
+        crate::switch::simple_switch_branch(binary, aiscript_switch_table, 0xb)
+    {
+        Some(s) => s,
+        None => return result,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, attack_clear);
+    analysis.analyze(&mut analyzer);
+
+    result
 }
 
 struct AttackPrepareAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    result: Option<E::VirtualAddress>,
+    result: &'a mut AiscriptSwitchAnalysis<E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
+    state: AiscriptSwitchState,
+}
+
+#[derive(Eq, PartialEq)]
+enum AiscriptSwitchState {
+    AttackPrepare,
+    AttackClear,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnalyzer<'a, 'e, E> {
@@ -716,23 +751,33 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnal
             Operation::Call(dest) => {
                 let ctx = ctrl.ctx();
                 let player_off = E::struct_layouts().ai_script_player();
-                let pos_off = E::struct_layouts().ai_script_center();
-                let ok = Some(())
-                    .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
-                    .and_then(|x| x.if_mem32_offset(player_off))
-                    .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
-                    .and_then(|x| x.if_mem32_offset(pos_off))
-                    .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
-                    .and_then(|x| x.if_mem32_offset(pos_off + 4))
-                    .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
-                    .filter(|&x| ctx.and_const(x, 0xffff_ffff) == ctx.const_1())
-                    .map(|_| ctrl.resolve(self.arg_cache.on_call(4)))
-                    .filter(|&x| ctx.and_const(x, 0xffff_ffff) == ctx.const_0())
-                    .is_some();
-                if ok {
-                    self.result = ctrl.resolve(dest)
-                        .if_constant()
-                        .map(|x| E::VirtualAddress::from_u64(x));
+                if self.state == AiscriptSwitchState::AttackPrepare {
+                    let pos_off = E::struct_layouts().ai_script_center();
+                    let ok = Some(())
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                        .and_then(|x| x.if_mem32_offset(player_off))
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                        .and_then(|x| x.if_mem32_offset(pos_off))
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
+                        .and_then(|x| x.if_mem32_offset(pos_off + 4))
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call_u32(3)))
+                        .filter(|&x| x == ctx.const_1())
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call_u32(4)))
+                        .filter(|&x| x == ctx.const_0())
+                        .is_some();
+                    if ok {
+                        self.result.ai_attack_prepare = ctrl.resolve_va(dest);
+                    }
+                } else {
+                    let ok = Some(())
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                        .and_then(|x| x.if_mem32_offset(player_off))
+                        .map(|_| ctrl.resolve(self.arg_cache.on_call_u32(1)))
+                        .filter(|&x| x == ctx.const_1())
+                        .is_some();
+                    if ok {
+                        self.result.ai_attack_clear = ctrl.resolve_va(dest);
+                    }
                 }
                 ctrl.end_analysis();
             }
