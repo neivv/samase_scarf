@@ -488,6 +488,12 @@ results! {
         // this = player_unit_skins, a1 player, a2 unit_id, a3 image_id
         // Return null when using default anim
         GetUnitSkin => get_unit_skin => cache_draw_image,
+        AiRegionUpdateStrength => ai_region_update_strength => cache_ai_step_region,
+        // a1 region; If there are enemies at region, set them as target for the region units
+        AiRegionUpdateTarget => ai_region_update_target => cache_ai_step_region,
+        AiRegionAbandonIfOverwhelmed => ai_region_abandon_if_overwhelmed => cache_ai_step_region,
+        // a1 region; Pick target for attack force; can be far away
+        AiRegionPickAttackTarget => ai_region_pick_attack_target => cache_ai_step_region,
     }
 }
 
@@ -3029,6 +3035,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         )
     }
 
+    pub fn ai_step_region(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::AiStepRegion, |s| s.cache_ai_step_frame(actx))
+    }
+
     pub fn ai_spend_money(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::AiSpendMoney, |s| s.cache_ai_step_frame(actx))
     }
@@ -4722,6 +4732,26 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some(([r.show_finished_unit_notification, r.switch_construction_image,
                     r.check_resources_for_building], []))
             })
+    }
+
+    fn cache_ai_step_region(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[AiRegionUpdateStrength, AiRegionUpdateTarget, AiRegionAbandonIfOverwhelmed,
+                AiRegionPickAttackTarget],
+            &[],
+            |s| {
+                let ai_step_region = s.ai_step_region(actx)?;
+                let r = ai::analyze_ai_step_region(actx, ai_step_region);
+                #[cfg(feature = "test_assertions")]
+                {
+                    let change_ai_region_state = s.change_ai_region_state(actx);
+                    assert_eq!(r.change_ai_region_state, change_ai_region_state);
+                }
+                Some(([r.ai_region_update_strength, r.ai_region_update_target,
+                    r.ai_region_abandon_if_overwhelmed, r.ai_region_pick_attack_target], []))
+            },
+        )
     }
 }
 

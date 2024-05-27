@@ -184,6 +184,11 @@ pub trait OperandExt<'e> {
     fn if_arithmetic_eq_neq(self) -> Option<(Operand<'e>, Operand<'e>, bool)>;
     /// bool true => eq, bool false => not eq
     fn if_arithmetic_eq_neq_zero(self, ctx: OperandCtx<'e>) -> Option<(Operand<'e>, bool)>;
+    /// Matches x & mask => (x, true)
+    ///     (x & mask) == 0 => (x, false)
+    /// "eq" in this case "jump if zero" / "bit clear"
+    /// Which may be confusing?
+    fn if_and_mask_eq_neq(self, mask: u64) -> Option<(Operand<'e>, bool)>;
 }
 
 impl<'e> OperandExt<'e> for Operand<'e> {
@@ -346,6 +351,19 @@ impl<'e> OperandExt<'e> for Operand<'e> {
             }
         }
         Some((l, true))
+    }
+
+    fn if_and_mask_eq_neq(self, mask: u64) -> Option<(Operand<'e>, bool)> {
+        let eq;
+        let val;
+        if let Some(a) = self.if_arithmetic_eq_const(0) {
+            eq = true;
+            val = a;
+        } else {
+            eq = false;
+            val = self;
+        }
+        Some((val.if_arithmetic_and_const(mask)?, eq))
     }
 }
 

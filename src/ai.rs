@@ -12,6 +12,7 @@ use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::analysis_state::{self, AnalysisState, AiTownState, GiveAiState, TrainMilitaryState};
+use crate::call_tracker::{CallTracker};
 use crate::hash_map::HashSet;
 use crate::switch::CompleteSwitch;
 use crate::util::{
@@ -2095,6 +2096,212 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AddBuildingAiAnal
                     ctrl.end_analysis();
                 }
             }
+        }
+    }
+}
+
+pub(crate) struct AiStepRegion<Va: VirtualAddressTrait> {
+    pub ai_region_update_strength: Option<Va>,
+    pub ai_region_update_target: Option<Va>,
+    pub ai_region_abandon_if_overwhelmed: Option<Va>,
+    pub ai_region_pick_attack_target: Option<Va>,
+    pub change_ai_region_state: Option<Va>,
+}
+
+pub(crate) fn analyze_ai_step_region<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    ai_step_region: E::VirtualAddress,
+) -> AiStepRegion<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut result = AiStepRegion {
+        ai_region_update_strength: None,
+        ai_region_update_target: None,
+        ai_region_abandon_if_overwhelmed: None,
+        ai_region_pick_attack_target: None,
+        change_ai_region_state: None,
+    };
+
+    let arg_cache = &actx.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, ai_step_region);
+    let mut analyzer = StepRegionInnerAnalyzer {
+        result: &mut result,
+        arg_cache,
+        region_operand: ctx.const_0(),
+        inline_depth: 0,
+        state: StepAiRegionState::FindSwitch,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum StepAiRegionState {
+    /// Switch on [ai_regions[a1] + a2].state
+    FindSwitch,
+    /// On switch state 8 (Attack grouping), find function that writes to region.local_strength = 0
+    /// before any calls or jumps.
+    /// Size may be up to u64 since it also zeroes later strength values
+    /// May have to inline once to state_attack_grouping.
+    UpdateStrength,
+    /// Next call with a1 = region after UpdateStrength
+    UpdateTarget,
+    /// Find jump on region.flags & 0x20, follow nonzero branch
+    AbandonFlagCheck,
+    /// Next call with a1 = region
+    AbandonCall,
+    /// Find jump where x == 1ffd, follow that
+    PickAttackTargetUnwalkableJump,
+    /// Find change_ai_region_state(a1 = region, 0u8)
+    ChangeRegionState,
+    /// Next call with a1 = region
+    PickAttackTarget,
+}
+
+struct StepRegionInnerAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut AiStepRegion<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    // Valid after FindSwitch
+    region_operand: Operand<'e>,
+    inline_depth: u8,
+    state: StepAiRegionState,
+    call_tracker: CallTracker<'acx, 'e, E>,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    StepRegionInnerAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        let is_jump_state = match self.state {
+            StepAiRegionState::FindSwitch | StepAiRegionState::AbandonFlagCheck |
+                StepAiRegionState::PickAttackTargetUnwalkableJump => true,
+            _ => false,
+        };
+        let is_call_state = !is_jump_state ||
+            self.state == StepAiRegionState::PickAttackTargetUnwalkableJump;
+        if self.state == StepAiRegionState::UpdateStrength && self.inline_depth > 0 {
+            if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                let value = ctrl.resolve(value);
+                if value == ctx.const_0() {
+                    let mem = ctrl.resolve_mem(mem);
+                    if mem.address() == (self.region_operand, 0x10) {
+                        self.result.ai_region_update_strength =
+                            Some(E::VirtualAddress::from_u64(0));
+                        ctrl.end_analysis();
+                    }
+                }
+                return;
+            }
+        }
+        match *op {
+            Operation::Call(dest) => {
+                if !is_call_state {
+                    return;
+                }
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    match self.state {
+                        StepAiRegionState::UpdateStrength => {
+                            if self.inline_depth >= 2 {
+                                ctrl.end_analysis();
+                            } else {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.result.ai_region_update_strength ==
+                                    Some(E::VirtualAddress::from_u64(0))
+                                {
+                                    self.result.ai_region_update_strength = Some(dest);
+                                    self.state = StepAiRegionState::UpdateTarget;
+                                } else {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                        StepAiRegionState::UpdateTarget | StepAiRegionState::AbandonCall |
+                            StepAiRegionState::ChangeRegionState |
+                            StepAiRegionState::PickAttackTarget =>
+                        {
+                            let a1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            if a1 == self.region_operand {
+                                if self.state == StepAiRegionState::UpdateTarget {
+                                    self.state = StepAiRegionState::AbandonFlagCheck;
+                                    self.result.ai_region_update_target = Some(dest);
+                                } else if self.state == StepAiRegionState::AbandonCall {
+                                    self.state = StepAiRegionState::PickAttackTargetUnwalkableJump;
+                                    self.result.ai_region_abandon_if_overwhelmed = Some(dest);
+                                } else if self.state == StepAiRegionState::ChangeRegionState {
+                                    let a2 = ctrl.resolve(self.arg_cache.on_call_u8(1));
+                                    if a2 == ctx.const_0() {
+                                        self.state = StepAiRegionState::PickAttackTarget;
+                                        self.result.change_ai_region_state = Some(dest);
+                                    }
+                                } else {
+                                    // self.state == StepAiRegionState::PickAttackTarget
+                                    ctrl.end_analysis();
+                                    self.result.ai_region_pick_attack_target = Some(dest);
+                                }
+                            }
+                        }
+                        StepAiRegionState::PickAttackTargetUnwalkableJump => {
+                            self.call_tracker.add_call(ctrl, dest);
+                        }
+                        _ => (),
+                    }
+                }
+            }
+            Operation::Jump { to, condition } => {
+                if !is_jump_state && condition != ctx.const_1() {
+                    ctrl.end_analysis();
+                    return;
+                }
+                if condition == ctx.const_1() {
+                    if self.state == StepAiRegionState::FindSwitch && to.if_constant().is_none() {
+                        let to = ctrl.resolve(to);
+                        let switch = CompleteSwitch::new(to, ctx, ctrl.exec_state());
+                        if let Some(switch) = switch {
+                            if let Some(index) = switch.index_operand(ctx) {
+                                if let Some(base) = index.if_mem8_offset(5) {
+                                    self.region_operand = base;
+                                    let binary = ctrl.binary();
+                                    if let Some(state8) = switch.branch(binary, ctx, 0x8) {
+                                        self.state = StepAiRegionState::UpdateStrength;
+                                        ctrl.clear_unchecked_branches();
+                                        ctrl.continue_at_address(state8);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if self.state != StepAiRegionState::FindSwitch {
+                    let condition = ctrl.resolve(condition);
+                    if self.state == StepAiRegionState::AbandonFlagCheck {
+                        if let Some((val, eq)) = condition.if_and_mask_eq_neq(0x20) {
+                            if val.if_mem8_offset(8) == Some(self.region_operand) {
+                                ctrl.clear_unchecked_branches();
+                                ctrl.continue_at_neq_address(eq, to);
+                                self.state = StepAiRegionState::AbandonCall;
+                            }
+                        }
+                    } else {
+                        let condition =
+                            self.call_tracker.resolve_calls_with_branch_limit(condition, 4);
+                        if let Some(eq) = condition.if_arithmetic_eq_neq()
+                            .filter(|x| x.1.if_constant() == Some(0x1ffd))
+                            .map(|x| x.2)
+                        {
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_eq_address(eq, to);
+                            self.state = StepAiRegionState::ChangeRegionState;
+                        }
+                    }
+                }
+            }
+            _ => (),
         }
     }
 }
