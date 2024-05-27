@@ -302,6 +302,7 @@ results! {
         ReceiveStormTurns => receive_storm_turns => cache_step_network,
         AiStepRegion => ai_step_region => cache_ai_step_frame,
         AiSpendMoney => ai_spend_money => cache_ai_step_frame,
+        AiTargetExpansion => ai_target_expansion => cache_ai_step_frame,
         DoAttack => do_attack => cache_do_attack,
         DoAttackMain => do_attack_main => cache_do_attack,
         AiTryReturnHome => ai_try_return_home => cache_do_attack,
@@ -3016,8 +3017,8 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
         self.cache_many(
-            &[AiStepRegion, AiSpendMoney, StepAiScript, StepAiScripts], &[FirstAiScript, Players,
-                StepAiRegionsRegion, StepAiRegionsPlayer, ResourceAreas,
+            &[AiStepRegion, AiSpendMoney, StepAiScript, StepAiScripts, AiTargetExpansion],
+            &[FirstAiScript, Players, StepAiRegionsRegion, StepAiRegionsPlayer, ResourceAreas,
                 AiTargetIgnoreResetCounter, AiTargetIgnoreResetCounter2,
                 AiTargetIgnoreRequestReset, AiMilitaryUpdateCounter],
             |s| {
@@ -3026,7 +3027,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let result = ai::step_frame_funcs(actx, step_objects, game);
                 s.aiscript_hook = result.hook;
                 Some(([result.ai_step_region, result.ai_spend_money, result.step_ai_script,
-                    result.step_ai_scripts],
+                    result.step_ai_scripts, result.ai_target_expansion],
                     [result.first_ai_script, result.players, result.step_ai_regions_region,
                     result.step_ai_regions_player, result.resource_areas,
                     result.ai_target_ignore_reset_counter, result.ai_target_ignore_reset_counter2,

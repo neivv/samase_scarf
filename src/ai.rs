@@ -796,6 +796,7 @@ pub(crate) struct AiStepFrameFuncs<'e, Va: VirtualAddressTrait> {
     pub ai_spend_money: Option<Va>,
     pub step_ai_scripts: Option<Va>,
     pub step_ai_script: Option<Va>,
+    pub ai_target_expansion: Option<Va>,
     pub players: Option<Operand<'e>>,
     pub first_ai_script: Option<Operand<'e>>,
     pub hook: Option<AiScriptHook<'e, Va>>,
@@ -822,6 +823,7 @@ pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
         ai_spend_money: None,
         step_ai_scripts: None,
         step_ai_script: None,
+        ai_target_expansion: None,
         first_ai_script: None,
         players: None,
         hook: None,
@@ -840,6 +842,7 @@ pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
         result: &mut result,
         arg_cache,
         inline_depth: 0,
+        step_ai_regions_depth: 0,
         checked_functions: HashSet::with_capacity_and_hasher(0x40, Default::default()),
         binary,
         game,
@@ -856,6 +859,10 @@ pub(crate) fn step_frame_funcs<'e, E: ExecutionState<'e>>(
 enum StepAiState {
     StepAiScript,
     StepRegions,
+    /// ai_target_expansion(a1 = step_ai_regions_player) in same loop as ai_step_region.
+    /// Find by jump on player_ai[step_ai_regions_player].target_expansion_attacks.
+    /// Inline twice.
+    TargetExpansion,
     ResourceAreas,
     TargetResetCounter,
     TargetResetCounter2,
@@ -866,6 +873,8 @@ struct StepRegionAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut AiStepFrameFuncs<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
+    /// Valid after StepRegions
+    step_ai_regions_depth: u8,
     checked_functions: HashSet<Rva>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     game: Operand<'e>,
@@ -886,6 +895,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Call(dest) if self.state != StepAiState::SpendMoney => {
                 let limit = match self.state {
                     StepAiState::StepAiScript => 3,
+                    StepAiState::TargetExpansion => 4,
                     StepAiState::StepRegions => 3,
                     StepAiState::ResourceAreas => 3,
                     StepAiState::TargetResetCounter => 3,
@@ -923,18 +933,43 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                     analysis.analyze(self);
                                     self.inline_depth -= 1;
                                     if let Some(result) = self.result.ai_step_region {
+                                        if self.state == StepAiState::TargetExpansion {
+                                            if self.inline_depth > 1 {
+                                                ctrl.end_analysis();
+                                            } else {
+                                                self.state = StepAiState::ResourceAreas;
+                                            }
+                                        }
                                         if result.as_u64() == 0 {
+                                            self.step_ai_regions_depth = self.inline_depth;
                                             let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                                             let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
                                             self.result.ai_step_region = Some(dest);
                                             self.result.step_ai_regions_player = Some(arg1);
                                             self.result.step_ai_regions_region = Some(arg2);
+                                            self.state = StepAiState::TargetExpansion;
                                         }
-                                        // ai_spend_money is expected to be at inline depth 1
-                                        if self.inline_depth > 1 {
+                                    }
+                                } else if self.state == StepAiState::TargetExpansion {
+                                    let a1 = ctrl.resolve(self.arg_cache.on_call(0));
+                                    if Some(a1) == self.result.step_ai_regions_player {
+                                        self.inline_depth += 1;
+                                        ctrl.analyze_with_current_state(self, dest);
+                                        self.inline_depth -= 1;
+                                        if self.inline_depth > self.step_ai_regions_depth {
                                             ctrl.end_analysis();
-                                        } else {
-                                            self.state = StepAiState::ResourceAreas;
+                                            return;
+                                        }
+                                        if let Some(result) = self.result.ai_target_expansion {
+                                            if result.as_u64() == 0 {
+                                                self.result.ai_target_expansion = Some(dest);
+                                            }
+                                            // ai_spend_money is expected to be at inline depth 1
+                                            if self.inline_depth > 1 {
+                                                ctrl.end_analysis();
+                                            } else {
+                                                self.state = StepAiState::ResourceAreas;
+                                            }
                                         }
                                     }
                                 } else {
@@ -1015,6 +1050,30 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         })
                         .and_either_other(|x| x.if_arithmetic_mul_const(0x24));
                     single_result_assign(players, &mut self.result.players);
+                }
+            }
+            Operation::Jump { condition, .. } if self.state == StepAiState::TargetExpansion => {
+                if self.inline_depth > self.step_ai_regions_depth {
+                    let condition = ctrl.resolve(condition);
+                    let ok = condition.if_arithmetic_eq_neq_zero(ctx)
+                        .and_then(|x| {
+                            let mem = x.0.if_mem8()?;
+                            let base = mem.address().0;
+                            let pair = base.if_arithmetic_add()
+                                .unwrap_or((base, ctx.const_0()));
+                            let player_ai_size = E::struct_layouts().player_ai_size();
+                            let (x, _) = Operand::either(
+                                pair.0,
+                                pair.1,
+                                |x| x.if_arithmetic_mul_const(player_ai_size),
+                            )?;
+                            (Some(x) == self.result.step_ai_regions_player).then_some(())
+                        })
+                        .is_some();
+                    if ok {
+                        self.result.ai_target_expansion = Some(E::VirtualAddress::from_u64(0));
+                    }
+                    ctrl.end_analysis();
                 }
             }
             Operation::Jump { condition, to } if self.state == StepAiState::TargetResetCounter2 =>
@@ -1128,6 +1187,16 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     .is_some();
                 if ok {
                     self.result.ai_step_region = Some(E::VirtualAddress::from_u64(0));
+                }
+            }
+            Operation::Move(DestOperand::Memory(ref mem), _, None)
+                if self.state == StepAiState::TargetExpansion =>
+            {
+                let dest = ctrl.resolve_mem(mem);
+                let is_player_global_write = self.result.step_ai_regions_player
+                    .is_some_and(|x| x.if_memory() == Some(&dest));
+                if is_player_global_write {
+                    ctrl.skip_operation();
                 }
             }
             Operation::Move(DestOperand::Memory(ref mem), val, None)
