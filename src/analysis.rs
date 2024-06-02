@@ -495,6 +495,8 @@ results! {
         AiRegionAbandonIfOverwhelmed => ai_region_abandon_if_overwhelmed => cache_ai_step_region,
         // a1 region; Pick target for attack force; can be far away
         AiRegionPickAttackTarget => ai_region_pick_attack_target => cache_ai_step_region,
+        // a1 ctrl, a2 id, a3 time, a4 func * (64bit) / a4_8 func_by_value (32bit)
+        CtrlSetTimer => ctrl_set_timer => cache_run_dialog_children,
     }
 }
 
@@ -4508,13 +4510,14 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     }
 
     fn cache_run_dialog_children(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
         use OperandAnalysis::*;
         self.cache_many(
-            &[], &[FirstDialog, RunDialogStack],
+            &[CtrlSetTimer], &[FirstDialog, RunDialogStack],
             |s| {
                 let run_dialog = s.run_dialog(actx)?;
                 let r = dialog::analyze_run_dialog(actx, run_dialog);
-                Some(([], [r.first_dialog, r.run_dialog_stack]))
+                Some(([r.ctrl_set_timer], [r.first_dialog, r.run_dialog_stack]))
             })
     }
 

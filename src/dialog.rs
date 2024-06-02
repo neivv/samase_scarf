@@ -98,9 +98,10 @@ pub(crate) struct InitStatRes<'e, Va: VirtualAddress> {
     pub get_statres_icons_ddsgrp: Option<Va>,
 }
 
-pub(crate) struct RunDialogChild<'e> {
+pub(crate) struct RunDialogChild<'e, Va: VirtualAddress> {
     pub first_dialog: Option<Operand<'e>>,
     pub run_dialog_stack: Option<Operand<'e>>,
+    pub ctrl_set_timer: Option<Va>,
 }
 
 impl<'e, Va: VirtualAddress> Default for MultiWireframes<'e, Va> {
@@ -2204,10 +2205,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
 pub(crate) fn analyze_run_dialog<'e, E: ExecutionState<'e>>(
     actx: &AnalysisCtx<'e, E>,
     run_dialog: E::VirtualAddress,
-) -> RunDialogChild<'e> {
+) -> RunDialogChild<'e, E::VirtualAddress> {
     let mut result = RunDialogChild {
         first_dialog: None,
         run_dialog_stack: None,
+        ctrl_set_timer: None,
     };
     let ctx = actx.ctx;
     let binary = actx.binary;
@@ -2227,8 +2229,9 @@ pub(crate) fn analyze_run_dialog<'e, E: ExecutionState<'e>>(
 enum RunDialogChildState {
     /// Find Mem32[dialog_return_code] = 0xffff_fffd
     InitReturnCode,
-    /// Find Mem32[dialog + x] &= 0xfbff_ffff
-    FlagClear,
+    /// At inline depth 0, ctrl_set_timer(a1 = a1, 0xc, 0x64, func)
+    /// May have to inline once.
+    CtrlSetTimer,
     /// Find call to run_dialog_start_loop(arg1)
     ///     (Sometimes inlined)
     /// Find run_dialog_stack.push(arg1)
@@ -2241,7 +2244,7 @@ enum RunDialogChildState {
 }
 
 struct RunDialogChildAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    result: &'a mut RunDialogChild<'e>,
+    result: &'a mut RunDialogChild<'e, E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     state: RunDialogChildState,
     allow_inline: bool,
@@ -2257,29 +2260,33 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunDialogChildAnalyz
                 if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
                     if mem.size == MemAccessSize::Mem32 {
                         if ctrl.resolve(value).if_constant() == Some(0xffff_fffd) {
-                            self.state = RunDialogChildState::FlagClear;
+                            self.state = RunDialogChildState::CtrlSetTimer;
                             self.allow_inline = true;
                             ctrl.clear_all_branches();
                         }
                     }
                 }
             }
-            RunDialogChildState::FlagClear => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
-                    if mem.size == MemAccessSize::Mem32 {
-                        let mem = ctrl.resolve_mem(&mem);
-                        let ok = mem.address().0 == self.arg_cache.on_entry(0) &&
-                            value.if_arithmetic_and_const(0xfbff_ffff).is_some();
-                        if ok {
+            RunDialogChildState::CtrlSetTimer => {
+                if let Operation::Call(dest) = *op {
+                    let ok = ctrl.resolve(self.arg_cache.on_call_u32(1)).if_constant() ==
+                            Some(0xc) &&
+                        ctrl.resolve(self.arg_cache.on_call_u32(2)).if_constant() == Some(0x64);
+                    if ok {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.result.ctrl_set_timer = Some(dest);
                             self.state = RunDialogChildState::Stack;
                             self.allow_inline = true;
-                            ctrl.clear_all_branches();
                             if self.inlining {
                                 ctrl.end_analysis();
+                            } else {
+                                ctrl.clear_all_branches();
                             }
+                            return;
                         }
                     }
-                } else if self.allow_inline {
+                }
+                if self.allow_inline {
                     // If there is a call with arg1 = arg1 before any other call or jump,
                     // inline it, as the flag clear is actually in a function that sends
                     // dialog init events etc.
@@ -2298,6 +2305,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunDialogChildAnalyz
                                 // the function we wanted.
                                 if self.state != RunDialogChildState::Stack {
                                     ctrl.end_analysis();
+                                } else {
+                                    ctrl.clear_all_branches();
                                 }
                             }
                         }
