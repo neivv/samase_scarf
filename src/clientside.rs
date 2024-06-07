@@ -114,6 +114,7 @@ fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
     analysis: &'acx AnalysisCtx<'e, E>,
     functions: &FunctionFinder<'_, 'e, E>,
     candidates: &[(E::VirtualAddress, Option<E::VirtualAddress>)],
+    checked_functions: &mut BumpVec<'acx, E::VirtualAddress>,
 ) -> ResultOrEntries<'acx, (E::VirtualAddress, Operand<'e>), E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -122,8 +123,12 @@ fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
 
     let mut result: Option<(E::VirtualAddress, Operand<'e>)> = None;
     let mut entries = BumpVec::new_in(bump);
-    for &(middle_of_func, global_addr) in candidates {
+    'outer: for &(middle_of_func, global_addr) in candidates {
         let res = entry_of_until(binary, funcs, middle_of_func, |entry| {
+            if checked_functions.contains(&entry) {
+                return EntryOf::Stop;
+            }
+            checked_functions.push(entry);
             let mut analyzer = GameScreenRClickAnalyzer::<E> {
                 call_found: false,
                 result: None,
@@ -169,7 +174,7 @@ fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
                     if let EntryOfResult::Entry(e) = res {
                         let res = Some((e, client_selection.clone()));
                         if single_result_assign(res, &mut result) {
-                            break;
+                            break 'outer;
                         }
                     }
                 }
@@ -241,10 +246,23 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
             return;
         }
         match *op {
-            Operation::Move(_, val, _) => {
+            Operation::Move(ref dest, val, _) => {
                 if !self.mov_u32_max_seen && self.first_branch {
                     let val = ctrl.resolve(val);
-                    if val.if_constant().map(|x| x as u32) == Some(u32::max_value()) {
+                    if val.if_constant().map(|x| x as u32) == Some(u32::MAX) {
+                        if E::VirtualAddress::SIZE == 4 {
+                            if let DestOperand::Memory(dest) = dest {
+                                // Don't accept push -1 which is part of SEH scope in function
+                                // prologue.
+                                let ctx = ctrl.ctx();
+                                if dest.address() == (ctx.register(4), 0) {
+                                    let dest = ctrl.resolve_mem(dest);
+                                    if dest.address() == (ctx.register(4), -8i64 as u64) {
+                                        return;
+                                    }
+                                }
+                            }
+                        }
                         self.mov_u32_max_seen = true;
                     }
                 }
@@ -494,14 +512,15 @@ pub(crate) fn game_screen_rclick<'e, E: ExecutionState<'e>>(
             .map(|x| (x.use_address, Some(rclick_order))),
         bump,
     );
-    let result = game_screen_rclick_inner(analysis, functions, &uses);
+    let mut checked_functions = bumpvec_with_capacity(0x20, bump);
+    let result = game_screen_rclick_inner(analysis, functions, &uses, &mut checked_functions);
     let result = match result {
         ResultOrEntries::Entries(entries) => {
             let callers = entries.iter().flat_map(|&f| {
                 functions.find_callers(analysis, f).into_iter().map(|x| (x, None))
             });
             let callers = BumpVec::from_iter_in(callers, bump);
-            game_screen_rclick_inner(analysis, functions, &callers)
+            game_screen_rclick_inner(analysis, functions, &callers, &mut checked_functions)
         }
         ResultOrEntries::Result(o) => ResultOrEntries::Result(o),
     };
