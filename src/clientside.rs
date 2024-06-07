@@ -109,6 +109,11 @@ pub(crate) struct UpdateGameScreenSize<'e> {
     pub game_screen_height_ratio: Option<Operand<'e>>,
 }
 
+pub(crate) struct TalkingPortrait<Va: VirtualAddress> {
+    pub trigger_talking_portrait: Option<Va>,
+    pub show_portrait: Option<Va>,
+}
+
 // Candidates are either a global ref with Some(global), or a call with None
 fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
     analysis: &'acx AnalysisCtx<'e, E>,
@@ -2382,6 +2387,83 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                                 self.result.game_screen_height_ratio = Some(result);
                                 ctrl.end_analysis();
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_talking_portrait_action<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    trigger_actions: E::VirtualAddress,
+) -> TalkingPortrait<E::VirtualAddress> {
+    let mut result = TalkingPortrait {
+        trigger_talking_portrait: None,
+        show_portrait: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let action_ptr = trigger_actions + E::VirtualAddress::SIZE * 0x1d;
+    let action = match binary.read_address(action_ptr) {
+        Ok(o) => o,
+        Err(_) => return result,
+    };
+
+    let mut analyzer = TalkingPortraitAnalyzer {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        state: TalkingPortraitState::Init,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, action);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+struct TalkingPortraitAnalyzer<'e, 'a, E: ExecutionState<'e>> {
+    result: &'a mut TalkingPortrait<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: TalkingPortraitState,
+}
+
+enum TalkingPortraitState {
+    /// Find trigger_talking_portrait(_, -1, _, -1)
+    Init,
+    /// Inside trigger_talking_portrait, find show_portrait(0, _, 2u32)
+    ShowPortrait,
+}
+
+impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for TalkingPortraitAnalyzer<'e, 'a, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                match self.state {
+                    TalkingPortraitState::Init => {
+                        let ok = ctrl.resolve(self.arg_cache.on_call_u32(1)).if_constant() ==
+                                Some(0xffff_ffff) &&
+                            ctrl.resolve(self.arg_cache.on_call_u32(2)).if_constant() ==
+                                Some(0xffff_ffff);
+                        if ok {
+                            self.result.trigger_talking_portrait = Some(dest);
+                            self.state = TalkingPortraitState::ShowPortrait;
+                            ctrl.analyze_with_current_state(self, dest);
+                            ctrl.end_analysis();
+                        }
+                    }
+                    TalkingPortraitState::ShowPortrait => {
+                        let ctx = ctrl.ctx();
+                        let ok = ctrl.resolve(self.arg_cache.on_call(0)) == ctx.const_0() &&
+                            ctrl.resolve(self.arg_cache.on_call_u32(2)).if_constant() == Some(2);
+                        if ok {
+                            self.result.show_portrait = Some(dest);
+                            ctrl.end_analysis();
+                        } else {
+                            ctrl.skip_call_preserve_esp();
                         }
                     }
                 }

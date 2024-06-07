@@ -497,6 +497,10 @@ results! {
         AiRegionPickAttackTarget => ai_region_pick_attack_target => cache_ai_step_region,
         // a1 ctrl, a2 id, a3 time, a4 func * (64bit) / a4_8 func_by_value (32bit)
         CtrlSetTimer => ctrl_set_timer => cache_run_dialog_children,
+        // a1 unit_id, a2 -1?, a3 -1?, a4 time
+        TriggerTalkingPortrait => trigger_talking_portrait => cache_trigger_talking_portrait,
+        // a1 unit_opt, a2 unit_id, a3 mode (1 = idle, 2 = talking)
+        ShowPortrait => show_portrait => cache_trigger_talking_portrait,
     }
 }
 
@@ -4756,6 +4760,20 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     r.ai_region_abandon_if_overwhelmed, r.ai_region_pick_attack_target], []))
             },
         )
+    }
+
+    fn cache_trigger_talking_portrait(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[TriggerTalkingPortrait, ShowPortrait], &[],
+            |s| {
+                let actions = s.trigger_actions(actx)?;
+                let r = clientside::analyze_talking_portrait_action(actx, actions);
+                Some((
+                    [r.trigger_talking_portrait, r.show_portrait],
+                    [],
+                ))
+            })
     }
 }
 
