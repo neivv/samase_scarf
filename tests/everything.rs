@@ -1684,7 +1684,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 LastActiveUnit | FirstFreeHpBar | LastFreeHpBar |
                 FirstFreePlacementImage | LastFreePlacementImage | FirstFreePlacementRect |
                 LastFreePlacementRect | TilesetIndexedMapTiles | Vx4MapTiles | RepulseState |
-                TerrainFramebuf =>
+                TerrainFramebuf | StatportVideos | StatportTalkingPortraitActive |
+                StatportVideoId =>
             {
                 check_global_opt(result, binary, op.name());
             }

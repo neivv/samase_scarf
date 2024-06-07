@@ -114,6 +114,12 @@ pub(crate) struct TalkingPortrait<Va: VirtualAddress> {
     pub show_portrait: Option<Va>,
 }
 
+pub(crate) struct ShowPortrait<'e> {
+    pub videos: Option<Operand<'e>>,
+    pub talking_active: Option<Operand<'e>>,
+    pub video_id: Option<Operand<'e>>,
+}
+
 // Candidates are either a global ref with Some(global), or a call with None
 fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
     analysis: &'acx AnalysisCtx<'e, E>,
@@ -2464,6 +2470,180 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for TalkingPortraitAnaly
                             ctrl.end_analysis();
                         } else {
                             ctrl.skip_call_preserve_esp();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_show_portrait<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    show_portrait: E::VirtualAddress,
+) -> ShowPortrait<'e> {
+    let mut result = ShowPortrait {
+        videos: None,
+        talking_active: None,
+        video_id: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut analyzer = ShowPortraitAnalyzer::<E> {
+        result: &mut result,
+        videos_candidate: None,
+        video_id_candidate: None,
+        state: ShowPortraitState::FlagCheck,
+        arg_cache: &actx.arg_cache,
+        check_show_talking_portrait_inline: true,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, show_portrait);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum ShowPortraitState {
+    /// Follow arg2 != 0x52 branch
+    FlagCheck,
+    /// Find arg3 == 2 jump, follow it
+    ArgJump,
+    /// Should find if !videos { delete_videos; videos = null } block
+    Videos,
+    /// Should have x == video_id jump, then later on write something to video_id
+    /// And video_id should be Mem8
+    /// At the same time search for talking_active = 1 write
+    /// May have to inline to show_talking_portrait(a1 = a2)
+    VideoId,
+}
+
+struct ShowPortraitAnalyzer<'e, 'a, E: ExecutionState<'e>> {
+    result: &'a mut ShowPortrait<'e>,
+    videos_candidate: Option<&'e MemAccess<'e>>,
+    video_id_candidate: Option<&'e MemAccess<'e>>,
+    state: ShowPortraitState,
+    arg_cache: &'a ArgCache<'e, E>,
+    check_show_talking_portrait_inline: bool,
+}
+
+impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for ShowPortraitAnalyzer<'e, 'a, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            ShowPortraitState::FlagCheck => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let ok = condition.if_arithmetic_eq_neq()
+                        .filter(|x| x.1.if_constant() == Some(0x52))
+                        .map(|x| x.2);
+                    if let Some(eq) = ok {
+                        self.state = ShowPortraitState::ArgJump;
+                        ctrl.clear_unchecked_branches();
+                        ctrl.continue_at_neq_address(eq, to);
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size == E::WORD_SIZE {
+                        if ctrl.resolve(value) == ctx.const_0() {
+                            // Videos object does have a branch where it is cleared before
+                            // arg3 jump too, just ignore it and prevent it from making
+                            // the memory location undef
+                            ctrl.skip_operation();
+                        }
+                    }
+                }
+            }
+            ShowPortraitState::ArgJump => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let ok = condition.if_arithmetic_eq_neq()
+                        .filter(|x| x.1.if_constant() == Some(2))
+                        .filter(|x| {
+                            ctx.and_const(x.0, 0xffff) ==
+                                ctx.and_const(self.arg_cache.on_entry(2), 0xffff)
+                        })
+                        .map(|x| x.2);
+                    if let Some(eq) = ok {
+                        self.state = ShowPortraitState::Videos;
+                        ctrl.clear_unchecked_branches();
+                        ctrl.continue_at_eq_address(eq, to);
+                    }
+                }
+            }
+            ShowPortraitState::Videos => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((op, eq)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                        if let Some(mem) = ctrl.if_mem_word(op) {
+                            self.videos_candidate = Some(mem);
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_neq_address(eq, to);
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size == E::WORD_SIZE {
+                        if let Some(cand) = self.videos_candidate {
+                            if ctrl.resolve(value) == ctx.const_0() &&
+                                ctrl.resolve_mem(mem) == *cand
+                            {
+                                ctrl.skip_operation();
+                                self.result.videos = Some(ctx.memory(cand));
+                                self.state = ShowPortraitState::VideoId;
+                            }
+                        }
+                    }
+                }
+            }
+            ShowPortraitState::VideoId => {
+                if let Operation::Jump { condition, .. } = *op {
+                    self.check_show_talking_portrait_inline = false;
+                    let condition = ctrl.resolve(condition);
+                    if let Some((a, b, _)) = condition.if_arithmetic_eq_neq() {
+                        if let Some((mem, _)) = Operand::either(a, b, |x| x.if_mem8()) {
+                            self.video_id_candidate = Some(mem);
+                        }
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if let Some(cand) = self.video_id_candidate {
+                        let mem = ctrl.resolve_mem(mem);
+                        if mem.is_global() {
+                            let value = ctrl.resolve(value);
+                            if mem == *cand {
+                                if value.if_constant().is_none() {
+                                    single_result_assign(
+                                        Some(ctx.memory(&mem)),
+                                        &mut self.result.video_id,
+                                    );
+                                }
+                            } else if value == ctx.const_1() {
+                                single_result_assign(
+                                    Some(ctx.memory(&mem)),
+                                    &mut self.result.talking_active,
+                                );
+                            }
+                            if self.result.video_id.is_some() &&
+                                self.result.talking_active.is_some()
+                            {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                } else if let Operation::Call(dest) = *op {
+                    if self.check_show_talking_portrait_inline {
+                        self.check_show_talking_portrait_inline = false;
+                        let inline =
+                            ctx.and_const(ctrl.resolve(self.arg_cache.on_call(0)), 0xffff) ==
+                            ctx.and_const(self.arg_cache.on_entry(1), 0xffff);
+
+                        if inline {
+                            if let Some(dest) = ctrl.resolve_va(dest) {
+                                ctrl.analyze_with_current_state(self, dest);
+                                // talking_active is still at level 0, continue analysis
+                            }
                         }
                     }
                 }

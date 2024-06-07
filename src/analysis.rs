@@ -798,6 +798,11 @@ results! {
         // tileset.vf4
         MinitileData => minitile_data => cache_init_terrain,
         FoliageState => foliage_state => cache_init_terrain,
+        // Struct ptr containing (shared_ptr[2] sd_hd_videos, bool active?) for portrait video
+        StatportVideos => statport_videos => cache_show_portrait,
+        StatportTalkingPortraitActive => statport_talking_portrait_active => cache_show_portrait,
+        // Which of 3 possible talking portraits is being shown
+        StatportVideoId => statport_video_id => cache_show_portrait,
     }
 }
 
@@ -4772,6 +4777,27 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some((
                     [r.trigger_talking_portrait, r.show_portrait],
                     [],
+                ))
+            })
+    }
+
+    fn show_portrait(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::ShowPortrait,
+            |s| s.cache_trigger_talking_portrait(actx),
+        )
+    }
+
+    fn cache_show_portrait(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[], &[StatportVideos, StatportTalkingPortraitActive, StatportVideoId],
+            |s| {
+                let show_portrait = s.show_portrait(actx)?;
+                let r = clientside::analyze_show_portrait(actx, show_portrait);
+                Some((
+                    [],
+                    [r.videos, r.talking_active, r.video_id],
                 ))
             })
     }
