@@ -146,6 +146,11 @@ pub(crate) struct InitMapFromPathAnalysis<'e, Va: VirtualAddress> {
     pub map_history: Option<Operand<'e>>,
 }
 
+pub(crate) struct JoinCustomGame<Va: VirtualAddress> {
+    pub join_custom_game: Option<Va>,
+    pub find_file_with_crc: Option<Va>,
+}
+
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
     fn default() -> Self {
         SinglePlayerStart {
@@ -4690,6 +4695,111 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheckReadWholeMpq
                     self.result.read_whole_mpq_file2 = Some(self.func);
                 }
                 ctrl.end_analysis();
+            }
+        }
+    }
+}
+
+pub(crate) fn join_custom_game<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    join_game: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> JoinCustomGame<E::VirtualAddress> {
+    let mut result = JoinCustomGame {
+        join_custom_game: None,
+        find_file_with_crc: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let arg_cache = &actx.arg_cache;
+
+    let callers = functions.find_callers(actx, join_game);
+    let funcs = functions.functions();
+    for caller in callers {
+        let new = entry_of_until(binary, funcs, caller, |entry| {
+            let mut analyzer = JoinCustomGameAnalyzer::<E> {
+                arg_cache,
+                result: &mut result,
+                entry_of: EntryOf::Retry,
+                inline_depth: 0,
+                join_game,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.entry_of
+        }).into_option_with_entry().map(|x| x.0);
+
+        if single_result_assign(new, &mut result.join_custom_game) {
+            break;
+        }
+    }
+
+    result
+}
+
+struct JoinCustomGameAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut JoinCustomGame<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    entry_of: EntryOf<()>,
+    inline_depth: u8,
+    join_game: E::VirtualAddress,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for JoinCustomGameAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        // join_custom_game should start with call
+        // to find_map_with_crc(_, size, crc, &stack_string) (Maybe inlined)
+        //      - size and crc are from arg2, will be replaced with custom
+        //      which calls find_file_with_crc(_, size, crc, &dirs, 3, &stack_string)
+        let ctx = ctrl.ctx();
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                if matches!(self.entry_of, EntryOf::Retry) {
+                    if dest == self.join_game {
+                        self.entry_of = EntryOf::Stop;
+                        ctrl.end_analysis();
+                        return;
+                    }
+                }
+                let this = ctrl.resolve_register(1);
+                if this == self.arg_cache.on_entry(1) {
+                    ctrl.do_call_with_result(ctx.custom(0));
+                    return;
+                }
+                let is_crc_call = ctrl.resolve(self.arg_cache.on_call(1))
+                        .unwrap_and_mask().if_custom() == Some(0) &&
+                    ctrl.resolve(self.arg_cache.on_call(2))
+                        .unwrap_and_mask().if_custom() == Some(0);
+                if is_crc_call {
+                    if ctrl.resolve(self.arg_cache.on_call_u32(4)).if_constant() == Some(3) {
+                        self.entry_of = EntryOf::Ok(());
+                        single_result_assign(Some(dest), &mut self.result.find_file_with_crc);
+                        ctrl.end_analysis();
+                    } else {
+                        // find_map_with_crc
+                        if self.inline_depth == 0 {
+                            self.inline_depth = 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = 0;
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+        }
+        if matches!(self.entry_of, EntryOf::Retry) {
+            if let Operation::Jump { condition, to } = *op {
+                if condition == ctx.const_1() &&
+                    ctrl.resolve_register(4) == ctx.register(4) &&
+                    ctrl.resolve_va(to) == Some(self.join_game)
+                {
+                    // Tail call
+                    self.entry_of = EntryOf::Stop;
+                    ctrl.end_analysis();
+                }
             }
         }
     }

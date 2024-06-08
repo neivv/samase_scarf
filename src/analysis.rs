@@ -501,6 +501,10 @@ results! {
         TriggerTalkingPortrait => trigger_talking_portrait => cache_trigger_talking_portrait,
         // a1 unit_opt, a2 unit_id, a3 mode (1 = idle, 2 = talking)
         ShowPortrait => show_portrait => cache_trigger_talking_portrait,
+        // a1?, a2 join_params, a3
+        JoinCustomGame => join_custom_game => cache_join_custom_game,
+        // a1 opt_filename, a2 size, a3 crc, a4 char **dirs, a5 dir_count, a6 String *out
+        FindFileWithCrc => find_file_with_crc => cache_join_custom_game,
     }
 }
 
@@ -4798,6 +4802,21 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some((
                     [],
                     [r.videos, r.talking_active, r.video_id],
+                ))
+            })
+    }
+
+    fn cache_join_custom_game(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[JoinCustomGame, FindFileWithCrc], &[],
+            |s| {
+                let join_game = s.join_game(actx)?;
+                let funcs = s.function_finder();
+                let r = game_init::join_custom_game(actx, join_game, &funcs);
+                Some((
+                    [r.join_custom_game, r.find_file_with_crc],
+                    [],
                 ))
             })
     }
