@@ -1618,7 +1618,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 ReadWholeMpqFile2 | StepBulletFrame | FlingyUpdateTargetDir |
                 LookupSoundId | SFileOpenFileEx | SFileReadFileEx | SFileCloseFile |
                 LoadConsoles | InitConsoles | GetUiConsoles | GetStatResIconsDdsGrp |
-                GetUnitSkin | JoinCustomGame | FindFileWithCrc => continue,
+                GetUnitSkin | JoinCustomGame | FindFileWithCrc | ForFilesInDir |
+                SimpleFileMatchCallback => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -2076,6 +2077,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     let join_game = analysis.join_game();
     let join_custom_game = analysis.join_custom_game();
     let find_file_with_crc = analysis.find_file_with_crc();
+    let for_files_in_dir = analysis.for_files_in_dir();
+    let simple_file_match_callback = analysis.simple_file_match_callback();
     let join_param_variant_type_offset = analysis.join_param_variant_type_offset();
     // 1233g refactored join_game/it's arguments heavily from what used to resemble 1161,
     // this analysis only finds the new format
@@ -2086,6 +2089,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(join_game.is_some());
         assert!(join_custom_game.is_some());
         assert!(find_file_with_crc.is_some());
+        assert!(for_files_in_dir.is_some());
+        assert!(simple_file_match_callback.is_some());
         if is_major_2021_patch {
             if E::VirtualAddress::SIZE == 4 {
                 assert_eq!(join_param_variant_type_offset, Some(0x20));
@@ -2099,6 +2104,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(join_game.is_none());
         assert!(join_custom_game.is_none());
         assert!(find_file_with_crc.is_none());
+        assert!(for_files_in_dir.is_none());
+        assert!(simple_file_match_callback.is_none());
         assert!(join_param_variant_type_offset.is_none());
     }
 

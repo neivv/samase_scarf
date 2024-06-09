@@ -151,6 +151,11 @@ pub(crate) struct JoinCustomGame<Va: VirtualAddress> {
     pub find_file_with_crc: Option<Va>,
 }
 
+pub(crate) struct FindFileWithCrc<Va: VirtualAddress> {
+    pub for_files_in_dir: Option<Va>,
+    pub simple_file_match_callback: Option<Va>,
+}
+
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
     fn default() -> Self {
         SinglePlayerStart {
@@ -4798,6 +4803,80 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for JoinCustomGameAna
                 {
                     // Tail call
                     self.entry_of = EntryOf::Stop;
+                    ctrl.end_analysis();
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn analyze_find_file_with_crc<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    find_file_with_crc: E::VirtualAddress,
+) -> FindFileWithCrc<E::VirtualAddress> {
+    let mut result = FindFileWithCrc {
+        for_files_in_dir: None,
+        simple_file_match_callback: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let arg_cache = &actx.arg_cache;
+
+    let mut analyzer = FindFileWithCrcAnalyzer::<E> {
+        arg_cache,
+        result: &mut result,
+        inline_depth: 0,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, find_file_with_crc);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+struct FindFileWithCrcAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut FindFileWithCrc<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindFileWithCrcAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        // find_file_with_crc calls
+        // find_files_simple(a1 = a1, in_out_dir, 0x104, file_crc_equals, ctx) which calls
+        // for_files_in_dir(in_out_dir, "*", simple_file_match_callback, 0, 1, &ctx)
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                let a2 = ctrl.resolve(self.arg_cache.on_call(1));
+                let a3 = ctrl.resolve(self.arg_cache.on_call(2));
+                let a4 = ctrl.resolve(self.arg_cache.on_call(3));
+                let a5 = ctrl.resolve(self.arg_cache.on_call(4));
+                let binary = ctrl.binary();
+                let ctx = ctrl.ctx();
+                let is_for_files_in_dir = a2.if_constant()
+                        .and_then(|c| binary.read_u16(E::VirtualAddress::from_u64(c)).ok())
+                        .is_some_and(|x| x == 0x2a) &&
+                    ctx.and_const(a4, 0xff) == ctx.const_0() &&
+                    ctx.and_const(a5, 0xff) == ctx.const_1();
+                if is_for_files_in_dir {
+                    if let Some(cb) = a3.if_constant() {
+                        let cb = E::VirtualAddress::from_u64(cb);
+                        self.result.for_files_in_dir = Some(dest);
+                        self.result.simple_file_match_callback = Some(cb);
+                        ctrl.end_analysis();
+                    }
+                    return;
+                }
+                let is_find_files_simple =
+                    self.inline_depth == 0 &&
+                    ctx.and_const(a3, 0xffff_ffff).if_constant() == Some(0x104) &&
+                    a4.if_constant().is_some();
+                if is_find_files_simple {
+                    self.inline_depth = 1;
+                    ctrl.analyze_with_current_state(self, dest);
+                    self.inline_depth = 0;
                     ctrl.end_analysis();
                 }
             }

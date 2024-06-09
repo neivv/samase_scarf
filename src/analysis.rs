@@ -510,6 +510,10 @@ results! {
         ProcessAsyncLobbyCommand => process_async_lobby_command => cache_step_lobby_state,
         // a1 data, a2 len, a3 player
         CommandLobbyMapP2p => command_lobby_map_p2p => cache_step_lobby_state,
+        // a1 dir, a2 wildcard_str, a3 callback, a4, a5 recurse, a6 callback_ctx, a7 ctx2
+        // callback: a1 dir_name, a2 file_entry, a3 ctx, a4 ctx2
+        ForFilesInDir => for_files_in_dir => cache_find_file_with_crc,
+        SimpleFileMatchCallback => simple_file_match_callback => cache_find_file_with_crc,
     }
 }
 
@@ -4826,6 +4830,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             })
     }
 
+    fn find_file_with_crc(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::FindFileWithCrc,
+            |s| s.cache_join_custom_game(actx),
+        )
+    }
+
     fn cache_step_lobby_network(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(
@@ -4859,6 +4870,20 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let r = network::step_lobby_state(actx, step_lobby_network, &funcs);
                 Some((
                     [r.process_async_lobby_command, r.command_lobby_map_p2p],
+                    [],
+                ))
+            })
+    }
+
+    fn cache_find_file_with_crc(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[ForFilesInDir, SimpleFileMatchCallback], &[],
+            |s| {
+                let find_file_with_crc = s.find_file_with_crc(actx)?;
+                let r = game_init::analyze_find_file_with_crc(actx, find_file_with_crc);
+                Some((
+                    [r.for_files_in_dir, r.simple_file_match_callback],
                     [],
                 ))
             })
