@@ -140,11 +140,8 @@ fn run_dialog_analysis<'e, E: ExecutionState<'e>>(
 
     let binary = analysis.binary;
     let funcs = functions.functions();
-    let mut str_refs = functions.string_refs(analysis, old_string_ref);
-    if str_refs.is_empty() {
-        str_refs = functions.string_refs(analysis, new_string_ref);
-    }
     let args = &analysis.arg_cache;
+    let str_refs = dialog_string_refs(analysis, functions, old_string_ref, new_string_ref);
     for str_ref in &str_refs {
         let entry_of_result = entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let mut analyzer = RunDialogAnalyzer {
@@ -168,6 +165,19 @@ fn run_dialog_analysis<'e, E: ExecutionState<'e>>(
         }
     }
     result
+}
+
+pub fn dialog_string_refs<'acx, 'e, E: ExecutionState<'e>>(
+    analysis: &'acx AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+    old_string_ref: &[u8],
+    new_string_ref: &[u8],
+) -> BumpVec<'acx, StringRefs<E::VirtualAddress>> {
+    let mut str_refs = functions.string_refs(analysis, old_string_ref);
+    if str_refs.is_empty() {
+        str_refs = functions.string_refs(analysis, new_string_ref);
+    }
+    str_refs
 }
 
 struct RunDialogAnalyzer<'exec, 'b, E: ExecutionState<'exec>> {

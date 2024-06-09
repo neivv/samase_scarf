@@ -553,6 +553,7 @@ pub(crate) fn misc_clientside<'e, E: ExecutionState<'e>>(
     is_multiplayer: Operand<'e>,
     scmain_state: Operand<'e>,
     vtables: &Vtables<'e, E::VirtualAddress>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> MiscClientSide<'e> {
     let mut result = MiscClientSide {
         is_paused: None,
@@ -577,11 +578,15 @@ pub(crate) fn misc_clientside<'e, E: ExecutionState<'e>>(
     //     end_targeting()
     //   }
     // }
+    let bump = &analysis.bump;
     let vtables = vtables.vtables_starting_with(b".?AVOptionsMenuPopup@glues@@\0")
         .map(|x| x.address);
+    let mut vtables = BumpVec::from_iter_in(vtables, bump);
+    if vtables.is_empty() {
+        vtables = options_menu_vtables_fallback(analysis, functions);
+    }
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let bump = &analysis.bump;
     let vtable_fn_result_op = ctx.custom(0);
     for vtable in vtables {
         let init_func = match binary.read_address(vtable + 0x3 * E::VirtualAddress::SIZE) {
@@ -617,6 +622,86 @@ pub(crate) fn misc_clientside<'e, E: ExecutionState<'e>>(
         }
     }
     result
+}
+
+/// No-RTTI fallback, find vtable from OptionsMenuPopup constructor
+fn options_menu_vtables_fallback<'acx, 'e, E: ExecutionState<'e>>(
+    actx: &'acx AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> BumpVec<'acx, E::VirtualAddress> {
+    let str_refs = crate::dialog::dialog_string_refs(
+        actx,
+        functions,
+        b"rez\\gluoptionspopup",
+        b"gluoptionspopup.ui",
+    );
+    let funcs = functions.functions();
+    let bump = &actx.bump;
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = bumpvec_with_capacity(0x4, bump);
+    for str_ref in &str_refs {
+        entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+            let mut analyzer = FindConstructorVtable::<E> {
+                use_address: str_ref.use_address,
+                result: &mut result,
+                entry_of: EntryOf::Retry,
+                rdata: actx.binary_sections.rdata,
+            };
+
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.entry_of
+        });
+        if !result.is_empty() {
+            break;
+        }
+    }
+    result
+}
+
+struct FindConstructorVtable<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    use_address: E::VirtualAddress,
+    result: &'a mut BumpVec<'acx, E::VirtualAddress>,
+    rdata: &'e BinarySection<E::VirtualAddress>,
+    entry_of: EntryOf<()>,
+}
+
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    FindConstructorVtable<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.use_address >= ctrl.address() &&
+            self.use_address < ctrl.current_instruction_end()
+        {
+            self.entry_of = EntryOf::Ok(());
+        }
+        if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+            if mem.size == E::WORD_SIZE {
+                let value = ctrl.resolve(value);
+                if let Some(c) = value.if_constant() {
+                    let addr = E::VirtualAddress::from_u64(c);
+                    if self.rdata.contains(addr) {
+                        let mem = ctrl.resolve_mem(mem);
+                        let ctx = ctrl.ctx();
+                        let (base, offset) = mem.address();
+                        if base == ctx.register(1) {
+                            // There are 2 vtables, one at offset 0 and other at higher
+                            // The one at 0 is one needed here.
+                            if offset == 0 {
+                                self.result.push(addr);
+                                ctrl.end_analysis();
+                                self.entry_of = EntryOf::Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 struct MiscClientSideAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {

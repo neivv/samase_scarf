@@ -2554,8 +2554,9 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             let is_multiplayer = s.is_multiplayer(actx)?;
             let scmain_state = s.scmain_state(actx)?;
             let vtables = s.vtables(actx);
+            let funcs = s.function_finder();
             let result =
-                clientside::misc_clientside(actx, is_multiplayer, scmain_state, &vtables);
+                clientside::misc_clientside(actx, is_multiplayer, scmain_state, &vtables, &funcs);
             Some(([], [result.is_paused, result.is_placing_building, result.is_targeting]))
         })
     }
