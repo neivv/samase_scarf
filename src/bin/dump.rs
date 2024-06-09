@@ -4,6 +4,7 @@ extern crate samase_scarf;
 extern crate scarf;
 
 use std::io::{self, Write};
+use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs::read_dir;
 use std::path::Path;
@@ -34,6 +35,7 @@ struct Args {
 fn main() {
     let exe = std::env::args_os().nth(1).unwrap();
     let arg2 = std::env::args_os().nth(2);
+    let arg3 = std::env::args_os().nth(3);
     let arg2 = arg2.as_ref();
     let dump_shaders = arg2.and_then(|arg| {
         let ok = arg.to_str()? == "--dump-shaders";
@@ -53,6 +55,10 @@ fn main() {
     }).is_some();
     let should_dump_test_compares = arg2.and_then(|arg| {
         let ok = arg.to_str()? == "--dump-test-compares";
+        Some(()).filter(|()| ok)
+    }).is_some();
+    let no_rtti = arg3.and_then(|arg| {
+        let ok = arg.to_str()? == "--no-rtti";
         Some(()).filter(|()| ok)
     }).is_some();
 
@@ -78,10 +84,7 @@ fn main() {
     if !is_64_bit(Path::new(&exe)) {
         #[cfg(feature = "binaries_32")]
         {
-            let mut binary = scarf::parse(&exe).unwrap();
-            let relocs =
-                scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary).unwrap();
-            binary.set_relocs(relocs);
+            let binary = get_binary_32(&exe, no_rtti);
             let ctx = &scarf::OperandContext::new();
             start_time = ::std::time::Instant::now();
             let text = dump::<scarf::ExecutionStateX86<'_>>(&binary, ctx, &args);
@@ -95,7 +98,7 @@ fn main() {
     } else {
         #[cfg(feature = "binaries_64")]
         {
-            let binary = scarf::parse_x86_64(&exe).unwrap();
+            let binary = get_binary_64(&exe, no_rtti);
             let ctx = &scarf::OperandContext::new();
             start_time = ::std::time::Instant::now();
             let text = dump::<scarf::ExecutionStateX86_64<'_>>(&binary, ctx, &args);
@@ -110,6 +113,56 @@ fn main() {
 
     let elapsed = start_time.elapsed();
     println!("Time taken: {}.{:09} s", elapsed.as_secs(), elapsed.subsec_nanos());
+}
+
+#[cfg(feature = "binaries_32")]
+fn get_binary_32(exe: &OsStr, no_rtti: bool) -> BinaryFile<scarf::VirtualAddress> {
+    let mut binary = scarf::parse(&exe).unwrap();
+    let relocs =
+        scarf::analysis::find_relocs::<scarf::ExecutionStateX86<'_>>(&binary).unwrap();
+    binary.set_relocs(relocs);
+    if no_rtti {
+        let ctx = &scarf::OperandContext::new();
+        filter_rtti_pointers::<scarf::ExecutionStateX86<'_>>(&binary, ctx)
+    } else {
+        binary
+    }
+}
+
+#[cfg(feature = "binaries_64")]
+fn get_binary_64(exe: &OsStr, no_rtti: bool) -> BinaryFile<scarf::VirtualAddress64> {
+    let binary = scarf::parse_x86_64(&exe).unwrap();
+    if no_rtti {
+        let ctx = &scarf::OperandContext::new();
+        filter_rtti_pointers::<scarf::ExecutionStateX86_64<'_>>(&binary, ctx)
+    } else {
+        binary
+    }
+}
+
+fn filter_rtti_pointers<'e, E: ExecutionState<'e>>(
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    ctx: OperandCtx<'e>,
+) -> BinaryFile<E::VirtualAddress> {
+    let mut analysis = Analysis::<E>::new(binary, ctx);
+    let vtables = analysis.vtables();
+    let mut sections = binary.sections().map(|s| {
+        scarf::BinarySection {
+            name: s.name,
+            virtual_address: s.virtual_address,
+            virtual_size: s.virtual_size,
+            data: s.data.clone(),
+        }
+    }).collect::<Vec<_>>();
+    let rdata = sections.iter_mut()
+        .find(|x| &x.name == b".rdata\0\0")
+        .expect("No .rdata section?");
+    for &vtable in &vtables {
+        let rtti_address = vtable - E::VirtualAddress::SIZE;
+        let index = (rtti_address.as_u64() - rdata.virtual_address.as_u64()) as usize;
+        rdata.data[index..][..(E::VirtualAddress::SIZE as usize)].fill(0u8);
+    }
+    scarf::raw_bin(binary.base(), sections)
 }
 
 fn dump<'e, E: ExecutionState<'e>>(
@@ -138,7 +191,7 @@ fn dump<'e, E: ExecutionState<'e>>(
     } else {
         let arg2 = std::env::args_os().nth(2);
         let arg2 = arg2.as_ref();
-        let filter = arg2.and_then(|x| x.to_str());
+        let filter = arg2.and_then(|x| x.to_str()).filter(|&x| x != "-");
         samase_scarf::dump::dump(&mut analysis, filter)
     };
 
