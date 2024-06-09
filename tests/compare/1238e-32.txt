@@ -190,6 +190,7 @@ select_mouse_move: 007c9960
 select_mouse_up: 007c9740
 select_units: 007dc9a0
 send_command: 00811da0
+send_queued_lobby_commands: 00808b30
 serialize_sprites: 0083e4d0
 set_briefing_music: 0064d010
 set_current_cursor_type: 0082aa50
@@ -232,6 +233,7 @@ step_game_loop: 00766530
 step_hidden_unit_frame: 00880660
 step_iscript: 008332e0
 step_iscript_switch: 0083418c
+step_lobby_network: 008176f0
 step_moving_bullet_frame: 00889dd0
 step_network: 00811a80
 step_objects: 00789f10

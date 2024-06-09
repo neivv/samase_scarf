@@ -505,6 +505,8 @@ results! {
         JoinCustomGame => join_custom_game => cache_join_custom_game,
         // a1 opt_filename, a2 size, a3 crc, a4 char **dirs, a5 dir_count, a6 String *out
         FindFileWithCrc => find_file_with_crc => cache_join_custom_game,
+        StepLobbyNetwork => step_lobby_network => cache_step_lobby_network,
+        SendQueuedLobbyCommands => send_queued_lobby_commands => cache_step_lobby_network,
     }
 }
 
@@ -4816,6 +4818,22 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let r = game_init::join_custom_game(actx, join_game, &funcs);
                 Some((
                     [r.join_custom_game, r.find_file_with_crc],
+                    [],
+                ))
+            })
+    }
+
+    fn cache_step_lobby_network(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[StepLobbyNetwork, SendQueuedLobbyCommands], &[],
+            |s| {
+                let step_network = s.step_network(actx)?;
+                let send_command = s.send_command(actx)?;
+                let funcs = s.function_finder();
+                let r = network::step_lobby_network(actx, step_network, send_command, &funcs);
+                Some((
+                    [r.step_lobby_network, r.send_queued_lobby_commands],
                     [],
                 ))
             })

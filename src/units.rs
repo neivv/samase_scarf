@@ -776,7 +776,7 @@ struct StrengthAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     current_func: E::VirtualAddress,
     // True if is_team_game() is not inlined when team_game_teams is found
     is_team_game_separate_func: bool,
-    not_team_game_branch: Option<(E::VirtualAddress, E)>,
+    not_team_game_branch: Option<(E, analysis::DefaultState, E::VirtualAddress)>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StrengthAnalyzer<'a, 'e, E> {
@@ -915,34 +915,28 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StrengthAnalyzer<
             StrengthState::TeamGameTeams => {
                 match *op {
                     Operation::Jump { condition, to } => {
-                        if let Some(to) = ctrl.resolve_va(to) {
-                            let condition = ctrl.resolve(condition);
-                            let ctx = ctrl.ctx();
-                            if let Some((x, eq)) = condition.if_arithmetic_eq_neq_zero(ctx) {
-                                if self.result.team_game_teams.is_none() {
-                                    if x == self.is_multiplayer {
-                                        // Follow only multiplayer == 1 branch
-                                        let dest = match eq {
-                                            true => ctrl.current_instruction_end(),
-                                            false => to,
-                                        };
-                                        ctrl.clear_unchecked_branches();
-                                        ctrl.continue_at_address(dest);
-                                        self.is_multiplayer_seen = true;
-                                        self.is_team_game_separate_func =
-                                            ctrl.branch_start() == self.current_func;
-                                        return;
-                                    } else if self.is_multiplayer_seen {
-                                        self.result.team_game_teams = Some(x);
-                                        if self.is_team_game_separate_func {
-                                            ctrl.end_analysis();
-                                        } else {
-                                            self.on_team_game_jump(ctrl, to, eq);
-                                        }
+                        let condition = ctrl.resolve(condition);
+                        let ctx = ctrl.ctx();
+                        if let Some((x, eq)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                            if self.result.team_game_teams.is_none() {
+                                if x == self.is_multiplayer {
+                                    // Follow only multiplayer == 1 branch
+                                    ctrl.clear_unchecked_branches();
+                                    ctrl.continue_at_neq_address(eq, to);
+                                    self.is_multiplayer_seen = true;
+                                    self.is_team_game_separate_func =
+                                        ctrl.branch_start() == self.current_func;
+                                    return;
+                                } else if self.is_multiplayer_seen {
+                                    self.result.team_game_teams = Some(x);
+                                    if self.is_team_game_separate_func {
+                                        ctrl.end_analysis();
+                                    } else {
+                                        self.on_team_game_jump(ctrl, to, eq);
                                     }
-                                } else if Operand::and_masked(x).0.if_custom() == Some(0) {
-                                    self.on_team_game_jump(ctrl, to, eq);
                                 }
+                            } else if x.unwrap_and_mask().if_custom() == Some(0) {
+                                self.on_team_game_jump(ctrl, to, eq);
                             }
                         }
                         self.is_multiplayer_seen = false;
@@ -964,9 +958,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StrengthAnalyzer<
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             if self.result.create_team_game_starting_units.is_none() {
                                 self.result.create_team_game_starting_units = Some(dest);
-                                ctrl.end_branch();
-                                if let Some((addr, state)) = self.not_team_game_branch.take() {
-                                    ctrl.add_branch_with_state(addr, state, Default::default());
+                                if let Some(state) = self.not_team_game_branch.take() {
+                                    ctrl.continue_with_state(state);
                                 }
                             } else {
                                 self.result.create_starting_units = Some(dest);
@@ -985,19 +978,13 @@ impl<'a, 'e, E: ExecutionState<'e>> StrengthAnalyzer<'a, 'e, E> {
     fn on_team_game_jump(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
-        to: E::VirtualAddress,
+        to: Operand<'e>,
         jump_if_not: bool,
     ) {
-        let no_branch_addr = ctrl.current_instruction_end();
-        let (team_game, not) = match jump_if_not {
-            true => (no_branch_addr, to),
-            false => (to, no_branch_addr),
-        };
         ctrl.clear_unchecked_branches();
-        let state = ctrl.exec_state();
-        self.not_team_game_branch = Some((not, state.clone()));
+        ctrl.continue_at_neq_address(jump_if_not, to);
+        self.not_team_game_branch = ctrl.state_for_eq_address(jump_if_not, to);
         self.state = StrengthState::StartingUnits;
-        ctrl.continue_at_address(team_game);
     }
 }
 

@@ -454,7 +454,7 @@ pub fn is_stack_address(addr: Operand<'_>) -> bool {
     }
 }
 
-pub trait ControlExt<'e, E: ExecutionState<'e>> {
+pub trait ControlExt<'e, E: ExecutionState<'e>, User: analysis::AnalysisState> {
     fn resolve_va(&mut self, operand: Operand<'e>) -> Option<E::VirtualAddress>;
     /// Skips current operation, assigns undef to other volatile registers except esp.
     fn skip_call_preserve_esp(&mut self);
@@ -503,6 +503,29 @@ pub trait ControlExt<'e, E: ExecutionState<'e>> {
     fn continue_at_eq_address(&mut self, eq_zero: bool, jump_dest: Operand<'e>) {
         self.continue_at_neq_address(!eq_zero, jump_dest);
     }
+    /// Does just (self.state.clone(), addr) where
+    /// addr is either jump_dest if eq_zero is false
+    /// or self.current_instruction_end() if eq_zero is true.
+    ///
+    /// eq_zero is same bool as returned from if_arithmetic_eq_neq_zero.
+    ///
+    /// Can only fail if jump_dest is not constant.
+    fn state_for_neq_address(
+        &mut self,
+        eq_zero: bool,
+        jump_dest: Operand<'e>,
+    ) -> Option<(E, User, E::VirtualAddress)>;
+    fn state_for_eq_address(
+        &mut self,
+        eq_zero: bool,
+        jump_dest: Operand<'e>,
+    ) -> Option<(E, User, E::VirtualAddress)> {
+        self.state_for_neq_address(!eq_zero, jump_dest)
+    }
+    /// Continues with state and address, *clearing all unchecked branches*, and ending current
+    /// branch.
+    fn continue_with_state(&mut self, state: (E, User, E::VirtualAddress));
+
     /// Return true => tail_call, false => call.
     /// Also does resolve_va() for call dest.
     fn call_or_tail_call(
@@ -512,7 +535,7 @@ pub trait ControlExt<'e, E: ExecutionState<'e>> {
     ) -> Option<(E::VirtualAddress, bool)>;
 }
 
-impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
+impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::State> for
     scarf::analysis::Control<'e, 'a, 'b, A>
 {
     fn resolve_va(&mut self, operand: Operand<'e>) ->
@@ -703,6 +726,32 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec> for
             }
         };
         self.continue_at_address(dest);
+    }
+
+    fn state_for_neq_address(
+        &mut self,
+        eq_zero: bool,
+        jump_dest: Operand<'e>,
+    ) -> Option<(A::Exec, A::State, <A::Exec as ExecutionState<'e>>::VirtualAddress)> {
+        let dest = match eq_zero {
+            true => self.current_instruction_end(),
+            false => match self.resolve_va(jump_dest) {
+                Some(s) => s,
+                None => return None,
+            }
+        };
+        let user = self.user_state().clone();
+        let state = self.exec_state().clone();
+        Some((state, user, dest))
+    }
+
+    fn continue_with_state(
+        &mut self,
+        state: (A::Exec, A::State, <A::Exec as ExecutionState<'e>>::VirtualAddress),
+    ) {
+        self.end_branch();
+        self.clear_unchecked_branches();
+        self.add_branch_with_state(state.2, state.0, state.1);
     }
 
     fn call_or_tail_call(
