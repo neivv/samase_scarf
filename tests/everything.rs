@@ -1619,7 +1619,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 LookupSoundId | SFileOpenFileEx | SFileReadFileEx | SFileCloseFile |
                 LoadConsoles | InitConsoles | GetUiConsoles | GetStatResIconsDdsGrp |
                 GetUnitSkin | JoinCustomGame | FindFileWithCrc | ForFilesInDir |
-                SimpleFileMatchCallback => continue,
+                SimpleFileMatchCallback | GetLocales => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -2281,14 +2281,19 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(mpq_locale.is_none());
     }
     // map_history was added in 1.23.3c (Or at least it wasn't used in map loading before that)
+    // Also locales object seems to have been added in 1.23.3c?
+    // Or at least it got refactored to current shape there.
     let map_history = analysis.map_history();
+    let get_locales = analysis.get_locales();
     if minor_version > 23 ||
         (minor_version == 23 && patch_version > 3) ||
         (minor_version == 23 && patch_version == 3 && revision > b'b')
     {
         check_global_opt(map_history, binary, "map_history");
+        assert!(get_locales.is_some());
     } else {
         assert!(map_history.is_none());
+        assert!(get_locales.is_none());
     }
 
     // step_bullet_frame was inlined to step_bullets in

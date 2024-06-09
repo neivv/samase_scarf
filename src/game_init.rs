@@ -156,6 +156,11 @@ pub(crate) struct FindFileWithCrc<Va: VirtualAddress> {
     pub simple_file_match_callback: Option<Va>,
 }
 
+pub(crate) struct ChooseSnp<Va: VirtualAddress> {
+    pub choose_snp: Option<Va>,
+    pub get_locales: Option<Va>,
+}
+
 impl<'e, Va: VirtualAddress> Default for SinglePlayerStart<'e, Va> {
     fn default() -> Self {
         SinglePlayerStart {
@@ -192,8 +197,8 @@ pub(crate) fn play_smk<'e, E: ExecutionState<'e>>(
     let funcs = functions.functions();
 
     // Find ref for char *smk_filenames[0x1c]; smk_filenames[0] == "smk\\blizzard.webm"
-    let rdata = binary.section(b".rdata\0\0")?;
-    let data = binary.section(b".data\0\0\0")?;
+    let rdata = analysis.binary_sections.rdata;
+    let data = analysis.binary_sections.data;
     let str_ref_addrs = find_strings_casei(bump, &rdata.data, b"smk\\blizzard.");
 
     let data_rvas = str_ref_addrs.iter().flat_map(|&str_rva| {
@@ -611,10 +616,10 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 }
 
 pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
-    analysis: &AnalysisCtx<'e, E>,
+    actx: &AnalysisCtx<'e, E>,
     functions: &FunctionFinder<'_, 'e, E>,
     vtables: &Vtables<'e, E::VirtualAddress>,
-) -> Option<E::VirtualAddress> {
+) -> ChooseSnp<E::VirtualAddress> {
     // Search for vtable of AVSelectConnectionScreen, whose event handler (Fn vtable + 0x18)
     // with arg1 == 9 calls a child function doing
     // if this.provider_id == ID_BNAU {
@@ -630,11 +635,11 @@ pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
     // choose_snp if provider id isn't BNET.
     let vtables = vtables.vtables_starting_with(b".?AVSelectConnectionScreen@glues@@\0")
         .map(|x| x.address);
-    let binary = analysis.binary;
-    let ctx = analysis.ctx;
-    let bump = &analysis.bump;
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let bump = &actx.bump;
     let funcs = functions.functions();
-    let arg_cache = &analysis.arg_cache;
+    let arg_cache = &actx.arg_cache;
     let mut result = None;
     for vtable in vtables {
         let func = match binary.read_address(vtable + 0x6 * E::VirtualAddress::SIZE) {
@@ -678,7 +683,14 @@ pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
             result = analyzer.result;
         }
     }
-    result
+    let mut full_result = ChooseSnp {
+        choose_snp: None,
+        get_locales: None,
+    };
+    if let Some(result) = result {
+        verify_choose_snp(actx, result, &mut full_result);
+    }
+    full_result
 }
 
 struct FindRealChooseSnp<'a, 'e, E: ExecutionState<'e>> {
@@ -764,6 +776,130 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 state.provider_id_offset = provider_id;
             }
             _ => (),
+        }
+    }
+}
+
+/// Alternative method that doesn't rely on RTTI
+pub(crate) fn choose_snp_fallback<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> ChooseSnp<E::VirtualAddress> {
+    let binary = actx.binary;
+    let bump = &actx.bump;
+    let funcs = functions.functions();
+    let mut full_result = ChooseSnp {
+        choose_snp: None,
+        get_locales: None,
+    };
+    let rdata = actx.binary_sections.rdata;
+    let matches = find_bytes(bump, &rdata.data, b"strERROR_STANDARD_SNP");
+    'outer: for rva in matches {
+        let address = rdata.virtual_address + rva.0;
+        let global_refs = functions.find_functions_using_global(actx, address);
+        for global in global_refs {
+            entry_of_until(binary, funcs, global.use_address, |entry| {
+                verify_choose_snp(actx, entry, &mut full_result);
+                if full_result.choose_snp.is_some() {
+                    EntryOf::Ok(())
+                } else {
+                    EntryOf::Retry
+                }
+            });
+            if full_result.choose_snp.is_some() {
+                break 'outer;
+            }
+        }
+    }
+    full_result
+}
+
+fn verify_choose_snp<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    choose_snp: E::VirtualAddress,
+    result: &mut ChooseSnp<E::VirtualAddress>,
+) {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = VerifyChooseSnp::<E> {
+        result: result,
+        has_inlined: false,
+        get_locales_candidate: (E::VirtualAddress::from_u64(0), 0),
+        state: VerifyChooseSnpState::Verify,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, choose_snp);
+    analysis.analyze(&mut analyzer);
+    if result.choose_snp.is_some() {
+        result.choose_snp = Some(choose_snp);
+    }
+}
+
+struct VerifyChooseSnp<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut ChooseSnp<E::VirtualAddress>,
+    has_inlined: bool,
+    get_locales_candidate: (E::VirtualAddress, u32),
+    state: VerifyChooseSnpState,
+}
+
+enum VerifyChooseSnpState {
+    /// Inline once, then find check of game.is_bw
+    Verify,
+    /// At same inline depth, should have
+    /// locales_default_locale(this = get_locales())
+    Locales,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for VerifyChooseSnp<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match self.state {
+            VerifyChooseSnpState::Verify => {
+                match *op {
+                    Operation::Call(dest) => {
+                        if !self.has_inlined {
+                            if let Some(dest) = ctrl.resolve_va(dest) {
+                                self.has_inlined = true;
+                                ctrl.analyze_with_current_state(self, dest);
+                                if self.result.choose_snp.is_some() {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                    Operation::SetFlags(ref flags) => {
+                        let is_bw_check = |op: Operand<'_>| op.if_mem8_offset(0x10350).is_some();
+                        if is_bw_check(ctrl.resolve(flags.left)) ||
+                            is_bw_check(ctrl.resolve(flags.right))
+                        {
+                            self.result.choose_snp = Some(E::VirtualAddress::from_u64(0));
+                            self.state = VerifyChooseSnpState::Locales;
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            VerifyChooseSnpState::Locales => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve_register(0);
+                        if this.if_custom() == Some(self.get_locales_candidate.1) {
+                            self.result.get_locales = Some(self.get_locales_candidate.0);
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        let ctx = ctrl.ctx();
+                        let custom_id = self.get_locales_candidate.1 + 1;
+                        if custom_id > 4 {
+                            ctrl.end_analysis();
+                        }
+                        let custom = ctx.custom(custom_id);
+                        ctrl.do_call_with_result(custom);
+                        self.get_locales_candidate = (dest, custom_id);
+                    }
+                }
+            }
         }
     }
 }

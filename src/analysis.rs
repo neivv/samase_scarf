@@ -195,7 +195,8 @@ results! {
         GluCmpgnEventHandler => glucmpgn_event_handler => cache_run_dialog,
         AiUpdateAttackTarget => ai_update_attack_target,
         IsOutsideGameScreen => is_outside_game_screen,
-        ChooseSnp => choose_snp,
+        ChooseSnp => choose_snp => cache_choose_snp,
+        GetLocales => get_locales => cache_choose_snp,
         LoadImages => load_images,
         InitGameNetwork => init_game_network,
         SpawnDialog => spawn_dialog => cache_spawn_dialog,
@@ -1203,10 +1204,6 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.enter(AnalysisCache::send_command)
     }
 
-    pub fn choose_snp(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(AnalysisCache::choose_snp)
-    }
-
     pub fn renderer_vtables(&mut self) -> Rc<Vec<E::VirtualAddress>> {
         self.enter(AnalysisCache::renderer_vtables)
     }
@@ -2161,11 +2158,23 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::MapInitChkCallbacks, |s| s.cache_init_map(actx))
     }
 
-    fn choose_snp(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.cache_single_address(AddressAnalysis::ChooseSnp, |s| {
+    fn cache_choose_snp(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[ChooseSnp, GetLocales], &[], |s| {
             let vtables = s.vtables(actx);
-            game_init::choose_snp(actx, &s.function_finder(), &vtables)
+            let mut r = game_init::choose_snp(actx, &s.function_finder(), &vtables);
+            if r.choose_snp.is_none() {
+                if crate::util::test_assertions() {
+                    panic!("Expected to find choose_snp with first method");
+                }
+                r = game_init::choose_snp_fallback(actx, &s.function_finder());
+            }
+            Some(([r.choose_snp, r.get_locales], []))
         })
+    }
+
+    fn choose_snp(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::ChooseSnp, |s| s.cache_choose_snp(actx))
     }
 
     fn renderer_vtables(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Vec<E::VirtualAddress>> {
