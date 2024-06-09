@@ -507,6 +507,9 @@ results! {
         FindFileWithCrc => find_file_with_crc => cache_join_custom_game,
         StepLobbyNetwork => step_lobby_network => cache_step_lobby_network,
         SendQueuedLobbyCommands => send_queued_lobby_commands => cache_step_lobby_network,
+        ProcessAsyncLobbyCommand => process_async_lobby_command => cache_step_lobby_state,
+        // a1 data, a2 len, a3 player
+        CommandLobbyMapP2p => command_lobby_map_p2p => cache_step_lobby_state,
     }
 }
 
@@ -4834,6 +4837,28 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let r = network::step_lobby_network(actx, step_network, send_command, &funcs);
                 Some((
                     [r.step_lobby_network, r.send_queued_lobby_commands],
+                    [],
+                ))
+            })
+    }
+
+    fn step_lobby_network(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::StepLobbyNetwork,
+            |s| s.cache_step_lobby_network(actx),
+        )
+    }
+
+    fn cache_step_lobby_state(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[ProcessAsyncLobbyCommand, CommandLobbyMapP2p], &[],
+            |s| {
+                let step_lobby_network = s.step_lobby_network(actx)?;
+                let funcs = s.function_finder();
+                let r = network::step_lobby_state(actx, step_lobby_network, &funcs);
+                Some((
+                    [r.process_async_lobby_command, r.command_lobby_map_p2p],
                     [],
                 ))
             })

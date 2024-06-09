@@ -7,6 +7,7 @@ use scarf::{MemAccessSize, Operand, OperandCtx, Operation, BinarySection, Binary
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{FunctionFinder, find_bytes, entry_of_until, EntryOf};
 use crate::add_terms::collect_arith_add_terms;
+use crate::switch::CompleteSwitch;
 use crate::util::{ControlExt, OperandExt, OptionExt, single_result_assign, if_arithmetic_eq_neq};
 use crate::vtables::Vtables;
 
@@ -32,6 +33,12 @@ pub struct SnetHandlePackets<Va: VirtualAddress> {
 pub struct StepLobbyNetwork<Va: VirtualAddress> {
     pub step_lobby_network: Option<Va>,
     pub send_queued_lobby_commands: Option<Va>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct StepLobbyState<Va: VirtualAddress> {
+    pub process_async_lobby_command: Option<Va>,
+    pub command_lobby_map_p2p: Option<Va>,
 }
 
 pub(crate) fn snp_definitions<'e, E: ExecutionState<'e>>(
@@ -643,6 +650,164 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                     Some(E::VirtualAddress::from_u64(0));
                                 ctrl.end_analysis();
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn step_lobby_state<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    step_lobby_network: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> StepLobbyState<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let arg_cache = &actx.arg_cache;
+    let mut result = StepLobbyState {
+        process_async_lobby_command: None,
+        command_lobby_map_p2p: None,
+    };
+
+    let callers = functions.find_callers(actx, step_lobby_network);
+    let funcs = functions.functions();
+    for caller in callers {
+        // Can match two different functions that both work for async command
+        entry_of_until(binary, funcs, caller, |entry| {
+            let mut analyzer = StepLobbyStateAnalyzer::<E> {
+                arg_cache,
+                result: &mut result,
+                entry_of: EntryOf::Retry,
+                inline_limit: 0,
+                step_lobby_network,
+                state: StepLobbyStateState::StepLobbyNetwork,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.entry_of
+        });
+
+        if result.process_async_lobby_command.is_some() {
+            break;
+        }
+    }
+
+    result
+}
+
+struct StepLobbyStateAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    arg_cache: &'a ArgCache<'e, E>,
+    entry_of: EntryOf<()>,
+    result: &'a mut StepLobbyState<E::VirtualAddress>,
+    inline_limit: u8,
+    step_lobby_network: E::VirtualAddress,
+    state: StepLobbyStateState,
+}
+
+enum StepLobbyStateState {
+    /// Find step_lobby_network call, and jump based on its return value
+    StepLobbyNetwork,
+    /// Should be next call / tail call on 0 branch
+    FindAsyncCommands,
+    /// Should have a switch
+    VerifyAsyncCommands,
+    /// On branch 0x4f, should have a call to lobby_command_map_p2p
+    MapP2pPacket,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepLobbyStateAnalyzer<'a, 'e, E> {
+    type Exec = E;
+    type State = analysis::DefaultState;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            StepLobbyStateState::StepLobbyNetwork => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if dest == self.step_lobby_network {
+                            self.entry_of = EntryOf::Stop;
+                            ctrl.do_call_with_result(ctx.custom(0));
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((other, eq)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                        if other.unwrap_and_mask().if_custom() == Some(0) {
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_eq_address(eq, to);
+                            self.state = StepLobbyStateState::FindAsyncCommands;
+                        }
+                    }
+                }
+            }
+            StepLobbyStateState::FindAsyncCommands => {
+                let dest = match *op {
+                    Operation::Call(dest) => dest,
+                    Operation::Jump { condition, to } => {
+                        if condition == ctx.const_1() &&
+                            ctrl.resolve_register(4) == ctx.register(4)
+                        {
+                            to
+                        } else {
+                            ctrl.end_analysis();
+                            return;
+                        }
+                    }
+                    _ => return,
+                };
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    self.inline_limit = 8;
+                    self.state = StepLobbyStateState::VerifyAsyncCommands;
+                    // This doesn't do stack correctly for tail call but there are no
+                    // arguments so it's fine..
+                    ctrl.analyze_with_current_state(self, dest);
+                    if self.result.process_async_lobby_command.is_some() {
+                        self.result.process_async_lobby_command = Some(dest);
+                    }
+                }
+                ctrl.end_analysis();
+            }
+            StepLobbyStateState::VerifyAsyncCommands => {
+                match *op {
+                    Operation::Call(..) | Operation::Jump { .. } => {
+                        if self.inline_limit == 0 {
+                            ctrl.end_analysis();
+                        } else {
+                            self.inline_limit -= 1;
+                        }
+                    }
+                    _ => (),
+                }
+                if let Operation::Jump { condition, to } = *op {
+                    if condition == ctx.const_1() && to.if_constant().is_none() {
+                        let to = ctrl.resolve(to);
+                        let exec_state = ctrl.exec_state();
+                        if let Some(switch) = CompleteSwitch::new(to, ctx, exec_state) {
+                            self.result.process_async_lobby_command =
+                                Some(E::VirtualAddress::from_u64(0));
+                            let binary = ctrl.binary();
+                            if let Some(branch) = switch.branch(binary, ctx, 0x4f) {
+                                ctrl.clear_unchecked_branches();
+                                ctrl.continue_at_address(branch);
+                                self.state = StepLobbyStateState::MapP2pPacket;
+                            }
+                        }
+                    }
+                }
+            }
+            StepLobbyStateState::MapP2pPacket => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let a1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let a2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let ok = a2.if_mem16().is_some_and(|mem| {
+                            mem.with_offset(2) == ctx.mem_access(a1, 0, MemAccessSize::Mem16)
+                        });
+                        if ok {
+                            self.result.command_lobby_map_p2p = Some(dest);
+                            ctrl.end_analysis();
                         }
                     }
                 }

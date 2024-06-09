@@ -541,7 +541,8 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::St
     fn resolve_va(&mut self, operand: Operand<'e>) ->
         Option<<A::Exec as ExecutionState<'e>>::VirtualAddress>
     {
-        self.resolve(operand).if_constant()
+        // Try just if_constant without resolving first as that is almost always the case
+        operand.if_constant().or_else(|| self.resolve(operand).if_constant())
             .filter(|&va| va >= self.binary().base().as_u64())
             .map(|x| <A::Exec as ExecutionState<'e>>::VirtualAddress::from_u64(x))
     }
