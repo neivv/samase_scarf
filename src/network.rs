@@ -80,6 +80,7 @@ pub(crate) fn snp_definitions<'e, E: ExecutionState<'e>>(
 pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     vtables: &Vtables<'e, E::VirtualAddress>,
+    functions: &FunctionFinder<'_, 'e, E>,
 ) -> InitStormNetworking<E::VirtualAddress> {
     let mut result = InitStormNetworking {
         init_storm_networking: None,
@@ -94,6 +95,8 @@ pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
     let text = analysis.binary_sections.text;
     let ctx = analysis.ctx;
     let arg_cache = &analysis.arg_cache;
+    let bump = &analysis.bump;
+    let funcs = functions.functions();
     for vtable in vtables {
         let func = match binary.read_address(vtable + 0x3 * E::VirtualAddress::SIZE) {
             Ok(o) => o,
@@ -110,6 +113,36 @@ pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
         analysis.analyze(&mut analyzer);
         if result.init_storm_networking.is_some() {
             break;
+        }
+    }
+    if result.init_storm_networking.is_none() {
+        // Fallback: The same function should also refer to string SetGatewayText
+        let rdata = analysis.binary_sections.rdata;
+        let results = find_bytes(bump, &rdata.data, b"SetGatewayText\0");
+        'outer: for rva in results {
+            let address = rdata.virtual_address + rva.0;
+            let global_refs = functions.find_functions_using_global(analysis, address);
+            for global_ref in global_refs {
+                entry_of_until(binary, funcs, global_ref.use_address, |entry| {
+                    let mut analyzer = FindInitStormNetworking::<E> {
+                        result: &mut result,
+                        inlining: false,
+                        text,
+                        binary,
+                        arg_cache,
+                    };
+                    let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+                    analysis.analyze(&mut analyzer);
+                    if result.init_storm_networking.is_some() {
+                        EntryOf::Ok(())
+                    } else {
+                        EntryOf::Retry
+                    }
+                });
+                if result.init_storm_networking.is_some() {
+                    break 'outer;
+                }
+            }
         }
     }
     result
@@ -141,24 +174,25 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetw
                         self.inlining = false;
                     }
                 } else {
-                    let arg1 = self.arg_cache.on_call(0);
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                     let arg2 = ctrl.resolve(self.arg_cache.on_call(1)).if_constant();
                     let text_start = self.text.virtual_address;
                     let text_end = self.text.virtual_address + self.text.virtual_size;
                     let binary = self.binary;
-                    let arg1_1;
-                    let arg1_2;
+
                     let word_size = u64::from(E::VirtualAddress::SIZE);
-                    if arg2 == Some(1) {
-                        arg1_1 = ctrl.resolve(ctrl.mem_word(arg1, 0));
-                        arg1_2 = ctrl.resolve(ctrl.mem_word(arg1, word_size));
+                    let ctx = ctrl.ctx();
+                    let mem = if arg2 == Some(1) {
+                        ctx.mem_access(arg1, 0, E::WORD_SIZE)
                     } else if arg2 == Some(2) {
                         // Older versions have array size 2 and a second fnptr pair
-                        arg1_1 = ctrl.resolve(ctrl.mem_word(arg1, 2 * word_size));
-                        arg1_2 = ctrl.resolve(ctrl.mem_word(arg1, 3 * word_size));
+                        ctx.mem_access(arg1, word_size * 2, E::WORD_SIZE)
                     } else {
                         return;
-                    }
+                    };
+                    let arg1_1 = ctrl.read_memory(&mem);
+                    let arg1_2 = ctrl.read_memory(&mem.with_offset(word_size));
+
                     let ok = Some(())
                         .and_then(|_| ctrl.if_mem_word(arg1_1)?.if_constant_address())
                         .and_then(|a| binary.read_address(E::VirtualAddress::from_u64(a)).ok())

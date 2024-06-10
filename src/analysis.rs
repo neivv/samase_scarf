@@ -2392,7 +2392,8 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use AddressAnalysis::*;
         self.cache_many(&[InitStormNetworking, LoadSnpList], &[], |s| {
             let vtables = s.vtables(actx);
-            let result = network::init_storm_networking(actx, &vtables);
+            let funcs = s.function_finder();
+            let result = network::init_storm_networking(actx, &vtables, &funcs);
             Some(([result.init_storm_networking, result.load_snp_list], []))
         })
     }
