@@ -4,7 +4,7 @@ use fxhash::FxHashMap;
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType, MemAccessSize};
-use scarf::{BinaryFile, DestOperand, MemAccess, Operation, Operand, OperandCtx};
+use scarf::{BinaryFile, BinarySection, DestOperand, MemAccess, Operation, Operand, OperandCtx};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_state::{
@@ -78,6 +78,9 @@ pub(crate) struct RunMenus<Va: VirtualAddress> {
     pub set_music: Option<Va>,
     pub pre_mission_glue: Option<Va>,
     pub show_mission_glue: Option<Va>,
+    pub construct_game_lobby_screen: Option<Va>,
+    pub game_lobby_screen_vtable: Option<Va>,
+    pub run_modern_dialog: Option<Va>,
 }
 
 pub(crate) struct RunDialog<Va: VirtualAddress> {
@@ -1812,6 +1815,9 @@ pub(crate) fn analyze_run_menus<'e, E: ExecutionState<'e>>(
         set_music: None,
         pre_mission_glue: None,
         show_mission_glue: None,
+        construct_game_lobby_screen: None,
+        game_lobby_screen_vtable: None,
+        run_modern_dialog: None,
     };
     let ctx = actx.ctx;
     let binary = actx.binary;
@@ -1822,6 +1828,12 @@ pub(crate) fn analyze_run_menus<'e, E: ExecutionState<'e>>(
         state: RunMenusState::Start,
         inline_depth: 0,
         entry_esp: ctx.register(4),
+        switch_state: None,
+        lobby_branch: None,
+        lobby_screen_local: ctx.const_0(),
+        first_lobby_screen_call: true,
+        maybe_stack_probe: false,
+        rdata: actx.binary_sections.rdata,
     };
     analysis.analyze(&mut analyzer);
     result
@@ -1833,6 +1845,13 @@ enum RunMenusState {
     TerranBriefing,
     CheckPreMissionGlue,
     FindShowMissionGlue,
+    /// Inline once, then find
+    /// construct_game_lobby_screen(&local)
+    LobbyScreen,
+    /// Writes a vtable to this.x0
+    VerifyConstructGameLobbyScreen,
+    /// run_modern_dialog(&lobby_screen_local) which was constructed
+    RunModernDialog,
 }
 
 struct RunMenusAnalyzer<'a, 'e, E: ExecutionState<'e>> {
@@ -1841,6 +1860,12 @@ struct RunMenusAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     state: RunMenusState,
     inline_depth: u8,
     entry_esp: Operand<'e>,
+    switch_state: Option<E>,
+    lobby_branch: Option<E::VirtualAddress>,
+    lobby_screen_local: Operand<'e>,
+    first_lobby_screen_call: bool,
+    maybe_stack_probe: bool,
+    rdata: &'e BinarySection<E::VirtualAddress>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a, 'e, E> {
@@ -1855,9 +1880,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                     if condition == ctx.const_1() {
                         let to = ctrl.resolve(to);
                         if to.if_constant().is_none() {
+                            let binary = ctrl.binary();
                             let exec = ctrl.exec_state();
                             if let Some(switch) = CompleteSwitch::new(to, ctx, exec) {
-                                let binary = ctrl.binary();
+                                self.switch_state = Some(exec.clone());
+                                self.lobby_branch = switch.branch(binary, ctx, 0xf);
                                 if let Some(case) = switch.branch(binary, ctx, 0x13) {
                                     self.state = RunMenusState::TerranBriefing;
                                     ctrl.clear_all_branches();
@@ -1889,7 +1916,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                                 self.entry_esp = old_esp;
                                 self.inline_depth -= 1;
                                 if self.result.set_music.is_some() {
-                                    ctrl.end_analysis();
+                                    self.to_lobby_screen_state(ctrl);
                                 }
                             }
                         } else {
@@ -1953,7 +1980,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                         let ok = ctrl.if_mem_word(arg1).is_some() && arg2 == ctx.const_1();
                         if ok {
                             self.result.show_mission_glue = Some(dest);
-                            ctrl.end_analysis();
+                            self.to_lobby_screen_state(ctrl);
                         }
                     }
                 }
@@ -1968,7 +1995,98 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                     }
                 }
             }
+            RunMenusState::LobbyScreen => {
+                if let Operation::Call(dest) = *op {
+                    if self.maybe_stack_probe {
+                        self.maybe_stack_probe = false;
+                        if ctrl.check_stack_probe() {
+                            return;
+                        }
+                    }
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.first_lobby_screen_call {
+                            self.first_lobby_screen_call = false;
+                            self.inline_depth = 1;
+                            let old_esp = self.entry_esp;
+                            self.entry_esp = ctrl.get_new_esp_for_call();
+                            self.maybe_stack_probe = true;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.entry_esp = old_esp;
+                            self.inline_depth = 0;
+                            if self.result.construct_game_lobby_screen.is_some() {
+                                ctrl.end_analysis();
+                            }
+                            return;
+                        }
+                        let this = ctrl.resolve_register(1);
+                        let is_on_stack = ctx.mem_access(this, 0, E::WORD_SIZE).address().0 ==
+                            ctx.mem_access(self.entry_esp, 0, E::WORD_SIZE).address().0;
+                        if is_on_stack {
+                            self.state = RunMenusState::VerifyConstructGameLobbyScreen;
+                            self.lobby_screen_local = this;
+                            ctrl.analyze_with_current_state(self, dest);
+                            if self.result.construct_game_lobby_screen.is_some() {
+                                self.result.construct_game_lobby_screen = Some(dest);
+                                self.state = RunMenusState::RunModernDialog;
+                            }
+                        }
+                    }
+                } else if self.maybe_stack_probe {
+                    if let Operation::Jump { .. } = *op {
+                        self.maybe_stack_probe = false;
+                    }
+                }
+            }
+            RunMenusState::VerifyConstructGameLobbyScreen => {
+                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    if mem.size == E::WORD_SIZE {
+                        let value = ctrl.resolve(value);
+                        if let Some(c) = value.if_constant() {
+                            let addr = E::VirtualAddress::from_u64(c);
+                            if self.rdata.contains(addr) {
+                                let mem = ctrl.resolve_mem(mem);
+                                if mem ==
+                                    ctx.mem_access(self.lobby_screen_local, 0, E::WORD_SIZE)
+                                {
+                                    self.result.construct_game_lobby_screen =
+                                        Some(E::VirtualAddress::from_u64(0));
+                                    self.result.game_lobby_screen_vtable = Some(addr);
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                } if let Operation::Jump { .. } = *op {
+                    ctrl.end_analysis();
+                }
+            }
+            RunMenusState::RunModernDialog => {
+                if let Operation::Call(dest) = *op {
+                    let this = ctrl.resolve_register(1);
+                    if this == self.lobby_screen_local {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.result.run_modern_dialog = Some(dest);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
         }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> RunMenusAnalyzer<'a, 'e, E> {
+    fn to_lobby_screen_state(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if self.inline_depth == 0 {
+            if let Some(addr) = self.lobby_branch {
+                if let Some(state) = self.switch_state.take() {
+                    ctrl.continue_with_state((state, Default::default(), addr));
+                    self.state = RunMenusState::LobbyScreen;
+                    return;
+                }
+            }
+        }
+        ctrl.end_analysis();
     }
 }
 

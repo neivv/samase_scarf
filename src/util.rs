@@ -626,16 +626,10 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::St
     fn check_stack_probe(&mut self) -> bool {
         let state = self.exec_state();
         if let Some(c) = state.resolve_register(0).if_constant() {
-            if A::Exec::WORD_SIZE == MemAccessSize::Mem64 {
-                if c >= 0x4000 {
-                    self.skip_operation();
-                    return true;
-                }
-            } else {
-                if c >= 0x1000 {
-                    self.skip_operation();
-                    return true;
-                }
+            let va_size = <A::Exec as ExecutionState<'e>>::VirtualAddress::SIZE;
+            if c >= 0x1000 && (c as u32) & (va_size - 1) == 0 {
+                self.skip_operation();
+                return true;
             }
         }
         false

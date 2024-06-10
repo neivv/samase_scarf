@@ -256,6 +256,9 @@ results! {
         SetBriefingMusic => set_briefing_music => cache_menu_screens,
         PreMissionGlue => pre_mission_glue => cache_menu_screens,
         ShowMissionGlue => show_mission_glue => cache_menu_screens,
+        ConstructGameLobbyScreen => construct_game_lobby_screen => cache_menu_screens,
+        GameLobbyScreenVtable => game_lobby_screen_vtable => cache_menu_screens,
+        RunModernDialog => run_modern_dialog => cache_menu_screens,
         MenuSwishIn => menu_swish_in => cache_glucmpgn_events,
         MenuSwishOut => menu_swish_out => cache_glucmpgn_events,
         AiSpellCast => ai_spell_cast,
@@ -3620,10 +3623,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
 
     fn cache_menu_screens(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
-        self.cache_many(&[SetBriefingMusic, PreMissionGlue, ShowMissionGlue], &[], |s| {
+        self.cache_many(&[SetBriefingMusic, PreMissionGlue, ShowMissionGlue,
+            ConstructGameLobbyScreen, GameLobbyScreenVtable, RunModernDialog], &[], |s| {
             let run_menus = s.run_menus(actx)?;
-            let result = dialog::analyze_run_menus(actx, run_menus);
-            Some(([result.set_music, result.pre_mission_glue, result.show_mission_glue], []))
+            let r = dialog::analyze_run_menus(actx, run_menus);
+            Some(([r.set_music, r.pre_mission_glue, r.show_mission_glue,
+                r.construct_game_lobby_screen, r.game_lobby_screen_vtable, r.run_modern_dialog],
+                []))
         })
     }
 
