@@ -58,6 +58,11 @@ pub(crate) struct StepActiveUnitAnalysis<'e, Va: VirtualAddress> {
     pub should_vision_update: Option<Operand<'e>>,
 }
 
+pub(crate) struct StepHiddenUnitAnalysis<Va: VirtualAddress> {
+    pub step_unit_movement: Option<Va>,
+    pub step_unit_timers: Option<Va>,
+}
+
 pub(crate) struct PrepareIssueOrderAnalysis<'e> {
     pub first_free_order: Option<Operand<'e>>,
     pub last_free_order: Option<Operand<'e>>,
@@ -1822,6 +1827,73 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepActiveAnalyzer<'a, 'acx, 'e, E> {
                     None
                 }
             });
+        }
+    }
+}
+
+pub(crate) fn analyze_step_hidden_unit<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    step_hidden_unit: E::VirtualAddress,
+) -> StepHiddenUnitAnalysis<E::VirtualAddress> {
+    let mut result = StepHiddenUnitAnalysis {
+        step_unit_movement: None,
+        step_unit_timers: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, step_hidden_unit);
+    let mut analyzer = StepHiddenAnalyzer::<E> {
+        result: &mut result,
+        step_hidden_unit,
+        recursive_call_found: false,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct StepHiddenAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut StepHiddenUnitAnalysis<E::VirtualAddress>,
+    step_hidden_unit: E::VirtualAddress,
+    recursive_call_found: bool,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepHiddenAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        // Find first recursive call to step_hidden_unit(this.subunit), after that
+        // next function should be step_unit_movement(this), and then
+        // step_unit_timers(this)
+        if !self.recursive_call_found {
+            if let Operation::Call(dest) = *op {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    if dest == self.step_hidden_unit {
+                        self.recursive_call_found = true;
+                        ctrl.clear_unchecked_branches();
+                    }
+                }
+            }
+        } else {
+            match *op {
+                Operation::Call(dest) => {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve_register(1);
+                        let ctx = ctrl.ctx();
+                        if this == ctx.register(1) {
+                            if self.result.step_unit_movement.is_none() {
+                                self.result.step_unit_movement = Some(dest);
+                            } else {
+                                self.result.step_unit_timers = Some(dest);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+                Operation::Jump { .. } => {
+                    ctrl.end_analysis();
+                }
+                _ => (),
+            }
         }
     }
 }

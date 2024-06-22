@@ -300,6 +300,7 @@ results! {
         UpdateUnitVisibility => update_unit_visibility => cache_step_objects,
         UpdateCloakState => update_cloak_state => cache_step_objects,
         StepUnitMovement => step_unit_movement => cache_step_active_unit,
+        StepUnitTimers => step_unit_timers => cache_step_hidden_unit,
         InitMapFromPath => init_map_from_path => cache_init_map,
         MapInitChkCallbacks => map_init_chk_callbacks => cache_init_map,
         StepNetwork => step_network => cache_game_loop,
@@ -3847,6 +3848,28 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 reveal_area
             );
             Some(([result.step_unit_movement], [result.should_vision_update]))
+        })
+    }
+
+    #[cfg(feature = "test_assertions")]
+    fn step_unit_movement(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::StepUnitMovement, |s| s.cache_step_active_unit(actx))
+    }
+
+    fn cache_step_hidden_unit(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[StepUnitTimers], &[], |s| {
+            let step_hidden_unit = s.step_hidden_unit_frame(actx)?;
+            let r = units::analyze_step_hidden_unit(
+                actx,
+                step_hidden_unit,
+            );
+            #[cfg(feature = "test_assertions")]
+            {
+                let step_unit_movement = s.step_unit_movement(actx);
+                assert_eq!(r.step_unit_movement, step_unit_movement);
+            }
+            Some(([r.step_unit_timers], []))
         })
     }
 
