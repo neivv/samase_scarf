@@ -519,6 +519,7 @@ results! {
         // callback: a1 dir_name, a2 file_entry, a3 ctx, a4 ctx2
         ForFilesInDir => for_files_in_dir => cache_find_file_with_crc,
         SimpleFileMatchCallback => simple_file_match_callback => cache_find_file_with_crc,
+        StartCloaking => start_cloaking => cache_cloak_command,
     }
 }
 
@@ -4927,6 +4928,16 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     [],
                 ))
             })
+    }
+
+    fn cache_cloak_command(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[StartCloaking], &[], |s| {
+            let process_commands = s.process_commands(actx)?;
+            let switch = s.process_commands_switch(actx)?;
+            let result = commands::cloak(actx, process_commands, &switch);
+            Some(([result.start_cloaking], []))
+        })
     }
 }
 

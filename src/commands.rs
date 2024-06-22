@@ -13,7 +13,7 @@ use crate::switch::CompleteSwitch;
 use crate::struct_layouts;
 use crate::util::{
     ControlExt, MemAccessExt, OptionExt, OperandExt, if_callable_const, read_u32_at,
-    if_arithmetic_eq_neq, is_global, bumpvec_with_capacity, single_result_assign,
+    if_arithmetic_eq_neq, is_global, bumpvec_with_capacity, single_result_assign, ExecStateExt,
 };
 
 #[derive(Clone, Debug)]
@@ -42,6 +42,10 @@ pub(crate) struct StepReplayCommands<'e, Va: VirtualAddressTrait> {
 pub(crate) struct PrintText<Va: VirtualAddressTrait> {
     pub print_text: Option<Va>,
     pub add_to_replay_data: Option<Va>,
+}
+
+pub(crate) struct Cloak<Va: VirtualAddressTrait> {
+    pub start_cloaking: Option<Va>,
 }
 
 pub(crate) struct Colors<'e> {
@@ -1344,6 +1348,146 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> AnalyzePlayerColors<'a, 'acx, 'e, E> {
                 false
             }
             _ => false,
+        }
+    }
+}
+
+pub(crate) fn cloak<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    process_commands: E::VirtualAddress,
+    process_commands_switch: &CompleteSwitch<'e>,
+) -> Cloak<E::VirtualAddress> {
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    // inline once to command_cloak(data), which should call
+    // check_tech_use_requirements(), check retval == 1, and then there call start_cloaking
+    // First branch in start_cloaking checks unit flag 0x100
+    let mut result = Cloak {
+        start_cloaking: None,
+    };
+    let branch = match process_commands_switch.branch(binary, ctx, 0x21) {
+        Some(s) => s,
+        None => return result,
+    };
+
+    let mut analyzer = CloakAnalyzer::<E> {
+        state: CloakState::BeforeSwitch,
+        inline_depth: 0,
+        branch,
+        result: &mut result,
+        call_tracker: CallTracker::with_capacity(actx, 0, 0x20),
+        arg_cache: &actx.arg_cache,
+    };
+    let mut exec_state = E::initial_state(ctx, binary);
+    // Set arg3 to 1 so the replay-specific switch will be skipped
+    exec_state.move_resolved(
+        &DestOperand::from_oper(actx.arg_cache.on_entry(2)),
+        ctx.const_1(),
+    );
+    let mut analysis =
+        FuncAnalysis::custom_state(binary, ctx, process_commands, exec_state, Default::default());
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct CloakAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    state: CloakState,
+    inline_depth: u8,
+    result: &'a mut Cloak<E::VirtualAddress>,
+    branch: E::VirtualAddress,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+enum CloakState {
+    BeforeSwitch,
+    TechUseRetVal,
+    FindStartCloaking,
+    VerifyStartCloaking,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CloakAnalyzer<'a, 'acx, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match self.state {
+            CloakState::BeforeSwitch => {
+                if let Operation::Jump { to, .. } = *op {
+                    if to.if_constant().is_none() {
+                        self.state = CloakState::TechUseRetVal;
+                        ctrl.clear_all_branches();
+                        ctrl.continue_at_address(self.branch);
+                    }
+                } else if let Operation::Call(..) = *op {
+                    ctrl.check_stack_probe();
+                }
+            }
+            CloakState::TechUseRetVal => {
+                if let Operation::Jump { condition, to } = *op {
+                    if to.if_constant().is_none() {
+                        // Switch again
+                        ctrl.end_analysis();
+                        return;
+                    }
+                    let condition = ctrl.resolve(condition);
+                    let ctx = ctrl.ctx();
+                    if let Some((l, r, eq)) = condition.if_arithmetic_eq_neq() {
+                        if r == ctx.const_1() && l.unwrap_and_mask().if_custom().is_some() {
+                            self.state = CloakState::FindStartCloaking;
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_eq_address(eq, to);
+                        }
+                    }
+                } else if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.inline_depth == 0 {
+                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            if arg1 == self.arg_cache.on_entry(0) {
+                                self.inline_depth = 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth = 0;
+                                ctrl.end_analysis();
+                            }
+                        }
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                }
+            }
+            CloakState::FindStartCloaking => {
+                if let Operation::Jump { .. } = *op {
+                    ctrl.end_analysis();
+                } else if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.state = CloakState::VerifyStartCloaking;
+                        ctrl.analyze_with_current_state(self, dest);
+                        if self.result.start_cloaking.is_some() {
+                            self.result.start_cloaking = Some(dest);
+                            ctrl.end_analysis();
+                        } else {
+                            self.state = CloakState::FindStartCloaking;
+                        }
+                    }
+                }
+            }
+            CloakState::VerifyStartCloaking => {
+                if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let condition = self.call_tracker.resolve_calls(condition);
+                    let ok = condition.if_arithmetic_and_const(0x1)
+                        .and_then(|x| x.if_mem8_offset(E::struct_layouts().unit_flags() + 1))
+                        .is_some();
+                    if ok {
+                        self.result.start_cloaking = Some(E::VirtualAddress::from_u64(0));
+                    }
+                    ctrl.end_analysis();
+                } else if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                }
+            }
         }
     }
 }
