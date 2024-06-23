@@ -116,7 +116,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FontsAnalyzer<'a, 'e
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), val) => {
                 let val = ctrl.resolve(val);
                 if let Some(offset) = val.if_custom() {
                     let mem = ctrl.resolve_mem(mem);

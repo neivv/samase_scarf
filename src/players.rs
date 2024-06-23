@@ -83,7 +83,7 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
                         }
                     }
                 }
-                Operation::Move(_, val, None) => {
+                Operation::Move(_, val) => {
                     match *ctrl.user_state().get::<LocalPlayerState>() {
                         LocalPlayerState::Start => {
                             let val = ctrl.resolve(val);
@@ -237,7 +237,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
                     }
                 }
             }
-            Operation::Move(ref dest, val, None) => {
+            Operation::Move(ref dest, val) => {
                 // Check for Mem16[base + arg1 * mul + 6] = arg4
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem16 {

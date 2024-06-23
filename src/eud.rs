@@ -439,7 +439,7 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
             let mut call_reserve = 0;
             let ctx = ctrl.ctx();
             let stop = match op {
-                Operation::Move(ref to, from, _) => {
+                Operation::Move(ref to, from) => {
                     if let Some(mem) = from.if_memory() {
                         // Don't stop on fs:[0] read
                         mem.if_constant_address() != Some(0)

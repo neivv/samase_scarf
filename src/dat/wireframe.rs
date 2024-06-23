@@ -276,7 +276,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(ref dest, val, None) => {
+            Operation::Move(ref dest, val) => {
                 let val = ctrl.resolve(val);
                 if let Some((base, index)) = self.texture_index_from_op(val, ctrl)
                     .and_then(|(base, index)| self.unresolve_base_index(base, index, ctrl))

@@ -65,7 +65,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
-            Operation::Move(DestOperand::Memory(ref mem), _, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), _) => {
                 match self.state {
                     InitUnitsState::WireframeArray => {
                         let dest = ctrl.resolve_mem(mem);
@@ -109,7 +109,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     _ => (),
                 }
             }
-            Operation::Move(_, val, None)
+            Operation::Move(_, val)
                 if self.state == InitUnitsState::UnitSearchInit_MemsetSeen =>
             {
                 if let Some(c) = val.if_constant() {
@@ -222,7 +222,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             self.result = EntryOf::Ok(());
         }
         match *op {
-            Operation::Move(_, val, None) => {
+            Operation::Move(_, val) => {
                 if let Some(mem) = val.if_mem8() {
                     let mem = ctrl.resolve_mem(mem);
                     if mem.address().1 == E::struct_layouts().button_condition_param() {

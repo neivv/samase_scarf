@@ -247,7 +247,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
         }
 
         let ctx = ctrl.ctx();
-        if let Operation::Move(ref dest, val, None) = *op {
+        if let Operation::Move(ref dest, val) = *op {
             // If reading unit flags, set cloak state to 0
             // Prevents a branch from making unit.sprite.visibility_mask undefined
             if is_unit_flags_access(E::struct_layouts(), val) {

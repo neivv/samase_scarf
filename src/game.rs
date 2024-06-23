@@ -181,7 +181,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(ref dest, val, None) => {
+            Operation::Move(ref dest, val) => {
                 self.check_rng_ref(ctrl);
                 self.vision_state.update(dest, ctrl.resolve(val), ctx);
                 if self.vision_state.is_ok() {
@@ -273,7 +273,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsVisionStepFunc<'e, 
                     ctrl.end_analysis();
                 }
             }
-            Operation::Move(ref dest, val, _cond) => {
+            Operation::Move(ref dest, val) => {
                 let ctx = ctrl.ctx();
                 self.vision_state.update(dest, ctrl.resolve(val), ctx);
                 if self.vision_state.is_ok() {
@@ -381,7 +381,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGame<'e, E> {
                     }
                 }
             }
-            Operation::Move(_, val, _cond) => {
+            Operation::Move(_, val) => {
                 let val = ctrl.resolve(val);
                 let val = game_detect_check(ctrl.ctx(), val);
                 if single_result_assign(val, &mut self.result) {
@@ -613,7 +613,7 @@ impl<'a, 'acx, 'e: 'a + 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), _, _) => {
+            Operation::Move(DestOperand::Memory(ref mem), _) => {
                 let dest_mem = ctrl.resolve_mem(mem);
                 if let Some(offset) = Self::esp_offset_mem(&dest_mem, ctx) {
                     let u32_offset = offset / 4;
@@ -824,7 +824,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     self.operation(ctrl, &Operation::Call(to));
                 }
             }
-            Operation::Move(ref dest, value, None) => {
+            Operation::Move(ref dest, value) => {
                 match *dest {
                     DestOperand::Register64(reg) if E::VirtualAddress::SIZE == 4 => {
                         if reg == 5 && value.if_memory().is_some() {
@@ -1129,7 +1129,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             }
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref dest), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref dest), value) = *op {
                     let value = ctrl.resolve(value);
                     let result = value.if_mem8()
                         .and_then(|mem| {
@@ -1253,7 +1253,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             StepObjectsAnalysisState::VisionUpdateCounter => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == MemAccessSize::Mem32 {
                         let value = ctrl.resolve(value);
                         if value.if_constant() == Some(0x64) {
@@ -1270,7 +1270,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             StepObjectsAnalysisState::VisionUpdated => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == MemAccessSize::Mem8 {
                         let value = ctrl.resolve(value);
                         if value == ctx.const_0() {
@@ -1287,7 +1287,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 ctrl.aliasing_memory_fix(op);
                 if self.needs_inline_verify {
                     match *op {
-                        Operation::Move(DestOperand::Memory(mem), value, None) => {
+                        Operation::Move(DestOperand::Memory(mem), value) => {
                             if mem.size == MemAccessSize::Mem32 {
                                 let value = ctrl.resolve(value);
                                 if value == ctx.const_0() {
@@ -1382,7 +1382,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             ctrl.add_branch_with_current_state(dest);
                         }
                     }
-                } else if let Operation::Move(ref dest, value, None) = *op {
+                } else if let Operation::Move(ref dest, value) = *op {
                     if let DestOperand::Memory(ref mem) = dest {
                         if mem.size == E::WORD_SIZE {
                             let mem = ctrl.resolve_mem(mem);
@@ -1468,7 +1468,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             ctrl.continue_at_address(dest);
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), _, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), _) = *op {
                     // Block moves to first_dying_unit.sprite so that it can be
                     // matched later on.
                     let mem = ctrl.resolve_mem(mem);
@@ -1513,7 +1513,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             self.dcreep_next_update_candidate = Some(x);
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if ctrl.resolve(value).if_constant() == Some(3) {
                         let mem = ctrl.resolve_mem(mem);
                         if let Some(cand) = self.dcreep_next_update_candidate {
@@ -1576,7 +1576,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             }
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if self.state == StepObjectsAnalysisState::LastDyingUnit {
                         let value = ctrl.resolve(value);
                         let ok = ctrl.if_mem_word_offset(value, 0)
@@ -1803,7 +1803,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             }
                         }
                     }
-                } else if let Operation::Move(ref dest, value, None) = *op {
+                } else if let Operation::Move(ref dest, value) = *op {
                     if let DestOperand::Memory(ref mem) = *dest {
                         if mem.size == E::WORD_SIZE && self.result.active_iscript_bullet.is_none() {
                             let value = ctrl.resolve(value);
@@ -1910,7 +1910,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepObjectsAnalyzer<'a, 'acx, 'e, E> {
         op: &Operation<'e>,
         constant: u64,
     ) -> Option<Operand<'e>> {
-        if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+        if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
             let value = ctrl.resolve(value);
             if value.if_constant() == Some(constant) {
                 let mem = ctrl.resolve_mem(mem);
@@ -1941,7 +1941,7 @@ fn analyze_simulate_short<'e, E: ExecutionState<'e>>(
                 Operation::Jump { .. } | Operation::Call(..) => {
                     ctrl.end_analysis();
                 }
-                Operation::Move(DestOperand::Memory(mem), _, _) => {
+                Operation::Move(DestOperand::Memory(mem), _) => {
                     let address = ctrl.resolve(mem.address().0);
                     if !is_stack_address(address) {
                         ctrl.end_analysis();

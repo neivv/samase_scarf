@@ -86,7 +86,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
                 self.jump_limit -= 1;
             }
-            Operation::Move(ref dest, value, None) => {
+            Operation::Move(ref dest, value) => {
                 let value = ctrl.resolve(value);
                 if value.if_constant() == Some(0x183) {
                     let address = ctrl.address();

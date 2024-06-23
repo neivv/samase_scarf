@@ -238,7 +238,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
                 address <= self.middle_of_func;
             if in_possible_range {
                 if let Some(global_addr) = self.global_addr {
-                    if let Operation::Move(_, ref val, _) = *op {
+                    if let Operation::Move(_, ref val) = *op {
                         // No need to resolve here, as the constant
                         // was found by just binary scanning,
                         self.call_found = val.if_memory()
@@ -257,7 +257,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for GameScreenRClickAnalyzer
             return;
         }
         match *op {
-            Operation::Move(ref dest, val, _) => {
+            Operation::Move(ref dest, val) => {
                 if !self.mov_u32_max_seen && self.first_branch {
                     let val = ctrl.resolve(val);
                     if val.if_constant().map(|x| x as u32) == Some(u32::MAX) {
@@ -462,7 +462,7 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
                         }
                     }
                 }
-                Operation::Move(_, val, None) => {
+                Operation::Move(_, val) => {
                     if self.depth != 0 {
                         let val = ctrl.resolve(val);
                         let result = Self::check_move(val);
@@ -679,7 +679,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
         {
             self.entry_of = EntryOf::Ok(());
         }
-        if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+        if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
             if mem.size == E::WORD_SIZE {
                 let value = ctrl.resolve(value);
                 if let Some(c) = value.if_constant() {
@@ -1028,7 +1028,7 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for StartTargetingAnalyz
                 }
             }
         } else {
-            if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+            if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                 let mem = ctrl.resolve_mem(mem);
                 if mem.is_global() {
                     let ctx = ctrl.ctx();
@@ -1336,7 +1336,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     ctrl.end_analysis();
                 }
             }
-        } else if let Operation::Move(ref dest, val, Some(condition)) = *op {
+        } else if let Operation::ConditionalMove(ref dest, val, condition) = *op {
             // Assume that orders_dat_obscured[x] is never 0xbd
             let condition = ctrl.resolve(condition);
             if let Some((_, right, is_eq)) = if_arithmetic_eq_neq(condition) {
@@ -1716,7 +1716,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         }
                         self.call_tracker.add_call(ctrl, dest);
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == E::WORD_SIZE {
                         let value = ctrl.resolve(value);
                         let mem = ctrl.resolve_mem(mem);
@@ -2091,7 +2091,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         self.stop_targeting_entry = E::VirtualAddress::from_u64(0);
                         ctrl.end_analysis();
                     }
-                    Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+                    Operation::Move(DestOperand::Memory(ref mem), value) => {
                         let value = ctrl.resolve(value);
                         if value == ctx.const_0() {
                             let mem = ctrl.resolve_mem(mem);
@@ -2152,7 +2152,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 }
             }
             GameScreenLClickState::GlobalWrites => {
-                if let Operation::Move(DestOperand::Memory(ref dest), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref dest), value) = *op {
                     let mut result_changed = false;
                     let dest = ctrl.resolve_mem(dest);
                     let value = ctrl.resolve(value);
@@ -2210,7 +2210,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         self.result.is_selecting = None;
                         ctrl.end_analysis();
                     }
-                    Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+                    Operation::Move(DestOperand::Memory(ref mem), value) => {
                         let value = ctrl.resolve(value);
                         if value == ctx.const_0() {
                             if self.result.is_selecting.is_some() {
@@ -2460,7 +2460,7 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 }
             }
             UpdateGameScreenSizeState::HeightRatio => {
-                if let Operation::Move(_, value, None) = *op {
+                if let Operation::Move(_, value) = *op {
                     if let Some((_, r)) = if_f32_div(value) {
                         let r = ctrl.resolve(r);
                         if let Some((l, r)) = r.if_arithmetic_float(ArithOpType::Mul) {
@@ -2631,7 +2631,7 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for ShowPortraitAnalyzer
                         ctrl.clear_unchecked_branches();
                         ctrl.continue_at_neq_address(eq, to);
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == E::WORD_SIZE {
                         if ctrl.resolve(value) == ctx.const_0() {
                             // Videos object does have a branch where it is cleared before
@@ -2669,7 +2669,7 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for ShowPortraitAnalyzer
                             ctrl.continue_at_neq_address(eq, to);
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == E::WORD_SIZE {
                         if let Some(cand) = self.videos_candidate {
                             if ctrl.resolve(value) == ctx.const_0() &&
@@ -2692,7 +2692,7 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for ShowPortraitAnalyzer
                             self.video_id_candidate = Some(mem);
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if let Some(cand) = self.video_id_candidate {
                         let mem = ctrl.resolve_mem(mem);
                         if mem.is_global() {

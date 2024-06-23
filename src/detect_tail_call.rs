@@ -50,7 +50,7 @@ impl<'e, E: ExecutionState<'e>> DetectTailCall<'e, E> {
         op: &Operation<'e>,
     ) -> bool {
         if !self.esp_write_seen {
-            if let Operation::Move(DestOperand::Register64(reg), _, _) = *op {
+            if let Operation::Move(DestOperand::Register64(reg), _) = *op {
                 if reg == 4 {
                     self.esp_write_seen = true;
                 }

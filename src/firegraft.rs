@@ -320,7 +320,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
                 self.entry_of = EntryOf::Ok(());
                 let ok = match *op {
-                    Operation::Move(ref dest, value, None) => {
+                    Operation::Move(ref dest, value) => {
                         if self.check(ctrl, value) {
                             true
                         } else if let DestOperand::Memory(ref dest) = *dest {

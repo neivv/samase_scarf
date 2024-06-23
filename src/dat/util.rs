@@ -331,7 +331,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
         }
         ctrl.aliasing_memory_fix(op);
-        if let Operation::Move(ref dest, val, None) = *op {
+        if let Operation::Move(ref dest, val) = *op {
             if self.rdtsc_tracker.check(ctrl, dest, val) {
                 return;
             }
@@ -391,7 +391,7 @@ impl<'e> RdtscTracker<'e> {
     /// Special case rdtsc to move Custom() that will be checked
     /// later on in jumps.
     ///
-    /// Call on Operation::Move(dest, val, None).
+    /// Call on Operation::Move(dest, val).
     /// Returns true if the operation was skipped.
     #[inline]
     pub fn check<A: analysis::Analyzer<'e>>(

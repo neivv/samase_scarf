@@ -209,7 +209,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
                     }
                 }
             }
-            Operation::Move(ref dest, val, _cond) => {
+            Operation::Move(ref dest, val) => {
                 // Try to find script->pos += 1
                 if self.aiscript_operand.is_none() {
                     if let DestOperand::Memory(ref mem) = dest {
@@ -360,7 +360,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptFindSwitchEnd
                     self.not_inlined_op_read = true;
                 }
             }
-            Operation::Move(ref dest, val, _) => {
+            Operation::Move(ref dest, val) => {
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem32 {
                         let dest = ctrl.resolve_mem(mem);
@@ -477,7 +477,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GuardAiAnalyzer<'e, E
                     ctrl.end_analysis();
                 }
             }
-            Operation::Move(_, val, _) => {
+            Operation::Move(_, val) => {
                 let val = ctrl.resolve(val);
                 let ctx = ctrl.ctx();
                 let result = ctrl.if_mem_word(val)
@@ -555,7 +555,7 @@ impl<'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     jump_check = true;
                 }
             }
-            Operation::Move(_, val, _cond) => {
+            Operation::Move(_, val) => {
                 let res = self.ai_towns_check(val, ctrl);
                 if single_result_assign(res, &mut self.result) {
                     ctrl.end_analysis();
@@ -658,7 +658,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlayerAiAnalyzer<'e, 
                     }
                 }
             }
-            Operation::Move(ref dest, val, _cond) => {
+            Operation::Move(ref dest, val) => {
                 if let DestOperand::Memory(mem) = dest {
                     let dest = ctrl.resolve_mem(mem);
                     let val = ctrl.resolve(val);
@@ -1090,7 +1090,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(mem), val, None)
+            Operation::Move(DestOperand::Memory(mem), val)
                 if self.state == StepAiState::SpendMoney && mem.size == MemAccessSize::Mem32 =>
             {
                 // Search for ai_spend_money by checking for a global store
@@ -1112,7 +1112,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(ref dest, _, Some(condition))
+            Operation::ConditionalMove(ref dest, _, condition)
                 if self.state == StepAiState::SpendMoney =>
             {
                 let condition = ctrl.resolve(condition);
@@ -1125,7 +1125,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     ctrl.move_unresolved(dest, ctx.custom(0));
                 }
             }
-            Operation::Move(ref dest, val, None) if self.state == StepAiState::StepAiScript => {
+            Operation::Move(ref dest, val) if self.state == StepAiState::StepAiScript => {
                 // step_objects has `counter = counter - 1`
                 // instruction which is after step_ai, so we can stop
                 // if that is reached.
@@ -1156,7 +1156,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, None)
+            Operation::Move(DestOperand::Memory(ref mem), val)
                 if self.state == StepAiState::StepRegions =>
             {
                 // First branch of ai_step_region always clears flag 0x4
@@ -1189,7 +1189,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     self.result.ai_step_region = Some(E::VirtualAddress::from_u64(0));
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), _, None)
+            Operation::Move(DestOperand::Memory(ref mem), _)
                 if self.state == StepAiState::TargetExpansion =>
             {
                 let dest = ctrl.resolve_mem(mem);
@@ -1199,7 +1199,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     ctrl.skip_operation();
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, None)
+            Operation::Move(DestOperand::Memory(ref mem), val)
                 if self.state == StepAiState::ResourceAreas =>
             {
                 if ctrl.resolve(val).if_constant() == Some(0x1c2) {
@@ -1216,7 +1216,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, None)
+            Operation::Move(DestOperand::Memory(ref mem), val)
                 if self.state == StepAiState::TargetResetCounter =>
             {
                 if ctrl.resolve(val).if_constant() == Some(0x12c) {
@@ -1228,7 +1228,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, None)
+            Operation::Move(DestOperand::Memory(ref mem), val)
                 if self.state == StepAiState::TargetResetCounter2 =>
             {
                 if ctrl.resolve(val).if_constant() == Some(6) {
@@ -1929,7 +1929,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiRemoveUnitAnaly
                     self.fail(ctrl);
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), _, _) => {
+            Operation::Move(DestOperand::Memory(ref mem), _) => {
                 let ctx = ctrl.ctx();
                 if mem.address().0 != ctx.register(4) {
                     self.fail(ctrl);
@@ -2254,7 +2254,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         let is_call_state = !is_jump_state ||
             self.state == StepAiRegionState::PickAttackTargetUnwalkableJump;
         if self.state == StepAiRegionState::UpdateStrength && self.inline_depth > 0 {
-            if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+            if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                 let value = ctrl.resolve(value);
                 if value == ctx.const_0() {
                     let mem = ctrl.resolve_mem(mem);

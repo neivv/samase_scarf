@@ -79,7 +79,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
                 self.string_size_add_seen = false;
-            } else if let Operation::Move(dest, value, None) = *op {
+            } else if let Operation::Move(dest, value) = *op {
                 // Not counting additions to stack
                 if dest != DestOperand::Register64(4) {
                     // Assume string to be at least 3 words large.
@@ -103,7 +103,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
         } else {
-            if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+            if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                 // Assuming this be store of vector.length
                 if ctrl.resolve(value).if_constant() == Some(0x41) {
                     let mem = ctrl.resolve_mem(mem);

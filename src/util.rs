@@ -579,7 +579,7 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::St
     }
 
     fn aliasing_memory_fix(&mut self, op: &scarf::Operation<'e>) {
-        if let scarf::Operation::Move(ref dest, value, None) = *op {
+        if let scarf::Operation::Move(ref dest, value) = *op {
             if let Some(mem) = value.if_memory() {
                 if mem.size == MemAccessSize::Mem8 {
                     let value = self.resolve(value);

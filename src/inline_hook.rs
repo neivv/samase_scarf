@@ -268,10 +268,13 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
             return;
         }
         match *op {
-            Operation::Move(ref dest, value, cond) => {
-                if let Some(cond) = cond {
-                    self.check_unresolved_value(ctrl, cond, false);
+            Operation::Move(ref dest, value) => {
+                if matches!(*dest, DestOperand::Memory(..)) {
+                    self.check_unresolved_value(ctrl, value, false);
                 }
+            }
+            Operation::ConditionalMove(ref dest, value, cond) => {
+                self.check_unresolved_value(ctrl, cond, false);
                 if matches!(*dest, DestOperand::Memory(..)) {
                     self.check_unresolved_value(ctrl, value, false);
                 }

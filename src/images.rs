@@ -168,7 +168,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for InitImagesAnalyze
                 }
             }
             InitImagesState::HpBarState => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == E::WORD_SIZE {
                         let mem = ctrl.resolve_mem(mem);
                         if mem.is_global() {
@@ -202,7 +202,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for InitImagesAnalyze
                 }
             }
             InitImagesState::LinkedLists => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == E::WORD_SIZE {
                         let mem = ctrl.resolve_mem(mem);
                         if mem.is_global() {

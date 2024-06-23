@@ -67,7 +67,7 @@ impl<'e, E: ExecutionState<'e>> DetectListAdd<'e, E> {
                     self.head_candidate_branches.insert(addr, *inner);
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), value) => {
                 if mem.size != E::WORD_SIZE {
                     return;
                 }
@@ -113,7 +113,7 @@ pub fn detect_list_remove<'e, A>(
 ) -> Option<(Operand<'e>, u32)>
 where A: Analyzer<'e>,
 {
-    if let Operation::Move(DestOperand::Memory(ref dest), value, None) = *op {
+    if let Operation::Move(DestOperand::Memory(ref dest), value) = *op {
         let word_size = <A::Exec as ExecutionState<'e>>::WORD_SIZE;
         let va_size = <A::Exec as ExecutionState<'e>>::VirtualAddress::SIZE;
 

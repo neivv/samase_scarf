@@ -125,7 +125,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
                     }
                 }
             }
-            Operation::Move(ref dest, val, _cond) => {
+            Operation::Move(ref dest, val) => {
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem32 {
                         let val = ctrl.resolve(val);

@@ -293,7 +293,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         }
         self.greatest_address = self.greatest_address.max(address);
         match *op {
-            Operation::Move(ref dest, unres_val, None) => {
+            Operation::Move(ref dest, unres_val) => {
                 // Any instruction referring to a global must be at least 5 bytes
                 let instruction_len = ctrl.current_instruction_end().as_u64()
                     .wrapping_sub(address.as_u64());

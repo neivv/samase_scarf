@@ -185,7 +185,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepIscriptAnalyzer<
         }
         let ctx = ctrl.ctx();
         match *op {
-            Operation::Move(_, val, None) => {
+            Operation::Move(_, val) => {
                 if self.result.iscript_bin.is_none() {
                     let val = ctrl.resolve(val);
                     let iscript_bin = val.if_mem8()
@@ -448,7 +448,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDrawCursorMarker<'e,
                     ctrl.end_analysis();
                 }
             }
-            Operation::Move(ref dest, val, None) => {
+            Operation::Move(ref dest, val) => {
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem8 {
                         let val = ctrl.resolve(val);

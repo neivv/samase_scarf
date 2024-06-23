@@ -1692,7 +1692,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         ctrl.aliasing_memory_fix(op);
 
         match *op {
-            Operation::Move(ref dest, val, None) => {
+            Operation::Move(ref dest, val) => {
                 if self.dat_ctx.rdtsc_tracker.check(ctrl, dest, val) {
                     return;
                 }
@@ -3517,7 +3517,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             self.end(ctrl);
         }
         match *op {
-            Operation::Move(ref dest, val, None) => {
+            Operation::Move(ref dest, val) => {
                 let resolved = ctrl.resolve(val);
                 self.check_u8_instruction(ctrl, Some(dest), resolved, val);
                 match *dest {
@@ -3968,7 +3968,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         self.inlining = false;
                     }
                 }
-                Operation::Move(_, val, None) => {
+                Operation::Move(_, val) => {
                     let val = ctrl.resolve(val);
                     if let Some(mem) = val.if_memory() {
                         let ctx = ctrl.ctx();

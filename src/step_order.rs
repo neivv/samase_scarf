@@ -190,7 +190,7 @@ pub fn step_secondary_order_hook_info<'e, E: ExecutionState<'e>>(
             fn operation(&mut self, ctrl: &mut Control<'g, '_, '_, Self>, op: &Operation<'g>) {
                 let ctx = ctrl.ctx();
                 match *op {
-                    Operation::Move(_, val, _) => {
+                    Operation::Move(_, val) => {
                         let val = ctrl.resolve(val);
                         if let Some(result) = self.check(val, ctrl) {
                             self.result = Some((ctrl.address(), result.0, result.1));
@@ -1006,7 +1006,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
                             }
                         }
                     }
-                    Operation::Move(DestOperand::Memory(ref mem), val, None)
+                    Operation::Move(DestOperand::Memory(ref mem), val)
                         if state == DoAttackState::LastBulletSpawner =>
                     {
                         // Step 1: Look for assignment of zero to global memory
@@ -1395,7 +1395,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderTrain
                             ctrl.end_analysis();
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), _, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), _) = *op {
                     if self.result.cancel_queued_unit.is_some() {
                         let mem = ctrl.resolve_mem(mem);
                         if mem.is_global() {
@@ -1479,7 +1479,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderMatri
                 }
             }
             OrderMatrixState::VerifyGetSightRange => {
-                if let Operation::Move(_, value, None) = *op {
+                if let Operation::Move(_, value) = *op {
                     if let Some(mem) = value.if_mem8() {
                         let mem = ctrl.resolve_mem(mem);
                         let (_index, base) = mem.address();
@@ -1800,7 +1800,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                     }
                 } else {
-                    if let Operation::Move(DestOperand::Memory(..), value, None) = *op {
+                    if let Operation::Move(DestOperand::Memory(..), value) = *op {
                         if ctrl.resolve(value).if_constant() == Some(0xf) {
                             self.order_timer_store_seen = true;
                         }
@@ -1948,7 +1948,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 } else {
                     if state == OrderInfestState::VerifyDetachAddon {
-                        if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                        if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                             if mem.size == E::WORD_SIZE {
                                 let mem = ctrl.resolve_mem(mem);
                                 let (base, offset) = mem.address();
@@ -2083,7 +2083,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         let ctx = ctrl.ctx();
         match self.state {
             ZergBuildSelfState::ClearCompletedFlag => {
-                if let Operation::Move(DestOperand::Memory(ref dest_mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref dest_mem), value) = *op {
                     let value = ctrl.resolve(value);
                     let ok = value.if_and_with_const()
                         .filter(|x| x.1 & 0xff == 0xfe)
@@ -2120,7 +2120,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             self.func_candidate = dest;
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == MemAccessSize::Mem16 {
                         if ctrl.resolve(value) == ctx.const_0() {
                             let mem = ctrl.resolve_mem(&mem);
@@ -2303,7 +2303,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderNukeL
             }
             NukeLaunchState::HideUnit => {
                 self.track_last_call_with_this(ctrl, op);
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     // Check [[this + C] + C] = this with C being unit.related offset
                     if mem.size == E::WORD_SIZE && ctrl.resolve(value) == ctx.register(1) {
                         let mem = ctrl.resolve_mem(mem);
@@ -2336,7 +2336,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderNukeL
                         }
                     }
                 } else {
-                    if let Operation::Move(_, value, None) = *op {
+                    if let Operation::Move(_, value) = *op {
                         if let Some(mem) = value.unwrap_sext().if_mem16() {
                             let mem = ctrl.resolve_mem(mem);
                             let (base, offset) = mem.address();
@@ -2385,7 +2385,7 @@ impl<'a, 'e, E: ExecutionState<'e>> AnalyzeOrderNukeLaunch<'a, 'e, E> {
         state: u8,
     ) -> Option<E::VirtualAddress> {
         self.track_last_call_with_this(ctrl, op);
-        if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+        if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
             if mem.size == MemAccessSize::Mem8 {
                 if ctrl.resolve(value).if_constant() == Some(state as u64) {
                     // Could also check mem offset to be this.order_state,

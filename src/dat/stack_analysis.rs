@@ -116,7 +116,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
             }
         }
         match *op {
-            Operation::Move(ref dest, val, None) => {
+            Operation::Move(ref dest, val) => {
                 let ctx = ctrl.ctx();
                 if matches!(dest, DestOperand::Register64(4)) {
                     let constant = val.if_add_with_const()

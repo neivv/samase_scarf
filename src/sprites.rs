@@ -251,7 +251,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), value, _) => {
+            Operation::Move(DestOperand::Memory(ref mem), value) => {
                 let dest = ctrl.resolve_mem(mem);
                 let ctx = ctrl.ctx();
                 let value = ctrl.resolve(value);
@@ -786,7 +786,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
             // if found write 0 to [first_lone_sprite]
             // (Skipping lone sprite loop) and switch to StepLoneSpritesFound
             // Ideally the next thing being handled should be fow sprites.
-            if let Operation::Move(_, value, None) = *op {
+            if let Operation::Move(_, value) = *op {
                 let value = ctrl.resolve(value);
                 if value == self.first_lone {
                     self.state = FowSpritesState::StepLoneSpritesFound;
@@ -834,7 +834,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), value, _) => {
+            Operation::Move(DestOperand::Memory(ref mem), value) => {
                 if mem.size != E::WORD_SIZE {
                     return;
                 }
@@ -1013,7 +1013,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), value) => {
                 if mem.size != E::WORD_SIZE {
                     return;
                 }

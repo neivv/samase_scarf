@@ -71,7 +71,7 @@ pub(crate) fn map_tile_flags<'e, E: ExecutionState<'e>>(
                         }
                     }
                 }
-                Operation::Move(ref dest, _, _) => {
+                Operation::Move(ref dest, _) => {
                     // Ignore moves to [unit + 0xd0]
                     if let DestOperand::Memory(mem) = dest {
                         let (_, dest_off) = ctrl.resolve_mem(mem).address();
@@ -115,7 +115,7 @@ fn tile_flags_from_update_visibility_point<'e, E: ExecutionState<'e>>(
         type Exec = F;
         fn operation(&mut self, ctrl: &mut Control<'f, '_, '_, Self>, op: &Operation<'f>) {
             match *op {
-                Operation::Move(_, from, None) => {
+                Operation::Move(_, from) => {
                     let from = ctrl.resolve(from);
                     let ctx = ctrl.ctx();
                     // Check for mem_any[map_tile_flags + 4 * (x + y * map_width)]
@@ -331,7 +331,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), val) => {
                 let dest = ctrl.resolve_mem(mem);
                 let is_setting_rng_enable = self.rng_enable.if_memory()
                     .filter(|&x| x == &dest)
@@ -644,7 +644,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             }
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size != E::WORD_SIZE {
                         return;
                     }
@@ -694,7 +694,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         ctrl.end_analysis();
                     }
                 }
-                if let Operation::Move(ref dest, value, None) = *op {
+                if let Operation::Move(ref dest, value) = *op {
                     let value = ctrl.resolve(value);
                     let size = E::struct_layouts().tileset_data_size();
                     let result = value.if_arithmetic_add()
@@ -708,7 +708,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             InitTerrainState::TilesetBuffers => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size != E::WORD_SIZE {
                         return;
                     }

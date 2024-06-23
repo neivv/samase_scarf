@@ -145,7 +145,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlaySoundFnAnalyzer<
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         // Just search for sound_channel.x6 = sfx_data[sound].x5b / x7f
         // Both sound channel and sfxdata struct sizes/layouts have changed across patches.
-        if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+        if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
             let ctx = ctrl.ctx();
             // Skip stack writes early
             if mem.size != MemAccessSize::Mem8 || mem.address().0 == ctx.register(4) {

@@ -46,7 +46,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 dat_warn!(self.dat_ctx, "Reached jump @ set_buttons {:?}", ctrl.address());
                 ctrl.end_analysis();
             }
-            Operation::Move(_, _, Some(condition)) => {
+            Operation::ConditionalMove(_, _, condition) => {
                 let condition = ctrl.resolve(condition);
                 let ok = condition.if_arithmetic_gt()
                     .filter(|x| x.0.if_constant() == Some(0xfa))

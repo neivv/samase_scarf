@@ -83,7 +83,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitReqsAnalyzer<
             self.result = EntryOf::Stop;
         }
         match *op {
-            Operation::Move(_, val, None) if !self.offsets_read => {
+            Operation::Move(_, val) if !self.offsets_read => {
                 let val = ctrl.resolve(val);
                 let ctx = ctrl.ctx();
                 let ok = val.if_mem16_offset(self.requirement_offsets.as_u64())
@@ -102,7 +102,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitReqsAnalyzer<
                     self.offsets_read = true;
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, None) if self.offsets_read => {
+            Operation::Move(DestOperand::Memory(ref mem), val) if self.offsets_read => {
                 let val = ctrl.resolve(val);
                 if val.if_constant() == Some(0x17) {
                     let ctx = ctrl.ctx();

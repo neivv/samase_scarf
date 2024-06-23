@@ -336,7 +336,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeFirstSwitch<'e
         } else {
             // Skip past sometimes occuring `stack_frame | 0` messing up things
             if E::VirtualAddress::SIZE == 4 {
-                if let Operation::Move(_, value, None) = *op {
+                if let Operation::Move(_, value) = *op {
                     let value = ctrl.resolve(value);
                     let ctx = ctrl.ctx();
                     let skip = value.if_arithmetic_and()
@@ -408,7 +408,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CommandUserAnalyzer<'
                     }
                 }
             }
-            Operation::Move(ref dest, _, _) => {
+            Operation::Move(ref dest, _) => {
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem8 {
                         // The alliance command writes bytes to game + e544 + x * 0xc
@@ -611,7 +611,7 @@ impl<'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(_, val, _) => {
+            Operation::Move(_, val) => {
                 let possible_result = ctrl.user_state().get::<IsReplayState>().possible_result;
                 if possible_result.is_some() {
                     let val = ctrl.resolve(val);
@@ -703,7 +703,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if self.result.network_ready.is_none() {
             if ctrl.user_state().get::<StepNetworkState>().after_receive_storm_turns {
-                if let Operation::Move(ref dest, val, None) = *op {
+                if let Operation::Move(ref dest, val) = *op {
                     if let DestOperand::Memory(mem) = dest {
                         let ctx = ctrl.ctx();
                         if ctrl.resolve(val) == ctx.const_1() {
@@ -845,7 +845,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 } else {
                     if !is_process_lobby_commands {
-                        if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                        if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                             if ctrl.resolve(value).if_constant() == Some(7) {
                                 let dest = ctrl.resolve_mem(mem);
                                 if dest.is_global() {
@@ -1333,7 +1333,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> AnalyzePlayerColors<'a, 'acx, 'e, E> {
                 }
                 false
             }
-            Operation::Move(DestOperand::Memory(ref dest), value, None)
+            Operation::Move(DestOperand::Memory(ref dest), value)
                 if dest.size == MemAccessSize::Mem8 =>
             {
                 let value = ctrl.resolve(value);

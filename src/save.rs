@@ -147,7 +147,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 }
                 self.first_branch = false;
             }
-            Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), value) => {
                 let value = ctrl.resolve(value);
                 let ctx = ctrl.ctx();
                 let dest_mem = ctrl.resolve_mem(mem);

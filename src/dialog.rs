@@ -351,7 +351,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
                     }
                 }
             }
-            Operation::Move(ref dest, val, _condition) => {
+            Operation::Move(ref dest, val) => {
                 let resolved = ctrl.resolve(val);
                 if resolved == self.return_marker {
                     if let DestOperand::Memory(ref mem) = *dest {
@@ -573,7 +573,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'acx, 'e, E>
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), value) => {
                 let mem = ctrl.resolve_mem(mem);
                 if !mem.is_global() {
                     return;
@@ -805,7 +805,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), val) => {
                 let dest = ctrl.resolve_mem(mem);
                 let val = ctrl.resolve(val);
                 if mem.size == MemAccessSize::Mem16 {
@@ -998,7 +998,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StatusScreenMode<'e, E> 
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), val) => {
                 if mem.size == MemAccessSize::Mem8 {
                     let ctx = ctrl.ctx();
                     if ctx.and_const(ctrl.resolve(val), 0xff) == ctx.const_0() {
@@ -1079,7 +1079,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
         // Both are called by same status screen init func
         let ctx = ctrl.ctx();
         match *op {
-            Operation::Move(DestOperand::Memory(ref mem), val, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), val) => {
                 let val = ctrl.resolve(val);
                 if let Some(c) = val.if_custom() {
                     let mem = ctrl.resolve_mem(mem);
@@ -1391,7 +1391,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindChildDrawFunc<'a
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
-            Operation::Move(DestOperand::Memory(ref mem), val, None)
+            Operation::Move(DestOperand::Memory(ref mem), val)
                 if mem.size == E::WORD_SIZE =>
             {
                 if let Some(val) = ctrl.resolve(val).if_constant() {
@@ -1509,7 +1509,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 self.entry_of = EntryOf::Stop;
             }
             match *op {
-                Operation::Move(DestOperand::Memory(mem), val, None)
+                Operation::Move(DestOperand::Memory(mem), val)
                     if mem.size == E::WORD_SIZE =>
                 {
                     // Search for stores to
@@ -1570,7 +1570,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         }
                     }
                 }
-                Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+                Operation::Move(DestOperand::Memory(ref mem), value) => {
                     let index = self.click_index;
                     if index < 3 {
                         if let Some(value) = ctrl.resolve_va(value) {
@@ -2038,7 +2038,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                 }
             }
             RunMenusState::VerifyConstructGameLobbyScreen => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == E::WORD_SIZE {
                         let value = ctrl.resolve(value);
                         if let Some(c) = value.if_constant() {
@@ -2256,7 +2256,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, None)
+            Operation::Move(DestOperand::Memory(ref mem), val)
                 if self.ext_event_branch == 2 =>
             {
                 if self.result.dialog_return_code.is_none() {
@@ -2385,7 +2385,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunDialogChildAnalyz
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match self.state {
             RunDialogChildState::InitReturnCode => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == MemAccessSize::Mem32 {
                         if ctrl.resolve(value).if_constant() == Some(0xffff_fffd) {
                             self.state = RunDialogChildState::CtrlSetTimer;
@@ -2457,7 +2457,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunDialogChildAnalyz
                             }
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == E::WORD_SIZE {
                         if ctrl.resolve(value) == self.arg_cache.on_entry(0) {
                             let mem = ctrl.resolve_mem(&mem);

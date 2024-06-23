@@ -227,7 +227,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
-            Operation::Move(_, val, _cond) => {
+            Operation::Move(_, val) => {
                 if !self.memref_found {
                     let val = ctrl.resolve(val);
                     if let Some(mem) = val.if_memory() {
@@ -851,7 +851,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StrengthAnalyzer<
                 }
             }
             StrengthState::UnitStrength => {
-                if let Operation::Move(DestOperand::Memory(ref mem), _, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), _) = *op {
                     if mem.size == MemAccessSize::Mem32 {
                         let dest = ctrl.resolve_mem(mem);
                         let ctx = ctrl.ctx();
@@ -877,7 +877,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StrengthAnalyzer<
                 }
             }
             StrengthState::SpriteVisionSync => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     let value = ctrl.resolve(value);
                     let ctx = ctrl.ctx();
                     if value == ctx.const_1() {
@@ -1319,7 +1319,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
             }
             match self.state {
                 SetUnitPlayerState::RemoveFromSelections => {
-                    if let Operation::Move(_, val, None) = *op {
+                    if let Operation::Move(_, val) = *op {
                         let val = ctrl.resolve(val);
                         if ctrl.if_mem_word(val).filter(|&x| x == &self.selections_mem).is_some() {
                             self.result.remove_from_selections = Some(self.current_entry);
@@ -1331,7 +1331,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                 }
                 SetUnitPlayerState::RemoveFromClientSelection => {
                     let val = match *op {
-                        Operation::Move(_, val, None) => ctrl.resolve(val),
+                        Operation::Move(_, val) => ctrl.resolve(val),
                         Operation::SetFlags(ref arith) => {
                             if arith.ty != scarf::FlagArith::And {
                                 return;
@@ -1371,7 +1371,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                     }
                 }
                 SetUnitPlayerState::ClearBuildQueue => {
-                    if let Operation::Move(DestOperand::Memory(ref mem), val, None) = *op {
+                    if let Operation::Move(DestOperand::Memory(ref mem), val) = *op {
                         let (base, offset) = ctrl.resolve_mem(mem).address();
                         let addr_ok = base == ctx.register(1) &&
                             offset == E::struct_layouts().unit_build_queue();
@@ -1677,7 +1677,7 @@ impl<'a, 'e, E: ExecutionState<'e>> UnitSpeedAnalyzer<'a, 'e, E> {
         // Checking one of candidate funcs
         // flingy speed / acceleration / turn rate funcs are assumed from
         // the code reading from corresponding array
-        if let Operation::Move(_, val, None) = *op {
+        if let Operation::Move(_, val) = *op {
             let val = ctrl.resolve(val);
             if let Some(mem) = val.if_memory() {
                 let size = mem.size;
@@ -2061,7 +2061,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             self.state = PrepareIssueOrderState::FirstFreeOrder;
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     // Block moves to Mem[esp + x]; a string initialized to
                     // stack and then moving to heap, followed by string.ptr[constant] = 0
                     // caused issues by overwriting stack args.
@@ -2162,7 +2162,7 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
                     }
                 }
             }
-        } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+        } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
             let value = ctrl.resolve(value);
             if self.result.first_free_order.is_none() {
                 if mem.size == MemAccessSize::Mem8 {
@@ -2267,7 +2267,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PylonInitAnalyzer
         let ctx = ctrl.ctx();
         match self.state {
             PylonInitState::FirstPylon => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     let mem = ctrl.resolve_mem(mem);
                     let offset = E::struct_layouts().unit_next_pylon();
                     if mem.address() == (ctx.register(1), offset) {
@@ -2312,7 +2312,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PylonInitAnalyzer
                 }
             }
             PylonInitState::PylonAurasVisible | PylonInitState::PylonRefresh => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if ctrl.resolve(value) == ctx.const_1() {
                         let mem = ctrl.resolve_mem(mem);
                         if mem.is_global() {
@@ -2452,7 +2452,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             }
                         }
                     }
-                } else if let Operation::Move(_, value, None) = *op {
+                } else if let Operation::Move(_, value) = *op {
                     if let Some((l, r)) = value.if_arithmetic_and() {
                         let l = ctrl.resolve(l);
                         let r = ctrl.resolve(r);
@@ -2532,7 +2532,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             }
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     let value = ctrl.resolve(value);
                     let dest = ctrl.resolve_mem(mem);
                     let (dest_base, dest_off) = dest.address();
@@ -2628,7 +2628,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             self.call_tracker.add_call_resolve(ctrl, dest);
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     // Check for first_free_fow_sprite.sprite = duplicated
                     let mem = ctrl.resolve_mem(mem);
                     let (base, offset) = mem.address();
@@ -3091,7 +3091,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for HideUnitAnalyzer<
                             }
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == MemAccessSize::Mem32 && mem.address().0 != ctx.register(4) {
                         let mem = ctrl.resolve_mem(mem);
                         let (base, offset) = mem.address();

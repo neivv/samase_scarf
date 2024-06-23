@@ -197,7 +197,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), value) => {
                 if mem.size != E::WORD_SIZE {
                     return;
                 }
@@ -541,7 +541,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
                             }
                         }
                     }
-                    Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+                    Operation::Move(DestOperand::Memory(ref mem), value) => {
                         let value = ctrl.resolve(value);
                         if value.if_mem8_offset(flingy_flags_offset) == Some(ecx) {
                             let mem = ctrl.resolve_mem(mem);
@@ -630,7 +630,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
                             }
                         }
                         ctrl.end_analysis();
-                    } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                    } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                         if self.result.step_flingy_position.is_none() {
                             let value = ctrl.resolve(value);
                             if value.if_mem32_offset(speed_offset) == Some(ecx) {
@@ -649,7 +649,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
             StepMovingState::AnalyzeStartEndStartWalk |
                 StepMovingState::AnalyzeStartEndEndWalk =>
             {
-                if let Operation::Move(DestOperand::Memory(ref mem), _, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), _) = *op {
                     if mem.size == MemAccessSize::Mem8 {
                         let mem = ctrl.resolve_mem(mem);
                         if mem.is_global() {
@@ -678,7 +678,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
                 }
             }
             StepMovingState::FlingyVarWrites => {
-                if let Operation::Move(DestOperand::Memory(ref dest), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref dest), value) = *op {
                     let dest = ctrl.resolve_mem(dest);
                     let value = ctrl.resolve(value);
                     if dest.address().0 == ecx && is_global(value) {
@@ -1113,7 +1113,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             }
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), _, _) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), _) = *op {
                     // Just move 0x83 always to lockdown timer value to not having
                     // to handle min/max checks
                     let mem = ctrl.resolve_mem(mem);
@@ -1246,7 +1246,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             }
                         }
                     }
-                    Operation::Move(ref dest, value, Some(condition)) => {
+                    Operation::ConditionalMove(ref dest, value, condition) => {
                         let condition = ctrl.resolve(condition);
                         if let Some(eq) = is_lurker_weapon_cmp(condition) {
                             ctrl.clear_unchecked_branches();
@@ -1613,7 +1613,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         }
                         self.call_tracker.add_call(ctrl, dest);
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     let mem = ctrl.resolve_mem(mem);
                     let strength_offset = E::struct_layouts().unit_ground_strength();
                     if mem.address() == (ecx, strength_offset) {
@@ -1664,7 +1664,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SplashLurkerAnalyzer
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let ctx = ctrl.ctx();
-        if let Operation::Move(DestOperand::Memory(ref dest), value, None) = *op {
+        if let Operation::Move(DestOperand::Memory(ref dest), value) = *op {
             if dest.size == E::WORD_SIZE && dest.address().0 != ctx.register(4) {
                 let value = ctrl.resolve(value);
                 if value == self.arg_cache.on_entry(0) {

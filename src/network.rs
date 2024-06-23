@@ -508,7 +508,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsNetUserLatency<
 
                     }
                 },
-                Operation::Move(_, val, _) => {
+                Operation::Move(_, val) => {
                     if let Some(mem) = ctrl.if_mem_word(val) {
                         let (mem_base, _) = mem.address();
                         // Looking for e.g. mov eax, [string_table + net_user_latency*4]

@@ -244,7 +244,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsPlaySmk<'a, 'e,
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        if let Operation::Move(_, value, None) = *op {
+        if let Operation::Move(_, value) = *op {
             let value = ctrl.resolve(value);
             let ok = ctrl.if_mem_word_offset(value, self.smk_names.as_u64())
                 .and_then(|x| x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into()))
@@ -347,7 +347,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsScMain<'a, 'e, 
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), _, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), _) => {
                 let mem = ctrl.resolve_mem(mem);
                 let addr = mem.address();
                 if self.game_pointers.iter().any(|&x| addr == x) {
@@ -436,7 +436,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 }
             }
-            Operation::Move(DestOperand::Memory(ref mem), val, _) => {
+            Operation::Move(DestOperand::Memory(ref mem), val) => {
                 // Skip any moves of constant 4 to memory as it is likely scmain_state write
                 if state == ScMainAnalyzerState::SearchingEntryHook {
                     if ctrl.resolve(val).if_constant() == Some(4) {
@@ -577,7 +577,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         // }
         // as its first operation (Unless assertions enabled)
         match *op {
-            Operation::Move(ref to, val, None) => {
+            Operation::Move(ref to, val) => {
                 let state = ctrl.user_state().get::<IsInitMapFromPathState>();
                 if state.is_after_arg3_check {
                     let val = ctrl.resolve(val);
@@ -1008,7 +1008,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             self.inlining = false;
                         }
                     }
-                } else if let Operation::Move(ref dest, val, None) = *op {
+                } else if let Operation::Move(ref dest, val) = *op {
                     if let DestOperand::Memory(mem) = dest {
                         let val = ctrl.resolve(val);
                         let dest = ctrl.resolve_mem(mem);
@@ -1104,7 +1104,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                 } else {
                     let dest_from = match *op {
-                        Operation::Move(ref dest, val, None) => match dest {
+                        Operation::Move(ref dest, val) => match dest {
                             DestOperand::Memory(mem) => {
                                 let dest = ctrl.resolve_mem(mem);
                                 let val = ctrl.resolve(val);
@@ -1248,7 +1248,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSelectMapEntr
                     ctrl.skip_operation();
                 }
             }
-            Operation::Move(ref dest, _, _) => {
+            Operation::Move(ref dest, _) => {
                 if let DestOperand::Memory(mem) = dest {
                     if mem.size == MemAccessSize::Mem8 {
                         let ctx = ctrl.ctx();
@@ -2352,7 +2352,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindChkInitPlayer<'e,
         // Mem8[chk_init_players + x * 0x24 + 0x8]
         // It is also looped from reverse, so the index is actually end_type - 24 * x
         match *op {
-            Operation::Move(DestOperand::Memory(ref dest), val, None) => {
+            Operation::Move(DestOperand::Memory(ref dest), val) => {
                 if !self.inlining && dest.size == MemAccessSize::Mem8 {
                     let val = ctrl.resolve(val);
                     if val.if_mem8().is_some() {
@@ -2432,7 +2432,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindOrigPlayerTyp
         // Command_48 does memcpy(original_chk_player_types, arg1 + 0x1f, 0xc)
         // (Well, not a memcpy call)
         match *op {
-            Operation::Move(DestOperand::Memory(ref dest), val, None) => {
+            Operation::Move(DestOperand::Memory(ref dest), val) => {
                 let val = ctrl.resolve(val);
                 let input_ok = val.if_memory()
                     .filter(|x| {
@@ -2597,7 +2597,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             LoadImagesAnalysisState::FindInitSkins => {
                 if self.checking_init_skins {
-                    if let Operation::Move(_, val, None) = *op {
+                    if let Operation::Move(_, val) = *op {
                         let val = ctrl.resolve(val);
                         let cmp = b"/skins";
                         let addr = if let Some(mem) = val.if_memory() {
@@ -2690,7 +2690,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             LoadImagesAnalysisState::FindFireOverlayMax => {
                 let ctx = ctrl.ctx();
-                if let Operation::Move(ref dest, value, None) = *op {
+                if let Operation::Move(ref dest, value) = *op {
                     let value = ctrl.resolve(value);
                     if value.if_constant() == Some(999) {
                         ctrl.skip_operation();
@@ -3220,7 +3220,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                 }
             }
             GameLoopAnalysisState::ContinueGameLoop => {
-                if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if mem.size == MemAccessSize::Mem8 && ctrl.resolve(value) == ctx.const_1() {
                         self.result.continue_game_loop = Some(ctx.memory(&ctrl.resolve_mem(mem)));
                         self.state = GameLoopAnalysisState::PaletteCopy;
@@ -3359,7 +3359,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                             }
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if ctrl.resolve(value) == ctx.const_1() {
                         let mem = ctrl.resolve_mem(mem);
                         if mem.if_constant_address().is_some() {
@@ -3523,7 +3523,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnaly
                     // being a poor choice due to its special handling value merging.
                     ctrl.do_call_with_result(ctx.custom(self.next_call_custom));
                     self.next_call_custom += 1;
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     // Skip stores that may be to next_game_step_tick
                     let value = ctrl.resolve(value);
                     if Operand::and_masked(value).0.if_custom().is_some() &&
@@ -3594,7 +3594,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepGameLoopAnaly
                 }
             }
             StepGameLoopAnalysisState::StepGameFrames => {
-                if let Operation::Move(_, value, None) = *op {
+                if let Operation::Move(_, value) = *op {
                     let value = ctrl.resolve(value);
                     if let Some(val) = value.if_arithmetic_sub_const(1) {
                         self.result.step_game_frames = Some(val);
@@ -3807,7 +3807,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsStepBnetControl
                             }
                         }
                     }
-                } else if let Operation::Move(ref dest, value, None) = *op {
+                } else if let Operation::Move(ref dest, value) = *op {
                     // Skips moves of val.x4 = val to prevent some the analysis
                     // from assuming that a binary tree stays empty
                     if let DestOperand::Memory(ref mem) = *dest {
@@ -4148,7 +4148,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSpMapEnd<'a, 
                         self.state = FindSpMapEndState::RunDialogSeen;
                         ctrl.do_call_with_result(ctx.constant(0xffff_fffd));
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref dest), _, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref dest), _) = *op {
                     // Skip moves to globals, some versions write initial value to
                     // local_game_result here.
                     let dest = ctrl.resolve_mem(dest);
@@ -4337,7 +4337,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeSpMapEnd<'
                             }
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref dest), val, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref dest), val) = *op {
                     if dest.size == E::WORD_SIZE {
                         let dest = ctrl.resolve_mem(dest);
                         if dest.is_global() {
@@ -4474,7 +4474,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         ctrl.add_branch_with_current_state(replay_branch);
                         self.state = InitMapFromPathState::LoadReplayScenarioChk;
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), _, _) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), _) = *op {
                     // Skip writes to game.campaign_mission since it'll be checked later
                     let mem = ctrl.resolve_mem(mem);
                     let (base, offset) = mem.address();
@@ -4545,7 +4545,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             self.map_mpq_candidate = None;
                         }
                     }
-                } else if let Operation::Move(DestOperand::Memory(ref mem), value, None) = *op {
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
                     if let Some(cand) = self.map_mpq_candidate {
                         if ctrl.resolve(value) == ctx.const_0() {
                             if let Some(cand_mem) = cand.if_memory() {

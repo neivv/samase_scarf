@@ -115,7 +115,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindPrismShaders<'a,
                     }
                 }
             }
-            Operation::Move(_, unresolved, None) => {
+            Operation::Move(_, unresolved) => {
                 let value = ctrl.resolve(unresolved);
                 if is_vertex_shader_name(self.binary, value) {
                     let ctx = ctrl.ctx();
@@ -523,7 +523,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDrawGameLayer<'e, E>
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
-            Operation::Move(DestOperand::Memory(ref mem), value, None) => {
+            Operation::Move(DestOperand::Memory(ref mem), value) => {
                 if mem.size == E::WORD_SIZE {
                     let dest = ctrl.resolve_mem(mem);
                     if dest.if_constant_address() == Some(self.dest_addr.as_u64()) {
@@ -741,7 +741,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 }
             }
             DrawGameLayerState::ZoomCompletion => {
-                if let Operation::Move(_, value, None) = *op {
+                if let Operation::Move(_, value) = *op {
                     let value = ctrl.resolve(value);
                     let result = value.if_arithmetic_float(ArithOpType::Add)
                         .and_either_other(|x| {
@@ -1248,7 +1248,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     if self.inline_depth != 0 {
                         ctrl.end_analysis();
                     }
-                } else if let Operation::Move(ref dest, value, None) = *op {
+                } else if let Operation::Move(ref dest, value) = *op {
                     let value = ctrl.resolve(value);
                     // vx4_map_tiles + ([game_e0] + [game_e4] * [game_e2]) * 2
                     let is_game_screen_xy_ptr = value.if_arithmetic_add()
