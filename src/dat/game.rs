@@ -666,20 +666,35 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         });
     }
 
-    fn player_upgrade_from_index(
+    fn upgrade_from_index_player(
         &self,
         index: Operand<'e>,
-        byte_offset: u32,
+        player: Operand<'e>,
         array_size: u32,
-    ) -> (Operand<'e>, Operand<'e>) {
+    ) -> Operand<'e> {
+        // index = player * array_size + upgrade
+        // => index - (player * array_size)
         let ctx = self.game_ctx.analysis.ctx;
-        // player = (byte_offset + index) / arr_size
-        // upgrade = (byte_offset + index) % arr_size
+        ctx.sub(
+            index,
+            ctx.mul_const(player, array_size as u64),
+        )
+    }
+
+    fn player_from_index_upgrade(
+        &self,
+        index: Operand<'e>,
+        upgrade: Operand<'e>,
+        array_size: u32,
+    ) -> Operand<'e> {
+        // index = player * array_size + tech
+        // => (index - tech) / array_size
+        let ctx = self.game_ctx.analysis.ctx;
         let arr_size = ctx.constant(array_size.into());
-        let index = ctx.add_const(index, u64::from(byte_offset));
-        let player = ctx.div(index, arr_size);
-        let upgrade = ctx.modulo(index, arr_size);
-        (player, upgrade)
+        ctx.div(
+            ctx.sub(index, upgrade),
+            arr_size,
+        )
     }
 
     fn patch_upgrade_array_sc(
@@ -705,16 +720,18 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
             (self.unresolve(ctrl, player), self.unresolve(ctrl, upgrade))
         {
             (Some(a), Some(b)) => (a, b),
-            (a, b) => {
+            (a, b) => 'block: {
                 if let Some(index_unres) = self.unresolve(ctrl, index) {
-                    let fallback = self.player_upgrade_from_index(index_unres, byte_offset, 0x2e);
-                    let player = a.unwrap_or(fallback.0);
-                    let upgrade = b.unwrap_or(fallback.1);
-                    (player, upgrade)
-                } else {
-                    dat_warn!(self, "Unable to find operands for player/upgrade");
-                    return;
+                    if let Some(player) = a {
+                        let upgrade = self.upgrade_from_index_player(index_unres, player, 0x2e);
+                        break 'block (player, upgrade);
+                    } else if let Some(upgrade) = b {
+                        let player = self.player_from_index_upgrade(index_unres, upgrade, 0x2e);
+                        break 'block (player, upgrade);
+                    }
                 }
+                dat_warn!(self, "Unable to find operands for player/upgrade");
+                return;
             }
         };
         let mut index = ctx.add(ctx.mul_const(upgrade, 0xc), player);
@@ -766,16 +783,18 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
             (self.unresolve(ctrl, player), self.unresolve(ctrl, upgrade))
         {
             (Some(a), Some(b)) => (a, b),
-            (a, b) => {
+            (a, b) => 'block: {
                 if let Some(index_unres) = self.unresolve(ctrl, index) {
-                    let fallback = self.player_upgrade_from_index(index_unres, byte_offset, 0xf);
-                    let player = a.unwrap_or(fallback.0);
-                    let upgrade = b.unwrap_or(fallback.1);
-                    (player, upgrade)
-                } else {
-                    dat_warn!(self, "Unable to find operands for player/upgrade");
-                    return;
+                    if let Some(player) = a {
+                        let upgrade = self.upgrade_from_index_player(index_unres, player, 0xf);
+                        break 'block (player, upgrade);
+                    } else if let Some(upgrade) = b {
+                        let player = self.player_from_index_upgrade(index_unres, upgrade, 0xf);
+                        break 'block (player, upgrade);
+                    }
                 }
+                dat_warn!(self, "Unable to find operands for player/upgrade");
+                return;
             }
         };
         let upgrade = ctx.add_const(upgrade, start_index as u64);
@@ -801,23 +820,22 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         index: Operand<'e>,
     ) {
         let ctx = ctrl.ctx();
-        let player_tech_from_index = |index| {
-            // player = (byte_offset + index) / arr_size
-            // tech = (byte_offset + index) % arr_size
-            let bw_offset = if array_size == 0x14 {
-                0x18u32.wrapping_sub(start_index)
-            } else {
-                0
-            };
+        let player_from_index_tech = |index, tech| {
+            // index = player * array_size + tech
+            // => (index - tech) / array_size
             let arr_size = ctx.constant(array_size.into());
-            let index = ctx.add_const(index, u64::from(byte_offset));
-            let offset = ctx.sub_const(index, bw_offset as u64);
-            let player = ctx.div(offset, arr_size);
-            let tech = ctx.add_const(
-                ctx.modulo(offset, arr_size),
-                bw_offset as u64,
-            );
-            (player, tech)
+            ctx.div(
+                ctx.sub(index, tech),
+                arr_size,
+            )
+        };
+        let tech_from_index_player = |index, player| {
+            // index = player * array_size + tech
+            // => index - (player * array_size)
+            ctx.sub(
+                index,
+                ctx.mul_const(player, array_size as u64),
+            )
         };
 
         let (player, tech) = match index.if_arithmetic_add()
@@ -833,16 +851,18 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
             (self.unresolve(ctrl, player), self.unresolve(ctrl, tech))
         {
             (Some(a), Some(b)) => (a, b),
-            (a, b) => {
+            (a, b) => 'block: {
                 if let Some(index_unres) = self.unresolve(ctrl, index) {
-                    let fallback = player_tech_from_index(index_unres);
-                    let player = a.unwrap_or(fallback.0);
-                    let tech = b.unwrap_or(fallback.1);
-                    (player, tech)
-                } else {
-                    dat_warn!(self, "Unable to find operands for player/tech");
-                    return;
+                    if let Some(player) = a {
+                        let tech = tech_from_index_player(index_unres, player);
+                        break 'block (player, tech);
+                    } else if let Some(tech) = b {
+                        let player = player_from_index_tech(index_unres, tech);
+                        break 'block (player, tech);
+                    }
                 }
+                dat_warn!(self, "Unable to find operands for player/tech");
+                return;
             }
         };
 
