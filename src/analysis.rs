@@ -520,6 +520,19 @@ results! {
         ForFilesInDir => for_files_in_dir => cache_find_file_with_crc,
         SimpleFileMatchCallback => simple_file_match_callback => cache_find_file_with_crc,
         StartCloaking => start_cloaking => cache_cloak_command,
+        UnitAiWorker => unit_ai_worker => cache_ai_order,
+        UnitAiMilitary => unit_ai_military => cache_ai_order,
+        AiTryProgressSpendingRequest => ai_try_progress_spending_request => cache_ai_order,
+        // this unit, a1 rect, a2 filter_func, a3 filter_param
+        FindNearestUnitInArea => find_nearest_unit_in_area => cache_ai_order,
+        // this unit, a1 radius, a2 filter_func, a3 filter_param
+        FindNearestUnitAroundUnit => find_nearest_unit_around_unit => cache_ai_order,
+        // this unit, a1 target, a2 check_detection
+        CanAttackUnit => can_attack_unit => cache_ai_order,
+        // this unit, a1 target
+        IsOutsideAttackRange => is_outside_attack_range => cache_ai_order,
+        // this unit, a1 target_opt
+        AiCanTargetAttackThis => ai_can_target_attack_this => cache_ai_order,
     }
 }
 
@@ -969,6 +982,11 @@ impl<'e, E: ExecutionState<'e>> ArgCache<'e, E> {
         self.ctx.and_const(val, 0xff)
     }
 
+    pub fn on_thiscall_call_u32(&self, index: u8) -> Operand<'e> {
+        let val = self.on_thiscall_call(index);
+        self.ctx.and_const(val, 0xffff_ffff)
+    }
+
     /// Returns operand corresponding to location of argument *on function entry*.
     pub fn on_entry(&self, index: u8) -> Operand<'e> {
         let is_x64 = <E::VirtualAddress as VirtualAddress>::SIZE == 8;
@@ -1004,6 +1022,11 @@ impl<'e, E: ExecutionState<'e>> ArgCache<'e, E> {
         } else {
             self.on_entry(index + 1)
         }
+    }
+
+    pub fn on_thiscall_entry_u32(&self, index: u8) -> Operand<'e> {
+        let val = self.on_thiscall_entry(index);
+        self.ctx.and_const(val, 0xffff_ffff)
     }
 }
 
@@ -4938,6 +4961,21 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             let result = commands::cloak(actx, process_commands, &switch);
             Some(([result.start_cloaking], []))
         })
+    }
+
+    fn cache_ai_order(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[UnitAiWorker, UnitAiMilitary, AiTryProgressSpendingRequest,
+                FindNearestUnitInArea, FindNearestUnitAroundUnit, CanAttackUnit,
+                IsOutsideAttackRange, AiCanTargetAttackThis], &[],
+            |s| {
+                let order = s.order_function(0x9c, actx)?;
+                let r = ai::analyze_order_unit_ai(actx, order);
+                Some(([r.unit_ai_worker, r.unit_ai_military, r.ai_try_progress_spending_request,
+                    r.find_nearest_unit_in_area, r.find_nearest_unit_around_unit,
+                    r.can_attack_unit, r.is_outside_attack_range, r.ai_should_keep_targeting], []))
+            })
     }
 }
 

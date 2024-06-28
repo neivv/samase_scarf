@@ -2374,3 +2374,467 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         }
     }
 }
+
+pub(crate) struct OrderUnitAi<Va: VirtualAddressTrait> {
+    pub unit_ai_worker: Option<Va>,
+    pub unit_ai_military: Option<Va>,
+    pub ai_try_progress_spending_request: Option<Va>,
+    pub find_nearest_unit_in_area: Option<Va>,
+    pub find_nearest_unit_around_unit: Option<Va>,
+    pub can_attack_unit: Option<Va>,
+    pub is_outside_attack_range: Option<Va>,
+    pub ai_should_keep_targeting: Option<Va>,
+}
+
+pub(crate) fn analyze_order_unit_ai<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    order_unit_ai: E::VirtualAddress,
+) -> OrderUnitAi<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let bump = &actx.bump;
+
+    let mut result = OrderUnitAi {
+        unit_ai_worker: None,
+        unit_ai_military: None,
+        ai_try_progress_spending_request: None,
+        find_nearest_unit_in_area: None,
+        find_nearest_unit_around_unit: None,
+        can_attack_unit: None,
+        is_outside_attack_range: None,
+        ai_should_keep_targeting: None,
+    };
+
+    let arg_cache = &actx.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, order_unit_ai);
+    let mut analyzer = OrderUnitAiAnalyzer {
+        result: &mut result,
+        arg_cache,
+        state: OrderUnitAiState::FindAiCheck,
+        inline_depth: 0,
+        unit_specific_depth: 0,
+        entry_esp: ctx.register(4),
+        after_ai_type_jump_branches: bumpvec_with_capacity(16, bump),
+        worker_state: None,
+        building_state: None,
+        military_state: None,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x10),
+        find_nearest_unit_in_area_candidate: None,
+        ai_call_candidate: None,
+    };
+    analysis.analyze(&mut analyzer);
+    if let Some(ai_should_keep_targeting) = result.ai_should_keep_targeting {
+        let mut state = E::initial_state(ctx, binary);
+        state.move_to(&DestOperand::from_oper(arg_cache.on_thiscall_entry(0)), ctx.const_0());
+        let mut analysis = FuncAnalysis::with_state(binary, ctx, ai_should_keep_targeting, state);
+        let mut analyzer = ShouldKeepTargetingAnalyzer {
+            result: &mut result,
+            arg_cache,
+            state: ShouldKeepTargetingState::CanAttackUnit,
+        };
+        analysis.analyze(&mut analyzer);
+    }
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum OrderUnitAiState {
+    /// Check unit.ai != null
+    FindAiCheck,
+    /// Inline once to ai_unit_specific(a1 = this), first jump should be
+    /// secondary_order == 6d
+    CloakCheck,
+    /// In cloak branch, ai_should_keep_targeting(this = unit, a1 = null)
+    AiShouldKeepTargeting,
+    /// Inline once with a1 = unit, tail call or first call
+    /// find_nearest_unit_around_unit(this = unit, 0x100, func, unit)
+    FindNearestUnitAroundUnit,
+    /// Back to inline depth 0, find jump on unit.ai.type == 2, 3, 4
+    /// Save their state but don't analyze yet
+    AiTypeJumps,
+    /// Find issue_order_targeting_unit(this = unit, 0x31, target = func())
+    /// (Possibly tail call)
+    /// Where func is either find_nearest_unit_in_area(this = unit, &global_map_bounds, func, unit)
+    /// Or a function which (tail) calls it.
+    FindRepairer,
+    /// Should call just unit_ai_worker before joining with after_ai_type_jump_branches
+    WorkerAi,
+    /// Should call ai_try_progress_spending_request and then write unit.order_timer
+    BuildingAi,
+    /// Should call just unit_ai_military
+    MilitaryAi,
+}
+
+struct OrderUnitAiAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OrderUnitAi<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+    unit_specific_depth: u8,
+    entry_esp: Operand<'e>,
+    state: OrderUnitAiState,
+    /// For determining when worker / building / military
+    after_ai_type_jump_branches: BumpVec<'acx, (E::VirtualAddress, E::VirtualAddress)>,
+    worker_state: Option<(E, analysis::DefaultState, E::VirtualAddress)>,
+    building_state: Option<(E, analysis::DefaultState, E::VirtualAddress)>,
+    military_state: Option<(E, analysis::DefaultState, E::VirtualAddress)>,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    /// Set only if find_repairer is inlined
+    find_nearest_unit_in_area_candidate: Option<E::VirtualAddress>,
+    ai_call_candidate: Option<E::VirtualAddress>,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    OrderUnitAiAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            OrderUnitAiState::FindAiCheck => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((op, eq)) = condition.if_arithmetic_eq_neq_zero(ctx) {
+                        if ctrl.if_mem_word_offset(op, E::struct_layouts().unit_ai()) ==
+                            Some(ctx.register(1))
+                        {
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_neq_address(eq, to);
+                            self.state = OrderUnitAiState::CloakCheck;
+                        }
+                    }
+                }
+            }
+            OrderUnitAiState::CloakCheck => {
+                match *op {
+                    Operation::Call(dest) => {
+                        if self.inline_depth == 0 {
+                            if let Some(dest) = ctrl.resolve_va(dest) {
+                                let a1 = ctrl.resolve(self.arg_cache.on_call(0));
+                                if a1 == ctx.register(1) {
+                                    self.inline_depth = 1;
+                                    let old_esp = self.entry_esp;
+                                    // inline to ai_unit_specific
+                                    ctrl.analyze_with_current_state(self, dest);
+                                    self.inline_depth = 0;
+                                    self.entry_esp = old_esp;
+                                    if self.state != OrderUnitAiState::CloakCheck {
+                                        self.state = OrderUnitAiState::AiTypeJumps;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Operation::Jump { condition, to } => {
+                        let condition = ctrl.resolve(condition);
+                        let ok = condition.if_arithmetic_eq_neq()
+                            .filter(|x| x.1.if_constant() == Some(0x6d))
+                            .map(|x| x.2);
+                        if let Some(eq) = ok {
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_eq_address(eq, to);
+                            self.state = OrderUnitAiState::AiShouldKeepTargeting;
+                        } else {
+                            if self.inline_depth != 0 {
+                                // Should be first jump in ai_unit_specific
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            OrderUnitAiState::AiShouldKeepTargeting => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ok = ctrl.resolve_register(1) == ctx.register(1) &&
+                            ctrl.resolve(self.arg_cache.on_thiscall_call(0)) == ctx.const_0();
+                        if ok {
+                            self.result.ai_should_keep_targeting = Some(dest);
+                            self.unit_specific_depth = self.inline_depth;
+                            self.state = OrderUnitAiState::FindNearestUnitAroundUnit;
+                        }
+                    }
+                }
+            }
+            OrderUnitAiState::FindNearestUnitAroundUnit => {
+                let unit = ctx.register(1);
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ok = ctrl.resolve_register(1) == unit &&
+                            ctrl.resolve(self.arg_cache.on_thiscall_call_u32(0)).if_constant() ==
+                                Some(0x100) &&
+                            ctrl.resolve(self.arg_cache.on_thiscall_call(2)) == unit;
+                        if ok {
+                            self.result.find_nearest_unit_around_unit = Some(dest);
+                            self.state = OrderUnitAiState::AiTypeJumps;
+                            if self.inline_depth != 0 {
+                                ctrl.end_analysis();
+                            }
+                            return;
+                        }
+                        if self.inline_depth != self.unit_specific_depth {
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        let inline = self.inline_depth == self.unit_specific_depth &&
+                            ctrl.resolve(self.arg_cache.on_call(0)) == unit;
+                        if inline {
+                            self.inline_depth += 1;
+                            self.entry_esp = ctrl.get_new_esp_for_call();
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth -= 1;
+                            if self.state != OrderUnitAiState::FindNearestUnitAroundUnit &&
+                                self.inline_depth != 0
+                            {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    if self.inline_depth != self.unit_specific_depth {
+                        if condition == ctx.const_1() &&
+                            ctrl.resolve_register(4) == self.entry_esp
+                        {
+                            // Tail call
+                            let ok = ctrl.resolve_register(1) == unit &&
+                                ctrl.resolve(self.arg_cache.on_thiscall_entry_u32(0)).if_constant()
+                                    == Some(0x100) &&
+                                ctrl.resolve(self.arg_cache.on_thiscall_entry(2)) == unit;
+                            if ok {
+                                self.result.find_nearest_unit_around_unit = ctrl.resolve_va(to);
+                                self.state = OrderUnitAiState::AiTypeJumps;
+                            }
+                        }
+                        // Should be first jump or nothing
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            OrderUnitAiState::AiTypeJumps => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((op, val, eq)) = condition.if_arithmetic_eq_neq() {
+                        if let Some(c) = val.if_constant() {
+                            let is_ai_type = op.if_mem8_offset(E::struct_layouts().unit_ai_type())
+                                .and_then(|mut x| {
+                                    if x.if_custom().is_some() {
+                                        // May be unit_ai_expect_valid call
+                                        x = self.call_tracker.resolve_calls(x);
+                                    }
+                                    ctrl.if_mem_word_offset(x, E::struct_layouts().unit_ai())
+                                }) == Some(ctx.register(1));
+                            if is_ai_type {
+                                let state = match c {
+                                    2 => &mut self.worker_state,
+                                    3 => &mut self.building_state,
+                                    4 => &mut self.military_state,
+                                    _ => return,
+                                };
+                                *state = ctrl.state_for_eq_address(eq, to);
+                                ctrl.continue_at_neq_address(eq, to);
+                                if self.worker_state.is_some() &&
+                                    self.building_state.is_some() &&
+                                    self.military_state.is_some()
+                                {
+                                    self.state = OrderUnitAiState::FindRepairer;
+                                }
+                            }
+                        }
+                    }
+                } else if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                }
+            }
+            OrderUnitAiState::FindRepairer => {
+                let (dest, a1, a2, a3) = match *op {
+                    Operation::Jump { condition, to } => {
+                        if condition == ctx.const_1() &&
+                            ctrl.resolve_register(4) == self.entry_esp
+                        {
+                            (
+                                to,
+                                self.arg_cache.on_thiscall_entry(0),
+                                self.arg_cache.on_thiscall_entry(1),
+                                self.arg_cache.on_thiscall_entry(2),
+                            )
+                        } else {
+                            return;
+                        }
+                    }
+                    Operation::Call(dest) => (
+                        dest,
+                        self.arg_cache.on_thiscall_call(0),
+                        self.arg_cache.on_thiscall_call(1),
+                        self.arg_cache.on_thiscall_call(2),
+                    ),
+                    _ => return,
+                };
+
+                if ctx.and_const(ctrl.resolve(a1), 0xff).if_constant() == Some(0x31) {
+                    if ctrl.resolve_register(1) != ctx.register(1) {
+                        return;
+                    }
+                    // issue_order_targeting_unit
+                    let target = ctrl.resolve(a2);
+                    if let Some(custom) = target.unwrap_and_mask().if_custom() {
+                        if let Some(addr) = self.call_tracker.custom_id_to_func(custom) {
+                            if Some(addr) == self.find_nearest_unit_in_area_candidate {
+                                self.result.find_nearest_unit_in_area = Some(addr);
+                            } else {
+                                let binary = ctrl.binary();
+                                self.inline_depth = 1;
+                                let old_esp = self.entry_esp;
+                                self.entry_esp = ctx.register(4);
+                                let mut analysis = FuncAnalysis::new(binary, ctx, addr);
+                                analysis.analyze(self);
+                                self.entry_esp = old_esp;
+                                self.inline_depth = 0;
+                            }
+                        }
+                    }
+                    self.next_ai_state(ctrl);
+                    return;
+                } else {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let unit = if self.inline_depth == 0 {
+                            ctx.register(1)
+                        } else {
+                            self.arg_cache.on_entry(0)
+                        };
+                        if ctrl.resolve_register(1) == unit && ctrl.resolve(a3) == unit {
+                            if self.inline_depth == 0 {
+                                self.find_nearest_unit_in_area_candidate = Some(dest);
+                            } else {
+                                self.result.find_nearest_unit_in_area = Some(dest);
+                            }
+                        }
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                }
+            }
+            OrderUnitAiState::WorkerAi | OrderUnitAiState::BuildingAi |
+                OrderUnitAiState::MilitaryAi =>
+            {
+                if let Operation::Call(dest) = *op {
+                    if self.ai_call_candidate.is_none() {
+                        self.ai_call_candidate = ctrl.resolve_va(dest);
+                    } else {
+                        self.next_ai_state(ctrl);
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    if condition == ctx.const_1() {
+                        if let Some(to) = ctrl.resolve_va(to) {
+                            let is_after_branch = self.after_ai_type_jump_branches.iter()
+                                .any(|x| to >= x.0 && to < x.1);
+                            if is_after_branch {
+                                if self.state == OrderUnitAiState::WorkerAi {
+                                    self.result.unit_ai_worker = self.ai_call_candidate;
+                                } else if self.state == OrderUnitAiState::MilitaryAi {
+                                    self.result.unit_ai_military = self.ai_call_candidate;
+                                }
+                            }
+                        }
+                    }
+                    self.next_ai_state(ctrl);
+                } else if self.state == OrderUnitAiState::BuildingAi {
+                    if let Operation::Move(DestOperand::Memory(ref mem), _) = *op {
+                        if mem.size == MemAccessSize::Mem8 {
+                            let mem = ctrl.resolve_mem(mem);
+                            if mem.address() ==
+                                (ctx.register(1), E::struct_layouts().unit_order_timer())
+                            {
+                                self.result.ai_try_progress_spending_request =
+                                    self.ai_call_candidate;
+                                self.next_ai_state(ctrl);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn branch_end(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if self.state == OrderUnitAiState::FindRepairer {
+            self.after_ai_type_jump_branches.push((ctrl.branch_start(), ctrl.address()));
+        }
+    }
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> OrderUnitAiAnalyzer<'a, 'acx, 'e, E> {
+    fn next_ai_state(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        let state = if let Some(new) = self.worker_state.take() {
+            ctrl.continue_with_state(new);
+            OrderUnitAiState::WorkerAi
+        } else if let Some(new) = self.military_state.take() {
+            ctrl.continue_with_state(new);
+            OrderUnitAiState::MilitaryAi
+        } else if let Some(new) = self.building_state.take() {
+            ctrl.continue_with_state(new);
+            OrderUnitAiState::BuildingAi
+        } else {
+            ctrl.end_analysis();
+            return;
+        };
+        self.state = state;
+        self.ai_call_candidate = None;
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum ShouldKeepTargetingState {
+    /// can_attack_unit(this = target, a1 = this, a2 = 1u8)
+    CanAttackUnit,
+    /// is_outside_attack_range(this = target, a1 = this)
+    IsOutsideAttackRange,
+}
+
+struct ShouldKeepTargetingAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OrderUnitAi<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: ShouldKeepTargetingState,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    ShouldKeepTargetingAnalyzer<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            let ctx = ctrl.ctx();
+            let is_target = |op: Operand<'e>| {
+                op.if_memory()
+                    .is_some_and(|x| {
+                        x.size == E::WORD_SIZE &&
+                            x.address() == (ctx.register(1), E::struct_layouts().unit_target())
+                    })
+            };
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                match self.state {
+                    ShouldKeepTargetingState::CanAttackUnit => {
+                        let ok = is_target(ctrl.resolve_register(1)) &&
+                            ctrl.resolve(self.arg_cache.on_thiscall_call(0)) == ctx.register(1) &&
+                            ctrl.resolve(self.arg_cache.on_thiscall_call_u8(1)) == ctx.const_1();
+                        if ok {
+                            self.result.can_attack_unit = Some(dest);
+                            self.state = ShouldKeepTargetingState::IsOutsideAttackRange;
+                            ctrl.do_call_with_result(ctx.const_1());
+                        }
+                    }
+                    ShouldKeepTargetingState::IsOutsideAttackRange => {
+                        let ok = is_target(ctrl.resolve_register(1)) &&
+                            ctrl.resolve(self.arg_cache.on_thiscall_call(0)) == ctx.register(1);
+                        if ok {
+                            self.result.is_outside_attack_range = Some(dest);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -205,6 +205,10 @@ impl StructLayouts {
         self.pair(0x13c, 0x1d4)
     }
 
+    pub const fn unit_ai_type(self) -> u64 {
+        self.pair(0x8, 0x10)
+    }
+
     pub const fn image_size(self) -> u64 {
         self.pair(0x40, 0x58)
     }

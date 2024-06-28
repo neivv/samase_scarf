@@ -10,6 +10,7 @@ add_town_unit_ai: 005be480
 ai_add_military_to_region: 005d4400
 ai_attack_clear: 005bd070
 ai_attack_prepare: 005d4fe0
+ai_can_target_attack_this: 0055cf90
 ai_focus_air: 005d4ed0
 ai_focus_disabled: 005d4f30
 ai_prepare_moving_to: 00587df0
@@ -25,6 +26,7 @@ ai_spend_money: 005bcbe0
 ai_step_region: 005d7140
 ai_target_expansion: 005d0bc0
 ai_train_military: 005d58c0
+ai_try_progress_spending_request: 005c1000
 ai_try_return_home: 005d8ca0
 ai_unit_was_hit: 005d4680
 ai_update_attack_target: 0055be30
@@ -32,6 +34,7 @@ anim_asset_change_cb: 00538aa0
 attack_unit: 0055d5a0
 building_placement_lclick: 006c43e0
 building_placement_rclick: 0063e030
+can_attack_unit: 00556590
 cancel_queued_unit: 0054f270
 change_ai_region_state: 005d1890
 check_dat_requirements: 0050ced0
@@ -82,6 +85,8 @@ file_exists: 0051b4c0
 file_read_fatal_error: 0088d500
 find_file_with_crc: None
 find_fow_sprite_for_click: 006c6f70
+find_nearest_unit_around_unit: 00637550
+find_nearest_unit_in_area: 00637620
 find_unit_borders_rect: 0055f440
 find_unit_for_click: 0070c5b0
 finish_unit_post: 00565fd0
@@ -133,6 +138,7 @@ init_status_screen: 006fa5f0
 init_storm_networking: 006a6420
 init_terrain: 005a8520
 init_units: 005670a0
+is_outside_attack_range: 0055dd60
 is_outside_game_screen: 0060d720
 join_custom_game: None
 join_game: None
@@ -271,6 +277,8 @@ ui_default_middle_up_handler: 0063e8c0
 ui_default_periodic_handler: 0063ebf0
 ui_default_right_down_handler: 0063ead0
 ui_default_scroll_handler: 0063e8d0
+unit_ai_military: 005d7930
+unit_ai_worker: 005c1860
 unit_apply_speed_upgrades: 0058e350
 unit_buffed_acceleration: 0056c180
 unit_buffed_flingy_speed: 0056c240
