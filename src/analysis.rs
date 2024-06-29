@@ -520,6 +520,7 @@ results! {
         ForFilesInDir => for_files_in_dir => cache_find_file_with_crc,
         SimpleFileMatchCallback => simple_file_match_callback => cache_find_file_with_crc,
         StartCloaking => start_cloaking => cache_cloak_command,
+        PrepareBuildUnit => prepare_build_unit => cache_morph_command,
         UnitAiWorker => unit_ai_worker => cache_ai_order,
         UnitAiMilitary => unit_ai_military => cache_ai_order,
         AiTryProgressSpendingRequest => ai_try_progress_spending_request => cache_ai_order,
@@ -4960,6 +4961,16 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             let switch = s.process_commands_switch(actx)?;
             let result = commands::cloak(actx, process_commands, &switch);
             Some(([result.start_cloaking], []))
+        })
+    }
+
+    fn cache_morph_command(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[PrepareBuildUnit], &[], |s| {
+            let process_commands = s.process_commands(actx)?;
+            let switch = s.process_commands_switch(actx)?;
+            let result = commands::morph(actx, process_commands, &switch);
+            Some(([result.prepare_build_unit], []))
         })
     }
 

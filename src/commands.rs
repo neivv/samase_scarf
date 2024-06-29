@@ -48,6 +48,10 @@ pub(crate) struct Cloak<Va: VirtualAddressTrait> {
     pub start_cloaking: Option<Va>,
 }
 
+pub(crate) struct Morph<Va: VirtualAddressTrait> {
+    pub prepare_build_unit: Option<Va>,
+}
+
 pub(crate) struct Colors<'e> {
     pub use_rgb: Option<Operand<'e>>,
     pub rgb_colors: Option<Operand<'e>>,
@@ -1485,6 +1489,113 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CloakAnalyzer<
                 } else if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         self.call_tracker.add_call(ctrl, dest);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn morph<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    process_commands: E::VirtualAddress,
+    process_commands_switch: &CompleteSwitch<'e>,
+) -> Morph<E::VirtualAddress> {
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    // Should be prepare_build_unit(this = _, a1 = Mem16[command_data + 1])
+    let mut result = Morph {
+        prepare_build_unit: None,
+    };
+    let branch = match process_commands_switch.branch(binary, ctx, 0x23) {
+        Some(s) => s,
+        None => return result,
+    };
+
+    let mut analyzer = MorphAnalyzer::<E> {
+        state: MorphState::BeforeSwitch,
+        inline_depth: 0,
+        branch,
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+    };
+    let mut exec_state = E::initial_state(ctx, binary);
+    // Set arg3 to 1 so the replay-specific switch will be skipped
+    exec_state.move_resolved(
+        &DestOperand::from_oper(actx.arg_cache.on_entry(2)),
+        ctx.const_1(),
+    );
+    let mut analysis =
+        FuncAnalysis::custom_state(binary, ctx, process_commands, exec_state, Default::default());
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct MorphAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    state: MorphState,
+    inline_depth: u8,
+    result: &'a mut Morph<E::VirtualAddress>,
+    branch: E::VirtualAddress,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+enum MorphState {
+    BeforeSwitch,
+    OrderJump,
+    PrepareBuildUnit,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MorphAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match self.state {
+            MorphState::BeforeSwitch => {
+                if let Operation::Jump { to, .. } = *op {
+                    if to.if_constant().is_none() {
+                        self.state = MorphState::OrderJump;
+                        ctrl.clear_all_branches();
+                        ctrl.continue_at_address(self.branch);
+                    }
+                } else if let Operation::Call(..) = *op {
+                    ctrl.check_stack_probe();
+                }
+            }
+            MorphState::OrderJump => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if self.inline_depth == 0 {
+                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            if arg1 == self.arg_cache.on_entry(0) {
+                                self.inline_depth = 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth = 0;
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((_, r, eq)) = condition.if_arithmetic_eq_neq() {
+                        if r.if_constant() == Some(0x2a) {
+                            self.state = MorphState::PrepareBuildUnit;
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_neq_address(eq, to);
+                        }
+                    }
+                }
+            }
+            MorphState::PrepareBuildUnit => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let a1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let ok = a1.if_mem16_offset(1) == Some(self.arg_cache.on_entry(0));
+                        if ok {
+                            self.result.prepare_build_unit = Some(dest);
+                            ctrl.end_analysis();
+                        }
                     }
                 }
             }
