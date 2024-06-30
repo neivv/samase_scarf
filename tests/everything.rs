@@ -1639,7 +1639,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 UiConsoles | StatResIconsDdsGrp | UseRgbColors | InLobbyOrGame | GameLobby |
                 RgbColors | DisableColorChoice | UseMapSetRgbColor | SfxData | SoundChannels |
                 Images | TilesetCv5 | TilesetData | TilesetVx4Ex | TileDefaultFlags |
-                MinitileGraphics | MinitileData | FoliageState =>
+                MinitileGraphics | MinitileData | FoliageState | CreepOriginalTiles |
+                CreepTileBorders =>
             {
                 continue;
             }
@@ -2171,6 +2172,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     let minitile_graphics = analysis.minitile_graphics();
     let minitile_data = analysis.minitile_data();
     let foliage_state = analysis.foliage_state();
+    let creep_original_tiles = analysis.creep_original_tiles();
+    let creep_tile_borders = analysis.creep_tile_borders();
     if minor_version >= 23 {
         check_global_struct_opt(skins, binary, "player_unit_skins");
         assert!(init_skins.is_some());
@@ -2182,6 +2185,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         check_global_opt(minitile_graphics, binary, "minitile_graphics");
         check_global_opt(minitile_data, binary, "minitile_data");
         check_global_struct_opt(foliage_state, binary, "foliage_state");
+        check_global_opt(creep_original_tiles, binary, "creep_original_tiles");
+        check_global_opt(creep_tile_borders, binary, "creep_tile_borders");
     } else {
         assert!(skins.is_none());
         assert!(init_skins.is_none());
@@ -2193,6 +2198,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(minitile_graphics.is_none());
         assert!(minitile_data.is_none());
         assert!(foliage_state.is_none());
+        assert!(creep_original_tiles.is_none());
+        assert!(creep_tile_borders.is_none());
     }
 
     // The vertex buffer funcs / struct layout changed slightly in 1.21.2,

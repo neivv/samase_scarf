@@ -831,6 +831,8 @@ results! {
         // tileset.vf4
         MinitileData => minitile_data => cache_init_terrain,
         FoliageState => foliage_state => cache_init_terrain,
+        CreepOriginalTiles => creep_original_tiles => cache_init_terrain,
+        CreepTileBorders => creep_tile_borders => cache_init_terrain,
         // Struct ptr containing (shared_ptr[2] sd_hd_videos, bool active?) for portrait video
         StatportVideos => statport_videos => cache_show_portrait,
         StatportTalkingPortraitActive => statport_talking_portrait_active => cache_show_portrait,
@@ -4779,7 +4781,8 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             &[InitTerrain],
             &[TilesetIndexedMapTiles, Vx4MapTiles, TerrainFramebuf, RepulseState,
                 TilesetData, TileDefaultFlags, TilesetCv5, TilesetVx4Ex,
-                MinitileGraphics, MinitileData, FoliageState],
+                MinitileGraphics, MinitileData, FoliageState, CreepOriginalTiles,
+                CreepTileBorders],
             |s| {
                 let init_game = s.init_game(actx)?;
                 let init_images = s.init_images(actx)?;
@@ -4787,7 +4790,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some(([r.init_terrain], [r.tileset_indexed_map_tiles, r.vx4_map_tiles,
                     r.terrain_framebuf, r.repulse_state, r.tileset_data, r.tile_default_flags,
                     r.tileset_cv5, r.tileset_vx4ex, r.minitile_graphics, r.minitile_data,
-                    r.foliage_state,
+                    r.foliage_state, r.creep_original_tiles, r.creep_tile_borders,
                 ]))
             })
     }

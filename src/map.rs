@@ -507,6 +507,8 @@ pub(crate) struct InitTerrain<'e, Va: VirtualAddress> {
     pub minitile_graphics: Option<Operand<'e>>,
     pub minitile_data: Option<Operand<'e>>,
     pub foliage_state: Option<Operand<'e>>,
+    pub creep_original_tiles: Option<Operand<'e>>,
+    pub creep_tile_borders: Option<Operand<'e>>,
 }
 
 pub(crate) fn init_terrain<'e, E: ExecutionState<'e>>(
@@ -527,6 +529,8 @@ pub(crate) fn init_terrain<'e, E: ExecutionState<'e>>(
         minitile_graphics: None,
         minitile_data: None,
         foliage_state: None,
+        creep_original_tiles: None,
+        creep_tile_borders: None,
     };
     let binary = actx.binary;
     let ctx = actx.ctx;
@@ -571,6 +575,8 @@ enum InitTerrainState {
     /// Inline once, make tileset_date pointer Custom for later checks
     TilesetData,
     /// Reads from tileset_data fields to globals
+    /// Has inline to init_creep(tileset_indexed_map_tiles, _, map_width_tiles, map_height_tiles)
+    /// in middle.
     TilesetBuffers,
     /// Find 0x180008 byte memset in foliage struct
     Foliage,
@@ -661,7 +667,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             }
                         } else if custom == 1 {
                             result.terrain_framebuf = Some(dest_op);
-                        } else {
+                        } else if custom == 2 {
                             result.repulse_state = Some(dest_op);
                         }
                         let all_done = result.tileset_indexed_map_tiles.is_some() &&
@@ -712,16 +718,24 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if mem.size != E::WORD_SIZE {
                         return;
                     }
+                    let mem = ctrl.resolve_mem(mem);
+                    if !mem.is_global() {
+                        return;
+                    }
                     let value = ctrl.resolve(value);
+                    if let Some(custom) = value.if_custom() {
+                        let dest_op = Some(ctx.memory(&mem));
+                        if custom == 4 {
+                            single_result_assign(dest_op, &mut self.result.creep_original_tiles);
+                        } else if custom == 5 {
+                            single_result_assign(dest_op, &mut self.result.creep_tile_borders);
+                        }
+                    }
                     let offset = ctrl.if_mem_word(value)
                         .filter(|x| x.address().0.if_custom() == Some(8))
                         .map(|x| x.address().1)
                         .filter(|&x| x < 0x580);
                     if let Some(offset) = offset {
-                        let mem = ctrl.resolve_mem(mem);
-                        if !mem.is_global() {
-                            return;
-                        }
                         let dest_op = ctx.memory(&mem);
                         let word_size = E::VirtualAddress::SIZE as u64;
                         let result = &mut self.result;
@@ -743,6 +757,34 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             result.tile_default_flags.is_some();
                         if all_done {
                             self.state = InitTerrainState::Foliage;
+                        }
+                    }
+                } else if let Operation::Call(dest) = *op {
+                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let inline = self.inline_depth == 0 &&
+                        arg1.if_custom() == Some(0) &&
+                        ctrl.resolve(self.arg_cache.on_call(2)).if_mem16_offset(0xe4).is_some();
+                    if inline {
+                        self.inline_depth += 1;
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            ctrl.analyze_with_current_state(self, dest);
+                        }
+                        self.inline_depth -= 1;
+                    } else {
+                        // Check malloc(map_tile_width * map_tile_height [* 2])
+                        // * 2 = creep_original_tiles => custom(4)
+                        // * 1 = creep_tile_borders => custom(5)
+                        let (inner, custom_id) = match arg1.if_arithmetic_mul_const(2) {
+                            Some(x) => (x, 4),
+                            None => (arg1, 5),
+                        };
+                        let is_tile_mul = inner.unwrap_sext()
+                            .if_arithmetic_mul()
+                            .and_either_other(|x| x.if_mem16_offset(0xe4))
+                            .and_then(|x| x.if_mem16_offset(0xe6))
+                            .is_some();
+                        if is_tile_mul {
+                            ctrl.do_call_with_result(ctx.custom(custom_id));
                         }
                     }
                 }
