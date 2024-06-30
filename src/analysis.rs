@@ -534,6 +534,8 @@ results! {
         IsOutsideAttackRange => is_outside_attack_range => cache_ai_order,
         // this unit, a1 target_opt
         AiCanTargetAttackThis => ai_can_target_attack_this => cache_ai_order,
+        // a1 unit, a2 dest_xy
+        MakePath => make_path => cache_step_unit_movement,
     }
 }
 
@@ -3878,7 +3880,6 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    #[cfg(feature = "test_assertions")]
     fn step_unit_movement(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::StepUnitMovement, |s| s.cache_step_active_unit(actx))
     }
@@ -4990,6 +4991,15 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     r.find_nearest_unit_in_area, r.find_nearest_unit_around_unit,
                     r.can_attack_unit, r.is_outside_attack_range, r.ai_should_keep_targeting], []))
             })
+    }
+
+    fn cache_step_unit_movement(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[MakePath], &[], |s| {
+            let step_unit_movement = s.step_unit_movement(actx)?;
+            let result = pathing::analyze_step_unit_movement(actx, step_unit_movement);
+            Some(([result.make_path], []))
+        })
     }
 }
 

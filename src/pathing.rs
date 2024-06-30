@@ -4,6 +4,7 @@ use scarf::{Operand, Operation, DestOperand};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::switch::simple_switch_branch;
+use crate::switch::CompleteSwitch;
 use crate::util::{ControlExt, ExecStateExt, OperandExt, OptionExt, single_result_assign};
 
 #[derive(Clone, Debug)]
@@ -11,6 +12,10 @@ pub struct RegionRelated<'e, Va: VirtualAddress> {
     pub get_region: Option<Va>,
     pub ai_regions: Option<Operand<'e>>,
     pub change_ai_region_state: Option<Va>,
+}
+
+pub(crate) struct StepUnitMovement<Va: VirtualAddress> {
+    pub make_path: Option<Va>,
 }
 
 pub(crate) fn regions<'e, E: ExecutionState<'e>>(
@@ -182,6 +187,98 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindPathing<'e, E> {
                 }
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) fn analyze_step_unit_movement<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    step_unit_movement: E::VirtualAddress,
+) -> StepUnitMovement<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut result = StepUnitMovement {
+        make_path: None,
+    };
+
+    let mut analysis = FuncAnalysis::new(binary, ctx, step_unit_movement);
+    let mut analyzer = StepUnitMovementAnalyzer::<E> {
+        result: &mut result,
+        arg_cache: &actx.arg_cache,
+        state: StepUnitMovementState::Switch,
+        inline_depth: 0,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct StepUnitMovementAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut StepUnitMovement<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+    state: StepUnitMovementState,
+}
+
+enum StepUnitMovementState {
+    /// Find switch on this.movement_state
+    Switch,
+    /// On branch 0x11, inline once to movement_state_11(this) if needed,
+    /// and first call should be make_path(a1 = this, a2 = this.move_target)
+    ///
+    /// There can be extra calls with this = this and jumps if assertions are enabled.
+    MakePath,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    StepUnitMovementAnalyzer<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            StepUnitMovementState::Switch => {
+                if let Operation::Jump { condition, to } = *op {
+                    if condition == ctx.const_1() {
+                        let to = ctrl.resolve(to);
+                        let exec = ctrl.exec_state();
+                        if let Some(switch) = CompleteSwitch::new(to, ctx, exec) {
+                            let binary = ctrl.binary();
+                            if let Some(branch) = switch.branch(binary, ctx, 0x11) {
+                                ctrl.clear_unchecked_branches();
+                                ctrl.continue_at_address(branch);
+                                self.state = StepUnitMovementState::MakePath;
+                            }
+                        }
+                    }
+                }
+            }
+            StepUnitMovementState::MakePath => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let a1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let a2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let ok = a1 == ctx.register(1) &&
+                            a2.if_mem32_offset(E::struct_layouts().flingy_move_target()) ==
+                                Some(ctx.register(1));
+                        if ok {
+                            self.result.make_path = Some(dest);
+                        } else {
+                            if ctrl.resolve_register(1) == ctx.register(1) &&
+                                self.inline_depth == 0
+                            {
+                                self.inline_depth = 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth = 0;
+                                if self.result.make_path.is_some() {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

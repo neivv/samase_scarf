@@ -53,6 +53,10 @@ impl StructLayouts {
         self.pair(0xc, 0x18)
     }
 
+    pub const fn flingy_move_target(self) -> u64 {
+        self.pair(0x10, 0x20)
+    }
+
     pub const fn flingy_next_move_waypoint(self) -> u64 {
         self.pair(0x18, 0x30)
     }
