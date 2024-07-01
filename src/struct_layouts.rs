@@ -276,6 +276,14 @@ impl StructLayouts {
         self.pair(0x30, 0x40)
     }
 
+    pub const fn ai_town_player(self) -> u64 {
+        self.pair(0x18, 0x30)
+    }
+
+    pub const fn worker_ai_town(self) -> u64 {
+        self.pair(0x14, 0x20)
+    }
+
     pub const fn player_ai_size(self) -> u64 {
         self.pair(0x4e8, 0x6e8)
     }

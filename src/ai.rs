@@ -2838,3 +2838,196 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         }
     }
 }
+
+pub(crate) struct UnitAiWorker<Va: VirtualAddressTrait> {
+    pub calculate_chokes_for_placement: Option<Va>,
+    pub place_building: Option<Va>,
+}
+
+pub(crate) fn analyze_unit_ai_worker<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    unit_ai_worker: E::VirtualAddress,
+) -> UnitAiWorker<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut result = UnitAiWorker {
+        calculate_chokes_for_placement: None,
+        place_building: None,
+    };
+
+    let arg_cache = &actx.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, unit_ai_worker);
+    let mut analyzer = UnitAiWorkerAnalyzer {
+        result: &mut result,
+        arg_cache,
+        state: UnitAiWorkerState::BunkerIdCheck,
+        inline_depth: 0,
+        unit_id: ctx.const_0(),
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum UnitAiWorkerState {
+    /// - Assume that x == 1 jumps are false (unit.race == terran)
+    /// - Inline to worker_try_progress_spending_queue(a1 = unit.ai.town, a2 = unit)
+    /// - Find x == 0x7d (bunker), follow true branch and store x as unit_id
+    BunkerIdCheck,
+    /// Find ai_check_choke_point_regions(a1 = town.player, _, 1u32)
+    GetChokePointRegions,
+    /// Inline to ai_place_building_outer(a1 = unit, unit_id, _, _, 1u32, 0x40u32)
+    /// find ai_place_building(a1 = unit, unit_id, _, _, 0x40u32)
+    PlaceBuilding,
+}
+
+struct UnitAiWorkerAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut UnitAiWorker<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    inline_depth: u8,
+    state: UnitAiWorkerState,
+    unit_id: Operand<'e>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitAiWorkerAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            UnitAiWorkerState::BunkerIdCheck => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((a, b, eq)) = condition.if_arithmetic_eq_neq() {
+                        if let Some(c) = b.if_constant() {
+                            if c == 1 {
+                                if a.unwrap_and_mask().if_custom() == Some(0) {
+                                    ctrl.continue_at_neq_address(eq, to);
+                                }
+                            } else if c == 0x7d {
+                                ctrl.clear_unchecked_branches();
+                                ctrl.continue_at_eq_address(eq, to);
+                                self.unit_id = ctx.and_const(a, 0xffff);
+                                self.state = UnitAiWorkerState::GetChokePointRegions;
+                            }
+                        }
+                    }
+                } else if let Operation::Call(dest) = *op {
+                    if self.inline_depth == 0 {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let inline = self.is_town(ctrl.resolve(self.arg_cache.on_call(0))) &&
+                                ctrl.resolve(self.arg_cache.on_call(1)) ==
+                                    self.arg_cache.on_entry(0);
+                            if inline {
+                                self.inline_depth = 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth = 0;
+                                if self.state != UnitAiWorkerState::BunkerIdCheck {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                            if ctrl.resolve_register(1) == self.arg_cache.on_entry(0) {
+                                // Possibly unit_race(a1)
+                                ctrl.do_call_with_result(ctx.custom(0));
+                            }
+                        }
+                    }
+                }
+            }
+            UnitAiWorkerState::GetChokePointRegions => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ok = self.is_town_player(ctrl.resolve(self.arg_cache.on_call(0))) &&
+                            ctrl.resolve(self.arg_cache.on_call_u32(2)) == ctx.const_1();
+                        if ok {
+                            self.result.calculate_chokes_for_placement = Some(dest);
+                            self.state = UnitAiWorkerState::PlaceBuilding;
+                            ctrl.clear_unchecked_branches();
+                        } else {
+                            ctrl.skip_call_preserve_esp();
+                        }
+                    }
+                }
+            }
+            UnitAiWorkerState::PlaceBuilding => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ok = ctrl.resolve(self.arg_cache.on_call(0)) ==
+                                self.arg_cache.on_entry(0) &&
+                            {
+                                let a1 = ctrl.resolve(self.arg_cache.on_call_u16(1));
+                                a1 == self.unit_id || a1.if_constant() == Some(0x7d)
+                            };
+                        if ok {
+                            let a5 = ctrl.resolve(self.arg_cache.on_call_u32(4));
+                            if let Some(c) = a5.if_constant() {
+                                if c == 1 && self.inline_depth < 2 {
+                                    let a6 = ctrl.resolve(self.arg_cache.on_call_u32(5));
+                                    if a6.if_constant() == Some(0x40) {
+                                        // place_building_outer does radius = id == 7c ? 28 :
+                                        // radius check, move explicit constant to id so that
+                                        // nothing breaks If place_building_outer is inlined, the
+                                        // inliner should remove that check as well since id is
+                                        // known to be 7d (hopefully)
+                                        let old_unit_id = self.unit_id;
+                                        let new_unit_id = ctx.constant(0x7d);
+                                        ctrl.move_unresolved(
+                                            &DestOperand::from_oper(self.arg_cache.on_call(1)),
+                                            new_unit_id
+                                        );
+                                        self.unit_id = new_unit_id;
+                                        self.inline_depth += 1;
+                                        ctrl.analyze_with_current_state(self, dest);
+                                        self.unit_id = old_unit_id;
+                                        self.inline_depth -= 1;
+                                        if self.result.place_building.is_some() {
+                                            ctrl.end_analysis();
+                                        }
+                                    }
+                                } else if c == 0x40 {
+                                    self.result.place_building = Some(dest);
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> UnitAiWorkerAnalyzer<'a, 'e, E> {
+    fn is_town(&self, op: Operand<'e>) -> bool {
+        // MemWord[MemWord[a1 + unit_ai] + worker_ai_town]
+        // or
+        // MemWord[get_unit_ai_expect_valid(this = a1) + worker_ai_town]
+        // which gets replaced with Custom(0) since this = a1
+        op.if_memory()
+            .and_then(|mem| {
+                let (base, offset) = mem.address();
+                if mem.size != E::WORD_SIZE || offset != E::struct_layouts().worker_ai_town() {
+                    return None;
+                }
+                if base.if_custom() == Some(0) {
+                    return Some(());
+                }
+                let mem = base.if_memory()?;
+                let (base, offset) = mem.address();
+                if mem.size != E::WORD_SIZE || offset != E::struct_layouts().unit_ai() {
+                    return None;
+                }
+                if base == self.arg_cache.on_entry(0) {
+                    Some(())
+                } else {
+                    None
+                }
+            })
+            .is_some()
+    }
+
+    fn is_town_player(&self, op: Operand<'e>) -> bool {
+        op.if_mem8_offset(E::struct_layouts().ai_town_player()).is_some_and(|x| self.is_town(x))
+    }
+}

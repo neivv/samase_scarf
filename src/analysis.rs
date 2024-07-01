@@ -538,6 +538,10 @@ results! {
         MakePath => make_path => cache_step_unit_movement,
         // a1 path_ctx
         CalculatePath => calculate_path => cache_make_path,
+        // a1 player, region_id, max_size
+        AiCalculateChokesForPlacement => ai_calculate_chokes_for_placement => cache_unit_ai_worker,
+        // a1 unit, unit_id, pos_xy, out_xy, radius_tiles
+        AiPlaceBuilding => ai_place_building => cache_unit_ai_worker,
     }
 }
 
@@ -954,6 +958,11 @@ impl<'e, E: ExecutionState<'e>> ArgCache<'e, E> {
     pub fn on_call_u8(&self, index: u8) -> Operand<'e> {
         let val = self.on_call(index);
         self.ctx.and_const(val, 0xff)
+    }
+
+    pub fn on_call_u16(&self, index: u8) -> Operand<'e> {
+        let val = self.on_call(index);
+        self.ctx.and_const(val, 0xffff)
     }
 
     pub fn on_call_u32(&self, index: u8) -> Operand<'e> {
@@ -4995,6 +5004,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             })
     }
 
+    fn unit_ai_worker(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::UnitAiWorker, |s| s.cache_ai_order(actx))
+    }
+
     fn cache_step_unit_movement(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(&[MakePath], &[], |s| {
@@ -5008,13 +5021,21 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_many_addr(AddressAnalysis::MakePath, |s| s.cache_step_unit_movement(actx))
     }
 
-
     fn cache_make_path(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(&[CalculatePath], &[], |s| {
             let make_path = s.make_path(actx)?;
             let result = pathing::analyze_make_path(actx, make_path);
             Some(([result.calculate_path], []))
+        })
+    }
+
+    fn cache_unit_ai_worker(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[AiCalculateChokesForPlacement, AiPlaceBuilding], &[], |s| {
+            let unit_ai_worker = s.unit_ai_worker(actx)?;
+            let r = ai::analyze_unit_ai_worker(actx, unit_ai_worker);
+            Some(([r.calculate_chokes_for_placement, r.place_building], []))
         })
     }
 }
