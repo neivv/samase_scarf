@@ -3080,3 +3080,152 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ChokesForPlacemen
         }
     }
 }
+
+pub(crate) struct PlaceBuilding<Va: VirtualAddressTrait> {
+    pub update_building_placement_state: Option<Va>,
+    pub ai_update_building_placement_state: Option<Va>,
+    pub find_nearest_unit_in_area_point: Option<Va>,
+}
+
+pub(crate) fn analyze_place_building<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    place_building: E::VirtualAddress,
+) -> PlaceBuilding<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut result = PlaceBuilding {
+        update_building_placement_state: None,
+        ai_update_building_placement_state: None,
+        find_nearest_unit_in_area_point: None,
+    };
+
+    let arg_cache = &actx.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, place_building);
+    let mut analyzer = PlaceBuildingAnalyzer {
+        result: &mut result,
+        arg_cache,
+        state: PlaceBuildingState::UpdatePlacement,
+        inline_depth: 0
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct PlaceBuildingAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut PlaceBuilding<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: PlaceBuildingState,
+    inline_depth: u8,
+}
+
+enum PlaceBuildingState {
+    /// find update_building_placement_state(a1 = a1, a1.player, _, _, a2, 0u32, 0u32, 1u32, 0u32)
+    /// assume return 1
+    UpdatePlacement,
+    /// Switch on a2, follow pylon branch (9c)
+    Switch,
+    /// Inline once if func(a1 = a1.player, a3), find
+    /// find_nearest_unit_in_area_pos(a3 & ffff, a3 >> 10, map_bounds, func, a1.player)
+    FindNearest,
+    /// ai_update_building_placement_state(a1 = a2?, &local, a1.player, _, a5)
+    AiUpdatePlacement,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlaceBuildingAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            PlaceBuildingState::UpdatePlacement => {
+                if let Operation::Call(dest) = *op {
+                    if ctrl.check_stack_probe() {
+                        return;
+                    }
+                    if seems_assertion_call(ctrl, self.arg_cache) {
+                        ctrl.end_branch();
+                        return;
+                    }
+                    let unit = self.arg_cache.on_entry(0);
+                    let ok = ctrl.resolve(self.arg_cache.on_call(0)) == unit &&
+                        ctrl.resolve(self.arg_cache.on_call_u8(1))
+                            .if_mem8_offset(E::struct_layouts().unit_player()) == Some(unit) &&
+                        ctrl.resolve(self.arg_cache.on_call_u8(5)) == ctx.const_0() &&
+                        ctrl.resolve(self.arg_cache.on_call_u8(6)) == ctx.const_0() &&
+                        ctrl.resolve(self.arg_cache.on_call_u8(7)) == ctx.const_1() &&
+                        ctrl.resolve(self.arg_cache.on_call_u8(8)) == ctx.const_0();
+                    if ok {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.result.update_building_placement_state = Some(dest);
+                            self.state = PlaceBuildingState::Switch;
+                            ctrl.clear_unchecked_branches();
+                        }
+                    }
+                }
+            }
+            PlaceBuildingState::Switch => {
+                if let Operation::Jump { condition, to } = *op {
+                    if condition == ctx.const_1() {
+                        let to = ctrl.resolve(to);
+                        let switch = CompleteSwitch::new(to, ctx, ctrl.exec_state());
+                        if let Some(switch) = switch {
+                            let binary = ctrl.binary();
+                            if let Some(branch) = switch.branch(binary, ctx, 0x9c) {
+                                ctrl.clear_unchecked_branches();
+                                ctrl.continue_at_address(branch);
+                                self.state = PlaceBuildingState::FindNearest;
+                            }
+                        }
+                    }
+                }
+            }
+            PlaceBuildingState::FindNearest => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let a1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let a2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let unit = self.arg_cache.on_entry(0);
+                        let pos_xy = self.arg_cache.on_entry(2);
+                        let ok = ctx.and_const(a1, 0xffff) == ctx.and_const(pos_xy, 0xffff) &&
+                            ctx.and_const(a2, 0xffff) ==
+                                ctx.and_const(ctx.rsh_const(pos_xy, 0x10), 0xffff) &&
+                            ctrl.resolve(self.arg_cache.on_call_u8(4))
+                                .if_mem8_offset(E::struct_layouts().unit_player()) == Some(unit);
+                        if ok {
+                            self.result.find_nearest_unit_in_area_point = Some(dest);
+                            self.state = PlaceBuildingState::AiUpdatePlacement;
+                            if self.inline_depth != 0 {
+                                ctrl.end_analysis();
+                            }
+                            return;
+                        }
+                        let inline = self.inline_depth == 0 &&
+                            a1.if_mem8_offset(E::struct_layouts().unit_player()) == Some(unit) &&
+                            ctx.and_const(a2, 0xffff_ffff) == ctx.and_const(pos_xy, 0xffff_ffff);
+                        if inline {
+                            self.inline_depth = 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = 0;
+                        }
+                    }
+                }
+            }
+            PlaceBuildingState::AiUpdatePlacement => {
+                if let Operation::Call(dest) = *op {
+                    let unit = self.arg_cache.on_entry(0);
+                    let radius = self.arg_cache.on_entry(4);
+                    let ok = ctrl.resolve(self.arg_cache.on_call_u8(2))
+                            .if_mem8_offset(E::struct_layouts().unit_player()) == Some(unit) &&
+                        ctrl.resolve(self.arg_cache.on_call_u8(4)) == ctx.and_const(radius, 0xff);
+                    if ok {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.result.ai_update_building_placement_state = Some(dest);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

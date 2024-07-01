@@ -545,6 +545,14 @@ results! {
         // a1 source_region, dest_region, max_distance_regions, [u16; 3] *out_regions,
         // u32 *out_error, min_distance_regions
         GetChokePointRegions => get_choke_point_regions => cache_ai_chokes_for_placement,
+        // a1 unit_opt, a2 player, a3 x_tile, a4 y_tile, a5 unit_id, a6 placement_entry,
+        // a7 check_vision, a8 also_invisible, a9 without_vision
+        UpdateBuildingPlacementState => update_building_placement_state => cache_ai_place_building,
+        // a1 unit_id, a2 u8 *placement_data[0x1000], a3 player, a4 pos_xy, a5 radius_tiles
+        AiUpdateBuildingPlacementState => ai_update_building_placement_state =>
+            cache_ai_place_building,
+        // a1 x, a2 y, a3 rect, a4 filter_func, a5 filter_param
+        FindNearestUnitInAreaPoint => find_nearest_unit_in_area_point => cache_ai_place_building,
     }
 }
 
@@ -5052,6 +5060,21 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             let r = ai::analyze_calculate_chokes_for_placement(actx, calculate_chokes);
             Some(([r.get_choke_point_regions], []))
         })
+    }
+
+    fn cache_ai_place_building(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[UpdateBuildingPlacementState, AiUpdateBuildingPlacementState,
+            FindNearestUnitInAreaPoint], &[],
+            |s| {
+                let place_building = s.cache_many_addr(
+                    AiPlaceBuilding,
+                    |s| s.cache_unit_ai_worker(actx),
+                )?;
+                let r = ai::analyze_place_building(actx, place_building);
+                Some(([r.update_building_placement_state, r.ai_update_building_placement_state,
+                    r.find_nearest_unit_in_area_point], []))
+            })
     }
 }
 
