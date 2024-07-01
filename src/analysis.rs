@@ -542,6 +542,9 @@ results! {
         AiCalculateChokesForPlacement => ai_calculate_chokes_for_placement => cache_unit_ai_worker,
         // a1 unit, unit_id, pos_xy, out_xy, radius_tiles
         AiPlaceBuilding => ai_place_building => cache_unit_ai_worker,
+        // a1 source_region, dest_region, max_distance_regions, [u16; 3] *out_regions,
+        // u32 *out_error, min_distance_regions
+        GetChokePointRegions => get_choke_point_regions => cache_ai_chokes_for_placement,
     }
 }
 
@@ -5036,6 +5039,18 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             let unit_ai_worker = s.unit_ai_worker(actx)?;
             let r = ai::analyze_unit_ai_worker(actx, unit_ai_worker);
             Some(([r.calculate_chokes_for_placement, r.place_building], []))
+        })
+    }
+
+    fn cache_ai_chokes_for_placement(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[GetChokePointRegions], &[], |s| {
+            let calculate_chokes = s.cache_many_addr(
+                AiCalculateChokesForPlacement,
+                |s| s.cache_unit_ai_worker(actx),
+            )?;
+            let r = ai::analyze_calculate_chokes_for_placement(actx, calculate_chokes);
+            Some(([r.get_choke_point_regions], []))
         })
     }
 }

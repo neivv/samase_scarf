@@ -3031,3 +3031,52 @@ impl<'a, 'e, E: ExecutionState<'e>> UnitAiWorkerAnalyzer<'a, 'e, E> {
         op.if_mem8_offset(E::struct_layouts().ai_town_player()).is_some_and(|x| self.is_town(x))
     }
 }
+
+pub(crate) struct CalculateChokesForPlacement<Va: VirtualAddressTrait> {
+    pub get_choke_point_regions: Option<Va>,
+}
+
+pub(crate) fn analyze_calculate_chokes_for_placement<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    calculate_chokes: E::VirtualAddress,
+) -> CalculateChokesForPlacement<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let mut result = CalculateChokesForPlacement {
+        get_choke_point_regions: None,
+    };
+
+    let arg_cache = &actx.arg_cache;
+    let mut analysis = FuncAnalysis::new(binary, ctx, calculate_chokes);
+    let mut analyzer = ChokesForPlacementAnalyzer {
+        result: &mut result,
+        arg_cache,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct ChokesForPlacementAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut CalculateChokesForPlacement<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ChokesForPlacementAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        // Should be just get_choke_point_regions(a2_region, _, 2, &stack, &stack, 2)
+        if let Operation::Call(dest) = *op {
+            let ok = ctrl.resolve(self.arg_cache.on_call_u16(0)) ==
+                    ctx.and_const(self.arg_cache.on_entry(1), 0xffff) &&
+                ctrl.resolve(self.arg_cache.on_call_u32(2)).if_constant() == Some(2) &&
+                ctrl.resolve(self.arg_cache.on_call_u32(5)).if_constant() == Some(2);
+            if ok {
+                self.result.get_choke_point_regions = ctrl.resolve_va(dest);
+                ctrl.end_analysis();
+            }
+        }
+    }
+}
