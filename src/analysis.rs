@@ -536,6 +536,8 @@ results! {
         AiCanTargetAttackThis => ai_can_target_attack_this => cache_ai_order,
         // a1 unit, a2 dest_xy
         MakePath => make_path => cache_step_unit_movement,
+        // a1 path_ctx
+        CalculatePath => calculate_path => cache_make_path,
     }
 }
 
@@ -4999,6 +5001,20 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             let step_unit_movement = s.step_unit_movement(actx)?;
             let result = pathing::analyze_step_unit_movement(actx, step_unit_movement);
             Some(([result.make_path], []))
+        })
+    }
+
+    fn make_path(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::MakePath, |s| s.cache_step_unit_movement(actx))
+    }
+
+
+    fn cache_make_path(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[CalculatePath], &[], |s| {
+            let make_path = s.make_path(actx)?;
+            let result = pathing::analyze_make_path(actx, make_path);
+            Some(([result.calculate_path], []))
         })
     }
 }

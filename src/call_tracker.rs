@@ -1,9 +1,11 @@
+use std::hash::{Hash, Hasher};
+
 use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::OperandHashByAddress;
-use scarf::{BinaryFile, Operand, OperandCtx, Operation};
+use scarf::{BinaryFile, DestOperand, Operand, OperandCtx, Operation};
 
 use crate::analysis::{AnalysisCtx};
 use crate::hash_map::HashMap;
@@ -13,13 +15,39 @@ use crate::util::{ControlExt, bumpvec_with_capacity};
 /// and allows converting the Custom(x) to inlined return value of the function.
 /// (Assumes no arguments to functions)
 pub struct CallTracker<'acx, 'e, E: ExecutionState<'e>> {
-    func_to_id: HashMap<(E::VirtualAddress, Option<OperandHashByAddress<'e>>), Operand<'e>>,
-    /// (func address, constraint, func return once analyzed)
+    func_to_id: HashMap<FuncInput<'acx, 'e, E::VirtualAddress>, Operand<'e>>,
+    /// (input, func return once analyzed)
     id_to_func:
-        BumpVec<'acx, (E::VirtualAddress, Option<Operand<'e>>, Option<Option<Operand<'e>>>)>,
+        BumpVec<'acx, (FuncInput<'acx, 'e, E::VirtualAddress>, Option<Option<Operand<'e>>>)>,
     first_custom: u32,
     binary: &'e BinaryFile<E::VirtualAddress>,
     ctx: OperandCtx<'e>,
+}
+
+#[derive(Eq, PartialEq, Debug, Copy, Clone)]
+struct FuncInput<'acx, 'e, Va: VirtualAddress> {
+    address: Va,
+    constraint: Option<Operand<'e>>,
+    state: &'acx [(DestOperand<'e>, Operand<'e>)],
+}
+
+impl<'acx, 'e, Va: VirtualAddress> Hash for FuncInput<'acx, 'e, Va> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.address.hash(state);
+        if let Some(c) = self.constraint {
+            0u8.hash(state);
+            OperandHashByAddress(c).hash(state);
+        } else {
+            1u8.hash(state);
+        }
+        self.state.len().hash(state);
+        for (dest, op) in self.state {
+            // Would be nice to hash entire dest though, but not super critical
+            // since hash collisions likely won't happen with how this is currently used..
+            std::mem::discriminant(dest).hash(state);
+            OperandHashByAddress(*op).hash(state);
+        }
+    }
 }
 
 impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
@@ -47,7 +75,24 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         address: E::VirtualAddress,
     ) {
         let ctx = ctrl.ctx();
-        let custom = self.func_to_custom(ctx, address);
+        let custom = self.func_to_custom(ctx, address, &[]);
+        ctrl.do_call_with_result(custom);
+    }
+
+    /// Registers and simulates a call to specific address, also skips current operation,
+    /// saving specified (DestOperand, Operand) pairs as input if/when the function
+    /// is executed later.
+    ///
+    /// Note that this mean it clobbers volatile registers, usually Analyzer::operation() wants
+    /// to do this after everything else at call operation has been checked.
+    pub fn add_call_with_state<A: scarf::Analyzer<'e>>(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, A>,
+        address: E::VirtualAddress,
+        state: &'acx [(DestOperand<'e>, Operand<'e>)],
+    ) {
+        let ctx = ctrl.ctx();
+        let custom = self.func_to_custom(ctx, address, state);
         ctrl.do_call_with_result(custom);
     }
 
@@ -57,17 +102,27 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         address: E::VirtualAddress,
     ) {
         let ctx = ctrl.ctx();
-        let custom = self.func_to_custom(ctx, address);
+        let custom = self.func_to_custom(ctx, address, &[]);
         ctrl.skip_call_preserve_esp();
         ctrl.exec_state().set_register(0, custom);
     }
 
-    fn func_to_custom(&mut self, ctx: OperandCtx<'e>, address: E::VirtualAddress) -> Operand<'e> {
-        let entry = self.func_to_id.entry((address, None));
+    fn func_to_custom(
+        &mut self,
+        ctx: OperandCtx<'e>,
+        address: E::VirtualAddress,
+        state: &'acx [(DestOperand<'e>, Operand<'e>)],
+    ) -> Operand<'e> {
+        let input = FuncInput {
+            address,
+            constraint: None,
+            state,
+        };
+        let entry = self.func_to_id.entry(input);
         let id_to_func = &mut self.id_to_func;
         let new_id = id_to_func.len() as u32 + self.first_custom;
         let &mut custom = entry.or_insert_with(|| {
-            id_to_func.push((address, None, None));
+            id_to_func.push((input, None));
             ctx.custom(new_id)
         });
         custom
@@ -84,7 +139,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         address: E::VirtualAddress,
     ) {
         let ctx = ctrl.ctx();
-        let custom = self.func_to_custom(ctx, address);
+        let custom = self.func_to_custom(ctx, address, &[]);
         let val = ctrl.resolve(self.resolve_calls(custom));
         ctrl.do_call_with_result(val)
     }
@@ -98,11 +153,16 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         constraint: Operand<'e>,
     ) {
         let ctx = ctrl.ctx();
-        let entry = self.func_to_id.entry((address, Some(constraint.hash_by_address())));
+        let input = FuncInput {
+            address,
+            constraint: Some(constraint),
+            state: &[],
+        };
+        let entry = self.func_to_id.entry(input);
         let id_to_func = &mut self.id_to_func;
         let new_id = id_to_func.len() as u32 + self.first_custom;
         let &mut custom = entry.or_insert_with(|| {
-            id_to_func.push((address, Some(constraint), None));
+            id_to_func.push((input, None));
             ctx.custom(new_id)
         });
         let new_esp = ctrl.get_new_esp_for_call();
@@ -132,9 +192,12 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         let ctx = self.ctx;
         let binary = self.binary;
         let index = custom_id.checked_sub(self.first_custom)? as usize;
-        let &mut (addr, constraint, ref mut result) = self.id_to_func.get_mut(index)?;
+        let &mut (input, ref mut result) = self.id_to_func.get_mut(index)?;
+        let addr = input.address;
+        let constraint = input.constraint;
+        let state = input.state;
         *result.get_or_insert_with(|| {
-            analyze_func_return_c::<E>(addr, ctx, binary, constraint, limit)
+            analyze_func_return_c::<E>(addr, ctx, binary, constraint, state, limit)
         })
     }
 
@@ -167,7 +230,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
 
     pub fn custom_id_to_func(&self, val: u32) -> Option<E::VirtualAddress> {
         let index = val.checked_sub(self.first_custom)?;
-        Some(self.id_to_func.get(index as usize)?.0)
+        Some(self.id_to_func.get(index as usize)?.0.address)
     }
 }
 
@@ -176,7 +239,7 @@ pub(crate) fn analyze_func_return<'e, E: ExecutionState<'e>>(
     ctx: OperandCtx<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
 ) -> Option<Operand<'e>> {
-    analyze_func_return_c::<E>(func, ctx, binary, None, u32::MAX)
+    analyze_func_return_c::<E>(func, ctx, binary, None, &[], u32::MAX)
 }
 
 fn analyze_func_return_c<'e, E: ExecutionState<'e>>(
@@ -184,6 +247,7 @@ fn analyze_func_return_c<'e, E: ExecutionState<'e>>(
     ctx: OperandCtx<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     constraint: Option<Operand<'e>>,
+    init_state: &[(DestOperand<'e>, Operand<'e>)],
     branch_limit: u32,
 ) -> Option<Operand<'e>> {
     struct Analyzer<'e, E: ExecutionState<'e>> {
@@ -261,7 +325,11 @@ fn analyze_func_return_c<'e, E: ExecutionState<'e>>(
         branch_limit,
     };
 
-    let mut analysis = FuncAnalysis::new(binary, ctx, func);
+    let mut state = E::initial_state(ctx, binary);
+    for &(ref dest, val) in init_state {
+        state.move_to(dest, val);
+    }
+    let mut analysis = FuncAnalysis::with_state(binary, ctx, func, state);
     analysis.analyze(&mut analyzer);
     analyzer.result
         .filter(|x| !x.is_undefined())

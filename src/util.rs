@@ -356,12 +356,25 @@ impl<'e> OperandExt<'e> for Operand<'e> {
     fn if_and_mask_eq_neq(self, mask: u64) -> Option<(Operand<'e>, bool)> {
         let eq;
         let val;
-        if let Some(a) = self.if_arithmetic_eq_const(0) {
-            eq = true;
-            val = a;
+        if mask == 1 {
+            // x & 1 == 0 or just x & 1
+            if let Some(a) = self.if_arithmetic_eq_const(0) {
+                eq = true;
+                val = a;
+            } else {
+                eq = false;
+                val = self;
+            }
         } else {
-            eq = false;
-            val = self;
+            // x & 10 == 0 or (x & 10 == 0) == 0
+            let inner = self.if_arithmetic_eq_const(0)?;
+            if let Some(a) = inner.if_arithmetic_eq_const(0) {
+                eq = false;
+                val = a;
+            } else {
+                eq = true;
+                val = inner;
+            }
         }
         Some((val.if_arithmetic_and_const(mask)?, eq))
     }
