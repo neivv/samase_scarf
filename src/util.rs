@@ -13,7 +13,6 @@ use scarf::{
     ArithOpType, BinaryFile, BinarySection, MemAccessSize, Operand, OperandCtx, OperandType, Rva
 };
 
-use crate::analysis::ArgCache;
 use crate::struct_layouts::{StructLayouts};
 
 // When not testing, immediatly end once a value is found, for tests require all values
@@ -100,31 +99,38 @@ impl<'e> OptionExt<'e> for Option<(Operand<'e>, Operand<'e>)> {
 /// error
 pub fn seems_assertion_call<'exec, A: analysis::Analyzer<'exec>>(
     ctrl: &mut Control<'exec, '_, '_, A>,
-    arg_cache: &ArgCache<'exec, A::Exec>,
 ) -> bool {
-    let arg1 = match ctrl.resolve(arg_cache.on_call(0)).if_constant() {
+    let binary = ctrl.binary();
+    let state = ctrl.exec_state();
+    seems_assertion_call_less_generic(state, binary)
+}
+
+pub fn seems_assertion_call_less_generic<'e, E: ExecutionState<'e>>(
+    state: &mut E,
+    binary: &BinaryFile<E::VirtualAddress>,
+) -> bool {
+    // Could check that these are strings
+    let arg1 = match state.resolve_arg(0).if_constant() {
         Some(s) => s,
         None => return false,
     };
-    let arg2 = match ctrl.resolve(arg_cache.on_call(1)).if_constant() {
+    let arg2 = match state.resolve_arg(1).if_constant() {
         Some(s) => s,
         None => return false,
     };
-    let arg3 = match ctrl.resolve(arg_cache.on_call(2)).if_constant() {
+    let arg3 = match state.resolve_arg(2).if_constant() {
         Some(s) => s,
         None => return false,
     };
-    let arg4 = match ctrl.resolve(arg_cache.on_call(3)).if_constant() {
+    let arg4 = match state.resolve_arg(3).if_constant() {
         Some(s) => s,
         None => return false,
     };
     if arg4 == 0 || arg4 > 12000 {
         return false;
     }
-    // Could check that these are strings
-    let binary = ctrl.binary();
     for arg in [arg1, arg2, arg3] {
-        let addr = <A::Exec as ExecutionState<'_>>::VirtualAddress::from_u64(arg);
+        let addr = E::VirtualAddress::from_u64(arg);
         if binary.section_by_addr(addr).is_none() {
             return false;
         }
@@ -364,6 +370,15 @@ impl<'e> OperandExt<'e> for Operand<'e> {
 
 pub trait ExecStateExt<'e> {
     fn struct_layouts() -> StructLayouts;
+    fn resolve_arg(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_u8(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_u16(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_u32(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_thiscall(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_thiscall_u8(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_thiscall_u16(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_thiscall_u32(&mut self, i: u8) -> Operand<'e>;
+    fn read_stack_memory(&mut self, offset: u64, size: MemAccessSize) -> Operand<'e>;
 }
 
 impl<'e, E: ExecutionState<'e>> ExecStateExt<'e> for E {
@@ -372,6 +387,74 @@ impl<'e, E: ExecutionState<'e>> ExecStateExt<'e> for E {
         StructLayouts {
             is_64bit: E::WORD_SIZE == MemAccessSize::Mem64
         }
+    }
+
+    fn resolve_arg(&mut self, i: u8) -> Operand<'e> {
+        if E::WORD_SIZE == MemAccessSize::Mem64 {
+            if i < 4 {
+                let reg = match i {
+                    0 => 1,
+                    1 => 2,
+                    2 => 8,
+                    3 | _ => 9,
+                };
+                self.resolve_register(reg)
+            } else {
+                self.read_stack_memory(i as u64 * 8, E::WORD_SIZE)
+            }
+        } else {
+            self.read_stack_memory(i as u64 * 4, E::WORD_SIZE)
+        }
+    }
+    fn resolve_arg_u8(&mut self, i: u8) -> Operand<'e> {
+        let arg = self.resolve_arg(i);
+        self.ctx().and_const(arg, 0xff)
+    }
+    fn resolve_arg_u16(&mut self, i: u8) -> Operand<'e> {
+        let arg = self.resolve_arg(i);
+        self.ctx().and_const(arg, 0xffff)
+    }
+    fn resolve_arg_u32(&mut self, i: u8) -> Operand<'e> {
+        let arg = self.resolve_arg(i);
+        self.ctx().and_const(arg, 0xffff_ffff)
+    }
+    #[inline]
+    fn resolve_arg_thiscall(&mut self, i: u8) -> Operand<'e> {
+        if E::WORD_SIZE == MemAccessSize::Mem64 {
+            self.resolve_arg(i.wrapping_add(1))
+        } else {
+            self.resolve_arg(i)
+        }
+    }
+    #[inline]
+    fn resolve_arg_thiscall_u8(&mut self, i: u8) -> Operand<'e> {
+        if E::WORD_SIZE == MemAccessSize::Mem64 {
+            self.resolve_arg_u8(i.wrapping_add(1))
+        } else {
+            self.resolve_arg_u8(i)
+        }
+    }
+    #[inline]
+    fn resolve_arg_thiscall_u16(&mut self, i: u8) -> Operand<'e> {
+        if E::WORD_SIZE == MemAccessSize::Mem64 {
+            self.resolve_arg_u16(i.wrapping_add(1))
+        } else {
+            self.resolve_arg_u16(i)
+        }
+    }
+    #[inline]
+    fn resolve_arg_thiscall_u32(&mut self, i: u8) -> Operand<'e> {
+        if E::WORD_SIZE == MemAccessSize::Mem64 {
+            self.resolve_arg_u32(i.wrapping_add(1))
+        } else {
+            self.resolve_arg_u32(i)
+        }
+    }
+    fn read_stack_memory(&mut self, offset: u64, size: MemAccessSize) -> Operand<'e> {
+        let ctx = self.ctx();
+        let rsp = self.resolve_register(4);
+        let mem = ctx.mem_access(rsp, offset, size);
+        self.read_memory(&mem)
     }
 }
 
@@ -528,6 +611,15 @@ pub trait ControlExt<'e, E: ExecutionState<'e>, User: analysis::AnalysisState> {
         operation: &scarf::Operation<'e>,
         entry_esp: Operand<'e>,
     ) -> Option<(E::VirtualAddress, bool)>;
+
+    fn resolve_arg(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_u8(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_u16(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_u32(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_thiscall(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_thiscall_u8(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_thiscall_u16(&mut self, i: u8) -> Operand<'e>;
+    fn resolve_arg_thiscall_u32(&mut self, i: u8) -> Operand<'e>;
 }
 
 impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::State> for
@@ -720,6 +812,39 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::St
             }
             _ => None,
         }
+    }
+
+    #[inline]
+    fn resolve_arg(&mut self, i: u8) -> Operand<'e> {
+        self.exec_state().resolve_arg(i)
+    }
+    #[inline]
+    fn resolve_arg_u8(&mut self, i: u8) -> Operand<'e> {
+        self.exec_state().resolve_arg_u8(i)
+    }
+    #[inline]
+    fn resolve_arg_u16(&mut self, i: u8) -> Operand<'e> {
+        self.exec_state().resolve_arg_u16(i)
+    }
+    #[inline]
+    fn resolve_arg_u32(&mut self, i: u8) -> Operand<'e> {
+        self.exec_state().resolve_arg_u32(i)
+    }
+    #[inline]
+    fn resolve_arg_thiscall(&mut self, i: u8) -> Operand<'e> {
+        self.exec_state().resolve_arg_thiscall(i)
+    }
+    #[inline]
+    fn resolve_arg_thiscall_u8(&mut self, i: u8) -> Operand<'e> {
+        self.exec_state().resolve_arg_thiscall_u8(i)
+    }
+    #[inline]
+    fn resolve_arg_thiscall_u16(&mut self, i: u8) -> Operand<'e> {
+        self.exec_state().resolve_arg_thiscall_u16(i)
+    }
+    #[inline]
+    fn resolve_arg_thiscall_u32(&mut self, i: u8) -> Operand<'e> {
+        self.exec_state().resolve_arg_thiscall_u32(i)
     }
 }
 

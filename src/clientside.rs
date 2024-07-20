@@ -307,12 +307,11 @@ pub(crate) fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
     analysis: &AnalysisCtx<'a, E>,
     game_screen_rclick: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
-    struct Analyzer<'a, 'b, E: ExecutionState<'a>> {
+    struct Analyzer<'a, E: ExecutionState<'a>> {
         result: Option<E::VirtualAddress>,
-        args: &'b ArgCache<'a, E>,
     }
 
-    impl<'a, 'b, E: ExecutionState<'a>> scarf::Analyzer<'a> for Analyzer<'a, 'b, E> {
+    impl<'a, E: ExecutionState<'a>> scarf::Analyzer<'a> for Analyzer<'a, E> {
         type State = analysis::DefaultState;
         type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'a, '_, '_, Self>, op: &Operation<'a>) {
@@ -322,8 +321,8 @@ pub(crate) fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
                 }
                 Operation::Call(to) => {
                     let to = ctrl.resolve_va(to);
-                    let arg1 = ctrl.resolve(self.args.on_call(0)).unwrap_sext();
-                    let arg2 = ctrl.resolve(self.args.on_call(1)).unwrap_sext();
+                    let arg1 = ctrl.resolve_arg(0).unwrap_sext();
+                    let arg2 = ctrl.resolve_arg(1).unwrap_sext();
                     if let Some(dest) = to {
                         if arg1.if_mem16().is_some() && arg2.if_mem16().is_some() {
                             self.result = Some(dest);
@@ -338,9 +337,8 @@ pub(crate) fn is_outside_game_screen<'a, E: ExecutionState<'a>>(
 
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let mut analyzer = Analyzer {
+    let mut analyzer = Analyzer::<E> {
         result: None,
-        args: &analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, game_screen_rclick);
     analysis.analyze(&mut analyzer);
@@ -401,7 +399,7 @@ pub(crate) fn game_coord_conversion<'a, E: ExecutionState<'a>>(
             &self,
             ctrl: &mut Control<'a, '_, '_, A>,
         ) -> bool {
-            let arg2 = ctrl.resolve(self.args.on_call(1));
+            let arg2 = ctrl.resolve_arg(1);
             arg2 == self.args.on_entry(0)
         }
 
@@ -1015,8 +1013,7 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for StartTargetingAnalyz
             };
             if let Some(dest) = ctrl.resolve_va(dest) {
                 let ok = (0..3).all(|i| {
-                    ctrl.resolve(ctx.and_const(self.arg_cache.on_call(i), 0xff))
-                        .if_constant() == Some(0x98)
+                    ctrl.resolve_arg_u8(i).if_constant() == Some(0x98)
                 });
                 if ok {
                     self.result.start_targeting = Some(dest);
@@ -1097,8 +1094,8 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for TargetingLclickAnaly
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if let Operation::Call(dest) = *op {
             let ctx = ctrl.ctx();
-            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-            let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+            let arg1 = ctrl.resolve_arg(0);
+            let arg2 = ctrl.resolve_arg(1);
             if arg2 == self.arg_cache.on_entry(0) {
                 // event_coords_to_game, use Custom(0) for x and Custom(1) for y
                 let mem = ctx.mem_access(arg1, 0, MemAccessSize::Mem32);
@@ -1114,7 +1111,7 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for TargetingLclickAnaly
                         result.find_unit_for_click = Some(dest);
                         ctrl.do_call_with_result(ctx.custom(2));
                     } else {
-                        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                        let arg3 = ctrl.resolve_arg(2);
                         if arg3.if_custom() == Some(2) {
                             if result.find_fow_sprite_for_click.is_none() {
                                 result.find_fow_sprite_for_click = Some(dest);
@@ -1274,7 +1271,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             };
             let ctx = ctrl.ctx();
             let args: [Operand<'e>; 5] = array_init::array_init(|i| {
-                ctrl.resolve(self.arg_cache.on_thiscall_call(i as u8))
+                ctrl.resolve_arg_thiscall(i as u8)
             });
             let state = ctrl.user_state().get::<HandleTargetedClickState>();
             let mut got_result = false;
@@ -1387,7 +1384,6 @@ pub(crate) fn analyze_center_view_action<'e, E: ExecutionState<'e>>(
 
     let mut analyzer = CenterViewActionAnalyzer {
         result: &mut result,
-        arg_cache: &actx.arg_cache,
         local_player_id,
         call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
     };
@@ -1405,7 +1401,6 @@ pub(crate) fn analyze_center_view_action<'e, E: ExecutionState<'e>>(
 
 struct CenterViewActionAnalyzer<'e, 'acx, 'a, E: ExecutionState<'e>> {
     result: &'a mut CenterViewAction<'e, E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     local_player_id: Operand<'e>,
     call_tracker: CallTracker<'acx, 'e, E>,
 }
@@ -1439,10 +1434,10 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
         } else {
             if let Operation::Call(dest) = *op {
                 if let Some(dest) = ctrl.resolve_va(dest) {
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg1 = ctrl.resolve_arg(0);
                     let ctx = ctrl.ctx();
                     if let Some(w) = self.screen_size_from_move_screen_arg(ctx, arg1) {
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let arg2 = ctrl.resolve_arg(1);
                         if let Some(h) = self.screen_size_from_move_screen_arg(ctx, arg2) {
                             self.result.move_screen = Some(dest);
                             self.result.game_screen_width_bwpx = Some(w);
@@ -1501,7 +1496,6 @@ pub(crate) fn init_ingame_ui<'e, E: ExecutionState<'e>>(
         let entry_of_result = entry_of_until(binary, funcs, caller, |entry| {
             let mut analyzer = InitIngameUiAnalyzer {
                 result: &mut result,
-                arg_cache: &actx.arg_cache,
                 rdata: actx.binary_sections.rdata,
                 init_statlb,
                 is_replay,
@@ -1558,7 +1552,6 @@ enum InitIngameUiState {
 
 struct InitIngameUiAnalyzer<'e, 'acx, 'a, E: ExecutionState<'e>> {
     result: &'a mut InitIngameUi<'e, E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     rdata: &'e BinarySection<E::VirtualAddress>,
     is_replay: Operand<'e>,
     init_statlb: E::VirtualAddress,
@@ -1890,7 +1883,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> InitIngameUiAnalyzer<'e, 'acx, '
     }
 
     fn seems_obs_ui_alloc_call(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) -> bool {
-        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+        let arg1 = ctrl.resolve_arg(0);
         if let Some(c) = arg1.if_constant() {
             c > 0x400 && c < 0x1000
         } else {
@@ -2032,9 +2025,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                                     [zero, zero, one]
                                         .iter().enumerate()
                                         .all(|(i, &expected)| {
-                                            let arg =
-                                                ctrl.resolve(self.arg_cache.on_call(i as u8));
-                                            ctx.and_const(arg, 0xff) == expected
+                                            ctrl.resolve_arg_u8(i as u8) == expected
                                         })
                                 })
                             };
@@ -2139,7 +2130,7 @@ impl<'e: 'acx, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             GameScreenLClickState::ClipCursor => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         if is_global(arg1) {
                             self.result.game_screen_rect_winpx = Some(arg1);
                             self.result.clip_cursor = Some(dest);
@@ -2270,7 +2261,6 @@ pub(crate) fn analyze_select_mouse_up<'e, E: ExecutionState<'e>>(
 
     let mut analyzer = SelectMouseUpAnalyzer {
         result: &mut result,
-        arg_cache: &actx.arg_cache,
         reset_ui_event_handlers,
         state: SelectMouseUpState::ResetUiEventHandlers,
         call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
@@ -2301,7 +2291,6 @@ enum SelectMouseUpState {
 
 struct SelectMouseUpAnalyzer<'e, 'acx, 'a, E: ExecutionState<'e>> {
     result: &'a mut SelectMouseUp<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     reset_ui_event_handlers: E::VirtualAddress,
     state: SelectMouseUpState,
     call_tracker: CallTracker<'acx, 'e, E>,
@@ -2329,7 +2318,7 @@ impl<'e, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                                 }
                             }
                             _ => {
-                                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                                let arg1 = ctrl.resolve_arg(0);
                                 if let Some(c) = Operand::and_masked(arg1).0.if_custom() {
                                     if let Some(func) = self.call_tracker.custom_id_to_func(c) {
                                         self.result.decide_cursor_type = Some(func);
@@ -2347,11 +2336,9 @@ impl<'e, 'acx, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 let ctx = ctrl.ctx();
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let arg3 =
-                            ctx.and_const(ctrl.resolve(self.arg_cache.on_call(2)), 0xff);
-                        let arg4 =
-                            ctx.and_const(ctrl.resolve(self.arg_cache.on_call(3)), 0xff);
+                        let arg1 = ctrl.resolve_arg(0);
+                        let arg3 = ctrl.resolve_arg_u8(2);
+                        let arg4 = ctrl.resolve_arg_u8(3);
                         let ok = arg3 == ctx.const_1() &&
                             arg4 == ctx.const_1() &&
                             self.eq_one_comparisons.contains(&Operand::and_masked(arg1).0);
@@ -2500,9 +2487,8 @@ pub(crate) fn analyze_talking_portrait_action<'e, E: ExecutionState<'e>>(
         Err(_) => return result,
     };
 
-    let mut analyzer = TalkingPortraitAnalyzer {
+    let mut analyzer = TalkingPortraitAnalyzer::<E> {
         result: &mut result,
-        arg_cache: &actx.arg_cache,
         state: TalkingPortraitState::Init,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, action);
@@ -2513,7 +2499,6 @@ pub(crate) fn analyze_talking_portrait_action<'e, E: ExecutionState<'e>>(
 
 struct TalkingPortraitAnalyzer<'e, 'a, E: ExecutionState<'e>> {
     result: &'a mut TalkingPortrait<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     state: TalkingPortraitState,
 }
 
@@ -2532,10 +2517,8 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for TalkingPortraitAnaly
             if let Some(dest) = ctrl.resolve_va(dest) {
                 match self.state {
                     TalkingPortraitState::Init => {
-                        let ok = ctrl.resolve(self.arg_cache.on_call_u32(1)).if_constant() ==
-                                Some(0xffff_ffff) &&
-                            ctrl.resolve(self.arg_cache.on_call_u32(2)).if_constant() ==
-                                Some(0xffff_ffff);
+                        let ok = ctrl.resolve_arg_u32(1).if_constant() == Some(0xffff_ffff) &&
+                            ctrl.resolve_arg_u32(2).if_constant() == Some(0xffff_ffff);
                         if ok {
                             self.result.trigger_talking_portrait = Some(dest);
                             self.state = TalkingPortraitState::ShowPortrait;
@@ -2545,8 +2528,8 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for TalkingPortraitAnaly
                     }
                     TalkingPortraitState::ShowPortrait => {
                         let ctx = ctrl.ctx();
-                        let ok = ctrl.resolve(self.arg_cache.on_call(0)) == ctx.const_0() &&
-                            ctrl.resolve(self.arg_cache.on_call_u32(2)).if_constant() == Some(2);
+                        let ok = ctrl.resolve_arg(0) == ctx.const_0() &&
+                            ctrl.resolve_arg_u32(2).if_constant() == Some(2);
                         if ok {
                             self.result.show_portrait = Some(dest);
                             ctrl.end_analysis();
@@ -2717,8 +2700,7 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for ShowPortraitAnalyzer
                 } else if let Operation::Call(dest) = *op {
                     if self.check_show_talking_portrait_inline {
                         self.check_show_talking_portrait_inline = false;
-                        let inline =
-                            ctx.and_const(ctrl.resolve(self.arg_cache.on_call(0)), 0xffff) ==
+                        let inline = ctrl.resolve_arg_u16(0) ==
                             ctx.and_const(self.arg_cache.on_entry(1), 0xffff);
 
                         if inline {

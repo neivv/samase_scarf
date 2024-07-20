@@ -162,7 +162,6 @@ pub(crate) fn run_triggers<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let funcs = functions.functions();
-    let arg_cache = &analysis.arg_cache;
     for caller in callers {
         entry_of_until_with_limit(binary, &funcs, caller, 128, |entry| {
             let mut analyzer = RunTriggersAnalyzer::<E> {
@@ -173,7 +172,6 @@ pub(crate) fn run_triggers<'e, E: ExecutionState<'e>>(
                 entry_of: EntryOf::Retry,
                 result: &mut result,
                 rng_enable,
-                arg_cache,
                 next_func_return_id: 0,
                 trigger_player: None,
             };
@@ -198,7 +196,6 @@ struct RunTriggersAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     caller_ref: E::VirtualAddress,
     entry_of: EntryOf<()>,
     result: &'a mut RunTriggers<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     next_func_return_id: u32,
     trigger_player: Option<Operand<'e>>,
 }
@@ -380,8 +377,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                             }
                         } else {
                             if let Some(player) = self.trigger_player {
-                                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                                if Operand::and_masked(arg1).0 == player {
+                                let arg1 = ctrl.resolve_arg(0);
+                                if arg1.unwrap_and_mask() == player {
                                     self.inline_depth += 1;
                                     ctrl.analyze_with_current_state(self, dest);
                                     self.inline_depth -= 1;
@@ -418,13 +415,12 @@ pub(crate) fn trigger_unit_count_caches<'e, E: ExecutionState<'e>>(
         Ok(o) => o,
         Err(_) => return result,
     };
-    let arg_cache = &analysis.arg_cache;
     let mut analyzer = CountCacheAnalyzer::<E> {
         result: &mut result,
-        arg_cache,
         inline_depth: 0,
         game,
         entry_esp: ctx.register(4),
+        phantom: Default::default(),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, cond_command);
     analysis.analyze(&mut analyzer);
@@ -434,9 +430,9 @@ pub(crate) fn trigger_unit_count_caches<'e, E: ExecutionState<'e>>(
 struct CountCacheAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     inline_depth: u8,
     result: &'a mut TriggerUnitCountCaches<'e>,
-    arg_cache: &'a ArgCache<'e, E>,
     game: Operand<'e>,
     entry_esp: Operand<'e>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CountCacheAnalyzer<'a, 'e, E> {
@@ -445,12 +441,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CountCacheAnalyze
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
-                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                let arg3 = ctrl.resolve_arg(2);
                 if arg3.if_constant() == Some(0xe4 * 12 * 4) {
-                    let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                    let arg2 = ctrl.resolve_arg(1);
                     let ctx = ctrl.ctx();
                     if let Some(offset) = ctx.sub(arg2, self.game).if_constant() {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         if offset == 0x5cf4 {
                             self.result.completed_units = Some(arg1);
                         } else if offset == 0x3234 {
@@ -617,7 +613,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             InitTerrainState::AllocatedBuffers => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         let arg1_c = arg1.if_constant().unwrap_or(u64::MAX);
                         let ok = if self.malloc != E::VirtualAddress::from_u64(0) {
                             dest == self.malloc
@@ -759,10 +755,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                     }
                 } else if let Operation::Call(dest) = *op {
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg1 = ctrl.resolve_arg(0);
                     let inline = self.inline_depth == 0 &&
                         arg1.if_custom() == Some(0) &&
-                        ctrl.resolve(self.arg_cache.on_call(2)).if_mem16_offset(0xe4).is_some();
+                        ctrl.resolve_arg(2).if_mem16_offset(0xe4).is_some();
                     if inline {
                         self.inline_depth += 1;
                         if let Some(dest) = ctrl.resolve_va(dest) {

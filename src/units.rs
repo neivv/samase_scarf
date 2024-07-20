@@ -297,15 +297,13 @@ pub(crate) fn order_issuing<'e, E: ExecutionState<'e>>(
     arbiter_idle_orders.sort_unstable_by_key(|x| (x.0.func_entry, x.1));
     arbiter_idle_orders.dedup_by_key(|x| (x.0.func_entry, x.1));
     let mut result = None;
-    let arg_cache = &analysis.arg_cache;
     for (global_ref, order) in arbiter_idle_orders {
         let order_init_arbiter = global_ref.func_entry;
         let mut analysis = FuncAnalysis::new(binary, ctx, order_init_arbiter);
-        let mut analyzer = OrderIssuingAnalyzer {
+        let mut analyzer = OrderIssuingAnalyzer::<E> {
             func_results: bumpvec_with_capacity(8, bump),
             inlining: false,
             order,
-            arg_cache,
             entry_esp: ctx.register(4),
         };
         analysis.analyze(&mut analyzer);
@@ -330,7 +328,6 @@ struct OrderIssuingAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     inlining: bool,
     order: Operand<'e>,
     entry_esp: Operand<'e>,
-    arg_cache: &'a ArgCache<'e, E>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for OrderIssuingAnalyzer<'a, 'e, E> {
@@ -386,15 +383,15 @@ impl<'a, 'e, E: ExecutionState<'e>> OrderIssuingAnalyzer<'a, 'e, E> {
         // x86_64 passes them in arg2 as struct
         let ctx = ctrl.ctx();
         if E::VirtualAddress::SIZE == 4 {
-            ctrl.resolve(self.arg_cache.on_thiscall_call(0)) == self.order &&
-                ctrl.resolve(self.arg_cache.on_thiscall_call(1)) == ctx.const_0() &&
-                ctrl.resolve(self.arg_cache.on_thiscall_call(2)) == ctx.const_0() &&
-                ctrl.resolve(self.arg_cache.on_thiscall_call(3)).if_constant() == Some(0xe4)
+            ctrl.resolve_arg_thiscall(0) == self.order &&
+                ctrl.resolve_arg_thiscall(1) == ctx.const_0() &&
+                ctrl.resolve_arg_thiscall(2) == ctx.const_0() &&
+                ctrl.resolve_arg_thiscall(3).if_constant() == Some(0xe4)
         } else {
-            if ctrl.resolve(self.arg_cache.on_thiscall_call(0)) != self.order {
+            if ctrl.resolve_arg_thiscall(0) != self.order {
                 return false;
             }
-            let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+            let arg2 = ctrl.resolve_arg_thiscall(1);
             let xy = ctx.mem_access(arg2, 0, MemAccessSize::Mem32);
             if ctrl.read_memory(&xy) != ctx.const_0() {
                 return false;
@@ -403,7 +400,7 @@ impl<'a, 'e, E: ExecutionState<'e>> OrderIssuingAnalyzer<'a, 'e, E> {
             if ctrl.read_memory(&unit_pointer) != ctx.const_0() {
                 return false;
             }
-            if ctrl.resolve(self.arg_cache.on_thiscall_call(2)).if_constant() != Some(0xe4) {
+            if ctrl.resolve_arg_thiscall(2).if_constant() != Some(0xe4) {
                 return false;
             }
             true
@@ -418,22 +415,21 @@ pub(crate) fn units<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let arg_cache = &analysis.arg_cache;
-    let mut analyzer = UnitsAnalyzer {
+    let mut analyzer = UnitsAnalyzer::<E> {
         result: None,
-        arg_cache,
+        phantom: Default::default(),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, init_units);
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-struct UnitsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct UnitsAnalyzer<'e, E: ExecutionState<'e>> {
     result: Option<Operand<'e>>,
-    arg_cache: &'a ArgCache<'e, E>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for UnitsAnalyzer<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for UnitsAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -451,13 +447,13 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for UnitsAnalyzer<'a, 'e
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> UnitsAnalyzer<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> UnitsAnalyzer<'e, E> {
     fn check_memset(&self, ctrl: &mut Control<'e, '_, '_, Self>) -> Option<Operand<'e>> {
-        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+        let arg2 = ctrl.resolve_arg(1);
         if arg2.if_constant() != Some(0) {
             return None;
         }
-        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+        let arg3 = ctrl.resolve_arg(2);
         let unit_size = if E::VirtualAddress::SIZE == 4 {
             0x150
         } else {
@@ -466,7 +462,7 @@ impl<'a, 'e, E: ExecutionState<'e>> UnitsAnalyzer<'a, 'e, E> {
         let arg3_ok = arg3.if_arithmetic_mul_const(unit_size).is_some() ||
             arg3.if_constant() == Some(unit_size * 1700);
         if arg3_ok {
-            Some(ctrl.resolve(self.arg_cache.on_call(0)))
+            Some(ctrl.resolve_arg(0))
         } else {
             None
         }
@@ -500,7 +496,6 @@ pub(crate) fn init_units<'e, E: ExecutionState<'e>>(
 
     struct Analyzer<'a, 'e, F: ExecutionState<'e>> {
         units_dat: Operand<'e>,
-        arg_cache: &'a ArgCache<'e, F>,
         binary: &'e BinaryFile<F::VirtualAddress>,
         limit: u8,
         result: &'a mut InitUnits<F::VirtualAddress>,
@@ -513,8 +508,8 @@ pub(crate) fn init_units<'e, E: ExecutionState<'e>>(
                 Operation::Call(dest) => {
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
                         let dest = F::VirtualAddress::from_u64(dest);
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let arg1 = ctrl.resolve_arg(0);
+                        let arg2 = ctrl.resolve_arg(1);
                         let compare_str = b"arr\\units.dat\0";
                         let ok = arg1.if_constant()
                             .map(|x| F::VirtualAddress::from_u64(x))
@@ -540,7 +535,6 @@ pub(crate) fn init_units<'e, E: ExecutionState<'e>>(
         }
     }
 
-    let arg_cache = &analysis.arg_cache;
     let mut checked = bumpvec_with_capacity(8, bump);
     for order_ref in &order_refs {
         if checked.iter().any(|&x| x == order_ref.func_entry) {
@@ -548,7 +542,6 @@ pub(crate) fn init_units<'e, E: ExecutionState<'e>>(
         }
         let mut analyzer = Analyzer::<E> {
             units_dat: ctx.constant(units.0.as_u64()),
-            arg_cache,
             binary,
             result: &mut result,
             limit: 8,
@@ -585,10 +578,8 @@ pub(crate) fn unit_creation<'e, E: ExecutionState<'e>>(
     // create_unit(id, x, y, player, skin)
     // Search for create_unit(0x21, Mem16[..], Mem16[..], Mem8[..], ..)
 
-    let arg_cache = &analysis.arg_cache;
     let mut analyzer = UnitCreationAnalyzer::<E> {
         result: &mut result,
-        arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, order_scan);
     analysis.analyze(&mut analyzer);
@@ -660,7 +651,6 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FinishUnitAnalyze
 
 struct UnitCreationAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut UnitCreation<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnalyzer<'a, 'e, E> {
@@ -673,9 +663,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitCreationAnaly
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
                     if self.result.create_unit.is_none() {
-                        let ok = Some(ctrl.resolve(self.arg_cache.on_call(0)))
+                        let ok = Some(ctrl.resolve_arg(0))
                             .filter(|&x| x.if_constant() == Some(0x21))
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
+                            .map(|_| ctrl.resolve_arg(3))
                             .and_then(|x| {
                                 x.if_mem8_offset(E::struct_layouts().unit_player())
                             })
@@ -1024,7 +1014,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGiveUnit<'a, 
         if let Operation::Call(_) = *op {
             let arg2_ok = ctrl.resolve_va(self.arg_cache.on_call(1)).is_some();
             if arg2_ok {
-                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                let arg3 = ctrl.resolve_arg(2);
                 let ctx = ctrl.ctx();
                 let offset = if E::VirtualAddress::SIZE == 4 { 0xc } else { 0x10 };
                 let trigger_action_callback = ctx.mem_access(arg3, offset, E::WORD_SIZE);
@@ -1083,7 +1073,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
                 }
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     let ctx = ctrl.ctx();
-                    let tc_arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                    let tc_arg1 = ctrl.resolve_arg_thiscall(0);
                     let this = ctrl.resolve_register(1);
                     let input_unit = self.arg_cache.on_entry(0);
                     let input_player = ctx.and_const(self.arg_cache.on_entry(1), 0xff);
@@ -1097,7 +1087,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
                                 .filter(|&x| x == input_unit)
                                 .is_some();
                         if this_ok && ctx.and_const(tc_arg1, 0xff).if_constant() == Some(0x14) {
-                            let tc_arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                            let tc_arg2 = ctrl.resolve_arg_thiscall(1);
                             if ctx.and_const(tc_arg2, 0xff) == ctx.const_1() {
                                 self.result = Some(E::VirtualAddress::from_u64(0));
                                 ctrl.end_analysis();
@@ -1117,11 +1107,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSetUnitPlayer
                         }
                         if !inline && self.inline_depth == 0 {
                             // cdecl(unit, player)
-                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                            if arg1 == input_unit &&
-                                ctx.and_const(ctrl.resolve(self.arg_cache.on_call(1)), 0xff) ==
-                                    input_player
-                            {
+                            let arg1 = ctrl.resolve_arg(0);
+                            if arg1 == input_unit && ctrl.resolve_arg_u8(1) == input_player {
                                 inline = true;
                             }
                         }
@@ -1242,7 +1229,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                     let is_ok = if self.state == SetUnitPlayerState::RemoveFromSelections ||
                         self.state == SetUnitPlayerState::PlayerGainedUpgrade
                     {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         arg1 == ctx.register(1)
                     } else {
                         let this = ctrl.resolve_register(1);
@@ -1251,12 +1238,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                     if is_ok {
                         if self.state == SetUnitPlayerState::UnitChangingPlayer {
                             let ok = Some(())
-                                .map(|_| ctrl.resolve(self.arg_cache.on_thiscall_call(0)))
+                                .map(|_| ctrl.resolve_arg_thiscall_u8(0))
                                 .filter(|&x| {
-                                    ctx.and_const(x, 0xff) ==
-                                        ctx.and_const(self.arg_cache.on_thiscall_entry(0), 0xff)
+                                    x == ctx.and_const(self.arg_cache.on_thiscall_entry(0), 0xff)
                                 })
-                                .map(|_| ctrl.resolve(self.arg_cache.on_thiscall_call(1)))
+                                .map(|_| ctrl.resolve_arg_thiscall(1))
                                 .filter(|&x| x == ctx.const_1())
                                 .is_some();
                             if ok {
@@ -1264,7 +1250,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SetUnitPlayerAnal
                                 self.state = SetUnitPlayerState::PlayerGainedUpgrade;
                             }
                         } else if self.state == SetUnitPlayerState::PlayerGainedUpgrade {
-                            let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                            let arg3 = ctrl.resolve_arg(2);
                             if arg3 == ctx.const_0() {
                                 if let Some(cb) = ctrl.resolve_va(self.arg_cache.on_call(1)) {
                                     let binary = ctrl.binary();
@@ -1413,9 +1399,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindPlayerGainedU
             if let Some(dest) = ctrl.resolve_va(dest) {
                 let this = ctrl.resolve_register(1);
                 if this == self.arg_cache.on_entry(0) {
-                    if ctrl.resolve(self.arg_cache.on_thiscall_call(0)) ==
-                        self.arg_cache.on_entry(1)
-                    {
+                    if ctrl.resolve_arg_thiscall(0) == self.arg_cache.on_entry(1) {
                         self.result = Some(dest);
                         ctrl.end_analysis();
                     }
@@ -1992,8 +1976,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
 
                         let mut inline_limit = 4;
                         if is_bfix && self.inline_depth == 0 {
-                            let arg1 =
-                                ctx.and_const(ctrl.resolve(self.arg_cache.on_call(0)), 0xff);
+                            let arg1 = ctrl.resolve_arg_u8(0);
                             let is_this_order =
                                 arg1.if_mem8_offset(E::struct_layouts().unit_order())
                                     == Some(ctx.register(1));
@@ -2102,23 +2085,21 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
         if ctrl.resolve_register(1) != ctx.register(1) {
             return false;
         }
-        if ctx.and_const(ctrl.resolve(arg_cache.on_thiscall_call(0)), 0xff) !=
-            ctx.and_const(arg_cache.on_thiscall_entry(0), 0xff)
-        {
+        if ctrl.resolve_arg_thiscall_u8(0) != ctx.and_const(arg_cache.on_thiscall_entry(0), 0xff) {
             return false;
         }
         if E::VirtualAddress::SIZE == 4 {
-            if ctrl.resolve(arg_cache.on_thiscall_call(4)) != ctx.const_0() {
+            if ctrl.resolve_arg_thiscall(4) != ctx.const_0() {
                 return false;
             }
             (1..3).all(|i| {
-                ctrl.resolve(arg_cache.on_thiscall_call(i)) == arg_cache.on_thiscall_entry(i)
+                ctrl.resolve_arg_thiscall(i) == arg_cache.on_thiscall_entry(i)
             })
         } else {
-            if ctrl.resolve(arg_cache.on_thiscall_call(3)) != ctx.const_0() {
+            if ctrl.resolve_arg_thiscall(3) != ctx.const_0() {
                 return false;
             }
-            let arg2 = ctrl.resolve(arg_cache.on_thiscall_call(1));
+            let arg2 = ctrl.resolve_arg_thiscall(1);
             let arg2_mem = ctx.mem_access(arg2, 0, MemAccessSize::Mem64);
             let ok = ctrl.read_memory(&arg2_mem) ==
                 ctx.mem64(arg_cache.on_thiscall_entry(1), 0) &&
@@ -2127,7 +2108,7 @@ impl<'a, 'e, E: ExecutionState<'e>> PrepareIssueOrderAnalyzer<'a, 'e, E> {
             if !ok {
                 return false;
             }
-            ctx.and_const(ctrl.resolve(arg_cache.on_thiscall_call(2)), 0xffff) ==
+            ctrl.resolve_arg_thiscall_u16(2) ==
                 ctx.and_const(arg_cache.on_thiscall_entry(2), 0xffff)
         }
     }
@@ -2229,7 +2210,6 @@ pub(crate) fn pylon_aura<'e, E: ExecutionState<'e>>(
     let mut analysis = FuncAnalysis::new(binary, ctx, order_pylon_init);
     let mut analyzer = PylonInitAnalyzer::<E> {
         result: &mut result,
-        arg_cache: &actx.arg_cache,
         state: PylonInitState::FirstPylon,
         inline_depth: 0,
         limit: 0,
@@ -2240,7 +2220,6 @@ pub(crate) fn pylon_aura<'e, E: ExecutionState<'e>>(
 
 struct PylonInitAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut PylonAura<'e, E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     state: PylonInitState,
     inline_depth: u8,
     limit: u8,
@@ -2297,7 +2276,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PylonInitAnalyzer
             }
             PylonInitState::AddPylonAuraVerify => {
                 if let Operation::Call(_) = *op {
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg1 = ctrl.resolve_arg(0);
                     if arg1.if_constant() == Some(0x141) {
                         self.state = PylonInitState::PylonAurasVisible;
                         ctrl.clear_unchecked_branches();
@@ -2329,7 +2308,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PylonInitAnalyzer
                         }
                     }
                 } else if let Operation::Call(dest) = *op {
-                    if seems_assertion_call(ctrl, self.arg_cache) {
+                    if seems_assertion_call(ctrl) {
                         ctrl.end_branch();
                         return;
                     }
@@ -2433,10 +2412,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if self.inline_depth < 2 {
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            let arg1 = ctx.and_const(
-                                ctrl.resolve(self.arg_cache.on_thiscall_call(0)),
-                                0xff,
-                            );
+                            let arg1 = ctrl.resolve_arg_thiscall_u8(0);
                             if is_this_sprite_vismask(E::struct_layouts(), ctx, arg1) {
                                 self.inline_depth += 1;
                                 ctrl.analyze_with_current_state(self, dest);
@@ -2593,9 +2569,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if self.inline_depth < 1 {
                             // Check inline to create_fow_sprite
-                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                            let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                            let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                            let arg1 = ctrl.resolve_arg(0);
+                            let arg2 = ctrl.resolve_arg(1);
+                            let arg3 = ctrl.resolve_arg(2);
                             let ok =
                                 self.is_uid(arg1, self.unit_array)
                                     .filter(|&x| x == ctx.register(1))
@@ -2651,9 +2627,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             UnitVisibilityState::UnitSkinMap => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         let this = ctrl.resolve_register(1);
-                        let tc_arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let tc_arg1 = ctrl.resolve_arg_thiscall(0);
                         if is_global(this) {
                             if self.result.unit_skin_map.is_none() {
                                 if self.is_uid(tc_arg1, self.unit_array) ==
@@ -2800,7 +2776,6 @@ pub(crate) fn analyze_finish_unit_post<'e, E: ExecutionState<'e>>(
     let mut analysis = FuncAnalysis::new(binary, ctx, finish_unit_post);
     let mut analyzer = FinishUnitPostAnalyzer::<E> {
         result: &mut result,
-        arg_cache: &actx.arg_cache,
         state: FinishUnitPostState::RemoveFromHiddenUnits,
         inline_depth: 0,
         inline_limit: 0,
@@ -2812,7 +2787,6 @@ pub(crate) fn analyze_finish_unit_post<'e, E: ExecutionState<'e>>(
 
 struct FinishUnitPostAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut FinishUnitPost<'e>,
-    arg_cache: &'a ArgCache<'e, E>,
     state: FinishUnitPostState,
     inline_depth: u8,
     inline_limit: u8,
@@ -2850,8 +2824,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FinishUnitPostAna
             // Inline if this == this, and a1 and a2 are globals
             if let Operation::Call(dest) = *op {
                 let inline = ctrl.resolve_register(1) == ctx.register(1) &&
-                    is_global_struct::<E>(ctrl.resolve(self.arg_cache.on_thiscall_call(0))) &&
-                    is_global_struct::<E>(ctrl.resolve(self.arg_cache.on_thiscall_call(1)));
+                    is_global_struct::<E>(ctrl.resolve_arg_thiscall(0)) &&
+                    is_global_struct::<E>(ctrl.resolve_arg_thiscall(1));
                 if inline {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         self.inline_depth = 1;
@@ -2940,7 +2914,6 @@ pub(crate) fn analyze_hide_unit<'e, E: ExecutionState<'e>>(
     let mut analysis = FuncAnalysis::new(binary, ctx, hide_unit);
     let mut analyzer = HideUnitAnalyzer::<E> {
         result: &mut result,
-        arg_cache: &actx.arg_cache,
         state: HideUnitState::IsHiddenJump,
         inline_depth: 0,
         inline_limit: 0,
@@ -2951,7 +2924,6 @@ pub(crate) fn analyze_hide_unit<'e, E: ExecutionState<'e>>(
 
 struct HideUnitAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut HideUnit<'e, E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     state: HideUnitState,
     inline_depth: u8,
     inline_limit: u8,
@@ -2999,10 +2971,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for HideUnitAnalyzer<
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ok = ctrl.resolve_register(1) == ctx.register(1) &&
-                            ctx.and_const(
-                                ctrl.resolve(self.arg_cache.on_thiscall_call(0)),
-                                0xff,
-                            ) == ctx.const_0();
+                            ctrl.resolve_arg_thiscall_u8(0) == ctx.const_0();
                         if ok {
                             self.result.remove_references = Some(dest);
                             self.state = HideUnitState::EndCollisionTracking;
@@ -3076,7 +3045,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for HideUnitAnalyzer<
                     if self.inline_depth < 4 {
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             let inline = ctrl.resolve_register(1) == ctx.register(1) || {
-                                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                                let arg1 = ctrl.resolve_arg(0);
                                 ctrl.if_mem_word_offset(arg1, path_offset) ==
                                     Some(ctx.register(1))
                             };
@@ -3323,7 +3292,6 @@ pub(crate) fn analyze_order_unit_morph<'e, E: ExecutionState<'e>>(
     );
     let mut analyzer = UnitMorphAnalyzer::<E> {
         result: &mut result,
-        arg_cache: &actx.arg_cache,
         state: UnitMorphState::TransformUnit,
         jump_seen: false,
         call_tracker: CallTracker::with_capacity(actx, 0, 16),
@@ -3346,7 +3314,6 @@ pub(crate) fn analyze_order_unit_morph<'e, E: ExecutionState<'e>>(
 
 struct UnitMorphAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut OrderUnitMorph<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     state: UnitMorphState,
     call_tracker: CallTracker<'acx, 'e, E>,
     jump_seen: bool,
@@ -3383,7 +3350,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 match self.state {
                     UnitMorphState::TransformUnit => {
                         if this == this_resolved {
-                            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                            let arg1 = ctrl.resolve_arg_thiscall(0);
                             let arg1 = self.call_tracker.resolve_simple(arg1);
                             let ok = arg1.if_mem16_offset(E::struct_layouts().unit_build_queue())
                                 .is_some();
@@ -3397,8 +3364,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         self.call_tracker.add_call_preserve_esp(ctrl, dest);
                     }
                     UnitMorphState::AddAiToTrainedUnit => {
-                        let ok = ctrl.resolve(self.arg_cache.on_call(0)) == this_resolved &&
-                            ctrl.resolve(self.arg_cache.on_call(1)) == this_resolved;
+                        let ok = ctrl.resolve_arg(0) == this_resolved &&
+                            ctrl.resolve_arg(1) == this_resolved;
                         if ok {
                             self.result.add_ai_to_trained_unit = Some(dest);
                             self.state = UnitMorphState::ShowFinishedUnitNotification;
@@ -3406,7 +3373,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                     }
                     UnitMorphState::ShowFinishedUnitNotification => {
-                        let ok = ctrl.resolve(self.arg_cache.on_call(0)) == this_resolved;
+                        let ok = ctrl.resolve_arg(0) == this_resolved;
                         if ok {
                             self.result.show_finished_unit_notification = Some(dest);
                             self.state = UnitMorphState::SwitchToConstructionImage;
@@ -3414,8 +3381,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                     UnitMorphState::SwitchToConstructionImage => {
                         if self.jump_seen && this == this_resolved {
-                            let ok = ctrl.resolve(self.arg_cache.on_thiscall_call_u8(0)) ==
-                                ctx.const_1();
+                            let ok = ctrl.resolve_arg_thiscall_u8(0) == ctx.const_1();
                             if ok {
                                 self.result.switch_construction_image = Some(dest);
                                 ctrl.end_analysis();
@@ -3423,13 +3389,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                     }
                     UnitMorphState::CheckResourcesForBuilding => {
-                        let ok = ctrl.resolve(self.arg_cache.on_call_u8(0))
+                        let ok = ctrl.resolve_arg_u8(0)
                             .if_mem8_offset(E::struct_layouts().unit_player()) ==
                                 Some(this_resolved) && {
-                            let arg1 = ctrl.resolve(self.arg_cache.on_call(1));
+                            let arg1 = ctrl.resolve_arg(1);
                             let arg1 = self.call_tracker.resolve_simple(arg1);
                             arg1.if_mem16_offset(E::struct_layouts().unit_build_queue()).is_some()
-                        } && ctrl.resolve(self.arg_cache.on_call_u8(2)) == ctx.const_1();
+                        } && ctrl.resolve_arg_u8(2) == ctx.const_1();
                         if ok {
                             self.result.check_resources_for_building = Some(dest);
                             ctrl.end_analysis();

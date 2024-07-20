@@ -53,7 +53,7 @@ use scarf::{
     MemAccess, Operation, Rva
 };
 
-use crate::analysis::{AnalysisCache, AnalysisCtx, ArgCache, DatType};
+use crate::analysis::{AnalysisCache, AnalysisCtx, DatType};
 use crate::analysis_find::{EntryOf, FunctionFinder, StringRefs, entry_of_until};
 use crate::detect_tail_call::DetectTailCall;
 use crate::hash_map::{HashMap, HashSet};
@@ -411,13 +411,11 @@ fn find_dat_root<'e, E: ExecutionState<'e>>(
 ) -> EntryOf<E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, parent);
-    let mut analyzer = FindDatRoot {
+    let mut analyzer = FindDatRoot::<E> {
         str_ref,
         addr_found: false,
         result: None,
-        arg_cache,
     };
     analysis.analyze(&mut analyzer);
     if let Some(result) = analyzer.result {
@@ -433,7 +431,6 @@ struct FindDatRoot<'a, 'e, E: ExecutionState<'e>> {
     str_ref: &'a StringRefs<E::VirtualAddress>,
     addr_found: bool,
     result: Option<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindDatRoot<'a, 'e, E> {
@@ -444,8 +441,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindDatRoot<'a, '
             self.addr_found = true;
         }
         if let Operation::Call(_) = *op {
-            let arg1 = ctrl.resolve(self.arg_cache.on_call(0)).if_constant();
-            let arg2 = ctrl.resolve(self.arg_cache.on_call(1)).if_constant();
+            let arg1 = ctrl.resolve_arg(0).if_constant();
+            let arg2 = ctrl.resolve_arg(1).if_constant();
             if let (Some(arg1), Some(arg2)) = (arg1, arg2) {
                 if arg1 == self.str_ref.string_address.as_u64() {
                     self.result = Some(E::VirtualAddress::from_u64(arg2));
@@ -1623,8 +1620,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             match *op {
                 Operation::Call(dest) => {
                     let arg_cache = &self.dat_ctx.analysis.arg_cache;
-                    let arg1 = ctrl.resolve(arg_cache.on_call(0));
-                    let arg2 = ctrl.resolve(arg_cache.on_call(1));
+                    let arg1 = ctrl.resolve_arg(0);
+                    let arg2 = ctrl.resolve_arg(1);
                     let init_cap = match E::VirtualAddress::SIZE {
                         4 => 0x8000_000f,
                         _ => 0x8000_0000_0000_000f,

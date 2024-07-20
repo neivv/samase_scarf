@@ -27,11 +27,10 @@ pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     // Order 0xa3 (Computer return) immediately calls ai_update_attack_target
 
-    struct Analyzer<'exec, 'b, E: ExecutionState<'exec>> {
+    struct Analyzer<'exec, E: ExecutionState<'exec>> {
         result: Option<E::VirtualAddress>,
-        args: &'b ArgCache<'exec, E>,
     }
-    impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for Analyzer<'exec, 'b, E> {
+    impl<'exec, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for Analyzer<'exec, E> {
         type State = analysis::DefaultState;
         type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation<'exec>) {
@@ -39,15 +38,9 @@ pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
                 Operation::Call(dest) => {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ctx = ctrl.ctx();
-                        let arg1 =
-                            ctx.and_const(ctrl.resolve(self.args.on_thiscall_call(0)), 0xff);
-                        let arg2 =
-                            ctx.and_const(ctrl.resolve(self.args.on_thiscall_call(1)), 0xff);
-                        let arg3 =
-                            ctx.and_const(ctrl.resolve(self.args.on_thiscall_call(2)), 0xff);
-                        let args_ok = arg1 == ctx.const_0() &&
-                            arg2 == ctx.const_1() &&
-                            arg3 == ctx.const_0();
+                        let args_ok = ctrl.resolve_arg_thiscall_u8(0) == ctx.const_0() &&
+                            ctrl.resolve_arg_thiscall_u8(1) == ctx.const_1() &&
+                            ctrl.resolve_arg_thiscall_u8(2) == ctx.const_0();
                         if args_ok {
                             self.result = Some(dest);
                         }
@@ -59,9 +52,8 @@ pub(crate) fn ai_update_attack_target<'e, E: ExecutionState<'e>>(
         }
     }
 
-    let mut analyzer = Analyzer {
+    let mut analyzer = Analyzer::<E> {
         result: None,
-        args: &analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(analysis.binary, ctx, order_computer_return);
     analysis.analyze(&mut analyzer);
@@ -703,10 +695,8 @@ pub(crate) fn aiscript_switch_analysis<'e, E: ExecutionState<'e>>(
         ai_attack_clear: None,
     };
 
-    let arg_cache = &analysis.arg_cache;
-    let mut analyzer = AttackPrepareAnalyzer {
+    let mut analyzer = AttackPrepareAnalyzer::<E> {
         result: &mut result,
-        arg_cache,
         state: AiscriptSwitchState::AttackPrepare,
     };
 
@@ -734,7 +724,6 @@ pub(crate) fn aiscript_switch_analysis<'e, E: ExecutionState<'e>>(
 
 struct AttackPrepareAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut AiscriptSwitchAnalysis<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     state: AiscriptSwitchState,
 }
 
@@ -755,15 +744,15 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnal
                 if self.state == AiscriptSwitchState::AttackPrepare {
                     let pos_off = E::struct_layouts().ai_script_center();
                     let ok = Some(())
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                        .map(|_| ctrl.resolve_arg(0))
                         .and_then(|x| x.if_mem32_offset(player_off))
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                        .map(|_| ctrl.resolve_arg(1))
                         .and_then(|x| x.if_mem32_offset(pos_off))
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
+                        .map(|_| ctrl.resolve_arg(2))
                         .and_then(|x| x.if_mem32_offset(pos_off + 4))
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call_u32(3)))
+                        .map(|_| ctrl.resolve_arg_u32(3))
                         .filter(|&x| x == ctx.const_1())
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call_u32(4)))
+                        .map(|_| ctrl.resolve_arg_u32(4))
                         .filter(|&x| x == ctx.const_0())
                         .is_some();
                     if ok {
@@ -771,9 +760,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AttackPrepareAnal
                     }
                 } else {
                     let ok = Some(())
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                        .map(|_| ctrl.resolve_arg(0))
                         .and_then(|x| x.if_mem32_offset(player_off))
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call_u32(1)))
+                        .map(|_| ctrl.resolve_arg_u32(1))
                         .filter(|&x| x == ctx.const_1())
                         .is_some();
                     if ok {
@@ -942,8 +931,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                         }
                                         if result.as_u64() == 0 {
                                             self.step_ai_regions_depth = self.inline_depth;
-                                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                                            let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                                            let arg1 = ctrl.resolve_arg(0);
+                                            let arg2 = ctrl.resolve_arg(1);
                                             self.result.ai_step_region = Some(dest);
                                             self.result.step_ai_regions_player = Some(arg1);
                                             self.result.step_ai_regions_region = Some(arg2);
@@ -951,7 +940,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                         }
                                     }
                                 } else if self.state == StepAiState::TargetExpansion {
-                                    let a1 = ctrl.resolve(self.arg_cache.on_call(0));
+                                    let a1 = ctrl.resolve_arg(0);
                                     if Some(a1) == self.result.step_ai_regions_player {
                                         self.inline_depth += 1;
                                         ctrl.analyze_with_current_state(self, dest);
@@ -1370,12 +1359,12 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             // Arg 2 = x ((location.left + location.right) sdiv 2)
                             // Arg 3 = y ((location.top + location.bottom) sdiv 2)
                             let ok = Some(())
-                                .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                                .map(|_| ctrl.resolve_arg(0))
                                 .and_then(|x| x.if_mem16_offset(0x18))
                                 .filter(|&x| x == self.arg_cache.on_entry(0))
-                                .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                                .map(|_| ctrl.resolve_arg(1))
                                 .filter(|&x| is_sdiv_2(x))
-                                .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
+                                .map(|_| ctrl.resolve_arg(2))
                                 .filter(|&x| is_sdiv_2(x))
                                 .is_some();
                             if ok {
@@ -1467,36 +1456,27 @@ pub(crate) fn ai_prepare_moving_to<'e, E: ExecutionState<'e>>(
     // if (this.ai != null) {
     //   ai_prepare_moving_to(this, x, y);
     // }
-    let arg_cache = &analysis.arg_cache;
     let mut exec_state = E::initial_state(ctx, binary);
-    let order_state = ctx.mem8(
-        ctx.register(1),
-        E::struct_layouts().unit_order_state(),
-    );
-    let target = ctx.mem32(
-        ctx.register(1),
-        E::struct_layouts().unit_target(),
-    );
-    exec_state.move_to(&DestOperand::from_oper(order_state), ctx.const_0());
-    exec_state.move_to(&DestOperand::from_oper(target), ctx.const_0());
+    let order_state = ctx.mem_access8(ctx.register(1), E::struct_layouts().unit_order_state());
+    let target = ctx.mem_access32(ctx.register(1), E::struct_layouts().unit_target());
+    exec_state.write_memory(&order_state, ctx.const_0());
+    exec_state.write_memory(&target, ctx.const_0());
     let mut analysis =
         FuncAnalysis::custom_state(binary, ctx, order_move, exec_state, Default::default());
     let mut analyzer = AiPrepareMovingToAnalyzer {
         result: None,
-        arg_cache,
         inline_depth: 0,
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-struct AiPrepareMovingToAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct AiPrepareMovingToAnalyzer<'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAnalyzer<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -1545,8 +1525,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AiPrepareMovingToAna
             Operation::Call(dest) if self.inline_depth < 3 || self.inline_depth == 255 => {
                 // Inline to f(this, this.order_target.x, this.order_target.y)
                 let ecx = ctrl.resolve_register(1);
-                let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
-                let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                let arg1 = ctrl.resolve_arg_thiscall(0);
+                let arg2 = ctrl.resolve_arg_thiscall(1);
                 if ecx != ctx.register(1) {
                     return;
                 }
@@ -1641,9 +1621,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             }
             Operation::Call(dest) if self.inline_depth < 3 => {
                 // Inline to f(this, this.order_target.x, this.order_target.y)
-                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                let arg1 = ctrl.resolve_arg(0);
+                let arg2 = ctrl.resolve_arg(1);
+                let arg3 = ctrl.resolve_arg(2);
                 let mut do_inline = false;
                 if self.inline_depth == 0 {
                     // Inline to cdecl f(this, arg1, arg2) at depth 0
@@ -1789,7 +1769,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddMilitaryAnalyzer<
         match *op {
             Operation::Call(dest) => {
                 let ctx = ctrl.ctx();
-                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                let arg1 = ctrl.resolve_arg(0);
                 let is_region1 = arg1.if_arithmetic_add_const(E::struct_layouts().ai_region_size())
                     .and_then(|x| ctrl.if_mem_word(x))
                     .and_then(|x| x.address_op(ctx).if_arithmetic_add())
@@ -1803,7 +1783,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddMilitaryAnalyzer<
                 if !is_region1 {
                     return;
                 }
-                let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                let arg2 = ctrl.resolve_arg(1);
                 if arg2.if_mem32().is_none() {
                     return;
                 }
@@ -1824,19 +1804,18 @@ pub(crate) fn ai_spell_cast<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     // Order 0xa0 (Guard) immediately calls ai_spell_cast
 
-    struct Analyzer<'exec, 'b, E: ExecutionState<'exec>> {
+    struct Analyzer<'exec, E: ExecutionState<'exec>> {
         result: Option<E::VirtualAddress>,
-        args: &'b ArgCache<'exec, E>,
     }
-    impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for Analyzer<'exec, 'b, E> {
+    impl<'exec, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for Analyzer<'exec, E> {
         type State = analysis::DefaultState;
         type Exec = E;
         fn operation(&mut self, ctrl: &mut Control<'exec, '_, '_, Self>, op: &Operation<'exec>) {
             match *op {
                 Operation::Call(dest) => {
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let arg1 = ctrl.resolve(self.args.on_call(0));
-                        let arg2 = ctrl.resolve(self.args.on_call(1));
+                        let arg1 = ctrl.resolve_arg(0);
+                        let arg2 = ctrl.resolve_arg(1);
                         let this = ctrl.ctx().register(1);
                         let args_ok = arg1 == this &&
                             arg2.if_constant() == Some(0);
@@ -1851,9 +1830,8 @@ pub(crate) fn ai_spell_cast<'e, E: ExecutionState<'e>>(
         }
     }
 
-    let mut analyzer = Analyzer {
+    let mut analyzer = Analyzer::<E> {
         result: None,
-        args: &analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(analysis.binary, ctx, order_guard);
     analysis.analyze(&mut analyzer);
@@ -1903,12 +1881,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiRemoveUnitAnaly
             Operation::Call(dest) => {
                 let ctx = ctrl.ctx();
                 if let Some(dest) = ctrl.resolve_va(dest) {
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg1 = ctrl.resolve_arg(0);
                     if arg1 != self.arg_cache.on_entry(0) {
                         self.fail(ctrl);
                         return;
                     }
-                    let arg2 = ctx.and_const(ctrl.resolve(self.arg_cache.on_call(1)), 0xff);
+                    let arg2 = ctrl.resolve_arg_u8(1);
                     if self.result.military.is_none() {
                         if arg2 != ctx.and_const(self.arg_cache.on_entry(1), 0xff) {
                             self.fail(ctrl);
@@ -2089,14 +2067,14 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AddAiToTrainedAna
 
                 if self.state == AddAiToTrainedState::AddMilitaryAi {
                     if let Operation::Call(dest) = *op {
-                        if seems_assertion_call(ctrl, arg_cache) {
+                        if seems_assertion_call(ctrl) {
                             ctrl.end_branch();
                             return;
                         }
                         if self.inline_depth == 0 {
                             let inline =
-                                ctrl.resolve(arg_cache.on_call(0)) == arg_cache.on_entry(0) &&
-                                ctrl.resolve(arg_cache.on_call(1)) == arg_cache.on_entry(1);
+                                ctrl.resolve_arg(0) == arg_cache.on_entry(0) &&
+                                ctrl.resolve_arg(1) == arg_cache.on_entry(1);
                             if inline {
                                 if let Some(dest) = ctrl.resolve_va(dest) {
                                     self.inline_depth = 1;
@@ -2152,13 +2130,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AddBuildingAiAnal
         if let Operation::Call(dest) = *op {
             // Just add_town_unit_ai(a1 = a1.ai.town, a2)
             // arg1.ai access may be outlined so just check BuildingAi.town deref
-            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+            let arg1 = ctrl.resolve_arg(0);
             let ok =
-                ctrl.if_mem_word_offset(
-                    arg1,
-                    E::struct_layouts().building_ai_town(),
-                ).is_some() &&
-                ctrl.resolve(self.arg_cache.on_call(1)) == self.arg_cache.on_entry(1);
+                ctrl.if_mem_word_offset(arg1, E::struct_layouts().building_ai_town()).is_some() &&
+                    ctrl.resolve_arg(1) == self.arg_cache.on_entry(1);
             if ok {
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     self.result.add_town_unit_ai = Some(dest);
@@ -2192,11 +2167,9 @@ pub(crate) fn analyze_ai_step_region<'e, E: ExecutionState<'e>>(
         change_ai_region_state: None,
     };
 
-    let arg_cache = &actx.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, ai_step_region);
     let mut analyzer = StepRegionInnerAnalyzer {
         result: &mut result,
-        arg_cache,
         region_operand: ctx.const_0(),
         inline_depth: 0,
         state: StepAiRegionState::FindSwitch,
@@ -2231,7 +2204,6 @@ enum StepAiRegionState {
 
 struct StepRegionInnerAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut AiStepRegion<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     // Valid after FindSwitch
     region_operand: Operand<'e>,
     inline_depth: u8,
@@ -2295,7 +2267,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             StepAiRegionState::ChangeRegionState |
                             StepAiRegionState::PickAttackTarget =>
                         {
-                            let a1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            let a1 = ctrl.resolve_arg(0);
                             if a1 == self.region_operand {
                                 if self.state == StepAiRegionState::UpdateTarget {
                                     self.state = StepAiRegionState::AbandonFlagCheck;
@@ -2304,7 +2276,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                     self.state = StepAiRegionState::PickAttackTargetUnwalkableJump;
                                     self.result.ai_region_abandon_if_overwhelmed = Some(dest);
                                 } else if self.state == StepAiRegionState::ChangeRegionState {
-                                    let a2 = ctrl.resolve(self.arg_cache.on_call_u8(1));
+                                    let a2 = ctrl.resolve_arg_u8(1);
                                     if a2 == ctx.const_0() {
                                         self.state = StepAiRegionState::PickAttackTarget;
                                         self.result.change_ai_region_state = Some(dest);
@@ -2429,7 +2401,6 @@ pub(crate) fn analyze_order_unit_ai<'e, E: ExecutionState<'e>>(
         let mut analysis = FuncAnalysis::with_state(binary, ctx, ai_should_keep_targeting, state);
         let mut analyzer = ShouldKeepTargetingAnalyzer {
             result: &mut result,
-            arg_cache,
             state: ShouldKeepTargetingState::CanAttackUnit,
         };
         analysis.analyze(&mut analyzer);
@@ -2510,7 +2481,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     Operation::Call(dest) => {
                         if self.inline_depth == 0 {
                             if let Some(dest) = ctrl.resolve_va(dest) {
-                                let a1 = ctrl.resolve(self.arg_cache.on_call(0));
+                                let a1 = ctrl.resolve_arg(0);
                                 if a1 == ctx.register(1) {
                                     self.inline_depth = 1;
                                     let old_esp = self.entry_esp;
@@ -2548,7 +2519,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ok = ctrl.resolve_register(1) == ctx.register(1) &&
-                            ctrl.resolve(self.arg_cache.on_thiscall_call(0)) == ctx.const_0();
+                            ctrl.resolve_arg_thiscall(0) == ctx.const_0();
                         if ok {
                             self.result.ai_should_keep_targeting = Some(dest);
                             self.unit_specific_depth = self.inline_depth;
@@ -2562,9 +2533,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ok = ctrl.resolve_register(1) == unit &&
-                            ctrl.resolve(self.arg_cache.on_thiscall_call_u32(0)).if_constant() ==
-                                Some(0x100) &&
-                            ctrl.resolve(self.arg_cache.on_thiscall_call(2)) == unit;
+                            ctrl.resolve_arg_thiscall_u32(0).if_constant() == Some(0x100) &&
+                            ctrl.resolve_arg_thiscall(2) == unit;
                         if ok {
                             self.result.find_nearest_unit_around_unit = Some(dest);
                             self.state = OrderUnitAiState::AiTypeJumps;
@@ -2578,7 +2548,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             return;
                         }
                         let inline = self.inline_depth == self.unit_specific_depth &&
-                            ctrl.resolve(self.arg_cache.on_call(0)) == unit;
+                            ctrl.resolve_arg(0) == unit;
                         if inline {
                             self.inline_depth += 1;
                             self.entry_esp = ctrl.get_new_esp_for_call();
@@ -2794,7 +2764,6 @@ enum ShouldKeepTargetingState {
 
 struct ShouldKeepTargetingAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut OrderUnitAi<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     state: ShouldKeepTargetingState,
 }
 
@@ -2817,8 +2786,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 match self.state {
                     ShouldKeepTargetingState::CanAttackUnit => {
                         let ok = is_target(ctrl.resolve_register(1)) &&
-                            ctrl.resolve(self.arg_cache.on_thiscall_call(0)) == ctx.register(1) &&
-                            ctrl.resolve(self.arg_cache.on_thiscall_call_u8(1)) == ctx.const_1();
+                            ctrl.resolve_arg_thiscall(0) == ctx.register(1) &&
+                            ctrl.resolve_arg_thiscall_u8(1) == ctx.const_1();
                         if ok {
                             self.result.can_attack_unit = Some(dest);
                             self.state = ShouldKeepTargetingState::IsOutsideAttackRange;
@@ -2827,7 +2796,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     }
                     ShouldKeepTargetingState::IsOutsideAttackRange => {
                         let ok = is_target(ctrl.resolve_register(1)) &&
-                            ctrl.resolve(self.arg_cache.on_thiscall_call(0)) == ctx.register(1);
+                            ctrl.resolve_arg_thiscall(0) == ctx.register(1);
                         if ok {
                             self.result.is_outside_attack_range = Some(dest);
                             ctrl.end_analysis();
@@ -2916,9 +2885,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitAiWorkerAnaly
                 } else if let Operation::Call(dest) = *op {
                     if self.inline_depth == 0 {
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            let inline = self.is_town(ctrl.resolve(self.arg_cache.on_call(0))) &&
-                                ctrl.resolve(self.arg_cache.on_call(1)) ==
-                                    self.arg_cache.on_entry(0);
+                            let inline = self.is_town(ctrl.resolve_arg(0)) &&
+                                ctrl.resolve_arg(1) == self.arg_cache.on_entry(0);
                             if inline {
                                 self.inline_depth = 1;
                                 ctrl.analyze_with_current_state(self, dest);
@@ -2938,8 +2906,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitAiWorkerAnaly
             UnitAiWorkerState::GetChokePointRegions => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let ok = self.is_town_player(ctrl.resolve(self.arg_cache.on_call(0))) &&
-                            ctrl.resolve(self.arg_cache.on_call_u32(2)) == ctx.const_1();
+                        let ok = self.is_town_player(ctrl.resolve_arg(0)) &&
+                            ctrl.resolve_arg_u32(2) == ctx.const_1();
                         if ok {
                             self.result.calculate_chokes_for_placement = Some(dest);
                             self.state = UnitAiWorkerState::PlaceBuilding;
@@ -2953,17 +2921,17 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitAiWorkerAnaly
             UnitAiWorkerState::PlaceBuilding => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let ok = ctrl.resolve(self.arg_cache.on_call(0)) ==
+                        let ok = ctrl.resolve_arg(0) ==
                                 self.arg_cache.on_entry(0) &&
                             {
-                                let a1 = ctrl.resolve(self.arg_cache.on_call_u16(1));
+                                let a1 = ctrl.resolve_arg_u16(1);
                                 a1 == self.unit_id || a1.if_constant() == Some(0x7d)
                             };
                         if ok {
-                            let a5 = ctrl.resolve(self.arg_cache.on_call_u32(4));
+                            let a5 = ctrl.resolve_arg_u32(4);
                             if let Some(c) = a5.if_constant() {
                                 if c == 1 && self.inline_depth < 2 {
-                                    let a6 = ctrl.resolve(self.arg_cache.on_call_u32(5));
+                                    let a6 = ctrl.resolve_arg_u32(5);
                                     if a6.if_constant() == Some(0x40) {
                                         // place_building_outer does radius = id == 7c ? 28 :
                                         // radius check, move explicit constant to id so that
@@ -3069,10 +3037,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ChokesForPlacemen
         let ctx = ctrl.ctx();
         // Should be just get_choke_point_regions(a2_region, _, 2, &stack, &stack, 2)
         if let Operation::Call(dest) = *op {
-            let ok = ctrl.resolve(self.arg_cache.on_call_u16(0)) ==
+            let ok = ctrl.resolve_arg_u16(0) ==
                     ctx.and_const(self.arg_cache.on_entry(1), 0xffff) &&
-                ctrl.resolve(self.arg_cache.on_call_u32(2)).if_constant() == Some(2) &&
-                ctrl.resolve(self.arg_cache.on_call_u32(5)).if_constant() == Some(2);
+                ctrl.resolve_arg_u32(2).if_constant() == Some(2) &&
+                ctrl.resolve_arg_u32(5).if_constant() == Some(2);
             if ok {
                 self.result.get_choke_point_regions = ctrl.resolve_va(dest);
                 ctrl.end_analysis();
@@ -3143,18 +3111,18 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlaceBuildingAnal
                     if ctrl.check_stack_probe() {
                         return;
                     }
-                    if seems_assertion_call(ctrl, self.arg_cache) {
+                    if seems_assertion_call(ctrl) {
                         ctrl.end_branch();
                         return;
                     }
                     let unit = self.arg_cache.on_entry(0);
-                    let ok = ctrl.resolve(self.arg_cache.on_call(0)) == unit &&
-                        ctrl.resolve(self.arg_cache.on_call_u8(1))
+                    let ok = ctrl.resolve_arg(0) == unit &&
+                        ctrl.resolve_arg_u8(1)
                             .if_mem8_offset(E::struct_layouts().unit_player()) == Some(unit) &&
-                        ctrl.resolve(self.arg_cache.on_call_u8(5)) == ctx.const_0() &&
-                        ctrl.resolve(self.arg_cache.on_call_u8(6)) == ctx.const_0() &&
-                        ctrl.resolve(self.arg_cache.on_call_u8(7)) == ctx.const_1() &&
-                        ctrl.resolve(self.arg_cache.on_call_u8(8)) == ctx.const_0();
+                        ctrl.resolve_arg_u8(5) == ctx.const_0() &&
+                        ctrl.resolve_arg_u8(6) == ctx.const_0() &&
+                        ctrl.resolve_arg_u8(7) == ctx.const_1() &&
+                        ctrl.resolve_arg_u8(8) == ctx.const_0();
                     if ok {
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             self.result.update_building_placement_state = Some(dest);
@@ -3183,14 +3151,14 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlaceBuildingAnal
             PlaceBuildingState::FindNearest => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let a1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let a2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let a1 = ctrl.resolve_arg(0);
+                        let a2 = ctrl.resolve_arg(1);
                         let unit = self.arg_cache.on_entry(0);
                         let pos_xy = self.arg_cache.on_entry(2);
                         let ok = ctx.and_const(a1, 0xffff) == ctx.and_const(pos_xy, 0xffff) &&
                             ctx.and_const(a2, 0xffff) ==
                                 ctx.and_const(ctx.rsh_const(pos_xy, 0x10), 0xffff) &&
-                            ctrl.resolve(self.arg_cache.on_call_u8(4))
+                            ctrl.resolve_arg_u8(4)
                                 .if_mem8_offset(E::struct_layouts().unit_player()) == Some(unit);
                         if ok {
                             self.result.find_nearest_unit_in_area_point = Some(dest);
@@ -3215,9 +3183,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlaceBuildingAnal
                 if let Operation::Call(dest) = *op {
                     let unit = self.arg_cache.on_entry(0);
                     let radius = self.arg_cache.on_entry(4);
-                    let ok = ctrl.resolve(self.arg_cache.on_call_u8(2))
+                    let ok = ctrl.resolve_arg_u8(2)
                             .if_mem8_offset(E::struct_layouts().unit_player()) == Some(unit) &&
-                        ctrl.resolve(self.arg_cache.on_call_u8(4)) == ctx.and_const(radius, 0xff);
+                        ctrl.resolve_arg_u8(4) == ctx.and_const(radius, 0xff);
                     if ok {
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             self.result.ai_update_building_placement_state = Some(dest);

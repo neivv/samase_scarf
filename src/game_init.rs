@@ -652,7 +652,6 @@ pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
         let state = AnalysisState::new(bump, StateEnum::FindChooseSnp(state));
         let mut analyzer = FindChooseSnp {
             result: None,
-            arg_cache,
             inlining: false,
             phantom: Default::default(),
         };
@@ -731,16 +730,13 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRealChooseSnp
     }
 }
 
-struct FindChooseSnp<'a, 'acx, 'e, E: ExecutionState<'e>> {
+struct FindChooseSnp<'acx, 'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     inlining: bool,
     phantom: std::marker::PhantomData<&'acx ()>,
 }
 
-impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    FindChooseSnp<'a, 'acx, 'e, E>
-{
+impl<'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindChooseSnp<'acx, 'e, E> {
     type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -750,7 +746,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     let state = ctrl.user_state().get::<FindChooseSnpState>();
                     if let Some(off) = state.provider_id_offset.clone() {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         if arg1 == off {
                             self.result = Some(dest);
                             ctrl.end_analysis();
@@ -971,17 +967,17 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     self.first_call = false;
                     let ctx = ctrl.ctx();
                     let zero = ctx.const_0();
-                    let ok = Some(ctrl.resolve(self.arg_cache.on_call(3)))
+                    let ok = Some(ctrl.resolve_arg(3))
                         .filter(|&x| x == zero)
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(4)))
+                        .map(|_| ctrl.resolve_arg(4))
                         .filter(|&x| x == zero)
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(5)))
-                        .filter(|&x| ctx.and_const(x, 0xffff_ffff) == zero)
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(6)))
-                        .filter(|&x| ctx.and_const(x, 0xffff_ffff).if_mem8().is_some())
+                        .map(|_| ctrl.resolve_arg_u32(5))
+                        .filter(|&x| x == zero)
+                        .map(|_| ctrl.resolve_arg_u32(6))
+                        .filter(|&x| x.if_mem8().is_some())
                         .is_some();
                     if ok {
-                        let arg10 = ctrl.resolve(self.arg_cache.on_call(9));
+                        let arg10 = ctrl.resolve_arg(9);
                         ctrl.user_state().set(SinglePlayerStartState::AssigningPlayerMappings);
                         self.result.local_storm_player_id = Some(ctx.mem32(arg10, 0));
                     } else if was_first_call {
@@ -993,11 +989,11 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     // Check for memcpy(&mut game_data, arg1, 0x8d) call
                     // Maybe broken since 1232e at least uses rep movs
-                    let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                    let arg3 = ctrl.resolve_arg(2);
                     if arg3.if_constant() == Some(0x8d) {
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let arg2 = ctrl.resolve_arg(1);
                         if arg2 == self.arg_cache.on_entry(0) {
-                            let arg1 = ctrl.resolve(self.arg_cache.on_call(1));
+                            let arg1 = ctrl.resolve_arg(0);
                             self.result.game_data = Some(arg1);
                         }
                     }
@@ -1286,12 +1282,10 @@ pub(crate) fn load_images<'e, E: ExecutionState<'e>>(
     let mut result = None;
     for string in str_refs {
         let new = entry_of_until(binary, funcs, string.use_address, |entry| {
-            let arg_cache = &analysis.arg_cache;
             let mut analyzer = IsLoadImages::<E> {
                 result: EntryOf::Retry,
                 use_address: string.use_address,
                 string_address: string.string_address,
-                arg_cache,
                 jump_limit: 3,
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -1307,15 +1301,14 @@ pub(crate) fn load_images<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct IsLoadImages<'a, 'e, E: ExecutionState<'e>> {
+struct IsLoadImages<'e, E: ExecutionState<'e>> {
     result: EntryOf<()>,
     use_address: E::VirtualAddress,
     string_address: E::VirtualAddress,
-    arg_cache: &'a ArgCache<'e, E>,
     jump_limit: u8,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsLoadImages<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsLoadImages<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -1325,7 +1318,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsLoadImages<'a, 
         }
         match *op {
             Operation::Call(_) => {
-                if let Some(c) = ctrl.resolve(self.arg_cache.on_call(0)).if_constant() {
+                if let Some(c) = ctrl.resolve_arg(0).if_constant() {
                     if c == self.string_address.as_u64() {
                         self.result = EntryOf::Ok(());
                         ctrl.end_analysis();
@@ -1940,7 +1933,7 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             let state = *ctrl.user_state().get::<MapEntryState>();
                             if state != MapEntryState::Unknown {
-                                let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                                let arg1 = ctrl.resolve_arg(0);
                                 if self.is_map_entry(arg1) {
                                     let result = &mut self.result;
                                     let result_fn = match state {
@@ -2056,9 +2049,9 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                             // arg6 = arg1.turn_rate
                             // Arg5~8 is a 16byte struct passed by value,
                             // on 64-bit check arg5.x4 = arg1.turn_rate (It is passed by pointer)
-                            let ok = Some(ctrl.resolve(arg_cache.on_call(0)))
+                            let ok = Some(ctrl.resolve_arg(0))
                                 .filter(|&x| is_stack_address(x))
-                                .map(|_| ctrl.resolve(arg_cache.on_call(1)))
+                                .map(|_| ctrl.resolve_arg(1))
                                 .and_then(|x| ctrl.if_mem_word_offset(x, 0))
                                 .filter(|&x| self.is_game_name(x))
                                 .filter(|_| {
@@ -2066,11 +2059,11 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                                     // to support those too also check arg5 instead of arg6.
                                     if E::VirtualAddress::SIZE == 4 {
                                         [1u8, 0].iter().any(|&i| {
-                                            let op = ctrl.resolve(arg_cache.on_call(4 + i));
+                                            let op = ctrl.resolve_arg(4 + i);
                                             self.is_game_input_turn_rate(op)
                                         })
                                     } else {
-                                        let op = ctrl.resolve(arg_cache.on_call(4));
+                                        let op = ctrl.resolve_arg(4);
                                         // The old versions that had 8-byte may not even
                                         // have 64-bit builds, but supporting it instead
                                         // of checking that.
@@ -2234,8 +2227,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsJoinGame<'a, 'e
         }
         match *op {
             Operation::Call(_) => {
-                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
+                let arg1 = ctrl.resolve_arg(0);
+                let arg4 = ctrl.resolve_arg(3);
                 let ok = ctrl.if_mem_word_offset(arg1, 0)
                     .filter(|&val| val == self.arg_cache.on_entry(1))
                     .and_then(|_| arg4.if_constant())
@@ -2283,8 +2276,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSnetInitProvi
         match *op {
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve_va(dest) {
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                    let arg5 = ctrl.resolve(self.arg_cache.on_call(4));
+                    let arg1 = ctrl.resolve_arg(0);
+                    let arg5 = ctrl.resolve_arg(4);
                     let ctx = ctrl.ctx();
                     let ok = Some(())
                         .filter(|()| {
@@ -2551,8 +2544,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         if self.inline_limit != 0 {
                             // Verify arg2 = arr\\images.tbl or exit
                             // Older versions used arg1
-                            let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            let arg2 = ctrl.resolve_arg(1);
+                            let arg1 = ctrl.resolve_arg(0);
                             let binary = ctrl.binary();
                             let cmp = b"arr\\images.tbl\0";
                             let cmp_len = cmp.len() as u32;
@@ -2641,12 +2634,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 // load_lo_set(&shield_overlays, images_dat_shield_overlay, &mut out, 999)
                 if let Operation::Call(_) = *op {
                     let is_find_grps = state == LoadImagesAnalysisState::FindImageGrps;
-                    let arg_cache = self.arg_cache;
                     let out = &mut self.result;
                     let result = Some(()).and_then(|()| {
-                        ctrl.resolve(arg_cache.on_call(3))
+                        ctrl.resolve_arg(3)
                             .if_constant().filter(|&c| c == 999)?;
-                        let arg2 = ctrl.resolve(arg_cache.on_call(1));
+                        let arg2 = ctrl.resolve_arg(1);
                         let out = if is_find_grps {
                             if arg2 == self.images_dat_grp {
                                 &mut out.image_grps
@@ -2662,7 +2654,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 return None;
                             }
                         };
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         Some((out, arg1))
                     });
                     if let Some((out_var, result)) = result {
@@ -2775,8 +2767,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
         //      * These last args seem to be unused and not set in 64bit at all;
         //      32bit has to set them due to callee-restores-stack cc
         let ctx = ctrl.ctx();
-        let arg1 = ctx.and_const(ctrl.resolve(self.arg_cache.on_thiscall_call(0)), 0xffff_ffff);
-        let arg2 = ctx.and_const(ctrl.resolve(self.arg_cache.on_thiscall_call(1)), 0xffff_ffff);
+        let arg1 = ctrl.resolve_arg_thiscall_u32(0);
+        let arg2 = ctrl.resolve_arg_thiscall_u32(1);
         let this = ctrl.resolve_register(1);
         let is_single_file = arg1 == ctx.const_0() &&
             arg2 == ctx.const_1() &&
@@ -2789,10 +2781,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
         let is_multi_file_1 = arg1 == ctx.const_0() &&
             arg2.if_constant() == Some(999);
         if is_multi_file_1 {
-            let arg3 =
-                ctx.and_const(ctrl.resolve(self.arg_cache.on_thiscall_call(2)), 0xffff_ffff);
-            let arg4 =
-                ctx.and_const(ctrl.resolve(self.arg_cache.on_thiscall_call(3)), 0xffff_ffff);
+            let arg3 = ctrl.resolve_arg_thiscall_u32(2);
+            let arg4 = ctrl.resolve_arg_thiscall_u32(3);
             let is_multi_file = arg3 == ctx.const_1() &&
                 matches!(arg4.if_constant(), Some(1) | Some(2));
             if is_multi_file {
@@ -2869,13 +2859,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
         if let Operation::Call(dest) = *op {
             let ctx = ctrl.ctx();
             let dest = ctrl.resolve(dest);
-            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+            let arg1 = ctrl.resolve_arg_thiscall(0);
             if let Some(dest) = dest.if_constant() {
                 let dest = E::VirtualAddress::from_u64(dest);
                 let this = ctrl.resolve_register(1);
                 let asset_change_cb = if E::VirtualAddress::SIZE == 4 {
-                    let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                    let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                    let arg2 = ctrl.resolve_arg(1);
+                    let arg3 = ctrl.resolve_arg(2);
                     // Check for add_asset_change_cb(&local, func_vtbl, func_cb, ...)
                     arg2.if_constant()
                         .map(E::VirtualAddress::from_u64)
@@ -2896,7 +2886,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                             arg3.if_constant()
                                 .map(E::VirtualAddress::from_u64)
                                 .filter(|&x| is_in_section(self.rdata, x))?;
-                            let param = ctrl.resolve(self.arg_cache.on_call(3))
+                            let param = ctrl.resolve_arg(3)
                                 .if_constant()
                                 .map(E::VirtualAddress::from_u64)
                                 .filter(|&x| is_in_section(self.text, x))?;
@@ -3018,7 +3008,7 @@ fn check_actual_open_anim_multi_file<'e, E: ExecutionState<'e>>(
                         };
                         if (0..argc).all(|i| {
                             let on_entry = self.arg_cache.on_thiscall_entry(i);
-                            let arg = ctrl.resolve(self.arg_cache.on_thiscall_call(i));
+                            let arg = ctrl.resolve_arg_thiscall(i);
                             on_entry == arg || ctx.and_const(on_entry, 0xffff_ffff) ==
                                 ctx.and_const(arg, 0xffff_ffff)
                         }) {
@@ -3186,7 +3176,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
             GameLoopAnalysisState::SetMusic => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         let ok = arg1.if_mem16_offset(0xee)
                             .filter(|&x| x == self.game)
                             .is_some();
@@ -3227,9 +3217,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
             GameLoopAnalysisState::PaletteCopy => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(arg_cache.on_call(0));
-                        let arg2 = ctrl.resolve(arg_cache.on_call(1));
-                        let arg3 = ctrl.resolve(arg_cache.on_call(2));
+                        let arg1 = ctrl.resolve_arg(0);
+                        let arg2 = ctrl.resolve_arg(1);
+                        let arg3 = ctrl.resolve_arg(2);
                         if arg3.if_constant() == Some(0x400) {
                             self.result.palette_set = Some(arg1);
                             self.result.main_palette = Some(arg2);
@@ -3263,10 +3253,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                     if self.inline_depth != 0 && condition == ctx.const_1() {
                         // Check for tail call memcpy
                         if ctrl.resolve_register(4) == self.entry_esp {
-                            let arg3 = ctrl.resolve(arg_cache.on_call(2));
+                            let arg3 = ctrl.resolve_arg(2);
                             if arg3.if_constant() == Some(0x400) {
-                                let arg1 = ctrl.resolve(arg_cache.on_call(0));
-                                let arg2 = ctrl.resolve(arg_cache.on_call(1));
+                                let arg1 = ctrl.resolve_arg(0);
+                                let arg2 = ctrl.resolve_arg(1);
                                 self.result.palette_set = Some(arg1);
                                 self.result.main_palette = Some(arg2);
                                 self.state = GameLoopAnalysisState::TfontGam;
@@ -3283,14 +3273,14 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                         let binary = ctrl.binary();
                         // Search for storm_load_pcx("game\\tFontGam.pcx", 0, out, 0xc0, 0, 0, 0)
                         let ok = [1, 4, 5, 6].iter()
-                            .all(|&x| ctrl.resolve(arg_cache.on_call(x)) == zero) &&
-                            ctrl.resolve(arg_cache.on_call(3)).if_constant() == Some(0xc0) &&
+                            .all(|&x| ctrl.resolve_arg(x) == zero) &&
+                            ctrl.resolve_arg(3).if_constant() == Some(0xc0) &&
                             ctrl.resolve_va(arg_cache.on_call(0))
                                 .filter(|&x| is_casei_cstring(binary, x, b"game\\tfontgam.pcx"))
                                 .is_some();
                         if ok {
                             self.result.load_pcx = Some(dest);
-                            self.result.tfontgam = Some(ctrl.resolve(arg_cache.on_call(2)));
+                            self.result.tfontgam = Some(ctrl.resolve_arg(2));
                             self.state = GameLoopAnalysisState::SyncData;
                             if self.inline_depth != 0 {
                                 ctrl.end_analysis();
@@ -3318,11 +3308,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if let Some(sync_active) = self.sync_active_candidate {
                             // Check memset(sync_data, 0, 0x10c0)
-                            let ok = ctrl.resolve(arg_cache.on_call(1)) == ctx.const_0() &&
-                                ctrl.resolve(arg_cache.on_call(2)).if_constant() == Some(0x10c0);
+                            let ok = ctrl.resolve_arg(1) == ctx.const_0() &&
+                                ctrl.resolve_arg(2).if_constant() == Some(0x10c0);
                             if ok {
                                 self.result.sync_active = Some(sync_active);
-                                self.result.sync_data = Some(ctrl.resolve(arg_cache.on_call(0)));
+                                self.result.sync_data = Some(ctrl.resolve_arg(0));
                                 self.state = GameLoopAnalysisState::StepNetwork;
                                 if self.inline_depth != 0 {
                                     ctrl.end_analysis();
@@ -3340,8 +3330,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                             }
                         }
                         let inline = self.sync_active_candidate.is_some() ||
-                            (self.inline_depth == 0 &&
-                                ctrl.resolve(self.arg_cache.on_call(0)) == ctx.const_1());
+                            (self.inline_depth == 0 && ctrl.resolve_arg(0) == ctx.const_1());
                         if inline {
                             if self.inline_depth == 0 {
                                 self.inline_limit = 4;
@@ -3387,8 +3376,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
             GameLoopAnalysisState::RenderScreen => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        if ctrl.resolve(arg_cache.on_call(1)) == ctx.const_1() {
-                            let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                        if ctrl.resolve_arg(1) == ctx.const_1() {
+                            let arg1 = ctrl.resolve_arg(0);
                             let arg1_mem = ctx.mem_access(arg1, 0, E::WORD_SIZE);
                             let ok = ctrl.read_memory(&arg1_mem)
                                 .if_constant()
@@ -3459,7 +3448,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
             GameLoopAnalysisState::StepGameLoopAfterContinue => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        if ctrl.resolve(self.arg_cache.on_call(0)).if_constant() == Some(3) {
+                        if ctrl.resolve_arg(0).if_constant() == Some(3) {
                             self.result.process_events = Some(dest);
                             if self.inline_depth != 0 {
                                 self.result.step_game_loop = Some(self.current_entry);
@@ -3833,7 +3822,6 @@ pub(crate) fn join_param_variant_type_offset<'e, E: ExecutionState<'e>>(
 
     let mut analyzer = JoinParamVariantTypeOffset::<E> {
         result: None,
-        arg_cache: &actx.arg_cache,
         inline_depth: 0,
         state: JoinParamState::FindGetSaveGameId,
         custom_pos: 0,
@@ -3841,15 +3829,15 @@ pub(crate) fn join_param_variant_type_offset<'e, E: ExecutionState<'e>>(
         current_variant: ctx.const_0(),
         current_arg1: actx.arg_cache.on_entry(0),
         bump: &actx.bump,
+        phantom: Default::default(),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, join_game);
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-struct JoinParamVariantTypeOffset<'a, 'acx, 'e, E: ExecutionState<'e>> {
+struct JoinParamVariantTypeOffset<'acx, 'e, E: ExecutionState<'e>> {
     result: Option<u16>,
-    arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
     state: JoinParamState,
     custom_pos: u32,
@@ -3857,6 +3845,7 @@ struct JoinParamVariantTypeOffset<'a, 'acx, 'e, E: ExecutionState<'e>> {
     current_variant: Operand<'e>,
     current_arg1: Operand<'e>,
     bump: &'acx Bump,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -3878,8 +3867,8 @@ enum JoinParamState {
 }
 
 
-impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    JoinParamVariantTypeOffset<'a, 'acx, 'e, E>
+impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    JoinParamVariantTypeOffset<'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;
@@ -3890,7 +3879,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let this = ctrl.resolve_register(1);
-                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let arg1 = ctrl.resolve_arg_thiscall(0);
                         if self.state == JoinParamState::FindGetSaveGameId {
                             if self.inline_depth != 0 {
                                 self.state = JoinParamState::BeforeVariantGet;
@@ -3926,7 +3915,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let this = ctrl.resolve_register(1);
-                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let arg1 = ctrl.resolve_arg_thiscall(0);
                         if this == ctx.register(1) && is_stack_address(arg1) {
                             ctrl.analyze_with_current_state(self, dest);
                             if self.result.is_some() {
@@ -3967,7 +3956,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, 'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'acx, 'e, E> {
     fn check_variant_type(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let ctx = ctrl.ctx();
         if let Operation::Call(dest) = *op {
@@ -3977,7 +3966,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> JoinParamVariantTypeOffset<'a, 'acx, '
                     let offset = ctx.mem_sub_op(&index_addr, self.current_variant).if_constant()
                         .or_else(|| {
                             (0..3).find_map(|i| {
-                                let arg = ctrl.resolve(self.arg_cache.on_call(i));
+                                let arg = ctrl.resolve_arg(i);
                                 ctx.mem_sub_op(&index_addr, arg).if_constant()
                             })
                         });
@@ -4078,13 +4067,11 @@ pub(crate) fn single_player_map_end<'e, E: ExecutionState<'e>>(
     if str_refs.is_empty() {
         str_refs = functions.string_refs(actx, b"gluscore.ui");
     }
-    let arg_cache = &actx.arg_cache;
     for str_ref in &str_refs {
         entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let mut analyzer = FindSpMapEnd::<E> {
                 run_dialog,
                 is_multiplayer,
-                arg_cache,
                 result: &mut result,
                 state: FindSpMapEndState::Init,
                 call_limit: 0,
@@ -4109,7 +4096,6 @@ pub(crate) fn single_player_map_end<'e, E: ExecutionState<'e>>(
 
 struct FindSpMapEnd<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut SinglePlayerMapEnd<'e, E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     is_multiplayer: Operand<'e>,
     run_dialog: E::VirtualAddress,
     state: FindSpMapEndState,
@@ -4227,7 +4213,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSpMapEnd<'a, 
             FindSpMapEndState::IsMultiplayerSeen => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         let result = arg1.if_arithmetic_eq_const(1)
                             .filter(|&x| is_global(x));
                         if let Some(result) = result {
@@ -4260,9 +4246,7 @@ pub(crate) fn single_player_map_end_analysis<'e, E: ExecutionState<'e>>(
 
     let binary = actx.binary;
     let ctx = actx.ctx;
-    let arg_cache = &actx.arg_cache;
     let mut analyzer = AnalyzeSpMapEnd::<E> {
-        arg_cache,
         result: &mut result,
         state: SpMapEndState::SetScmainState,
         last_global_store: None,
@@ -4274,7 +4258,6 @@ pub(crate) fn single_player_map_end_analysis<'e, E: ExecutionState<'e>>(
 
 struct AnalyzeSpMapEnd<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut SinglePlayerMapEndAnalysis<'e, E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     state: SpMapEndState,
     last_global_store: Option<(MemAccess<'e>, Operand<'e>)>,
 }
@@ -4299,7 +4282,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeSpMapEnd<'
             SpMapEndState::SetScmainState => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         if arg1.if_constant() == Some(4) {
                             self.result.set_scmain_state = Some(dest);
                             ctrl.clear_unchecked_branches();
@@ -4324,7 +4307,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeSpMapEnd<'
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if let Some((addr, val)) = self.last_global_store.take() {
-                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            let arg1 = ctrl.resolve_arg(0);
                             if arg1 == val {
                                 self.result.current_campaign_mission = Some(ctx.memory(&addr));
                                 self.result.unlock_mission = Some(dest);
@@ -4480,12 +4463,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             InitMapFromPathState::LoadReplayScenarioChk => {
                 if let Operation::Call(dest) = *op {
-                    let ok = ctrl.resolve(arg_cache.on_call(2)) == ctx.const_1() &&
-                        ctrl.resolve(arg_cache.on_call(3)) == arg_cache.on_entry(1);
+                    let ok = ctrl.resolve_arg(2) == ctx.const_1() &&
+                        ctrl.resolve_arg(3) == arg_cache.on_entry(1);
                     if ok {
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            let arg1 = ctrl.resolve(arg_cache.on_call(0));
-                            let arg2 = ctrl.resolve(arg_cache.on_call(1));
+                            let arg1 = ctrl.resolve_arg(0);
+                            let arg2 = ctrl.resolve_arg(1);
                             self.result.load_replay_scenario_chk = Some(dest);
                             self.result.replay_scenario_chk = Some(arg1);
                             self.result.replay_scenario_chk_size = Some(arg2);
@@ -4503,10 +4486,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             InitMapFromPathState::SfileCloseArchive => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         if !self.inlining_open_map_unk {
                             let inline = arg1 == arg_cache.on_entry(0) &&
-                                ctrl.resolve(arg_cache.on_call(1)) == arg_cache.on_entry(1);
+                                ctrl.resolve_arg(1) == arg_cache.on_entry(1);
                             if inline {
                                 self.inlining_open_map_unk = true;
                                 ctrl.analyze_with_current_state(self, dest);
@@ -4518,10 +4501,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             }
                         }
                         if !self.inlining_open_global_map_mpq {
-                            let arg3 = ctx.and_const(
-                                ctrl.resolve(arg_cache.on_call(2)),
-                                0xff,
-                            );
+                            let arg3 = ctrl.resolve_arg_u8(2);
                             let arg3_campaign_mission =
                                 self.check_campaign_mission_cmp(arg3).is_some();
                             if arg3_campaign_mission {
@@ -4562,15 +4542,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             InitMapFromPathState::OpenMapMpq => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg3 = ctx.and_const(
-                            ctrl.resolve(arg_cache.on_call(2)),
-                            0xff,
-                        );
+                        let arg3 = ctrl.resolve_arg_u8(2);
                         let arg3_campaign_mission =
                             self.check_campaign_mission_cmp(arg3).is_some();
-                        let ok = ctrl.resolve(arg_cache.on_call(0)) == arg_cache.on_entry(0) &&
+                        let ok = ctrl.resolve_arg(0) == arg_cache.on_entry(0) &&
                             arg3_campaign_mission &&
-                            self.check_map_mpq_addr(ctrl.resolve(arg_cache.on_call(6)));
+                            self.check_map_mpq_addr(ctrl.resolve_arg(6));
                         if ok {
                             self.result.open_map_mpq = Some(dest);
                             self.state = InitMapFromPathState::ReadWholeMpqFile;
@@ -4584,25 +4561,22 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             InitMapFromPathState::ReadWholeMpqFile => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let ok = Some(ctrl.resolve(arg_cache.on_call(0))) ==
+                        let ok = Some(ctrl.resolve_arg(0)) ==
                                 self.result.map_mpq &&
                             (4..7).all(|i| {
-                                ctx.and_const(
-                                    ctrl.resolve(arg_cache.on_call(i)),
-                                    0xffff_ffff,
-                                ) == ctx.const_0()
+                                ctrl.resolve_arg_u32(i) == ctx.const_0()
                             });
                         if ok {
                             self.check_read_whole_mpq_file(ctrl, dest);
                             self.state = InitMapFromPathState::MapHistory;
-                            let arg = ctrl.resolve(arg_cache.on_call(2));
+                            let arg = ctrl.resolve_arg(2);
                             let arg_mem = ctrl.mem_access_word(arg, 0);
                             ctrl.write_memory(&arg_mem, ctx.custom(0));
                             ctrl.do_call_with_result(ctx.const_1());
                             return;
                         }
                         if !self.inlining_read_map_file {
-                            let arg2 = ctrl.resolve(arg_cache.on_call(1));
+                            let arg2 = ctrl.resolve_arg(1);
                             if arg2.if_constant().is_none() {
                                 self.inlining_read_map_file = true;
                                 ctrl.inline(self, dest);
@@ -4634,9 +4608,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             InitMapFromPathState::MapHistory => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let tc_arg1 = ctrl.resolve(arg_cache.on_thiscall_call(0));
+                        let tc_arg1 = ctrl.resolve_arg_thiscall(0);
                         if tc_arg1.if_custom() == Some(0) {
-                            let tc_arg2 = ctrl.resolve(arg_cache.on_thiscall_call(1));
+                            let tc_arg2 = ctrl.resolve_arg_thiscall(1);
                             // Arg2 should be map data length; so not global
                             if !is_global(tc_arg2) {
                                 let this = ctrl.resolve_register(1);
@@ -4656,7 +4630,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 }
                             }
                         } else {
-                            let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                            let arg1 = ctrl.resolve_arg(0);
                             let constant = arg1.if_constant()
                                 .or_else(|| {
                                     // 64bit does `lea rcx, [rax + C]` in branch
@@ -4753,7 +4727,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> AnalyzeInitMapFromPath<'a, 'acx, 'e, E
         if E::VirtualAddress::SIZE == 8 && self.result.read_whole_mpq_file.is_none() {
             // Didn't get result where both of them are something; assume
             // 8 args if value in arg8 place is currently 0.
-            let arg8 = ctx.and_const(ctrl.resolve(self.arg_cache.on_call(7)), 0xffff_ffff);
+            let arg8 = ctrl.resolve_arg_u32(7);
             if arg8 == ctx.const_0() {
                 self.result.read_whole_mpq_file2 = Some(func);
             } else {
@@ -4792,7 +4766,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheckReadWholeMpq
                 self.first_call = false;
                 let ctx = ctrl.ctx();
                 if (0..7).all(|i| {
-                    let arg = ctrl.resolve(self.arg_cache.on_call(i));
+                    let arg = ctrl.resolve_arg(i);
                     let entry_arg = self.arg_cache.on_entry(i);
                     // u32 args are likely just moved as u32, so mask both sides when
                     // checking if they're equal
@@ -4802,8 +4776,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheckReadWholeMpq
                         arg == entry_arg
                     }
                 }) {
-                    let arg8 =
-                        ctx.and_const(ctrl.resolve(self.arg_cache.on_call(7)), 0xffff_ffff);
+                    let arg8 = ctrl.resolve_arg_u32(7);
                     if arg8 == ctx.const_0() {
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             self.result.read_whole_mpq_file = Some(self.func);
@@ -4903,12 +4876,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for JoinCustomGameAna
                     ctrl.do_call_with_result(ctx.custom(0));
                     return;
                 }
-                let is_crc_call = ctrl.resolve(self.arg_cache.on_call(1))
+                let is_crc_call = ctrl.resolve_arg(1)
                         .unwrap_and_mask().if_custom() == Some(0) &&
-                    ctrl.resolve(self.arg_cache.on_call(2))
+                    ctrl.resolve_arg(2)
                         .unwrap_and_mask().if_custom() == Some(0);
                 if is_crc_call {
-                    if ctrl.resolve(self.arg_cache.on_call_u32(4)).if_constant() == Some(3) {
+                    if ctrl.resolve_arg_u32(4).if_constant() == Some(3) {
                         self.entry_of = EntryOf::Ok(());
                         single_result_assign(Some(dest), &mut self.result.find_file_with_crc);
                         ctrl.end_analysis();
@@ -4950,10 +4923,8 @@ pub(crate) fn analyze_find_file_with_crc<'e, E: ExecutionState<'e>>(
 
     let binary = actx.binary;
     let ctx = actx.ctx;
-    let arg_cache = &actx.arg_cache;
 
     let mut analyzer = FindFileWithCrcAnalyzer::<E> {
-        arg_cache,
         result: &mut result,
         inline_depth: 0,
     };
@@ -4965,7 +4936,6 @@ pub(crate) fn analyze_find_file_with_crc<'e, E: ExecutionState<'e>>(
 
 struct FindFileWithCrcAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut FindFileWithCrc<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
 }
 
@@ -4978,10 +4948,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindFileWithCrcAn
         // for_files_in_dir(in_out_dir, "*", simple_file_match_callback, 0, 1, &ctx)
         if let Operation::Call(dest) = *op {
             if let Some(dest) = ctrl.resolve_va(dest) {
-                let a2 = ctrl.resolve(self.arg_cache.on_call(1));
-                let a3 = ctrl.resolve(self.arg_cache.on_call(2));
-                let a4 = ctrl.resolve(self.arg_cache.on_call(3));
-                let a5 = ctrl.resolve(self.arg_cache.on_call(4));
+                let a2 = ctrl.resolve_arg(1);
+                let a3 = ctrl.resolve_arg(2);
+                let a4 = ctrl.resolve_arg(3);
+                let a5 = ctrl.resolve_arg(4);
                 let binary = ctrl.binary();
                 let ctx = ctrl.ctx();
                 let is_for_files_in_dir = a2.if_constant()

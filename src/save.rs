@@ -137,9 +137,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             }
             Operation::Call(_) => {
                 if self.first_branch {
-                    let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                    let arg3 = ctrl.resolve_arg(2);
                     if arg3.if_constant() == Some(2) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         if arg1 == self.arg_cache.on_entry(0) {
                             self.had_file_call = true;
                         }

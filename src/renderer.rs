@@ -100,9 +100,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindPrismShaders<'a,
         match *op {
             Operation::Call(dest) => {
                 if self.inline_depth == 0 {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve_arg(0);
                         if arg1 == self.arg_cache.on_thiscall_entry(0) {
                             self.inline_depth += 1;
                             ctrl.analyze_with_current_state(self, dest);
@@ -267,7 +266,6 @@ pub(crate) fn analyze_draw_image<'e, E: ExecutionState<'e>>(
 ) -> DrawImage<'e, E::VirtualAddress> {
     let ctx = analysis.ctx;
     let binary = analysis.binary;
-    let arg_cache = &analysis.arg_cache;
     // Search for a child function of draw_image
     // thiscall get_unit_skin(player_unit_skins, player, unit_id, image_id)
     let mut result = DrawImage {
@@ -275,7 +273,6 @@ pub(crate) fn analyze_draw_image<'e, E: ExecutionState<'e>>(
         get_unit_skin: None,
     };
     let mut analyzer = PlayerUnitSkins::<E> {
-        arg_cache,
         result: &mut result,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, draw_image);
@@ -284,7 +281,6 @@ pub(crate) fn analyze_draw_image<'e, E: ExecutionState<'e>>(
 }
 
 struct PlayerUnitSkins<'a, 'e, E: ExecutionState<'e>> {
-    arg_cache: &'a ArgCache<'e, E>,
     result: &'a mut DrawImage<'e, E::VirtualAddress>,
 }
 
@@ -295,9 +291,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerUnitSkins<'a, 
         match *op {
             Operation::Call(dest) => {
                 let ctx = ctrl.ctx();
-                let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
-                let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
-                let ok = ctx.and_const(arg1, 0xff).if_mem8().is_some() &&
+                let arg1 = ctrl.resolve_arg_thiscall_u8(0);
+                let arg3 = ctrl.resolve_arg_thiscall(2);
+                let ok = arg1.if_mem8().is_some() &&
                     arg3.if_mem16_offset(E::struct_layouts().image_id())
                         .filter(|&x| x == ctx.register(1))
                         .is_some();
@@ -403,10 +399,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindVertexBuffer<'a,
                     if self.inline_depth < 2 {
                         // Check for first two funcs which take draw_commands as an arg1
                         // One is thiscall, one is cdecl
-                        if ctrl.resolve(self.arg_cache.on_call(0)) ==
-                            self.arg_cache.on_thiscall_entry(0) ||
-                            ctrl.resolve(self.arg_cache.on_thiscall_call(0) )==
-                            self.arg_cache.on_thiscall_entry(0)
+                        if ctrl.resolve_arg(0) == self.arg_cache.on_thiscall_entry(0) ||
+                            ctrl.resolve_arg_thiscall(0) == self.arg_cache.on_thiscall_entry(0)
                         {
                             self.inline_depth += 1;
                             ctrl.analyze_with_current_state(self, dest);
@@ -446,7 +440,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindVertexBuffer<'a,
                             .if_mem_word_offset(dest, 0xa * word_size as u64)
                             .is_some();
                         if is_vtable_fn_28 {
-                            let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
+                            let arg3 = ctrl.resolve_arg_thiscall(2);
                             // Arg3 is Mem32[vertex_buf + 4] (Mem32 even on 64bit too)
                             let vertex_buf = arg3.if_mem32()
                                 .map(|x| ctx.mem_sub_const_op(x, word_size as u64));
@@ -923,7 +917,6 @@ pub(crate) fn analyze_render_screen<'e, E: ExecutionState<'e>>(
         get_render_target_candidate: None,
         inline_depth: 0,
         inline_limit: 0,
-        arg_cache: &actx.arg_cache,
         seen_funcs: HashSet::with_capacity_and_hasher(0x80, Default::default()),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, render_screen);
@@ -969,7 +962,6 @@ struct AnalyzeRenderScreen<'a, 'acx, 'e, E: ExecutionState<'e>> {
     get_render_target_candidate: Option<E::VirtualAddress>,
     inline_depth: u8,
     inline_limit: u8,
-    arg_cache: &'a ArgCache<'e, E>,
     /// Used to avoid unnecessarily repeated inlining into child functions.
     /// All ones we care about will not have been seen before.
     seen_funcs: HashSet<OperandHashByAddress<'e>>,
@@ -1084,7 +1076,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             RenderScreenState::RenderTargets => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         let ctx = ctrl.ctx();
                         if arg1.if_constant() == Some(2) {
                             self.get_render_target_candidate = Some(dest);
@@ -1134,7 +1126,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         let renderer = ctrl.if_mem_word_offset(dest, offset as u64)
                             .and_then(|x| ctrl.if_mem_word_offset(x, 0));
                         if let Some(renderer) = renderer {
-                            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                            let arg1 = ctrl.resolve_arg_thiscall(0);
                             let draw_commands = self.call_tracker.resolve_calls(arg1);
                             if is_global(draw_commands) {
                                 self.result.draw_commands = Some(draw_commands);
@@ -1167,7 +1159,6 @@ pub(crate) fn analyze_draw_terrain<'e, E: ExecutionState<'e>>(
         call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
         inline_depth: 0,
         draw_tiles_depth: 0,
-        arg_cache: &actx.arg_cache,
         is_paused,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, draw_terrain);
@@ -1203,7 +1194,6 @@ struct AnalyzeDrawTerrain<'a, 'acx, 'e, E: ExecutionState<'e>> {
     call_tracker: CallTracker<'acx, 'e, E>,
     inline_depth: u8,
     draw_tiles_depth: u8,
-    arg_cache: &'a ArgCache<'e, E>,
     is_paused: Operand<'e>,
 }
 
@@ -1283,11 +1273,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ok = {
-                                let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
+                                let arg3 = ctrl.resolve_arg_thiscall(2);
                                 let mem = ctx.mem_access(arg3, 0, MemAccessSize::Mem64);
                                 ctrl.read_memory(&mem) == ctx.const_0()
                             } &&
-                            is_tile(ctrl.resolve(self.arg_cache.on_thiscall_call(1)));
+                            is_tile(ctrl.resolve_arg_thiscall(1));
                         if ok {
                             self.result.get_atlas_page_coords_for_terrain_tile = Some(dest);
                             ctrl.end_analysis();
@@ -1298,12 +1288,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             let mut inline = false;
                             if inline_depth < 1 {
                                 // draw_terrain_tile_row
-                                let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                                let arg2 = ctrl.resolve_arg(1);
                                 inline = arg2.if_custom() == Some(0);
                             }
                             if !inline {
                                 // draw_terrain_tile inlining
-                                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                                let arg3 = ctrl.resolve_arg(2);
                                 inline = is_tile(arg3);
                             }
                             if inline {

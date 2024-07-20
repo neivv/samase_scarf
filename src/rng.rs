@@ -6,7 +6,7 @@ use scarf::analysis::{self, FuncAnalysis, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operation, Operand, OperandCtx, MemAccessSize, DestOperand};
 
-use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis::{AnalysisCtx};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::util::{single_result_assign, ControlExt, OperandExt};
 
@@ -37,17 +37,15 @@ pub(crate) fn rng<'e, E: ExecutionState<'e>>(
     spawn_direction_refs.sort_unstable_by_key(|x| x.func_entry);
     spawn_direction_refs.dedup_by_key(|x| x.func_entry);
     let functions = functions.functions();
-    let arg_cache = &analysis.arg_cache;
 
     let mut result = None;
     for global_ref in spawn_direction_refs.iter() {
         let val = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
-            let mut analyzer = FindRng {
+            let mut analyzer = FindRng::<E> {
                 jump_conds: BumpVec::new_in(bump),
                 result: EntryOf::Retry,
                 no_jump_cond: None,
-                arg_cache,
                 bump,
                 is_inlining: false,
                 use_address: global_ref.use_address,
@@ -73,7 +71,6 @@ pub(crate) fn rng<'e, E: ExecutionState<'e>>(
 }
 
 struct FindRng<'a, 'e, E: ExecutionState<'e>> {
-    arg_cache: &'a ArgCache<'e, E>,
     bump: &'a bumpalo::Bump,
     result: EntryOf<(Operand<'e>, Operand<'e>)>,
     no_jump_cond: Option<Operand<'e>>,
@@ -97,7 +94,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
         match *op {
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve_va(dest) {
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg1 = ctrl.resolve_arg(0);
                     if arg1.if_constant() == Some(0x24) {
                         if !self.is_inlining {
                             let jump_conds =

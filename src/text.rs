@@ -44,7 +44,6 @@ pub(crate) fn fonts<'e, E: ExecutionState<'e>>(
     // fonts[3] = Func("font16x")
     // Uses Custom(x) to store what offset in array the result is stored to
     let mut result = None;
-    let arg_cache = &analysis.arg_cache;
     for cand in candidates {
         let use_address = cand.use_address;
         let val = entry_of_until(binary, funcs, use_address, |entry| {
@@ -52,7 +51,6 @@ pub(crate) fn fonts<'e, E: ExecutionState<'e>>(
                 result: EntryOf::Retry,
                 use_address,
                 candidates: BumpVec::new_in(bump),
-                arg_cache,
                 rdata,
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -70,7 +68,6 @@ struct FontsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: EntryOf<Operand<'e>>,
     use_address: E::VirtualAddress,
     candidates: BumpVec<'a, FontsCandidate<'e>>,
-    arg_cache: &'a ArgCache<'e, E>,
     rdata: &'e BinarySection<E::VirtualAddress>,
 }
 
@@ -90,7 +87,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FontsAnalyzer<'a, 'e
         }
         match *op {
             Operation::Call(_) => {
-                if let Some(arg1) = ctrl.resolve(self.arg_cache.on_call(0)).if_constant() {
+                if let Some(arg1) = ctrl.resolve_arg(0).if_constant() {
                     let rdata = &self.rdata;
                     if arg1 >= rdata.virtual_address.as_u64() {
                         let offset = arg1 - rdata.virtual_address.as_u64();
@@ -330,8 +327,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             last_ok_call: Some(dest.as_u64()),
                         });
                     } else {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
-                        let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                        let arg1 = ctrl.resolve_arg_thiscall(0);
+                        let arg2 = ctrl.resolve_arg_thiscall(1);
                         let ctx = ctrl.ctx();
                         if arg1 == ctx.const_0() && arg2.if_constant() == Some(0x20) {
                             self.ok_calls.push(dest);
@@ -359,7 +356,6 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TtfCacheCharacterAna
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
             Operation::Call(dest) => {
-                let ctx = ctrl.ctx();
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     let ecx = ctrl.resolve_register(1);
                     // Args 4, 5, 6 are hardcoded constants. Either
@@ -367,21 +363,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for TtfCacheCharacterAna
                     //  0xd, 0xb4, 13.0 (new)
                     //  0xa, 0xb4, 18.0 (old)
                     let args_ok = Some(())
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                        .map(|_| ctrl.resolve_arg(0))
                         .filter(|&a1| self.is_glyph_set_ptr(a1))
                         .and_then(|_| {
-                            let arg4 = ctx.and_const(
-                                ctrl.resolve(self.arg_cache.on_call(3)),
-                                0xff,
-                            ).if_constant()?;
-                            let arg5 = ctx.and_const(
-                                ctrl.resolve(self.arg_cache.on_call(4)),
-                                0xff,
-                            ).if_constant()?;
-                            let arg6 = ctx.and_const(
-                                ctrl.resolve(self.arg_cache.on_call(5)),
-                                0xffff_ffff,
-                            );
+                            let arg4 = ctrl.resolve_arg_u8(3).if_constant()?;
+                            let arg5 = ctrl.resolve_arg_u8(4).if_constant()?;
+                            let arg6 = ctrl.resolve_arg_u32(5);
                             let arg6 = arg6.if_constant()
                                 .or_else(|| {
                                     // Read from memory if data/rdata value,
@@ -463,7 +450,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindTtfMalloc<'a, 'e
         match *op {
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve_va(dest) {
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg1 = ctrl.resolve_arg(0);
                     // Malloc is called with (a4 + right - left) * (a4 + bottom - top)
                     // (a4 is border width)
                     let arg4 = self.arg_cache.on_entry(3);

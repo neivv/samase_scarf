@@ -80,11 +80,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeReadWholeM
                     }
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ctx = ctrl.ctx();
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
-                        let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
-                        let arg5 = ctrl.resolve(self.arg_cache.on_call(4));
+                        let arg1 = ctrl.resolve_arg(0);
+                        let arg2 = ctrl.resolve_arg(1);
+                        let arg3 = ctrl.resolve_arg(2);
+                        let arg4 = ctrl.resolve_arg(3);
+                        let arg5 = ctrl.resolve_arg(4);
                         let ok = match self.inline_depth {
                             0 => {
                                 arg1 == self.arg_cache.on_entry(0) &&
@@ -102,7 +102,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeReadWholeM
                                     arg5 == ctx.const_0()
                             }
                             2 | _ => {
-                                let arg6 = ctrl.resolve(self.arg_cache.on_call(5));
+                                let arg6 = ctrl.resolve_arg(5);
                                 // Checking that locale_global must be global, but
                                 // not platform_global, as it is semi-unused and smart
                                 // compiler could just compile it to 0.
@@ -148,13 +148,12 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeReadWholeM
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ctx = ctrl.ctx();
                         let zero = ctx.const_0();
-                        let ok = ctrl.resolve(self.arg_cache.on_call(0)).if_custom() == Some(0) &&
-                            ctrl.resolve(self.arg_cache.on_call(3)) == zero &&
-                            ctrl.resolve(self.arg_cache.on_call(4)) ==
-                                self.arg_cache.on_entry(6) &&
-                            ctx.and_const(ctrl.resolve(self.arg_cache.on_call(5)), 0xffff_ffff) ==
+                        let ok = ctrl.resolve_arg(0).if_custom() == Some(0) &&
+                            ctrl.resolve_arg(3) == zero &&
+                            ctrl.resolve_arg(4) == self.arg_cache.on_entry(6) &&
+                            ctrl.resolve_arg_u32(5) ==
                                 ctx.and_const(self.arg_cache.on_entry(7), 0xffff_ffff) &&
-                            ctrl.resolve(self.arg_cache.on_call(6)) == zero;
+                            ctrl.resolve_arg(6) == zero;
                         if ok {
                             self.result.sfile_read_file_ex = Some(dest);
                             ctrl.clear_unchecked_branches();
@@ -167,7 +166,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeReadWholeM
             MpqFileState::CloseFile => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         if arg1.if_custom() == Some(0) {
                             self.result.sfile_close_file = Some(dest);
                             ctrl.end_analysis();

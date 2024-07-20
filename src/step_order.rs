@@ -5,7 +5,7 @@ use scarf::analysis::{self, FuncAnalysis, Cfg, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::OperandCtx;
 
-use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis::{AnalysisCtx};
 use crate::analysis_find::{entry_of_until, EntryOf, FunctionFinder};
 use crate::analysis_state::{AnalysisState, StateEnum, StepOrderState};
 use crate::call_tracker::CallTracker;
@@ -854,15 +854,13 @@ pub(crate) fn do_attack<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
 
-    let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, attack_order);
-    let mut analyzer = FindDoAttack {
+    let mut analyzer = FindDoAttack::<E> {
         ai_try_return_home: None,
         update_attack_target: None,
         do_attack: None,
         do_attack_main: None,
         last_bullet_spawner: None,
-        arg_cache,
         inlining: false,
         entry_esp: ctx.register(4),
         state: DoAttackState::AiTryReturnHome,
@@ -877,13 +875,12 @@ pub(crate) fn do_attack<'e, E: ExecutionState<'e>>(
     }
 }
 
-struct FindDoAttack<'a, 'e, E: ExecutionState<'e>> {
+struct FindDoAttack<'e, E: ExecutionState<'e>> {
     ai_try_return_home: Option<E::VirtualAddress>,
     update_attack_target: Option<E::VirtualAddress>,
     do_attack: Option<E::VirtualAddress>,
     do_attack_main: Option<E::VirtualAddress>,
     last_bullet_spawner: Option<Operand<'e>>,
-    arg_cache: &'a ArgCache<'e, E>,
     inlining: bool,
     entry_esp: Operand<'e>,
     state: DoAttackState,
@@ -903,7 +900,7 @@ enum DoAttackState {
     DoAttackMain,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -913,8 +910,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
             DoAttackState::AiTryReturnHome => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let arg1 = ctrl.resolve_arg(0);
+                        let arg2 = ctrl.resolve_arg(1);
                         let ok = arg1 == ctx.register(1) &&
                             ctx.and_const(arg2, 0xff) == ctx.const_0();
                         if ok {
@@ -987,13 +984,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
                                 // Step 2: Check for do_attack_main(this, 2, units_dat_air_weapon[x])
                                 let ok = Some(())
                                     .filter(|_| ctrl.resolve_register(1) == ctx.register(1))
-                                    .and_then(|_| {
-                                        ctrl.resolve(self.arg_cache.on_thiscall_call(0)).if_constant()
-                                    })
+                                    .and_then(|_| ctrl.resolve_arg_thiscall(0).if_constant())
                                     .filter(|&c| c == 2)
-                                    .and_then(|_| {
-                                        ctrl.resolve(self.arg_cache.on_thiscall_call(1)).if_mem8()
-                                    })
+                                    .and_then(|_| ctrl.resolve_arg_thiscall(1).if_mem8())
                                     .filter(|x| {
                                         let (base, offset) = x.address();
                                         base != ctx.const_0() && offset != 0
@@ -1052,13 +1045,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindDoAttack<'a, 'e,
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> FindDoAttack<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> FindDoAttack<'e, E> {
     fn is_do_attack_call(&self, ctrl: &mut Control<'e, '_, '_, Self>) -> bool {
-        let ctx = ctrl.ctx();
-        let ecx = ctx.register(1);
-        let this = ctrl.resolve(ecx);
-        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
-        this == ecx && ctx.and_const(arg1, 0xff).if_constant() == Some(5)
+        let ecx = ctrl.ctx().register(1);
+        let this = ctrl.resolve_register(1);
+        this == ecx && ctrl.resolve_arg_thiscall_u8(0).if_constant() == Some(5)
     }
 }
 
@@ -1082,7 +1073,6 @@ pub(crate) fn step_order_analysis<'e, E: ExecutionState<'e>>(
         inline_depth_at_interceptor: 0,
         inline_result: None,
         entry_esp: ctx.register(4),
-        arg_cache: &actx.arg_cache,
     };
     let mut exec = E::initial_state(ctx, binary);
     // Assign order = ff (Don't go to any order func)
@@ -1113,7 +1103,6 @@ struct AnalyzeStepOrder<'a, 'e, E: ExecutionState<'e>> {
     inline_depth_at_interceptor: u8,
     inline_result: Option<Operand<'e>>,
     entry_esp: Operand<'e>,
-    arg_cache: &'a ArgCache<'e, E>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -1152,7 +1141,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeStepOrder<
         if let Operation::Call(dest) = *op {
             if let Some(dest) = ctrl.resolve_va(dest) {
                 if state == AnalyzeStepOrderState::FocusAir {
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg1 = ctrl.resolve_arg(0);
                     let unit_specific = E::struct_layouts().unit_specific();
                     let ok = ctrl.if_mem_word_offset(arg1, unit_specific)
                         .filter(|&x| x == ctx.register(1))
@@ -1270,7 +1259,6 @@ pub(crate) fn analyze_order_train<'e, E: ExecutionState<'e>>(
     let mut analyzer = AnalyzeOrderTrain::<E> {
         result: &mut result,
         state: OrderTrainState::StepTrain,
-        arg_cache: &actx.arg_cache,
         cancel_queued_branch: None,
     };
     let mut exec = E::initial_state(ctx, binary);
@@ -1289,7 +1277,6 @@ pub(crate) fn analyze_order_train<'e, E: ExecutionState<'e>>(
 struct AnalyzeOrderTrain<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut OrderTrain<E::VirtualAddress>,
     state: OrderTrainState,
-    arg_cache: &'a ArgCache<'e, E>,
     cancel_queued_branch: Option<(E::VirtualAddress, E)>,
 }
 
@@ -1318,7 +1305,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderTrain
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             let ecx = ctx.register(1);
                             let this = ctrl.resolve(ecx);
-                            let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                            let arg2 = ctrl.resolve_arg_thiscall(1);
                             let currently_building = E::struct_layouts().unit_currently_building();
                             let ok = ctrl.if_mem_word_offset(this, currently_building) ==
                                     Some(ecx) &&
@@ -1358,8 +1345,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderTrain
             OrderTrainState::AddAiToTrainedUnit => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let arg1 = ctrl.resolve_arg(0);
+                        let arg2 = ctrl.resolve_arg(1);
                         let ecx = ctx.register(1);
                         let currently_building = E::struct_layouts().unit_currently_building();
                         let ok = arg1 == ecx &&
@@ -1381,9 +1368,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderTrain
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if self.result.cancel_queued_unit.is_none() {
                             let this = ctrl.resolve_register(1);
-                            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
                             let ok = this == ctx.register(1) &&
-                                ctx.and_const(arg1, 0xff) == ctx.const_0();
+                                ctrl.resolve_arg_thiscall_u8(0) == ctx.const_0();
                             if ok {
                                 self.result.cancel_queued_unit = Some(dest);
                             }
@@ -1427,7 +1413,6 @@ pub(crate) fn analyze_order_matrix<'e, E: ExecutionState<'e>>(
     let mut analyzer = AnalyzeOrderMatrix::<E> {
         result: &mut result,
         state: OrderMatrixState::GetSightRange,
-        arg_cache: &actx.arg_cache,
         units_dat_sight_range,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, order_matrix);
@@ -1438,7 +1423,6 @@ pub(crate) fn analyze_order_matrix<'e, E: ExecutionState<'e>>(
 struct AnalyzeOrderMatrix<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut OrderMatrix<E::VirtualAddress>,
     state: OrderMatrixState,
-    arg_cache: &'a ArgCache<'e, E>,
     units_dat_sight_range: E::VirtualAddress,
 }
 
@@ -1459,11 +1443,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOrderMatri
             OrderMatrixState::GetSightRange => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let ecx = ctx.register(1);
-                        let this = ctrl.resolve(ecx);
-                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
-                        let ok = this == ecx &&
-                            ctx.and_const(arg1, 0xff) == ctx.const_1();
+                        let this = ctrl.resolve_register(1);
+                        let ok = this == ctx.register(1) &&
+                            ctrl.resolve_arg_thiscall_u8(0) == ctx.const_1();
                         if ok {
                             self.state = OrderMatrixState::VerifyGetSightRange;
                             ctrl.analyze_with_current_state(self, dest);
@@ -1509,7 +1491,6 @@ pub(crate) fn analyze_order_player_guard<'e, E: ExecutionState<'e>>(
     let mut analyzer = AnalyzeOrderPlayerGuard::<E> {
         result: &mut result,
         state: OrderPlayerGuardState::GetTargetAcqRange,
-        arg_cache: &actx.arg_cache,
         call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x8),
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, order_player_guard);
@@ -1520,7 +1501,6 @@ pub(crate) fn analyze_order_player_guard<'e, E: ExecutionState<'e>>(
 struct AnalyzeOrderPlayerGuard<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut OrderPlayerGuard<E::VirtualAddress>,
     state: OrderPlayerGuardState,
-    arg_cache: &'a ArgCache<'e, E>,
     call_tracker: CallTracker<'acx, 'e, E>,
 }
 
@@ -1601,14 +1581,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     _ => return,
                 };
                 if let Some(dest) = ctrl.resolve_va(dest) {
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                    let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                    let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
-                    let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
-                    let ok = arg1 == ctx.register(1) &&
+                    let arg2 = ctrl.resolve_arg(1);
+                    let ok = ctrl.resolve_arg(0) == ctx.register(1) &&
                         arg2.if_custom().is_some() &&
-                        ctx.and_const(arg3, 0xff) == ctx.const_1() &&
-                        ctx.and_const(arg4, 0xff) == ctx.const_0();
+                        ctrl.resolve_arg_u8(2) == ctx.const_1() &&
+                        ctrl.resolve_arg_u8(3) == ctx.const_0();
                     if ok {
                         self.result.attack_unit = Some(dest);
                         self.result.pick_auto_target = arg2.if_custom()
@@ -1643,7 +1620,6 @@ pub(crate) fn analyze_order_arbiter_cloak<'e, E: ExecutionState<'e>>(
     let mut analyzer = AnalyzeOrderArbiterCloak::<E> {
         result: &mut result,
         state: OrderArbiterCloakState::GetAttackRange,
-        arg_cache: &actx.arg_cache,
         units_dat_air_weapon,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, order_arbiter_cloak);
@@ -1654,7 +1630,6 @@ pub(crate) fn analyze_order_arbiter_cloak<'e, E: ExecutionState<'e>>(
 struct AnalyzeOrderArbiterCloak<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut OrderArbiterCloak<E::VirtualAddress>,
     state: OrderArbiterCloakState,
-    arg_cache: &'a ArgCache<'e, E>,
     units_dat_air_weapon: E::VirtualAddress,
 }
 
@@ -1678,8 +1653,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ecx = ctx.register(1);
-                        let this = ctrl.resolve(ecx);
-                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let this = ctrl.resolve_register(1);
+                        let arg1 = ctrl.resolve_arg_thiscall(0);
                         let ok = this == ecx &&
                             arg1.if_mem8_offset(self.units_dat_air_weapon.as_u64()).is_some();
                         if ok {
@@ -1694,7 +1669,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             OrderArbiterCloakState::UnitBorders => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         let mem = ctx.mem_access(arg1, 0, MemAccessSize::Mem16);
                         let left = ctrl.read_memory(&mem);
                         let top =
@@ -2018,7 +1993,6 @@ pub(crate) fn analyze_order_zerg_build_self<'e, E: ExecutionState<'e>>(
         result: &mut result,
         state: ZergBuildSelfState::ClearCompletedFlag,
         func_candidate: E::VirtualAddress::from_u64(0),
-        arg_cache: &actx.arg_cache,
         units_dat_flag_jump_seen: false,
         funcs_seen: 0,
         any_jumps_seen: false,
@@ -2043,7 +2017,6 @@ struct AnalyzeOrderZergBuildSelf<'a, 'e, E: ExecutionState<'e>> {
     func_candidate: E::VirtualAddress,
     funcs_seen: u32,
     any_jumps_seen: bool,
-    arg_cache: &'a ArgCache<'e, E>,
     units_dat_flag_jump_seen: bool,
 }
 
@@ -2140,10 +2113,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if self.func_candidate.as_u64() != 0 {
-                            let arg1 = ctx.and_const(
-                                ctrl.resolve(self.arg_cache.on_thiscall_call(0)),
-                                0xff,
-                            );
+                            let arg1 = ctrl.resolve_arg_thiscall_u8(0);
                             if arg1.if_constant() == Some(0xf) {
                                 self.result.stop_creep_disappearing_at_building =
                                     Some(self.func_candidate);
@@ -2152,7 +2122,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 return;
                             }
                         }
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         if arg1 == ctx.register(1) {
                             self.func_candidate = dest;
                         }
@@ -2205,10 +2175,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 } else {
                     if let Operation::Call(dest) = *op {
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            let arg5 = ctx.and_const(
-                                ctrl.resolve(self.arg_cache.on_call(4)),
-                                0xff,
-                            );
+                            let arg5 = ctrl.resolve_arg_u8(4);
                             if arg5 == ctx.const_1() {
                                 self.result.place_creep_rect = Some(dest);
                             }

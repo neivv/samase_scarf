@@ -128,13 +128,12 @@ pub(crate) fn local_player_id<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-struct FindInitNetPlayer<'a, 'e, E: ExecutionState<'e>> {
+struct FindInitNetPlayer<'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     in_child_func: bool,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindInitNetPlayer<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindInitNetPlayer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -146,13 +145,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindInitNetPlayer<'a
                 }
             }
             Operation::Call(dest) => {
-                if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                    let dest = E::VirtualAddress::from_u64(dest);
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     // Check that
                     // arg3 == mem16[data + 4],
                     // arg4 == mem16[data + 6],
-                    let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
-                    let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
+                    let arg3 = ctrl.resolve_arg(2);
+                    let arg4 = ctrl.resolve_arg(3);
                     let arg3_base = arg3.if_mem16_offset(4);
                     let arg4_base = arg4.if_mem16_offset(6);
                     match (arg3_base, arg4_base) {
@@ -202,7 +200,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
         let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
-                if seems_assertion_call(ctrl, self.arg_cache) {
+                if seems_assertion_call(ctrl) {
                     return;
                 }
                 if let Some(dest) = ctrl.resolve_va(dest) {
@@ -304,9 +302,8 @@ pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
         Some(s) => s,
         None => return result,
     };
-    let mut analyzer = FindInitNetPlayer {
+    let mut analyzer = FindInitNetPlayer::<E> {
         result: None,
-        arg_cache: &actx.arg_cache,
         in_child_func: false,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, cmd_3f);

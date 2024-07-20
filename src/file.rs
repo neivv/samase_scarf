@@ -16,7 +16,6 @@ pub(crate) struct OpenFile<Va: VirtualAddress> {
 struct FindLoadDat<'acx, 'e, E: ExecutionState<'e>> {
     result: BumpVec<'acx, E::VirtualAddress>,
     string_address: E::VirtualAddress,
-    arg_cache: &'acx ArgCache<'e, E>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLoadDat<'a, 'e, E> {
@@ -25,8 +24,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLoadDat<'a, '
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if let Operation::Call(dest) = *op {
             if let Some(dest) = ctrl.resolve_va(dest) {
-                let arg1 = ctrl.resolve(self.arg_cache.on_call(0)).if_constant();
-                let arg2 = ctrl.resolve(self.arg_cache.on_call(1)).if_constant();
+                let arg1 = ctrl.resolve_arg(0).if_constant();
+                let arg2 = ctrl.resolve_arg(1).if_constant();
                 if let (Some(arg1), Some(_)) = (arg1, arg2) {
                     if arg1 == self.string_address.as_u64() {
                         self.result.push(dest);
@@ -43,7 +42,6 @@ pub(crate) fn find_load_dat_fn<'acx, 'e, E: ExecutionState<'e>>(
     parent: E::VirtualAddress,
     string_address: E::VirtualAddress,
 ) -> BumpVec<'acx, E::VirtualAddress> {
-    let arg_cache = &analysis.arg_cache;
     let ctx = analysis.ctx;
     let binary = analysis.binary;
     let bump = &analysis.bump;
@@ -51,7 +49,6 @@ pub(crate) fn find_load_dat_fn<'acx, 'e, E: ExecutionState<'e>>(
     let mut analyzer = FindLoadDat {
         result: BumpVec::new_in(bump),
         string_address,
-        arg_cache,
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
@@ -189,7 +186,7 @@ fn find_name_arg<'e, A: analysis::Analyzer<'e>>(
     ctrl: &mut Control<'e, '_, '_, A>
 ) -> Option<Arg> {
     (0..10).filter_map(|i| {
-        let resolved = ctrl.resolve(arg_cache.on_call(i));
+        let resolved = ctrl.resolve_arg(i);
         match arg {
             Arg::Stack(s) => {
                 let equiv = arg_cache.on_entry(s);
@@ -264,10 +261,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeOpenFile<'
             if let Some(dest) = ctrl.resolve_va(dest) {
                 // file_exists(&local_buffer, 104, path(arg2), open_params(arg3))
                 let arg_cache = self.arg_cache;
-                let ok = ctrl.resolve(arg_cache.on_call(1)).if_constant() == Some(0x104) &&
-                    ctrl.resolve(arg_cache.on_call(2)) == arg_cache.on_entry(1) &&
-                    ctrl.resolve(arg_cache.on_call(3)) == arg_cache.on_entry(2) &&
-                    !is_global(ctrl.resolve(arg_cache.on_call(0)));
+                let ok = ctrl.resolve_arg(1).if_constant() == Some(0x104) &&
+                    ctrl.resolve_arg(2) == arg_cache.on_entry(1) &&
+                    ctrl.resolve_arg(3) == arg_cache.on_entry(2) &&
+                    !is_global(ctrl.resolve_arg(0));
                 if ok {
                     self.result.file_exists = Some(dest);
                     ctrl.end_analysis();
@@ -322,7 +319,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeLoadDat<'a
             }
         } else if let Operation::Call(dest) = *op {
             let ctx = ctrl.ctx();
-            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+            let arg1 = ctrl.resolve_arg(0);
             if arg1 == self.arg_cache.on_entry(0) {
                 if self.custom_jump_seen {
                     if let Some(dest) = ctrl.resolve_va(dest) {
@@ -331,7 +328,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeLoadDat<'a
                         return;
                     }
                 } else {
-                    let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                    let arg3 = ctrl.resolve_arg(2);
                     ctrl.write_memory(
                         &ctx.mem_access(arg3, 0, MemAccessSize::Mem32),
                         ctx.custom(0),

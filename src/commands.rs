@@ -67,8 +67,6 @@ pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
     process_commands_switch: &CompleteSwitch<'e>,
 ) -> PrintText<E::VirtualAddress> {
     struct Analyzer<'a, 'e, E: ExecutionState<'e>> {
-        arg1: Operand<'e>,
-        arg2: Operand<'e>,
         ctx: OperandCtx<'e>,
         result: &'a mut PrintText<E::VirtualAddress>,
         branch: E::VirtualAddress,
@@ -85,8 +83,8 @@ pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
                         return;
                     }
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg1);
-                        let arg2 = ctrl.resolve(self.arg2);
+                        let arg1 = ctrl.resolve_arg(0);
+                        let arg2 = ctrl.resolve_arg(1);
                         if self.result.print_text.is_none() {
                             if let Some(mem) = arg2.if_mem8() {
                                 let offset_1 = mem.with_offset_size(1, MemAccessSize::Mem8)
@@ -136,8 +134,6 @@ pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
 
     let mut analyzer = Analyzer::<E> {
         before_switch: true,
-        arg1: analysis.arg_cache.on_call(0),
-        arg2: analysis.arg_cache.on_call(1),
         ctx,
         branch,
         result: &mut result,
@@ -218,29 +214,26 @@ pub(crate) fn send_command<'e, E: ExecutionState<'e>>(
     firegraft: &crate::FiregraftAddresses<E::VirtualAddress>,
 ) -> Option<E::VirtualAddress> {
     let binary = analysis.binary;
-    let arg_cache = &analysis.arg_cache;
     let ctx = analysis.ctx;
 
     let &button_sets = firegraft.buttonsets.first()?;
     let stim_func = struct_layouts::button_set_index_to_action(binary, button_sets, 0, 5)?;
 
     let mut analysis = FuncAnalysis::new(binary, ctx, stim_func);
-    let mut analyzer = FindSendCommand {
+    let mut analyzer = FindSendCommand::<E> {
         result: None,
-        arg_cache,
         is_inlining: false,
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-struct FindSendCommand<'a, 'e, E: ExecutionState<'e>> {
+struct FindSendCommand<'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     is_inlining: bool,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -249,11 +242,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     // Check if calling send_command(&[COMMAND_STIM], 1)
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg1 = ctrl.resolve_arg(0);
                     let arg1_addr = ctx.mem_access(arg1, 0, MemAccessSize::Mem8);
                     let arg1_inner = ctrl.read_memory(&arg1_addr);
                     if arg1_inner.if_constant() == Some(0x36) {
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let arg2 = ctrl.resolve_arg(1);
                         if arg2.if_constant() == Some(1) {
                             if single_result_assign(Some(dest), &mut self.result) {
                                 ctrl.end_analysis();
@@ -666,7 +659,6 @@ pub(crate) fn analyze_step_network<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let bump = &analysis.bump;
-    let arg_cache = &analysis.arg_cache;
 
     let exec_state = E::initial_state(ctx, binary);
     let state = StepNetworkState {
@@ -676,7 +668,6 @@ pub(crate) fn analyze_step_network<'e, E: ExecutionState<'e>>(
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, step_network, exec_state, state);
     let mut analyzer = AnalyzeStepNetwork::<E> {
         result: &mut result,
-        arg_cache,
         inlining: false,
         process_command_inline_depth: 0,
         inline_limit: 0,
@@ -689,7 +680,6 @@ pub(crate) fn analyze_step_network<'e, E: ExecutionState<'e>>(
 
 struct AnalyzeStepNetwork<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut StepNetwork<'e, E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     inlining: bool,
     process_command_inline_depth: u8,
     inline_limit: u8,
@@ -723,17 +713,17 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         // Check that receive_storm_turns didn't get inlined.
                         // receive_storm_turns calls storm_122 with same arguments
                         // but adds arg6 = 4.
-                        let ok = Some(ctrl.resolve(self.arg_cache.on_call(0)))
+                        let ok = Some(ctrl.resolve_arg(0))
                             .filter(|x| x.if_constant() == Some(0))
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                            .map(|_| ctrl.resolve_arg(1))
                             .filter(|x| x.if_constant() == Some(0xc))
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(5)))
+                            .map(|_| ctrl.resolve_arg(5))
                             .filter(|x| x.if_constant() != Some(0x4))
                             .is_some();
                         if ok {
-                            let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
-                            let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
-                            let arg5 = ctrl.resolve(self.arg_cache.on_call(4));
+                            let arg3 = ctrl.resolve_arg(2);
+                            let arg4 = ctrl.resolve_arg(3);
+                            let arg5 = ctrl.resolve_arg(4);
                             let ok = arg3.if_constant().is_some() &&
                                 arg4.if_constant().is_some() &&
                                 arg5.if_constant().is_some();
@@ -764,9 +754,8 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         // process_commands(player_turns[7], turns_size[7], 0)
                         // process_lobby_commands(player_turns[7], turns_size[7], 7)
-                        let arg_cache = self.arg_cache;
                         let ok =
-                            ctrl.resolve(arg_cache.on_call(0)).if_memory()
+                            ctrl.resolve_arg(0).if_memory()
                                 .filter(|&x| {
                                     x.size == E::WORD_SIZE &&
                                         Some(ctx.mem_sub_const_op(
@@ -774,7 +763,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                             7 * E::VirtualAddress::SIZE as u64,
                                         )) == self.result.player_turns
                                 })
-                                .and_then(|_| ctrl.resolve(arg_cache.on_call(1)).if_mem32())
+                                .and_then(|_| ctrl.resolve_arg(1).if_mem32())
                                 .filter(|&x| {
                                     Some(ctx.mem_sub_const_op(x, 7 * 4)) ==
                                         self.result.player_turns_size
@@ -784,7 +773,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                         true => 7,
                                         false => 0,
                                     };
-                                    ctrl.resolve(arg_cache.on_call(2)).if_constant() == Some(cmp)
+                                    ctrl.resolve_arg(2).if_constant() == Some(cmp)
                                 })
                                 .is_some();
                         if ok {
@@ -806,10 +795,8 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 //   this == player_turns, arg1(u8) == 0
                                 let this_ok = Some(ctrl.resolve_register(1)) ==
                                     self.result.player_turns;
-                                let arg1 =
-                                    ctrl.resolve(self.arg_cache.on_thiscall_call(0));
-                                let arg2 =
-                                    ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                                let arg1 = ctrl.resolve_arg_thiscall(0);
+                                let arg2 = ctrl.resolve_arg_thiscall(1);
                                 if this_ok {
                                     (ctx.and_const(arg1, 0xff) == ctx.const_1() &&
                                         self.process_command_inline_depth < 1 &&
@@ -947,26 +934,25 @@ pub(crate) fn replay_data<'e, E: ExecutionState<'e>>(
 
     let branch = process_commands_switch.branch(binary, ctx, 0x15)?;
 
-    let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, branch);
     let mut analyzer = FindReplayData::<E> {
         result: None,
         limit: 6,
         inline_depth: 0,
-        arg_cache,
+        phantom: Default::default(),
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-struct FindReplayData<'a, 'e, E: ExecutionState<'e>> {
+struct FindReplayData<'e, E: ExecutionState<'e>> {
     result: Option<Operand<'e>>,
     limit: u8,
     inline_depth: u8,
-    arg_cache: &'a ArgCache<'e, E>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindReplayData<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindReplayData<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -978,7 +964,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindReplayData<'a
                     return;
                 }
                 self.limit -= 1;
-                if ctrl.resolve(self.arg_cache.on_call(1)).if_constant() == Some(0xb) {
+                if ctrl.resolve_arg(1).if_constant() == Some(0xb) {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let old_limit = self.limit;
                         self.inline_depth = 1;
@@ -1000,7 +986,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindReplayData<'a
                     return;
                 }
                 self.limit -= 1;
-                if ctrl.resolve(self.arg_cache.on_call(2)).if_constant() == Some(0xb) {
+                if ctrl.resolve_arg(2).if_constant() == Some(0xb) {
                     if let Some(dest) = ctrl.resolve(dest).if_constant() {
                         let dest = E::VirtualAddress::from_u64(dest);
                         self.inline_depth += 1;
@@ -1153,12 +1139,10 @@ pub(crate) fn player_colors<'e, E: ExecutionState<'e>>(
         None => return result,
     };
 
-    let arg_cache = &actx.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, branch);
     let mut analyzer = AnalyzePlayerColors::<E> {
         result: &mut result,
         inline_depth: 0,
-        arg_cache,
         state: PlayerColorState::First,
         call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
         jump_conditions: bumpvec_with_capacity(10, bump),
@@ -1170,7 +1154,6 @@ pub(crate) fn player_colors<'e, E: ExecutionState<'e>>(
 struct AnalyzePlayerColors<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut Colors<'e>,
     inline_depth: u8,
-    arg_cache: &'a ArgCache<'e, E>,
     state: PlayerColorState,
     call_tracker: CallTracker<'acx, 'e, E>,
     // (branch_start, preceding condition),
@@ -1309,10 +1292,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> AnalyzePlayerColors<'a, 'acx, 'e, E> {
         match *op {
             Operation::Call(..) => {
                 // check memcpy calls
-                let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                let arg3 = ctrl.resolve_arg(2);
                 if let Some(len) = arg3.if_constant() {
                     if len == 8 || len == 0x80 {
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let arg2 = ctrl.resolve_arg(1);
                         let arg2_offset = arg2.if_arithmetic_add()
                             .and_then(|(_l, r)| r.if_constant());
                         if let Some(off) = arg2_offset {
@@ -1325,7 +1308,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> AnalyzePlayerColors<'a, 'acx, 'e, E> {
                             } else {
                                 return false;
                             };
-                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            let arg1 = ctrl.resolve_arg(0);
                             if is_global(arg1) {
                                 *out = Some(arg1);
                                 return true;
@@ -1445,7 +1428,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CloakAnalyzer<
                 } else if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if self.inline_depth == 0 {
-                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            let arg1 = ctrl.resolve_arg(0);
                             if arg1 == self.arg_cache.on_entry(0) {
                                 self.inline_depth = 1;
                                 ctrl.analyze_with_current_state(self, dest);
@@ -1565,7 +1548,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MorphAnalyzer<'a, 'e
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if self.inline_depth == 0 {
-                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            let arg1 = ctrl.resolve_arg(0);
                             if arg1 == self.arg_cache.on_entry(0) {
                                 self.inline_depth = 1;
                                 ctrl.analyze_with_current_state(self, dest);
@@ -1588,7 +1571,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MorphAnalyzer<'a, 'e
             MorphState::PrepareBuildUnit => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let a1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let a1 = ctrl.resolve_arg_thiscall(0);
                         let ok = a1.if_mem16_offset(1) == Some(self.arg_cache.on_entry(0));
                         if ok {
                             self.result.prepare_build_unit = Some(dest);

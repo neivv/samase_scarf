@@ -4,7 +4,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, Operation};
 
-use crate::util::{OperandExt};
+use crate::util::{ControlExt, OperandExt};
 use super::{DatPatchContext};
 
 /// Patches unit id checks in conditions / actions. They differ
@@ -94,14 +94,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
                     if self.checked_functions.insert(dest) {
-                        let arg_cache = &self.dat_ctx.analysis.arg_cache;
                         // Check for [arg1 + c] for unit_id
                         // (arg1 + 18 for action)
                         let offset = match self.is_action {
                             true => 0x18,
                             false => 0xc,
                         };
-                        let ok = Some(ctrl.resolve(arg_cache.on_call(1)))
+                        let arg_cache = &self.dat_ctx.analysis.arg_cache;
+                        let ok = Some(ctrl.resolve_arg(1))
                             .and_then(|x| x.if_mem16_offset(offset))
                             .filter(|&x| x == arg_cache.on_entry(0))
                             .is_some();

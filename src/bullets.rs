@@ -82,18 +82,15 @@ pub(crate) struct SplashLurker<'e> {
     pub lurker_hits_frame: Option<Operand<'e>>,
 }
 
-struct FindCreateBullet<'a, 'acx, 'e, E: ExecutionState<'e>> {
+struct FindCreateBullet<'acx, 'e, E: ExecutionState<'e>> {
     is_inlining: bool,
     result: Option<E::VirtualAddress>,
     active_iscript_unit: Option<Operand<'e>>,
-    arg_cache: &'a ArgCache<'e, E>,
     calls_seen: u32,
     phantom: std::marker::PhantomData<&'acx ()>,
 }
 
-impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
-    FindCreateBullet<'a, 'acx, 'e, E>
-{
+impl<'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindCreateBullet<'acx, 'e, E> {
     type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -102,7 +99,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             Operation::Call(to) => {
                 if !self.is_inlining {
                     if let Some(dest) = ctrl.resolve_va(to) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let arg1 = ctrl.resolve_arg_thiscall(0);
                         if arg1.if_mem8().is_some() {
                             self.is_inlining = true;
                             let ecx = ctrl.resolve_register(1);
@@ -122,13 +119,13 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     }
                 }
 
-                let unit = ctrl.resolve(self.arg_cache.on_call(5));
+                let unit = ctrl.resolve_arg(5);
                 if let Some(active_unit) = self.active_iscript_unit {
                     if unit != active_unit {
                         return;
                     }
                 }
-                let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
+                let arg4 = ctrl.resolve_arg(3);
                 let is_player = arg4
                     .if_mem8_offset(E::struct_layouts().unit_player())
                     .map(|x| x == unit)
@@ -294,7 +291,6 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
         result: None,
         active_iscript_unit: None,
         calls_seen: 0,
-        arg_cache: &analysis.arg_cache,
         phantom: Default::default(),
     };
     let exec_state = E::initial_state(ctx, binary);
@@ -453,7 +449,6 @@ pub(crate) fn analyze_step_moving_bullet_frame<'e, E: ExecutionState<'e>>(
         inlining_move_flingy: false,
         verifying_func: false,
         result: &mut result,
-        arg_cache: &actx.arg_cache,
         current_func: E::VirtualAddress::from_u64(0),
         start_end_other_state: None,
         start_end_candidate: None,
@@ -469,7 +464,6 @@ struct StepMovingAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     inlining_move_flingy: bool,
     verifying_func: bool,
     result: &'a mut StepMovingBulletFrame<'e, E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     current_func: E::VirtualAddress,
     start_end_other_state: Option<(E, E::VirtualAddress)>,
     start_end_candidate: Option<Operand<'e>>,
@@ -727,8 +721,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for StepMovingAnalyzer<'
                         let ok = E::struct_layouts().if_unit_sprite(this) ==
                             Some(ecx);
                         if ok {
-                            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
-                            let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                            let arg1 = ctrl.resolve_arg_thiscall(0);
+                            let arg2 = ctrl.resolve_arg_thiscall(1);
                             let ok = arg1.if_mem16_offset(pos_offset) == Some(ecx) &&
                                 arg2.if_mem16_offset(pos_offset + 2) == Some(ecx);
                             if ok {
@@ -829,24 +823,22 @@ pub(crate) fn do_missile_damage<'e, E: ExecutionState<'e>>(
     let switch_branch = switch::simple_switch_branch(binary, iscript_switch, 0x1b)?;
     let mut analyzer = DoMissileDmgAnalyzer::<E> {
         result: None,
-        arg_cache: &actx.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, switch_branch);
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-struct DoMissileDmgAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct DoMissileDmgAnalyzer<'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DoMissileDmgAnalyzer<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DoMissileDmgAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if let Operation::Call(dest) = *op {
-            if seems_assertion_call(ctrl, self.arg_cache) {
+            if seems_assertion_call(ctrl) {
                 ctrl.end_branch();
                 return;
             }
@@ -1043,12 +1035,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let this = ctrl.resolve(ecx);
-                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let arg1 = ctrl.resolve_arg_thiscall(0);
                         let ok = if self.state == MissileDamageState::HitUnit {
                             ctrl.if_mem_word_offset(this, target_offset) == Some(ecx) &&
                                 arg1 == ecx
                         } else {
-                            let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                            let arg2 = ctrl.resolve_arg_thiscall(1);
                             ctrl.if_mem_word_offset(this, target_offset) == Some(ecx) &&
                                 ctrl.if_mem_word_offset(arg1, parent_offset) == Some(ecx) &&
                                 arg2 == ctx.const_1()
@@ -1098,7 +1090,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                                 self.result.disable_unit = Some(dest);
                                 ctrl.end_analysis();
                             } else if self.inline_depth == 0 {
-                                let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                                let arg1 = ctrl.resolve_arg_thiscall(0);
                                 if arg1.if_constant() == Some(0x83) {
                                     let old_esp = self.entry_esp;
                                     self.inline_depth = 1;
@@ -1126,10 +1118,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             MissileDamageState::AiUnitWasHit => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
-                        let arg4 = ctrl.resolve(self.arg_cache.on_call(3));
+                        let arg1 = ctrl.resolve_arg(0);
+                        let arg2 = ctrl.resolve_arg(1);
+                        let arg3 = ctrl.resolve_arg(2);
+                        let arg4 = ctrl.resolve_arg(3);
                         let ok = ctrl.if_mem_word_offset(arg1, target_offset) == Some(ecx) &&
                             ctrl.if_mem_word_offset(arg2, parent_offset) == Some(ecx) &&
                             arg3 == ctx.const_1() &&
@@ -1147,10 +1139,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             MissileDamageState::Sounds => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let arg1 = Operand::and_masked(arg1).0;
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
-                        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                        let arg1 = ctrl.resolve_arg(0).unwrap_and_mask();
+                        let arg2 = ctrl.resolve_arg(1);
+                        let arg3 = ctrl.resolve_arg(2);
                         let ok = (arg1.if_custom().is_some() || arg1.if_constant().is_some()) &&
                             ctrl.if_mem_word_offset(arg2, target_offset) == Some(ecx) &&
                             arg3 == ctx.const_1();
@@ -1173,7 +1164,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let this = ctrl.resolve(ecx);
                         if self.inline_depth == 0 {
-                            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                            let arg1 = ctrl.resolve_arg_thiscall(0);
                             let inline =
                                 ctrl.if_mem_word_offset(this, parent_offset) == Some(ecx) &&
                                 ctrl.if_mem_word_offset(arg1, target_offset) == Some(ecx);
@@ -1189,7 +1180,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                         if !self.increment_kill_scores_seen {
                             // Check a2 != this.parent.player_id to avoid
                             // confusing with increment_kill_scores
-                            let c_a2 = ctrl.resolve(self.arg_cache.on_call(1));
+                            let c_a2 = ctrl.resolve_arg(1);
                             let is_parent_player =
                                 c_a2.if_mem8_offset(E::struct_layouts().unit_player()).is_some();
                             self.increment_kill_scores_seen = is_parent_player;
@@ -1390,7 +1381,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for HitUnitAnalyzer<'a, 
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ecx = ctx.register(1);
                         let this = ctrl.resolve_register(1);
-                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let arg1 = ctrl.resolve_arg_thiscall(0);
                         if this != ecx {
                             if E::VirtualAddress::SIZE == 4 &&
                                 self.state == HitUnitState::DoWeaponDamage
@@ -1407,10 +1398,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for HitUnitAnalyzer<'a, 
                             return;
                         }
                         let bullet = self.arg_cache.on_thiscall_entry(0);
-                        let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
-                        let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
-                        let arg4 = ctrl.resolve(self.arg_cache.on_thiscall_call(3));
-                        let arg5 = ctrl.resolve(self.arg_cache.on_thiscall_call(4));
+                        let arg2 = ctrl.resolve_arg_thiscall(1);
+                        let arg3 = ctrl.resolve_arg_thiscall(2);
+                        let arg4 = ctrl.resolve_arg_thiscall(3);
+                        let arg5 = ctrl.resolve_arg_thiscall(4);
                         let ok = if self.state == HitUnitState::HallucinationHit {
                             ctx.and_const(arg1, 0xff)
                                     .if_mem8_offset(weapon_id_offset) == Some(bullet) &&
@@ -1511,17 +1502,16 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         let ctx = ctrl.ctx();
                         let ok = ctrl.resolve_register(1) == ctx.register(1) && {
-                                let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                                let arg2 = ctrl.resolve_arg_thiscall_u8(1);
                                 let entry_arg5 = self.arg_cache.on_thiscall_entry(4);
-                                ctx.and_const(arg2, 0xff) == ctx.and_const(entry_arg5, 0xff)
+                                arg2 == ctx.and_const(entry_arg5, 0xff)
                             } && {
-                                let arg3 = ctrl.resolve(self.arg_cache.on_thiscall_call(2));
+                                let arg3 = ctrl.resolve_arg_thiscall_u8(2);
                                 let entry_arg6 = self.arg_cache.on_thiscall_entry(5);
-                                ctx.and_const(arg3, 0xff) == ctx.and_const(entry_arg6, 0xff)
+                                arg3 == ctx.and_const(entry_arg6, 0xff)
                             } && {
-                                let arg4 = ctrl.resolve(self.arg_cache.on_thiscall_call(3));
-                                ctx.and_const(arg4, 0xff)
-                                    .if_arithmetic_eq_neq()
+                                let arg4 = ctrl.resolve_arg_thiscall_u8(3);
+                                arg4.if_arithmetic_eq_neq()
                                     .filter(|x| x.1.if_constant() == Some(0x22))
                                     .is_some()
                             };

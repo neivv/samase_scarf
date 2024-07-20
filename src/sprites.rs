@@ -170,9 +170,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
         match *op {
             Operation::Call(to) => {
                 if let Some(dest) = ctrl.resolve_va(to) {
-                    let arg_cache = self.arg_cache;
                     let ctx = ctrl.ctx();
-                    let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                    let arg1 = ctrl.resolve_arg(0);
                     if arg1.if_constant() == Some(0xe7) {
                         // Nuke dot sprite, either calling create lone or create sprite
                         // Their args are the same though, so cannot verify much here.
@@ -211,14 +210,14 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                         return;
                     }
                     let ecx = ctrl.resolve_register(1);
-                    let tc_arg1 = ctrl.resolve(arg_cache.on_thiscall_call(0));
+                    let tc_arg1 = ctrl.resolve_arg_thiscall(0);
                     if self.is_list_call(tc_arg1, ecx) {
                         ctrl.analyze_with_current_state(self, dest);
                     } else {
                         if self.state == FindSpritesState::CreateSprite {
                             // Check for fn(&mut val1, &mut val2) where
                             // val1 and val2 were inited with constants
-                            let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                            let arg2 = ctrl.resolve_arg(1);
                             let arg1_mem = ctx.mem_access(arg1, 0, E::WORD_SIZE);
                             let arg2_mem = ctx.mem_access(arg2, 0, E::WORD_SIZE);
                             let arg1_c = ctrl.read_memory(&arg1_mem).if_constant();
@@ -937,7 +936,6 @@ pub(crate) fn init_sprites<'e, E: ExecutionState<'e>>(
     };
     let str_refs = functions.string_refs(analysis, b"arr\\sprites.dat\0");
     let functions = functions.functions();
-    let arg_cache = &analysis.arg_cache;
     for str_ref in str_refs {
         let val = entry_of_until(binary, &functions, str_ref.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
@@ -948,7 +946,6 @@ pub(crate) fn init_sprites<'e, E: ExecutionState<'e>>(
                 str_ref_found: false,
                 first_free_sprite_addr,
                 last_free_sprite_addr,
-                arg_cache,
                 array_candidates: BumpVec::new_in(bump),
             };
             analysis.analyze(&mut analyzer);
@@ -979,7 +976,6 @@ struct InitSpritesAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     str_ref_found: bool,
     first_free_sprite_addr: MemAccess<'e>,
     last_free_sprite_addr: Operand<'e>,
-    arg_cache: &'acx ArgCache<'e, E>,
     array_candidates: BumpVec<'acx, (Operand<'e>, Operand<'e>)>,
 }
 
@@ -998,7 +994,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             Operation::Call(to) => {
                 if !self.inlining {
                     if let Some(dest) = ctrl.resolve_va(to) {
-                        let arg2 = ctrl.resolve(self.arg_cache.on_thiscall_call(1));
+                        let arg2 = ctrl.resolve_arg_thiscall(1);
                         let should_inline = arg2 == self.last_free_sprite_addr;
                         if should_inline {
                             ctrl.analyze_with_current_state(self, dest);

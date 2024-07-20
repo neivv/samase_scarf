@@ -143,14 +143,12 @@ fn run_dialog_analysis<'e, E: ExecutionState<'e>>(
 
     let binary = analysis.binary;
     let funcs = functions.functions();
-    let args = &analysis.arg_cache;
     let str_refs = dialog_string_refs(analysis, functions, old_string_ref, new_string_ref);
     for str_ref in &str_refs {
         let entry_of_result = entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
-            let mut analyzer = RunDialogAnalyzer {
+            let mut analyzer = RunDialogAnalyzer::<E> {
                 string_address: str_ref.string_address,
                 result: &mut result,
-                args,
                 func_entry: entry,
             };
 
@@ -185,7 +183,6 @@ pub fn dialog_string_refs<'acx, 'e, E: ExecutionState<'e>>(
 
 struct RunDialogAnalyzer<'exec, 'b, E: ExecutionState<'exec>> {
     string_address: E::VirtualAddress,
-    args: &'b ArgCache<'exec, E>,
     result: &'b mut RunDialog<E::VirtualAddress>,
     func_entry: E::VirtualAddress,
 }
@@ -199,10 +196,10 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
         let ctx = ctrl.ctx();
         match *op {
             Operation::Call(to) => {
-                let arg1 = ctrl.resolve(self.args.on_call(0));
-                let arg2 = ctrl.resolve(self.args.on_call(1));
-                let arg3 = ctrl.resolve(self.args.on_call(2));
-                let arg4 = ctrl.resolve(self.args.on_call(3));
+                let arg1 = ctrl.resolve_arg(0);
+                let arg2 = ctrl.resolve_arg(1);
+                let arg3 = ctrl.resolve_arg(2);
+                let arg4 = ctrl.resolve_arg(3);
                 let arg1_is_dialog_ptr = arg1.if_custom() == Some(0);
                 if arg1_is_dialog_ptr {
                     // run_dialog(dialog, 0, event_handler)
@@ -273,15 +270,13 @@ pub(crate) fn find_dialog_global<'exec, E: ExecutionState<'exec>>(
 ) -> EntryOf<E::VirtualAddress> {
     let ctx = analysis.ctx;
     let return_marker = ctx.and_const(ctx.custom(0), E::WORD_SIZE.mask());
-    let args = &analysis.arg_cache;
     let string_address_constant = ctx.constant(str_ref.string_address.as_u64());
     let mut analysis = FuncAnalysis::new(analysis.binary, ctx, func);
-    let mut analyzer = DialogGlobalAnalyzer {
+    let mut analyzer = DialogGlobalAnalyzer::<E> {
         result: EntryOf::Retry,
         path_string: None,
         str_ref,
         string_address_constant,
-        args,
         return_marker,
     };
     analysis.analyze(&mut analyzer);
@@ -293,7 +288,6 @@ struct DialogGlobalAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     path_string: Option<Operand<'e>>,
     str_ref: &'a StringRefs<E::VirtualAddress>,
     string_address_constant: Operand<'e>,
-    args: &'a ArgCache<'e, E>,
     return_marker: Operand<'e>,
 }
 
@@ -317,7 +311,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
             Operation::Call(_dest) => {
                 let mut args = [ctx.const_0(); 4];
                 for i in 0..args.len() {
-                    args[i] = ctrl.resolve(self.args.on_call(i as u8));
+                    args[i] = ctrl.resolve_arg(i as u8);
                 }
                 let string_in_args = args.iter().any(|&x| x == self.string_address_constant);
                 if string_in_args {
@@ -341,7 +335,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
                         .and_then(|x| x.if_constant_address())
                         .is_some_and(|x| x == self.str_ref.string_address.as_u64());
                     if arg3_is_string_struct_ptr {
-                        let arg1 = ctrl.resolve(self.args.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         self.path_string = Some(arg1);
                     }
                 }
@@ -547,8 +541,8 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'acx, 'e, E>
         match *op {
             Operation::Call(dest) if self.inline_depth < 2 => {
                 // set_tooltip arg2 is a fnptr (arg 1 child ctrl)
-                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                let arg1 = ctrl.resolve_arg(0);
+                let arg2 = ctrl.resolve_arg(1);
                 if arg2.if_constant().is_none() {
                     // Alternatively just accept fn (ctrl, event)
                     if arg2.if_custom() != Some(0) || arg1.if_custom() != Some(1) {
@@ -622,7 +616,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'acx, 'e, E>
                             true
                         } else {
                             let ctx = ctrl.ctx();
-                            let arg = ctrl.resolve(self.arg_cache.on_call(i));
+                            let arg = ctrl.resolve_arg(i);
                             match ctx.and_const(arg, 0xff).if_constant() {
                                 Some(s) => s as u8 == vals[i as usize],
                                 _ => false,
@@ -764,7 +758,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     if self.inline_depth < 5 {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         // Only inline when status_screen dialog is being passed to the function
                         // as arg1
                         if arg1 == self.arg_cache.on_entry(0) {
@@ -869,12 +863,10 @@ pub(crate) fn mouse_xy<'e, E: ExecutionState<'e>>(
 
     // Search for [Control.user_pointer].field0 = *cmdicons_ddsgrp
     // Right before that it sets Control.user_u16 to 0xc
-    let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, run_dialog);
     let mut analyzer = MouseXyAnalyzer::<E> {
         result: &mut result,
         inline_depth: 0,
-        arg_cache,
         funcs: bumpvec_with_capacity(32, bump),
     };
     analysis.analyze(&mut analyzer);
@@ -883,7 +875,6 @@ pub(crate) fn mouse_xy<'e, E: ExecutionState<'e>>(
 
 struct MouseXyAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut MouseXy<'e, E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
     funcs: BumpVec<'acx, E::VirtualAddress>,
 }
@@ -917,7 +908,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     let is_calling_event_handler = ctrl.if_mem_word(dest)
                         .is_some_and(|mem| (0x28..0x80).contains(&mem.address().1));
                     if is_calling_event_handler {
-                        let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let arg2 = ctrl.resolve_arg(1);
                         let x_offset = E::struct_layouts().event_mouse_xy();
                         let x = ctrl.read_memory(&ctx.mem_access16(arg2, x_offset));
                         let y = ctrl.read_memory(&ctx.mem_access16(arg2, x_offset + 2));
@@ -1012,12 +1003,10 @@ pub(crate) fn multi_wireframes<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let funcs = functions.functions();
     let str_refs = functions.string_refs(analysis, b"unit\\wirefram\\tranwire");
-    let arg_cache = &analysis.arg_cache;
     for str_ref in &str_refs {
         let res = entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
-            let mut analyzer = MultiWireframeAnalyzer {
+            let mut analyzer = MultiWireframeAnalyzer::<E> {
                 result: &mut result,
-                arg_cache,
                 binary,
                 check_return_store: None,
                 spawn_dialog,
@@ -1044,7 +1033,6 @@ pub(crate) fn multi_wireframes<'e, E: ExecutionState<'e>>(
 
 struct MultiWireframeAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut MultiWireframes<'e, E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     binary: &'e BinaryFile<E::VirtualAddress>,
     check_return_store: Option<MultiGrpType>,
     spawn_dialog: E::VirtualAddress,
@@ -1091,10 +1079,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
                 }
             }
             Operation::Call(dest) => {
-                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                let arg1 = ctrl.resolve_arg(0);
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     if dest == self.spawn_dialog {
-                        let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                        let arg3 = ctrl.resolve_arg(2);
                         // spawn_dialog(dialog, 0, event_handler)
                         // The dialog variable may have been written and is reread for the call,
                         // or it may just pass the return address directly (but still have
@@ -1111,7 +1099,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MultiWireframeAnalyz
                     }
                 }
                 if let Some(ty) = self.is_multi_grp_path(arg1) {
-                    let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
+                    let arg2 = ctrl.resolve_arg(1);
                     if arg2 == ctx.const_0() {
                         self.check_return_store = Some(ty);
                         ctrl.skip_operation();
@@ -1169,24 +1157,23 @@ pub(crate) fn wirefram_ddsgrp<'e, E: ExecutionState<'e>>(
 
     let wireframe_event = find_child_event_handler::<E>(analysis, ss_event_handler, 0)?;
     let draw_func = find_child_draw_func::<E>(analysis, wireframe_event)?;
-    let arg_cache = &analysis.arg_cache;
     let mut analysis = FuncAnalysis::new(binary, ctx, draw_func);
-    let mut analyzer = WireframDdsgrpAnalyzer {
+    let mut analyzer = WireframDdsgrpAnalyzer::<E> {
         inline_depth: 0,
-        arg_cache,
         result: None,
+        phantom: Default::default(),
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-struct WireframDdsgrpAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    arg_cache: &'a ArgCache<'e, E>,
+struct WireframDdsgrpAnalyzer<'e, E: ExecutionState<'e>> {
     inline_depth: u8,
     result: Option<Operand<'e>>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyzer<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -1196,11 +1183,11 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyz
                 if self.inline_depth == 0 {
                     // Arg 3 and 4 should be referring to stack, arg 1 global mem
                     let result = Some(())
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
+                        .map(|_| ctrl.resolve_arg(2))
                         .filter(|&a3| is_stack_address(a3))
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
+                        .map(|_| ctrl.resolve_arg(3))
                         .filter(|&a4| is_stack_address(a4))
-                        .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                        .map(|_| ctrl.resolve_arg(0))
                         .and_then(|a1| ctrl.if_mem_word(a1))
                         .filter(|a1| a1.is_global());
                     if let Some(result) = result {
@@ -1310,12 +1297,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindChildEventHandle
         match *op {
             Operation::Call(_) => {
                 let result = Some(())
-                    .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                    .map(|_| ctrl.resolve_arg(0))
                     .filter(|&a1| a1 == self.arg_cache.on_entry(0))
-                    .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                    .map(|_| ctrl.resolve_arg(1))
                     .and_then(|a2| {
                         let addr = E::VirtualAddress::from_u64(a2.if_constant()?);
-                        let a3 = ctrl.resolve(self.arg_cache.on_call(2));
+                        let a3 = ctrl.resolve_arg(2);
                         let len: u32 = a3.if_constant()?.try_into().ok()?;
                         Some((addr, len))
                     });
@@ -1686,21 +1673,19 @@ pub(crate) fn clamp_zoom<'e, E: ExecutionState<'e>>(
     let mut analyzer = FindClampZoom::<E> {
         inline_depth: 0,
         is_multiplayer,
-        arg_cache: &actx.arg_cache,
         result: None,
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-struct FindClampZoom<'a, 'e, E: ExecutionState<'e>> {
+struct FindClampZoom<'e, E: ExecutionState<'e>> {
     inline_depth: u8,
-    arg_cache: &'a ArgCache<'e, E>,
     is_multiplayer: Operand<'e>,
     result: Option<E::VirtualAddress>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindClampZoom<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindClampZoom<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -1761,7 +1746,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindClampZoom<'a, 'e
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> FindClampZoom<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> FindClampZoom<'e, E> {
     /// Returns (should_inline, is_clamp_zoom_candidate)
     fn check_inline(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) -> (bool, bool) {
         if self.inline_depth > 5 {
@@ -1769,7 +1754,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FindClampZoom<'a, 'e, E> {
         }
         let ctx = ctrl.ctx();
         let arg1 = match E::VirtualAddress::SIZE == 4 {
-            true => ctrl.resolve(self.arg_cache.on_call(0)),
+            true => ctrl.resolve_arg(0),
             false => ctrl.resolve(ctx.xmm(0, 0)),
         };
         let binary = ctrl.binary();
@@ -1810,7 +1795,6 @@ pub(crate) fn analyze_run_menus<'e, E: ExecutionState<'e>>(
     let mut analysis = FuncAnalysis::new(binary, ctx, run_menus);
     let mut analyzer = RunMenusAnalyzer::<E> {
         result: &mut result,
-        arg_cache: &actx.arg_cache,
         state: RunMenusState::Start,
         inline_depth: 0,
         entry_esp: ctx.register(4),
@@ -1842,7 +1826,6 @@ enum RunMenusState {
 
 struct RunMenusAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut RunMenus<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     state: RunMenusState,
     inline_depth: u8,
     entry_esp: Operand<'e>,
@@ -1886,10 +1869,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if self.result.set_music.is_none() {
-                            let arg1 = ctx.and_const(
-                                ctrl.resolve(self.arg_cache.on_call(0)),
-                                0xff,
-                            );
+                            let arg1 = ctrl.resolve_arg_u8(0);
                             if arg1.if_constant() == Some(0xe) {
                                 self.result.set_music = Some(dest);
                                 return;
@@ -1961,8 +1941,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
             RunMenusState::FindShowMissionGlue => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let arg2 = ctx.and_const(ctrl.resolve(self.arg_cache.on_call(1)), 0xff);
+                        let arg1 = ctrl.resolve_arg(0);
+                        let arg2 = ctrl.resolve_arg_u8(1);
                         let ok = ctrl.if_mem_word(arg1).is_some() && arg2 == ctx.const_1();
                         if ok {
                             self.result.show_mission_glue = Some(dest);
@@ -2201,15 +2181,15 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     if self.ext_event_branch == 0xa && self.result.swish_in.is_none() {
                         // swish_in(this, ptr, 2, 2, 0)
                         let is_swish_in = Some(())
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(0)))
+                            .map(|_| ctrl.resolve_arg(0))
                             .filter(|&x| x == self.arg_cache.on_entry(0))
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(1)))
+                            .map(|_| ctrl.resolve_arg(1))
                             .and_then(|x| x.if_constant().filter(|&c| c > 0x1000))
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(2)))
-                            .filter(|&x| ctx.and_const(x, 0xff).if_constant() == Some(2))
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(3)))
-                            .filter(|&x| ctx.and_const(x, 0xff).if_constant() == Some(2))
-                            .map(|_| ctrl.resolve(self.arg_cache.on_call(4)))
+                            .map(|_| ctrl.resolve_arg_u8(2))
+                            .filter(|&x| x.if_constant() == Some(2))
+                            .map(|_| ctrl.resolve_arg_u8(3))
+                            .filter(|&x| x.if_constant() == Some(2))
+                            .map(|_| ctrl.resolve_arg_u16(4))
                             .filter(|&x| ctx.and_const(x, 0xffff) == ctx.const_0())
                             .is_some();
                         if is_swish_in {
@@ -2227,7 +2207,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             }
                         }
                         if !self.inlining {
-                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            let arg1 = ctrl.resolve_arg(0);
                             if arg1 == self.arg_cache.on_entry(0) {
                                 self.inlining = true;
                                 ctrl.analyze_with_current_state(self, dest);
@@ -2381,9 +2361,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunDialogChildAnalyz
             }
             RunDialogChildState::CtrlSetTimer => {
                 if let Operation::Call(dest) = *op {
-                    let ok = ctrl.resolve(self.arg_cache.on_call_u32(1)).if_constant() ==
-                            Some(0xc) &&
-                        ctrl.resolve(self.arg_cache.on_call_u32(2)).if_constant() == Some(0x64);
+                    let ok = ctrl.resolve_arg_u32(1).if_constant() == Some(0xc) &&
+                        ctrl.resolve_arg_u32(2).if_constant() == Some(0x64);
                     if ok {
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             self.result.ctrl_set_timer = Some(dest);
@@ -2407,9 +2386,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunDialogChildAnalyz
                     } else if let Operation::Call(dest) = *op {
                         self.allow_inline = false;
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            if ctrl.resolve(self.arg_cache.on_call(0)) ==
-                                self.arg_cache.on_entry(0)
-                            {
+                            if ctrl.resolve_arg(0) == self.arg_cache.on_entry(0) {
                                 self.inlining = true;
                                 ctrl.analyze_with_current_state(self, dest);
                                 self.inlining = false;
@@ -2429,9 +2406,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunDialogChildAnalyz
                 if let Operation::Call(dest) = *op {
                     if self.allow_inline {
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            if ctrl.resolve(self.arg_cache.on_call(0)) ==
-                                self.arg_cache.on_entry(0)
-                            {
+                            if ctrl.resolve_arg(0) == self.arg_cache.on_entry(0) {
                                 // Only try inlining once, should be that or nothing.
                                 self.allow_inline = false;
                                 ctrl.analyze_with_current_state(self, dest);
@@ -2493,7 +2468,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunDialogChildAnalyz
             RunDialogChildState::FirstDialog => {
                 if let Operation::Call(dest) = *op {
                     let dest = ctrl.resolve(dest);
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg1 = ctrl.resolve_arg(0);
                     if let Some(dest) = dest.if_constant() {
                         if self.allow_inline {
                             if arg1 == self.arg_cache.on_entry(0) {

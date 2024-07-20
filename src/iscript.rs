@@ -37,10 +37,9 @@ pub(crate) fn step_iscript<'e, E: ExecutionState<'e>>(
     let ctx = actx.ctx;
     let binary = actx.binary;
 
-    let mut analyzer = FindStepIscript {
+    let mut analyzer = FindStepIscript::<E> {
         result: None,
         inline_limit: 0,
-        arg_cache: &actx.arg_cache,
         sprite_first_overlay: E::struct_layouts().sprite_first_overlay(sprite_size)?,
         entry_esp: ctx.register(4),
     };
@@ -49,15 +48,14 @@ pub(crate) fn step_iscript<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-struct FindStepIscript<'a, 'e, E: ExecutionState<'e>> {
+struct FindStepIscript<'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     inline_limit: u8,
     sprite_first_overlay: u32,
     entry_esp: Operand<'e>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindStepIscript<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindStepIscript<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -84,7 +82,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindStepIscript<'a, 
     }
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> FindStepIscript<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> FindStepIscript<'e, E> {
     fn check_function_call(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
@@ -92,16 +90,15 @@ impl<'a, 'e, E: ExecutionState<'e>> FindStepIscript<'a, 'e, E> {
         consider_inline: bool,
     ) {
         let ctx = ctrl.ctx();
-        let arg_cache = self.arg_cache;
         let this = ctrl.resolve_register(1);
-        let arg1 = ctrl.resolve(arg_cache.on_thiscall_call(0));
+        let arg1 = ctrl.resolve_arg_thiscall(0);
         let is_first_overlay = ctrl.if_mem_word_offset(this, self.sprite_first_overlay.into())
             .and_then(|x| E::struct_layouts().if_unit_sprite(x)) ==
             Some(ctx.register(1));
         if is_first_overlay {
             let zero = ctx.const_0();
-            let ok = ctrl.resolve(arg_cache.on_thiscall_call(1)) == zero &&
-                ctrl.resolve(arg_cache.on_thiscall_call(2)) == zero &&
+            let ok = ctrl.resolve_arg_thiscall(1) == zero &&
+                ctrl.resolve_arg_thiscall(2) == zero &&
                 arg1.if_arithmetic_add_const(E::struct_layouts().image_iscript()) == Some(this);
             if ok {
                 self.result = Some(dest);
@@ -345,19 +342,17 @@ pub(crate) fn add_overlay_iscript<'e, E: ExecutionState<'e>>(
 
     let mut analyzer = AddOverlayAnalyzer::<E> {
         result: None,
-        args: &analysis.arg_cache,
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, case_8);
     analysis.analyze(&mut analyzer);
     analyzer.result
 }
 
-struct AddOverlayAnalyzer<'exec, 'b, Exec: ExecutionState<'exec>> {
+struct AddOverlayAnalyzer<'e, Exec: ExecutionState<'e>> {
     result: Option<Exec::VirtualAddress>,
-    args: &'b ArgCache<'exec, Exec>,
 }
 
-impl<'e, 'b, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyzer<'e, 'b, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -374,12 +369,12 @@ impl<'e, 'b, E: ExecutionState<'e>> scarf::Analyzer<'e> for AddOverlayAnalyzer<'
             Operation::Call(to) => {
                 let to = ctrl.resolve(to);
                 if let Some(dest) = to.if_constant() {
-                    let arg5 = ctrl.resolve(self.args.on_thiscall_call(4));
-                    let arg5_ok = ctx.and_const(arg5, 0xffff_ffff) == ctx.const_1();
+                    let arg5 = ctrl.resolve_arg_thiscall_u32(4);
+                    let arg5_ok = arg5 == ctx.const_1();
                     if !arg5_ok {
                         return;
                     }
-                    let arg2 = ctrl.resolve(self.args.on_thiscall_call(1));
+                    let arg2 = ctrl.resolve_arg_thiscall(1);
 
                     let image_parent = E::struct_layouts().image_parent();
                     let arg2_ok = ctrl.if_mem_word_offset(arg2, image_parent).is_some();

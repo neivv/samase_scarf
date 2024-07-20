@@ -262,9 +262,9 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
                     // A1 has to be a1 to this fn
                     // a2 ptr,
                     // a3 length
-                    let a1 = ctrl.resolve(self.arg_cache.on_call(0));
-                    let a2 = ctrl.resolve(self.arg_cache.on_call(1));
-                    let a3 = ctrl.resolve(self.arg_cache.on_call(2));
+                    let a1 = ctrl.resolve_arg(0);
+                    let a2 = ctrl.resolve_arg(1);
+                    let a3 = ctrl.resolve_arg(2);
                     let eud_size = if E::VirtualAddress::SIZE == 4 { 0x10 } else { 0x18 };
                     if a1 == self.arg_cache.on_entry(0) {
                         if let Some(len) = a3.if_constant().and_then(|x| u32::try_from(x).ok()) {
@@ -339,7 +339,7 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
             // Check for eud_vec_push(&vec, &eud)
             // Eud is 0x10 / 0x18 bytes
             let ctx = ctrl.ctx();
-            let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+            let arg1 = ctrl.resolve_arg_thiscall(0);
             let eud_size = if E::VirtualAddress::SIZE == 4 { 0x10 } else { 0x18 };
             let offsets_sizes = if E::VirtualAddress::SIZE == 4 {
                 &[

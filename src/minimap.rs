@@ -2,7 +2,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operand, Operation};
 
-use crate::analysis::{AnalysisCtx, ArgCache, Patch};
+use crate::analysis::{AnalysisCtx, Patch};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::analysis_state::{AnalysisState, StateEnum, ReplayVisionsState};
 use crate::util::{ControlExt, ExecStateExt, OperandExt, OptionExt, bumpvec_with_capacity};
@@ -217,7 +217,6 @@ pub(crate) fn replay_visions<'e, E: ExecutionState<'e>>(
     };
     let mut analyzer = ReplayVisionsAnalyzer::<E> {
         result: &mut result,
-        arg_cache: &actx.arg_cache,
         inlining_draw_active_units: false,
         inlining_small_fn: 0,
         phantom: Default::default(),
@@ -228,7 +227,6 @@ pub(crate) fn replay_visions<'e, E: ExecutionState<'e>>(
 
 struct ReplayVisionsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut ReplayVisions<'e>,
-    arg_cache: &'a ArgCache<'e, E>,
     inlining_draw_active_units: bool,
     inlining_small_fn: u8,
     phantom: std::marker::PhantomData<(*const E, &'acx &'e ())>,
@@ -390,7 +388,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     // Check for draw_active_units call
                     if !self.inlining_draw_active_units {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         if Operand::and_masked(arg1).0.if_custom() == Some(0) {
                             self.inlining_draw_active_units = true;
                             ctrl.inline(self, dest);

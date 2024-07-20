@@ -5,7 +5,7 @@ use scarf::{DestOperand, FlagArith, Operand, Operation};
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::switch::CompleteSwitch;
-use crate::util::{single_result_assign, OperandExt};
+use crate::util::{single_result_assign, ControlExt, OperandExt};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckUnitRequirements<'e, Va: VirtualAddress> {
@@ -130,7 +130,6 @@ pub(crate) fn check_dat_requirements<'e, E: ExecutionState<'e>>(
     globals.sort_unstable_by_key(|x| x.func_entry);
     globals.dedup_by_key(|x| x.func_entry);
     let mut result = None;
-    let arg_cache = &analysis.arg_cache;
     let functions = functions.functions();
     for global_ref in globals {
         let val = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
@@ -139,7 +138,6 @@ pub(crate) fn check_dat_requirements<'e, E: ExecutionState<'e>>(
                 result: EntryOf::Retry,
                 global_address: global_ref.use_address,
                 requirement_offsets,
-                arg_cache,
             };
             analysis.analyze(&mut analyzer);
             analyzer.result
@@ -151,14 +149,13 @@ pub(crate) fn check_dat_requirements<'e, E: ExecutionState<'e>>(
     result
 }
 
-struct DatReqsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct DatReqsAnalyzer<'e, E: ExecutionState<'e>> {
     result: EntryOf<E::VirtualAddress>,
     global_address: E::VirtualAddress,
     requirement_offsets: E::VirtualAddress,
-    arg_cache: &'a ArgCache<'e, E>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for DatReqsAnalyzer<'a, 'e, E> {
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for DatReqsAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -171,11 +168,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for DatReqsAnalyzer<'
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve(dest).if_constant() {
                     let dest = E::VirtualAddress::from_u64(dest);
-                    let ctx = ctrl.ctx();
-                    let arg5 = ctx.and_const(
-                        ctrl.resolve(self.arg_cache.on_call(4)),
-                        0xffff_ffff,
-                    );
+                    let arg5 = ctrl.resolve_arg_u32(4);
                     let ok = arg5.if_mem16_offset(self.requirement_offsets.as_u64())
                         .and_then(|x| x.if_arithmetic_mul_const(2))
                         .is_some();

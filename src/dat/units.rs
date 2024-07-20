@@ -138,9 +138,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     if self.state == InitUnitsState::UnitSearchInit {
-                        let arg_cache = &self.dat_ctx.analysis.arg_cache;
-                        let arg2 = ctrl.resolve(arg_cache.on_call(1));
-                        let arg3 = ctrl.resolve(arg_cache.on_call(2));
+                        let arg2 = ctrl.resolve_arg(1);
+                        let arg3 = ctrl.resolve_arg(2);
                         let is_memset =
                             arg2.if_constant().filter(|&c| c as u8 == 0xff).is_some() &&
                             arg3.if_arithmetic_mul_const(8).is_some();
@@ -237,8 +236,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         ctrl.if_mem_word_offset(dest, E::struct_layouts().button_condition_func())
                             .is_some();
                     if is_button_cond {
-                        let arg_cache = &self.dat_ctx.analysis.arg_cache;
-                        let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         let needs_widen =
                             arg1.if_mem8_offset(E::struct_layouts().button_condition_param())
                                 .is_some();

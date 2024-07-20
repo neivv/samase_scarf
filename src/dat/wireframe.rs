@@ -221,9 +221,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     return;
                 }
 
-                let arg_cache = &self.dat_ctx.analysis.arg_cache;
                 // Check for grp_frame_header(grp, frame_id, out1, out2)
-                let arg1 = ctrl.resolve(arg_cache.on_call(0));
+                let arg1 = ctrl.resolve_arg(0);
                 let arg_match = self.grp_operands.get(&arg1.hash_by_address())
                     .map(|x| (*x, GrpType::Grp))
                     .or_else(|| {
@@ -234,8 +233,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     .filter(|x| x.0 == x.1)
                     .map(|x| x.0);
                 if let Some(_grp) = arg_match {
-                    let arg3 = ctrl.resolve(arg_cache.on_call(2));
-                    let arg4 = ctrl.resolve(arg_cache.on_call(3));
+                    let arg3 = ctrl.resolve_arg(2);
+                    let arg4 = ctrl.resolve_arg(3);
                     if is_stack(arg3, ctx) && is_stack(arg4, ctx) {
                         let binary = self.dat_ctx.binary;
                         let reloc_addr = arg1.if_memory()

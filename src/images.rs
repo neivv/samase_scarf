@@ -1,12 +1,10 @@
-use scarf::{
-    DestOperand, Operand, Operation, MemAccess,
-};
+use scarf::{DestOperand, Operand, Operation, MemAccess};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState};
 
 use scarf::exec_state::VirtualAddress as VirtualAddressTrait;
 
-use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis::{AnalysisCtx};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::util::{
     MemAccessExt, single_result_assign, ControlExt, is_global, ExecStateExt,
@@ -64,13 +62,10 @@ pub(crate) fn init_images<'e, E: ExecutionState<'e>>(
     global_refs.sort_unstable_by_key(|x| x.func_entry);
     global_refs.dedup_by_key(|x| x.func_entry);
 
-    let arg_cache = &actx.arg_cache;
-
     for global in global_refs {
         let ok = entry_of_until(binary, funcs, global.use_address, |entry| {
             let mut analyzer = InitImagesAnalyzer::<E> {
                 result: &mut result,
-                arg_cache,
                 inline_depth: 0,
                 state: InitImagesState::Arrays,
                 list_stores: [[None; 2]; 3],
@@ -109,7 +104,6 @@ enum InitImagesState {
 
 struct InitImagesAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut InitImages<'e, E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
     state: InitImagesState,
     /// Store list head/tail until able to determine which one is which
@@ -129,10 +123,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for InitImagesAnalyze
                         ctrl.end_analysis();
                     }
                     Operation::Call(..) => {
-                        let arg_cache = self.arg_cache;
-                        let arg1 = ctrl.resolve(arg_cache.on_call(0));
-                        let arg2 = ctrl.resolve(arg_cache.on_call(1));
-                        let arg3 = ctrl.resolve(arg_cache.on_call(2));
+                        let arg1 = ctrl.resolve_arg(0);
+                        let arg2 = ctrl.resolve_arg(1);
+                        let arg3 = ctrl.resolve_arg(2);
                         if arg2 != ctx.const_0() || !is_global(arg1) {
                             return;
                         }
@@ -190,8 +183,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for InitImagesAnalyze
                     }
                 } else if let Operation::Call(dest) = *op {
                     if self.inline_depth == 0 {
-                        let arg0 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
-                        if ctx.and_const(arg0, 0xff) == ctx.const_0() {
+                        let arg0 = ctrl.resolve_arg_thiscall_u8(0);
+                        if arg0 == ctx.const_0() {
                             if let Some(dest) = ctrl.resolve_va(dest) {
                                 self.inline_depth = 1;
                                 ctrl.analyze_with_current_state(self, dest);

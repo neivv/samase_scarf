@@ -22,12 +22,10 @@ pub(crate) fn play_sound<'e, E: ExecutionState<'e>>(
     // which calls play_sound_outer(sound, unused?, 0, x, y)
     // which calls play_sound(sound, unused, 0, x, y)
     let playsound = switch::simple_switch_branch(binary, iscript_switch, 0x18)?;
-    let arg_cache = &analysis.arg_cache;
     let mut analyzer = PlaySoundAnalyzer::<E> {
         result: None,
         inline_depth: 0,
         sound_id: None,
-        arg_cache,
         arg3_zero_seen: false,
         inner_arg4: None,
         inner_arg5: None,
@@ -37,17 +35,16 @@ pub(crate) fn play_sound<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-struct PlaySoundAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+struct PlaySoundAnalyzer<'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
     inline_depth: u8,
     sound_id: Option<Operand<'e>>,
-    arg_cache: &'a ArgCache<'e, E>,
     arg3_zero_seen: bool,
     inner_arg4: Option<Operand<'e>>,
     inner_arg5: Option<Operand<'e>>,
 }
 
-impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlaySoundAnalyzer<'a, 'e, E> {
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlaySoundAnalyzer<'e, E> {
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
@@ -56,7 +53,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlaySoundAnalyzer<'a
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     let ctx = ctrl.ctx();
                     if self.inline_depth == 0 {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                        let arg1 = ctrl.resolve_arg_thiscall(0);
                         if arg1.if_mem16().is_some() {
                             self.sound_id = Some(arg1);
                             self.inline_depth += 1;
@@ -65,24 +62,20 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlaySoundAnalyzer<'a
                             self.sound_id = None;
                         }
                     } else {
-                        let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                        let arg1 = ctrl.resolve_arg(0);
                         if Some(arg1) == self.sound_id {
-                            let arg3 = ctrl.resolve(self.arg_cache.on_call(2));
+                            let arg3 = ctrl.resolve_arg(2);
                             let arg3_zero = arg3 == ctx.const_0();
                             if arg3_zero {
                                 if self.arg3_zero_seen {
-                                    let ok = Some(ctrl.resolve(self.arg_cache.on_call(3))) ==
-                                            self.inner_arg4 &&
-                                        Some(ctrl.resolve(self.arg_cache.on_call(4))) ==
-                                            self.inner_arg5;
+                                    let ok = Some(ctrl.resolve_arg(3)) == self.inner_arg4 &&
+                                        Some(ctrl.resolve_arg(4)) == self.inner_arg5;
                                     if !ok {
                                         return;
                                     }
                                 } else {
-                                    self.inner_arg4 =
-                                        Some(ctrl.resolve(self.arg_cache.on_call(3)));
-                                    self.inner_arg5 =
-                                        Some(ctrl.resolve(self.arg_cache.on_call(4)));
+                                    self.inner_arg4 = Some(ctrl.resolve_arg(3));
+                                    self.inner_arg5 = Some(ctrl.resolve_arg(4));
                                     self.arg3_zero_seen = true;
                                 }
                             }

@@ -4,7 +4,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{MemAccessSize, Operand, OperandCtx, Operation, BinarySection, BinaryFile};
 
-use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis::{AnalysisCtx};
 use crate::analysis_find::{FunctionFinder, find_bytes, entry_of_until, EntryOf};
 use crate::add_terms::collect_arith_add_terms;
 use crate::switch::CompleteSwitch;
@@ -94,7 +94,6 @@ pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let text = analysis.binary_sections.text;
     let ctx = analysis.ctx;
-    let arg_cache = &analysis.arg_cache;
     let bump = &analysis.bump;
     let funcs = functions.functions();
     for vtable in vtables {
@@ -107,7 +106,6 @@ pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
             inlining: false,
             text,
             binary,
-            arg_cache,
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, func);
         analysis.analyze(&mut analyzer);
@@ -129,7 +127,6 @@ pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
                         inlining: false,
                         text,
                         binary,
-                        arg_cache,
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
@@ -153,7 +150,6 @@ struct FindInitStormNetworking<'a, 'e, E: ExecutionState<'e>> {
     inlining: bool,
     text: &'a BinarySection<E::VirtualAddress>,
     binary: &'a BinaryFile<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetworking<'a, 'e, E> {
@@ -174,8 +170,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitStormNetw
                         self.inlining = false;
                     }
                 } else {
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
-                    let arg2 = ctrl.resolve(self.arg_cache.on_call(1)).if_constant();
+                    let arg1 = ctrl.resolve_arg(0);
+                    let arg2 = ctrl.resolve_arg(1).if_constant();
                     let text_start = self.text.virtual_address;
                     let text_end = self.text.virtual_address + self.text.virtual_size;
                     let binary = self.binary;
@@ -234,7 +230,6 @@ pub(crate) fn snet_handle_packets<'e, E: ExecutionState<'e>>(
         vtables.vtables_starting_with(b".?AVUdpServer@").map(|x| x.address),
         bump,
     );
-    let arg_cache = &analysis.arg_cache;
     for root_inline_limit in 0..2 {
         for &vtable in &vtables {
             let func = match binary.read_address(vtable + 0x3 * E::VirtualAddress::SIZE) {
@@ -246,7 +241,6 @@ pub(crate) fn snet_handle_packets<'e, E: ExecutionState<'e>>(
                 root_inline_limit,
                 checking_candidate: false,
                 inlining_entry: E::VirtualAddress::from_u64(0),
-                arg_cache,
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, func);
             analysis.analyze(&mut analyzer);
@@ -265,7 +259,6 @@ struct SnetHandlePacketsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     // Do first with no inlining, then with one level of inlining.
     root_inline_limit: u8,
     inlining_entry: E::VirtualAddress,
-    arg_cache: &'a ArgCache<'e, E>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SnetHandlePacketsAnalyzer<'a, 'e, E> {
@@ -297,7 +290,6 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SnetHandlePackets
                         }
                     }
                 } else {
-                    let arg_cache = self.arg_cache;
                     if searching_for_recv {
                         let ok = Some(())
                             .filter(|_| dest.if_memory().is_some())
@@ -305,7 +297,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SnetHandlePackets
                                 // All arguments are out arguments initialized to 0
                                 (0..3).all(|i| {
                                     Some(())
-                                        .map(|_| ctrl.resolve(arg_cache.on_call(i)))
+                                        .map(|_| ctrl.resolve_arg(i))
                                         .map(|x| {
                                             let mem = ctx.mem_access(x, 0, MemAccessSize::Mem32);
                                             ctrl.read_memory(&mem)
@@ -552,7 +544,6 @@ pub(crate) fn step_lobby_network<'e, E: ExecutionState<'e>>(
 ) -> StepLobbyNetwork<E::VirtualAddress> {
     let binary = actx.binary;
     let ctx = actx.ctx;
-    let arg_cache = &actx.arg_cache;
     let mut result = StepLobbyNetwork {
         step_lobby_network: None,
         send_queued_lobby_commands: None,
@@ -563,7 +554,6 @@ pub(crate) fn step_lobby_network<'e, E: ExecutionState<'e>>(
     for caller in callers {
         let new = entry_of_until(binary, funcs, caller, |entry| {
             let mut analyzer = StepLobbyNetworkAnalyzer::<E> {
-                arg_cache,
                 result: &mut result,
                 entry_of: EntryOf::Retry,
                 inline_limit: 0,
@@ -586,7 +576,6 @@ pub(crate) fn step_lobby_network<'e, E: ExecutionState<'e>>(
 }
 
 struct StepLobbyNetworkAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    arg_cache: &'a ArgCache<'e, E>,
     entry_of: EntryOf<()>,
     result: &'a mut StepLobbyNetwork<E::VirtualAddress>,
     inline_limit: u8,
@@ -678,7 +667,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         if dest == self.send_command {
-                            let arg2 = ctrl.resolve(self.arg_cache.on_call_u32(1));
+                            let arg2 = ctrl.resolve_arg_u32(1);
                             if arg2 == ctx.const_1() {
                                 self.result.send_queued_lobby_commands =
                                     Some(E::VirtualAddress::from_u64(0));
@@ -699,7 +688,6 @@ pub(crate) fn step_lobby_state<'e, E: ExecutionState<'e>>(
 ) -> StepLobbyState<E::VirtualAddress> {
     let binary = actx.binary;
     let ctx = actx.ctx;
-    let arg_cache = &actx.arg_cache;
     let mut result = StepLobbyState {
         process_async_lobby_command: None,
         command_lobby_map_p2p: None,
@@ -711,7 +699,6 @@ pub(crate) fn step_lobby_state<'e, E: ExecutionState<'e>>(
         // Can match two different functions that both work for async command
         entry_of_until(binary, funcs, caller, |entry| {
             let mut analyzer = StepLobbyStateAnalyzer::<E> {
-                arg_cache,
                 result: &mut result,
                 entry_of: EntryOf::Retry,
                 inline_limit: 0,
@@ -732,7 +719,6 @@ pub(crate) fn step_lobby_state<'e, E: ExecutionState<'e>>(
 }
 
 struct StepLobbyStateAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    arg_cache: &'a ArgCache<'e, E>,
     entry_of: EntryOf<()>,
     result: &'a mut StepLobbyState<E::VirtualAddress>,
     inline_limit: u8,
@@ -834,8 +820,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepLobbyStateAna
             StepLobbyStateState::MapP2pPacket => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let a1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let a2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let a1 = ctrl.resolve_arg(0);
+                        let a2 = ctrl.resolve_arg(1);
                         let ok = a2.if_mem16().is_some_and(|mem| {
                             mem.with_offset(2) == ctx.mem_access(a1, 0, MemAccessSize::Mem16)
                         });

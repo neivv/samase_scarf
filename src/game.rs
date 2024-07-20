@@ -575,7 +575,7 @@ impl<'a, 'acx, 'e: 'a + 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     Some(s) => E::VirtualAddress::from_u64(s),
                     None => return,
                 };
-                let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                let arg1 = ctrl.resolve_arg(0);
                 if let Some(offset) = Self::esp_offset(arg1, ctx).filter(|&x| x >= 6 * 4) {
                     let u32_offset = offset / 4;
                     if (0..7).all(|i| self.is_local_u32_set(u32_offset - i)) {
@@ -697,8 +697,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         match *op {
             Operation::Call(dest_unres) => {
                 let dest_op = ctrl.resolve(dest_unres);
-                let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
-                let arg1_not_this = ctrl.resolve(self.arg_cache.on_call(0));
+                let arg1 = ctrl.resolve_arg_thiscall(0);
+                let arg1_not_this = ctrl.resolve_arg(0);
                 let ecx = ctrl.resolve_register(1);
                 let mut inline = false;
                 let word_size = E::VirtualAddress::SIZE;
@@ -1197,7 +1197,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             {
                 if let Operation::Call(dest) = *op {
                     let dest = ctrl.resolve(dest);
-                    let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let arg1 = ctrl.resolve_arg(0);
                     let is_x = arg1.if_mem8_offset(dcreep_x_offset).is_some();
                     if is_x {
                         if self.state == StepObjectsAnalysisState::CreepFuncs {
@@ -1476,7 +1476,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if let Operation::Call(dest) = *op {
                     if self.inline_depth < self.max_inline_depth {
                         if let Some(dest) = ctrl.resolve_va(dest) {
-                            let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            let arg1 = ctrl.resolve_arg(0);
                             if Some(arg1) == self.result.first_dying_unit {
                                 let old_inline_limit = self.inline_limit;
                                 self.inline_limit = 5;
@@ -1530,12 +1530,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let x_offset = E::struct_layouts().flingy_pos();
                         let y_offset = x_offset + 2;
 
-                        let ok = ctrl.resolve(self.arg_cache.on_call(0))
+                        let ok = ctrl.resolve_arg(0)
                                 .if_mem16_offset(unit_id_offset) == Some(first_dying) &&
-                            ctrl.resolve(self.arg_cache.on_call(1))
+                            ctrl.resolve_arg(1)
                                 .unwrap_sext()
                                 .if_mem16_offset(x_offset) == Some(first_dying) &&
-                            ctrl.resolve(self.arg_cache.on_call(2))
+                            ctrl.resolve_arg(2)
                                 .unwrap_sext()
                                 .if_mem16_offset(y_offset) == Some(first_dying);
                         if ok {
@@ -1704,7 +1704,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             if self.cloak_state_checked {
                                 let this = ctrl.resolve_register(1);
                                 if this == self.first_active_unit {
-                                    let arg1 = ctrl.resolve(self.arg_cache.on_thiscall_call(0));
+                                    let arg1 = ctrl.resolve_arg_thiscall(0);
                                     if arg1 == ctx.const_0() {
                                         self.result.update_cloak_state = Some(dest);
                                         self.state = StepObjectsAnalysisState::StepHiddenUnitFrame;

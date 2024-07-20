@@ -40,7 +40,6 @@ pub(crate) fn regions<'e, E: ExecutionState<'e>>(
     // Find things through aiscript value_area
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let arg_cache = &analysis.arg_cache;
 
     let value_area = match simple_switch_branch(binary, aiscript_hook.switch_table, 0x2a) {
         Some(s) => s,
@@ -69,7 +68,6 @@ pub(crate) fn regions<'e, E: ExecutionState<'e>>(
     let mut analyzer = RegionsAnalyzer {
         result: &mut result,
         inlining: false,
-        arg_cache,
     };
     analysis.analyze(&mut analyzer);
     result
@@ -78,7 +76,6 @@ pub(crate) fn regions<'e, E: ExecutionState<'e>>(
 struct RegionsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut RegionRelated<'e, E::VirtualAddress>,
     inlining: bool,
-    arg_cache: &'a ArgCache<'e, E>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RegionsAnalyzer<'a, 'e, E> {
@@ -118,20 +115,17 @@ impl<'a, 'e, E: ExecutionState<'e>> RegionsAnalyzer<'a, 'e, E> {
         ctrl: &mut Control<'e, '_, '_, Self>,
     ) -> bool {
         let ctx = ctrl.ctx();
-        match ctx.and_const(ctrl.resolve(self.arg_cache.on_call(1)), 0xffff).if_constant() {
+        match ctrl.resolve_arg_u16(1).if_constant() {
             // GetRegion(x, y) call?
             Some(998) => {
-                if ctx.and_const(
-                    ctrl.resolve(self.arg_cache.on_call(0)),
-                    0xffff,
-                ).if_constant() == Some(999) {
+                if ctrl.resolve_arg_u16(0).if_constant() == Some(999) {
                     self.result.get_region = Some(dest);
                     return true;
                 }
             }
             // SetAiRegionState call?
             Some(5) => {
-                let arg1 =  ctrl.resolve(self.arg_cache.on_call(0));
+                let arg1 =  ctrl.resolve_arg(0);
                 let ai_regions = arg1.if_arithmetic_add()
                     .and_either_other(|x| {
                         x.if_arithmetic_mul_const(E::struct_layouts().ai_region_size())
@@ -211,7 +205,6 @@ pub(crate) fn analyze_step_unit_movement<'e, E: ExecutionState<'e>>(
     let mut analysis = FuncAnalysis::new(binary, ctx, step_unit_movement);
     let mut analyzer = StepUnitMovementAnalyzer::<E> {
         result: &mut result,
-        arg_cache: &actx.arg_cache,
         state: StepUnitMovementState::Switch,
         inline_depth: 0,
     };
@@ -221,7 +214,6 @@ pub(crate) fn analyze_step_unit_movement<'e, E: ExecutionState<'e>>(
 
 struct StepUnitMovementAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     result: &'a mut StepUnitMovement<E::VirtualAddress>,
-    arg_cache: &'a ArgCache<'e, E>,
     inline_depth: u8,
     state: StepUnitMovementState,
 }
@@ -263,8 +255,8 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             StepUnitMovementState::MakePath => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
-                        let a1 = ctrl.resolve(self.arg_cache.on_call(0));
-                        let a2 = ctrl.resolve(self.arg_cache.on_call(1));
+                        let a1 = ctrl.resolve_arg(0);
+                        let a2 = ctrl.resolve_arg(1);
                         let ok = a1 == ctx.register(1) &&
                             a2.if_mem32_offset(E::struct_layouts().flingy_move_target()) ==
                                 Some(ctx.register(1));
@@ -391,9 +383,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if !self.path_null_jump_seen {
                     if self.inline_depth == 0 {
                         if let Operation::Call(dest) = *op {
-                            let inline = ctrl.resolve(self.arg_cache.on_call(0)) ==
+                            let inline = ctrl.resolve_arg(0) ==
                                 self.arg_cache.on_entry(0) &&
-                                ctrl.resolve(self.arg_cache.on_call_u32(1)) ==
+                                ctrl.resolve_arg_u32(1) ==
                                     ctx.and_const(self.arg_cache.on_entry(1), 0xffff_ffff);
                             if inline {
                                 if let Some(dest) = ctrl.resolve_va(dest) {
@@ -410,7 +402,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 } else {
                     if self.inline_depth < 2 {
                         if let Operation::Call(dest) = *op {
-                            let a1 = ctrl.resolve(self.arg_cache.on_call(0));
+                            let a1 = ctrl.resolve_arg(0);
                             let mem = ctx.mem_access(a1, 0, E::WORD_SIZE);
                             let is_path_ctx = ctrl.read_memory(&mem) ==
                                 self.arg_cache.on_entry(0);
@@ -492,7 +484,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             MakePathState::CalculatePath => {
                 if let Operation::Call(dest) = *op {
-                    let a1 = ctrl.resolve(self.arg_cache.on_call(0));
+                    let a1 = ctrl.resolve_arg(0);
                     let mem = ctrl.mem_access_word(a1, 0);
                     let is_path_ctx = ctrl.read_memory(&mem) == self.arg_cache.on_entry(0);
                     if is_path_ctx {
