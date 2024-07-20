@@ -43,24 +43,6 @@ where T: std::fmt::Debug + PartialEq,
     false
 }
 
-pub fn if_callable_const<'e, A: analysis::Analyzer<'e>>(
-    binary: &BinaryFile<<A::Exec as ExecutionState<'e>>::VirtualAddress>,
-    dest: Operand<'e>,
-    ctrl: &mut Control<'e, '_, '_, A>
-) -> Option<<A::Exec as ExecutionState<'e>>::VirtualAddress> {
-    ctrl.resolve(dest).if_constant()
-        .and_then(|dest| {
-            let dest = <A::Exec as ExecutionState<'_>>::VirtualAddress::from_u64(dest);
-            let code_section = binary.code_section();
-            let code_section_end = code_section.virtual_address + code_section.virtual_size;
-            if dest > code_section.virtual_address && dest < code_section_end {
-                Some(dest)
-            } else {
-                None
-            }
-        })
-}
-
 /// Helper extension functions for Option<(Operand<'e>, Operand<'e>)>.
 pub trait OptionExt<'e> {
     /// `opt.and_either(x)` is equivalent to
@@ -562,58 +544,21 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::St
 
     fn skip_call_preserve_esp(&mut self) {
         self.skip_operation();
-        let ctx = self.ctx();
         let state = self.exec_state();
-        for i in 0..3 {
-            state.set_register(i, ctx.new_undef());
-        }
-        if A::Exec::WORD_SIZE == MemAccessSize::Mem64 {
-            for i in 8..10 {
-                state.set_register(i, ctx.new_undef());
-            }
-        }
+        skip_call_preserve_esp_less_generic(state);
     }
 
     fn do_call_with_result(&mut self, result: Operand<'e>) {
         self.skip_operation();
-        let ctx = self.ctx();
         let state = self.exec_state();
-        state.set_register(0, result);
-        for i in 1..3 {
-            state.set_register(i, ctx.new_undef());
-        }
-        if A::Exec::WORD_SIZE == MemAccessSize::Mem32 {
-            state.set_register(4, ctx.new_undef());
-        } else {
-            for i in 8..10 {
-                state.set_register(i, ctx.new_undef());
-            }
-        }
+        do_call_with_result_less_generic(state, result);
     }
 
     fn aliasing_memory_fix(&mut self, op: &scarf::Operation<'e>) {
-        if let scarf::Operation::Move(ref dest, value) = *op {
-            if let Some(mem) = value.if_memory() {
-                if mem.size == MemAccessSize::Mem8 {
-                    let value = self.resolve(value);
-                    if let Some(mem) = value.if_mem8() {
-                        let skip = aliasing_mem8_check(mem);
-                        if skip {
-                            self.skip_operation();
-                            let ctx = self.ctx();
-                            let state = self.exec_state();
-                            state.move_to(dest, ctx.new_undef());
-                        }
-                    }
-                } else if mem.size == MemAccessSize::Mem32 {
-                    if self.resolve_mem(mem).if_constant_address() == Some(0x7ffe026c) {
-                        self.skip_operation();
-                        let ctx = self.ctx();
-                        let state = self.exec_state();
-                        state.move_to(dest, ctx.constant(0xa));
-                    }
-                }
-            }
+        let state = self.exec_state();
+        let skip = aliasing_memory_fix_less_generic(state, op);
+        if skip {
+            self.skip_operation();
         }
     }
 
@@ -626,14 +571,8 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::St
     }
 
     fn pop_stack(&mut self) {
-        let ctx = self.ctx();
         let state = self.exec_state();
-        let old_esp = state.resolve_register(4);
-        let new_esp = ctx.add_const(
-            old_esp,
-            <A::Exec as ExecutionState<'e>>::VirtualAddress::SIZE.into(),
-        );
-        state.set_register(4, new_esp);
+        pop_stack_less_generic(state);
     }
 
     fn check_stack_probe(&mut self) -> bool {
@@ -656,7 +595,10 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::St
         if_arithmetic_eq_neq(condition)
             .filter(|x| x.1.if_constant().is_some())
             .and_then(|(l, r, is_eq)| {
+                // TODO make less generic
                 let no_jump_dest = self.current_instruction_end();
+                let exec_state = self.exec_state();
+                let ctx = exec_state.ctx();
                 let (assign_branch, other_branch) = match is_eq {
                     true => (jump_dest, no_jump_dest),
                     false => (no_jump_dest, jump_dest),
@@ -668,7 +610,6 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::St
                     8 | _ => 16,
                 };
                 let mut registers = [false; 16];
-                let exec_state = self.exec_state();
                 let mut any_moved = false;
                 let (l, mask) = Operand::and_masked(l);
                 for register in 0..register_count {
@@ -680,7 +621,6 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::St
                 }
                 if any_moved {
                     self.add_branch_with_current_state(other_branch);
-                    let ctx = self.ctx();
                     let exec_state = self.exec_state();
                     for register in 0..register_count {
                         if registers[register as usize] {
@@ -781,6 +721,71 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::St
             _ => None,
         }
     }
+}
+
+fn skip_call_preserve_esp_less_generic<'e, E: ExecutionState<'e>>(state: &mut E) {
+    let ctx = state.ctx();
+    for i in 0..3 {
+        state.set_register(i, ctx.new_undef());
+    }
+    if E::WORD_SIZE == MemAccessSize::Mem64 {
+        for i in 8..10 {
+            state.set_register(i, ctx.new_undef());
+        }
+    }
+}
+
+fn do_call_with_result_less_generic<'e, E: ExecutionState<'e>>(
+    state: &mut E,
+    result: Operand<'e>,
+) {
+    let ctx = state.ctx();
+    state.set_register(0, result);
+    for i in 1..3 {
+        state.set_register(i, ctx.new_undef());
+    }
+    if E::WORD_SIZE == MemAccessSize::Mem32 {
+        state.set_register(4, ctx.new_undef());
+    } else {
+        for i in 8..10 {
+            state.set_register(i, ctx.new_undef());
+        }
+    }
+}
+
+fn pop_stack_less_generic<'e, E: ExecutionState<'e>>(state: &mut E) {
+    let ctx = state.ctx();
+    let old_esp = state.resolve_register(4);
+    let new_esp = ctx.add_const(old_esp, E::VirtualAddress::SIZE.into());
+    state.set_register(4, new_esp);
+}
+
+fn aliasing_memory_fix_less_generic<'e, E: ExecutionState<'e>>(
+    state: &mut E,
+    op: &scarf::Operation<'e>,
+) -> bool {
+    if let scarf::Operation::Move(ref dest, value) = *op {
+        if let Some(mem) = value.if_memory() {
+            if mem.size == MemAccessSize::Mem8 {
+                let value = state.resolve(value);
+                if let Some(mem) = value.if_mem8() {
+                    let skip = aliasing_mem8_check(mem);
+                    if skip {
+                        let ctx = state.ctx();
+                        state.move_to(dest, ctx.new_undef());
+                        return true;
+                    }
+                }
+            } else if mem.size == MemAccessSize::Mem32 {
+                if state.resolve_mem(mem).if_constant_address() == Some(0x7ffe026c) {
+                    let ctx = state.ctx();
+                    state.move_to(dest, ctx.constant(0xa));
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn aliasing_mem8_check(mem: &scarf::MemAccess<'_>) -> bool {

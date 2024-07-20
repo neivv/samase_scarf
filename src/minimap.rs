@@ -1,6 +1,6 @@
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{DestOperand, Operand, Operation};
+use scarf::{Operand, Operation};
 
 use crate::analysis::{AnalysisCtx, ArgCache, Patch};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
@@ -46,11 +46,10 @@ pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
     let funcs = functions.functions();
 
     let mut first_fow_uses = bumpvec_with_capacity(0x10, bump);
-    first_fow_uses.extend(
-        functions.find_functions_using_global(analysis, first_fow_addr)
-            .into_iter()
-            .map(|x| x.use_address)
-    );
+    let global_uses = functions.find_functions_using_global(analysis, first_fow_addr);
+    for x in &global_uses {
+        first_fow_uses.push(x.use_address);
+    }
     let mut result = None;
     let mut draw_minimap_units = None;
     let mut i = 0;
@@ -70,7 +69,8 @@ pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
             let mut func_analysis = FuncAnalysis::new(binary, ctx, entry);
             func_analysis.analyze(&mut analyzer);
             if analyzer.is_get_fn {
-                first_fow_uses.extend(functions.find_callers(analysis, entry));
+                let callers = functions.find_callers(analysis, entry);
+                first_fow_uses.extend_from_slice_copy(&callers);
             }
             analyzer.entry_of
         }).into_option_with_entry().map(|x| x.0);
@@ -166,8 +166,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for ReplayFowAnalyzer<'a
                             .and_either_other(|x| x.if_constant())
                             .and_then(|x| x.if_arithmetic_sub_const(0xcb))
                             .and_then(|x| x.if_mem16_offset(fow_unit_id_offset))
-                            .filter(|&x| x == self.first_fow_sprite)
-                            .is_some();
+                            .is_some_and(|x| x == self.first_fow_sprite);
                         if checks_fow_unit_id {
                             self.fow_unit_id_checked = true;
                         }
@@ -204,7 +203,7 @@ pub(crate) fn replay_visions<'e, E: ExecutionState<'e>>(
     let bump = &actx.bump;
     let mut exec = E::initial_state(ctx, binary);
     if let Some(mem) = is_replay.if_memory() {
-        exec.move_to(&DestOperand::Memory(*mem), ctx.constant(1));
+        exec.write_memory(mem, ctx.constant(1));
     }
     let state = ReplayVisionsState {
         visibility_mask_comparision: 0,
@@ -305,9 +304,9 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
             // For first_player_unit bounds check
             let condition = ctrl.resolve(condition);
             let make_uncond = condition.if_arithmetic_gt()
-                .filter(|x| x.0.if_constant() == Some(0xc))
-                .filter(|x| Operand::and_masked(x.1).0.if_custom() == Some(0))
-                .is_some();
+                .is_some_and(|x| {
+                    x.0.if_constant() == Some(0xc) && x.1.unwrap_and_mask().if_custom() == Some(0)
+                });
             if make_uncond {
                 ctrl.end_branch();
                 if let Some(to) = ctrl.resolve_va(to) {
@@ -362,9 +361,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                             .and_then(|x| {
                                 x.if_add_either_other(ctx, |x| {
                                     x.if_arithmetic_mul_const(E::VirtualAddress::SIZE.into())
-                                        .filter(|&x| {
-                                            Operand::and_masked(x).0.if_custom() == Some(0)
-                                        })
+                                        .filter(|&x| x.unwrap_and_mask().if_custom() == Some(0))
                                 })
                             })
                     });

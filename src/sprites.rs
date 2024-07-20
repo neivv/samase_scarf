@@ -239,12 +239,10 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SpriteAnalyzer<'a, '
                             state.set_register(1, ctx.new_undef());
                             state.set_register(2, ctx.new_undef());
                             if arg1_c.is_some() {
-                                let dest = DestOperand::Memory(arg1_mem);
-                                state.move_resolved(&dest, ctx.custom(custom_id + 1));
+                                state.write_memory(&arg1_mem, ctx.custom(custom_id + 1));
                             }
                             if arg2_c.is_some() {
-                                let dest = DestOperand::Memory(arg2_mem);
-                                state.move_resolved(&dest, ctx.custom(custom_id + 2));
+                                state.write_memory(&arg2_mem, ctx.custom(custom_id + 2));
                             }
                             ctrl.skip_operation();
                         }
@@ -448,33 +446,31 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
         let mut exec_state = E::initial_state(ctx, binary);
         let state = Default::default();
         if let Some(ret) = return_addr {
-            exec_state.move_to(
-                &DestOperand::Memory(ctx.mem_access(ctx.register(4), 0, E::WORD_SIZE)),
+            exec_state.write_memory(
+                &ctx.mem_access(ctx.register(4), 0, E::WORD_SIZE),
                 ctx.constant(ret.as_u64()),
             );
-            exec_state.move_to(
-                &DestOperand::Memory(
-                    ctx.mem_access(ctx.const_0(), ret.as_u64() - 2, MemAccessSize::Mem16)
-                ),
+            exec_state.write_memory(
+                &ctx.mem_access16(ctx.const_0(), ret.as_u64() - 2),
                 ctx.constant(0xd0ff),
             );
         }
         if let Some(arg1) = arg1 {
-            exec_state.move_to(
-                &DestOperand::Memory(ctx.mem_access(ctx.custom(0), 0, E::WORD_SIZE)),
+            exec_state.write_memory(
+                &ctx.mem_access(ctx.custom(0), 0, E::WORD_SIZE),
                 ctx.constant(arg1),
             );
-            exec_state.move_to(
+            exec_state.move_resolved(
                 &DestOperand::from_oper(self.arg_cache.on_entry(0)),
                 ctx.custom(0),
             );
         }
         if let Some(arg2) = arg2 {
-            exec_state.move_to(
-                &DestOperand::Memory(ctx.mem_access(ctx.custom(1), 0, E::WORD_SIZE)),
+            exec_state.write_memory(
+                &ctx.mem_access(ctx.custom(1), 0, E::WORD_SIZE),
                 ctx.constant(arg2),
             );
-            exec_state.move_to(
+            exec_state.move_resolved(
                 &DestOperand::from_oper(self.arg_cache.on_entry(1)),
                 ctx.custom(1),
             );
@@ -668,8 +664,8 @@ fn required_return_addr<'e, E: ExecutionState<'e>>(
     };
     let mut exec_state = E::initial_state(ctx, binary);
     let state = Default::default();
-    exec_state.move_to(
-        &DestOperand::Memory(ctx.mem_access(ctx.register(4), 0, E::WORD_SIZE)),
+    exec_state.write_memory(
+        &ctx.mem_access(ctx.register(4), 0, E::WORD_SIZE),
         ctx.custom(0),
     );
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, func, exec_state, state);
@@ -789,11 +785,12 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FowSpriteAnalyzer<
             if let Operation::Move(_, value) = *op {
                 let value = ctrl.resolve(value);
                 if value == self.first_lone {
-                    self.state = FowSpritesState::StepLoneSpritesFound;
-                    self.inline_depth = 0;
-                    let ctx = ctrl.ctx();
-                    let state = ctrl.exec_state();
-                    state.move_to(&DestOperand::from_oper(value), ctx.const_0());
+                    if let Some(memory) = value.if_memory() {
+                        self.state = FowSpritesState::StepLoneSpritesFound;
+                        self.inline_depth = 0;
+                        let ctx = ctrl.ctx();
+                        ctrl.write_memory(memory, ctx.const_0());
+                    }
                 }
                 return;
             }

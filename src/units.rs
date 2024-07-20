@@ -493,9 +493,8 @@ pub(crate) fn init_units<'e, E: ExecutionState<'e>>(
     {
         let mut arr = [(&orders, &mut order_refs)];
         for &mut (ref dat, ref mut out) in &mut arr {
-            out.extend(
-                functions.find_functions_using_global(analysis, dat.0)
-            );
+            let funcs = functions.find_functions_using_global(analysis, dat.0);
+            out.extend_from_slice_copy(&funcs);
         }
     }
 

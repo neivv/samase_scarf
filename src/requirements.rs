@@ -94,12 +94,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for UnitReqsAnalyzer<
                     })
                     .is_some();
                 if ok {
-                    let exec_state = ctrl.exec_state();
-                    exec_state.move_to(
-                        &DestOperand::from_oper(val),
-                        ctx.const_0(),
-                    );
-                    self.offsets_read = true;
+                    if let Some(mem) = val.if_memory() {
+                        ctrl.write_memory(mem, ctx.const_0());
+                        self.offsets_read = true;
+                    }
                 }
             }
             Operation::Move(DestOperand::Memory(ref mem), val) if self.offsets_read => {

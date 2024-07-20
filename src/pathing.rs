@@ -48,21 +48,18 @@ pub(crate) fn regions<'e, E: ExecutionState<'e>>(
     };
     // Set script->player to 0, x to 999 and y to 998
     let mut state = E::initial_state(ctx, binary);
-    let player = ctx.mem32(
+    let player = ctx.mem_access32(
         aiscript_hook.script_operand_at_switch,
         E::struct_layouts().ai_script_player(),
     );
-    let x = ctx.mem32(
+    let x = ctx.mem_access32(
         aiscript_hook.script_operand_at_switch,
         E::struct_layouts().ai_script_center(),
     );
-    let y = ctx.mem32(
-        aiscript_hook.script_operand_at_switch,
-        E::struct_layouts().ai_script_center() + 4,
-    );
-    state.move_to(&DestOperand::from_oper(player), ctx.const_0());
-    state.move_to(&DestOperand::from_oper(x), ctx.constant(999));
-    state.move_to(&DestOperand::from_oper(y), ctx.constant(998));
+    let y = x.with_offset(4);
+    state.write_memory(&player, ctx.const_0());
+    state.write_memory(&x, ctx.constant(999));
+    state.write_memory(&y, ctx.constant(998));
     let mut analysis = FuncAnalysis::with_state(
         binary,
         ctx,
@@ -496,9 +493,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             MakePathState::CalculatePath => {
                 if let Operation::Call(dest) = *op {
                     let a1 = ctrl.resolve(self.arg_cache.on_call(0));
-                    let mem = ctx.mem_access(a1, 0, E::WORD_SIZE);
-                    let is_path_ctx = ctrl.read_memory(&mem) ==
-                        self.arg_cache.on_entry(0);
+                    let mem = ctrl.mem_access_word(a1, 0);
+                    let is_path_ctx = ctrl.read_memory(&mem) == self.arg_cache.on_entry(0);
                     if is_path_ctx {
                         if let Some(dest) = ctrl.resolve_va(dest) {
                             self.result.calculate_path = Some(dest);

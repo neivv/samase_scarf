@@ -223,25 +223,21 @@ impl<'exec, 'b, E: ExecutionState<'exec>> scarf::Analyzer<'exec> for
                 }
                 let arg1_is_string_ptr = {
                     arg1.if_constant()
-                        .filter(|&c| c == self.string_address.as_u64())
-                        .is_some()
+                        .is_some_and(|c| c == self.string_address.as_u64())
                 };
                 if arg1_is_string_ptr {
                     ctrl.do_call_with_result(ctx.custom(0));
                 }
                 let arg4_is_string_ptr = arg4.if_constant()
-                    .filter(|&c| c == self.string_address.as_u64())
-                    .is_some();
+                    .is_some_and(|c| c == self.string_address.as_u64());
                 let arg2_is_string_ptr = arg2.if_constant()
-                    .filter(|&c| c == self.string_address.as_u64())
-                    .is_some();
+                    .is_some_and(|c| c == self.string_address.as_u64());
                 let arg3_value = ctrl.read_memory(&ctx.mem_access(arg3, 0, E::WORD_SIZE));
                 let arg3_inner = ctrl.read_memory(&ctx.mem_access(arg3_value, 0, E::WORD_SIZE));
                 // Can be join(String *out, String *path1, String *path2)
                 let arg3_is_string_struct_ptr = arg3_inner.if_memory()
                     .and_then(|x| x.if_constant_address())
-                    .filter(|&x| x == self.string_address.as_u64())
-                    .is_some();
+                    .is_some_and(|x| x == self.string_address.as_u64());
                 if arg2_is_string_ptr || arg4_is_string_ptr || arg3_is_string_struct_ptr {
                     // String creation function returns eax = arg1
                     ctrl.do_call_with_result(arg1);
@@ -310,12 +306,12 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
         }
         let ctx = ctrl.ctx();
         if let Some(path_string) = self.path_string.take() {
-            let dest2 = DestOperand::from_oper(ctrl.mem_word(path_string, 0));
+            let dest2 = ctrl.mem_access_word(path_string, 0);
             let state = ctrl.exec_state();
             // String creation function returns eax = arg1
             state.set_register(0, path_string);
             // Mem[string + 0] is character data
-            state.move_resolved(&dest2, self.string_address_constant);
+            state.write_memory(&dest2, self.string_address_constant);
         }
         match *op {
             Operation::Call(_dest) => {
@@ -343,8 +339,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DialogGlobalAnalyzer
                     // Can be join(String *out, String *path1, String *path2)
                     let arg3_is_string_struct_ptr = arg3_inner.if_memory()
                         .and_then(|x| x.if_constant_address())
-                        .filter(|&x| x == self.str_ref.string_address.as_u64())
-                        .is_some();
+                        .is_some_and(|x| x == self.str_ref.string_address.as_u64());
                     if arg3_is_string_struct_ptr {
                         let arg1 = ctrl.resolve(self.args.on_call(0));
                         self.path_string = Some(arg1);
@@ -534,10 +529,8 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'acx, 'e, E>
                             ctx.custom(1),
                         );
                         let type_offset = E::struct_layouts().event_type();
-                        exec_state.move_to(
-                            &DestOperand::Memory(
-                                ctx.mem_access(ctx.custom(0), type_offset, MemAccessSize::Mem16)
-                            ),
+                        exec_state.write_memory(
+                            &ctx.mem_access16(ctx.custom(0), type_offset),
                             ctx.constant(0x3),
                         );
                         ctrl.analyze_with_current_state(self, addr);
@@ -793,9 +786,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                                 // hackfix to fix get_ddsgrp() static constructor
                                 // writing 0 to [ddsgrp], causing it be undefined.
                                 // Make it back [ddsgrp]
-                                let val = ctrl.mem_word(eax, 0);
-                                let exec_state = ctrl.exec_state();
-                                exec_state.move_resolved(&DestOperand::from_oper(val), val);
+                                let addr = ctrl.mem_access_word(eax, 0);
+                                let val = ctx.memory(&addr);
+                                ctrl.write_memory(&addr, val);
                             }
                             self.current_function_u16_param_set = u16_param_set;
                         }
@@ -832,8 +825,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CmdIconsDdsGrp<'a, '
                     if let Some((base, offset)) = self.current_function_u16_param_set {
                         let ok = dest.if_no_offset()
                             .and_then(|x| ctrl.if_mem_word_offset(x, offset as u64 + 2))
-                            .filter(|&x| x == base)
-                            .is_some();
+                            .is_some_and(|x| x == base);
                         if ok {
                             if let Some(outer) = ctrl.if_mem_word(val) {
                                 let outer = outer.address_op(ctx);
@@ -923,17 +915,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                 } else {
                     let ctx = ctrl.ctx();
                     let is_calling_event_handler = ctrl.if_mem_word(dest)
-                        .filter(|mem| (0x28..0x80).contains(&mem.address().1))
-                        .is_some();
+                        .is_some_and(|mem| (0x28..0x80).contains(&mem.address().1));
                     if is_calling_event_handler {
                         let arg2 = ctrl.resolve(self.arg_cache.on_call(1));
                         let x_offset = E::struct_layouts().event_mouse_xy();
-                        let x = ctrl.read_memory(
-                            &ctx.mem_access(arg2, x_offset, MemAccessSize::Mem16)
-                        );
-                        let y = ctrl.read_memory(
-                            &ctx.mem_access(arg2, x_offset + 2, MemAccessSize::Mem16)
-                        );
+                        let x = ctrl.read_memory(&ctx.mem_access16(arg2, x_offset));
+                        let y = ctrl.read_memory(&ctx.mem_access16(arg2, x_offset + 2));
                         if let Some(c) = Operand::and_masked(x).0.if_custom() {
                             self.result.x_func = Some(self.funcs[c as usize]);
                         } else {
@@ -1239,9 +1226,9 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for WireframDdsgrpAnalyz
                             // hackfix to fix get_ddsgrp() static constructor
                             // writing 0 to [ddsgrp], causing it be undefined.
                             // Make it back [ddsgrp]
-                            let val = ctrl.mem_word(eax, 0);
-                            let exec_state = ctrl.exec_state();
-                            exec_state.move_resolved(&DestOperand::from_oper(val), val);
+                            let addr = ctrl.mem_access_word(eax, 0);
+                            let val = ctx.memory(&addr);
+                            ctrl.write_memory(&addr, val);
                         }
                         let exec_state = ctrl.exec_state();
                         exec_state.set_register(4, esp);
@@ -1273,12 +1260,13 @@ fn find_child_event_handlers<'e, E: ExecutionState<'e>>(
         &DestOperand::from_oper(arg2_loc),
         event_address,
     );
-    exec_state.move_to(
-        &DestOperand::from_oper(ctx.mem16(event_address, 0x10)),
+    let event_type = E::struct_layouts().event_type();
+    exec_state.write_memory(
+        &ctx.mem_access16(event_address, event_type),
         ctx.constant(0xe),
     );
-    exec_state.move_to(
-        &DestOperand::from_oper(ctx.mem32(event_address, 0x0)),
+    exec_state.write_memory(
+        &ctx.mem_access32(event_address, 0x0),
         ctx.constant(0x0),
     );
     let mut analysis = FuncAnalysis::custom_state(
@@ -1358,12 +1346,12 @@ fn find_child_draw_func<'e, E: ExecutionState<'e>>(
         event_address,
     );
     let event_type = E::struct_layouts().event_type();
-    exec_state.move_to(
-        &DestOperand::from_oper(ctx.mem16(event_address, event_type)),
+    exec_state.write_memory(
+        &ctx.mem_access16(event_address, event_type),
         ctx.constant(0xe),
     );
-    exec_state.move_to(
-        &DestOperand::from_oper(ctx.mem32(event_address, 0)),
+    exec_state.write_memory(
+        &ctx.mem_access32(event_address, 0x0),
         ctx.constant(0x0),
     );
     let mut analysis = FuncAnalysis::custom_state(
@@ -1400,8 +1388,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindChildDrawFunc<'a
                         .iter()
                         .any(|&offset| {
                             mem.if_offset(offset)
-                                .filter(|&other| other == self.arg_cache.on_entry(0))
-                                .is_some()
+                                .is_some_and(|other| other == self.arg_cache.on_entry(0))
                         });
                     if ok && val > 0x10000 {
                         self.result = Some(E::VirtualAddress::from_u64(val));
@@ -1765,8 +1752,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindClampZoom<'a, 'e
             }
             let condition = ctrl.resolve(condition);
             let ok = condition.if_arithmetic_eq_neq_zero(ctx)
-                .filter(|&x| x.0 == self.is_multiplayer)
-                .is_some();
+                .is_some_and(|x| x.0 == self.is_multiplayer);
             if ok {
                 self.result = Some(E::VirtualAddress::from_u64(0));
                 ctrl.end_analysis();
@@ -2019,8 +2005,8 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                             return;
                         }
                         let this = ctrl.resolve_register(1);
-                        let is_on_stack = ctx.mem_access(this, 0, E::WORD_SIZE).address().0 ==
-                            ctx.mem_access(self.entry_esp, 0, E::WORD_SIZE).address().0;
+                        let is_on_stack = ctrl.mem_access_word(this, 0).address().0 ==
+                            ctrl.mem_access_word(self.entry_esp, 0).address().0;
                         if is_on_stack {
                             self.state = RunMenusState::VerifyConstructGameLobbyScreen;
                             self.lobby_screen_local = this;
@@ -2045,9 +2031,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunMenusAnalyzer<'a,
                             let addr = E::VirtualAddress::from_u64(c);
                             if self.rdata.contains(addr) {
                                 let mem = ctrl.resolve_mem(mem);
-                                if mem ==
-                                    ctx.mem_access(self.lobby_screen_local, 0, E::WORD_SIZE)
-                                {
+                                if mem == ctrl.mem_access_word(self.lobby_screen_local, 0) {
                                     self.result.construct_game_lobby_screen =
                                         Some(E::VirtualAddress::from_u64(0));
                                     self.result.game_lobby_screen_vtable = Some(addr);

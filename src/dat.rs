@@ -59,8 +59,7 @@ use crate::detect_tail_call::DetectTailCall;
 use crate::hash_map::{HashMap, HashSet};
 use crate::range_list::RangeList;
 use crate::util::{
-    bumpvec_with_capacity, single_result_assign, if_callable_const, ControlExt, OperandExt,
-    ExecStateExt,
+    bumpvec_with_capacity, single_result_assign, ControlExt, OperandExt, ExecStateExt,
 };
 use crate::x86_64_unwind;
 
@@ -419,7 +418,6 @@ fn find_dat_root<'e, E: ExecutionState<'e>>(
         addr_found: false,
         result: None,
         arg_cache,
-        binary,
     };
     analysis.analyze(&mut analyzer);
     if let Some(result) = analyzer.result {
@@ -436,7 +434,6 @@ struct FindDatRoot<'a, 'e, E: ExecutionState<'e>> {
     addr_found: bool,
     result: Option<E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
-    binary: &'e BinaryFile<E::VirtualAddress>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindDatRoot<'a, 'e, E> {
@@ -446,11 +443,10 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindDatRoot<'a, '
         if ctrl.address() == self.str_ref.use_address {
             self.addr_found = true;
         }
-        if let Operation::Call(dest) = *op {
-            let dest = if_callable_const(self.binary, dest, ctrl);
+        if let Operation::Call(_) = *op {
             let arg1 = ctrl.resolve(self.arg_cache.on_call(0)).if_constant();
             let arg2 = ctrl.resolve(self.arg_cache.on_call(1)).if_constant();
-            if let (Some(_dest), Some(arg1), Some(arg2)) = (dest, arg1, arg2) {
+            if let (Some(arg1), Some(arg2)) = (arg1, arg2) {
                 if arg1 == self.str_ref.string_address.as_u64() {
                     self.result = Some(E::VirtualAddress::from_u64(arg2));
                     ctrl.end_analysis();

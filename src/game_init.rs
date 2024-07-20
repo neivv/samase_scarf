@@ -1964,14 +1964,11 @@ pub(crate) fn analyze_select_map_entry<'e, E: ExecutionState<'e>>(
                                         {
                                             self.state =
                                                 SelectMapEntryState::CreateGameMultiplayer;
-                                            let dest = ctx.mem32(
+                                            let dest = ctx.mem_access32(
                                                 arg_cache.on_entry(2),
                                                 self.map_entry_flags_offset.unwrap_or(0) as u64,
                                             );
-                                            state.move_resolved(
-                                                &DestOperand::from_oper(dest),
-                                                ctx.constant(2),
-                                            );
+                                            state.write_memory(&dest, ctx.constant(2));
                                             let binary = ctrl.binary();
                                             let user_state = MapEntryState::Unknown;
                                             let user_state = AnalysisState::new(
@@ -2838,8 +2835,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
             .filter(|&c| c <= 1)
             .is_some();
         if is_copy {
-            let arg1_address = ctx.mem_access(arg1, 0, E::WORD_SIZE);
-            let arg1_field1 = ctx.mem_access(arg1, E::VirtualAddress::SIZE.into(), E::WORD_SIZE);
+            let arg1_address = ctrl.mem_access_word(arg1, 0);
+            let arg1_field1 = ctrl.mem_access_word(arg1, E::VirtualAddress::SIZE.into());
             let vtbl = ctrl.read_memory(&arg1_address)
                 .if_constant()
                 .map(E::VirtualAddress::from_u64);
@@ -2848,13 +2845,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                 .map(E::VirtualAddress::from_u64);
             if let (Some(vtbl), Some(param)) = (vtbl, param) {
                 // Copy vtbl and param to this
-                let dest = ctrl.mem_word(this,0 );
-                let dest2 = ctrl.mem_word(this, E::VirtualAddress::SIZE as u64);
+                let dest = ctrl.mem_access_word(this, 0);
+                let dest2 = ctrl.mem_access_word(this, E::VirtualAddress::SIZE as u64);
                 let state = ctrl.exec_state();
                 let vtbl = ctx.constant(vtbl.as_u64());
                 let param = ctx.constant(param.as_u64());
-                state.move_resolved(&DestOperand::from_oper(dest), vtbl);
-                state.move_resolved(&DestOperand::from_oper(dest2), param);
+                state.write_memory(&dest, vtbl);
+                state.write_memory(&dest2, param);
                 if E::VirtualAddress::SIZE == 4 {
                     // Also assuming that func copy is stdcall
                     let esp = ctrl.resolve_register(4);
@@ -3400,16 +3397,14 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for GameLoopAnalyzer<
                             if ok {
                                 self.result.render_screen = Some(dest);
                                 if let Some(continue_loop) = self.result.continue_game_loop {
-                                    let state = ctrl.exec_state();
-                                    state.move_resolved(
-                                        &DestOperand::from_oper(continue_loop),
-                                        ctx.custom(0),
-                                    );
-                                    self.state = GameLoopAnalysisState::StepGameLoop;
-                                    ctrl.analyze_with_current_state(
-                                        self,
-                                        ctrl.current_instruction_end(),
-                                    );
+                                    if let Some(mem) = continue_loop.if_memory() {
+                                        ctrl.write_memory(mem, ctx.custom(0));
+                                        self.state = GameLoopAnalysisState::StepGameLoop;
+                                        ctrl.analyze_with_current_state(
+                                            self,
+                                            ctrl.current_instruction_end(),
+                                        );
+                                    }
                                 }
                                 ctrl.end_analysis();
                             }
@@ -3938,9 +3933,9 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 ctrl.end_analysis();
                                 return;
                             }
-                            let dest = DestOperand::from_oper(ctrl.mem_word(arg1, 0));
+                            let arg1_mem = ctrl.mem_access_word(arg1, 0);
                             let state = ctrl.exec_state();
-                            state.move_resolved(&dest, ctx.custom(self.custom_pos));
+                            state.write_memory(&arg1_mem, ctx.custom(self.custom_pos));
                             self.custom_pos += 1;
                         } else {
                             let custom_off = [this, arg1].iter().find_map(|&op| {
@@ -4601,10 +4596,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             self.check_read_whole_mpq_file(ctrl, dest);
                             self.state = InitMapFromPathState::MapHistory;
                             let arg = ctrl.resolve(arg_cache.on_call(2));
-                            ctrl.move_resolved(
-                                &DestOperand::Memory(ctx.mem_access(arg, 0, E::WORD_SIZE)),
-                                ctx.custom(0),
-                            );
+                            let arg_mem = ctrl.mem_access_word(arg, 0);
+                            ctrl.write_memory(&arg_mem, ctx.custom(0));
                             ctrl.do_call_with_result(ctx.const_1());
                             return;
                         }

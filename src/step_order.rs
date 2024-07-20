@@ -344,8 +344,8 @@ fn find_order_function_any<'e, E: ExecutionState<'e>>(
     let bump = &analysis.bump;
 
     let mut state = E::initial_state(ctx, binary);
-    let dest = DestOperand::Memory(ctx.mem_access(this, order_offset, MemAccessSize::Mem8));
-    state.move_to(&dest, ctx.constant(order as u64));
+    let dest = ctx.mem_access8(this, order_offset);
+    state.write_memory(&dest, ctx.constant(order as u64));
     let user_state =
         AnalysisState::new(bump, StateEnum::StepOrder(StepOrderState::NotSwitchJumped));
     let mut analysis = FuncAnalysis::custom_state(
@@ -1098,7 +1098,7 @@ pub(crate) fn step_order_analysis<'e, E: ExecutionState<'e>>(
     let ecx = ctx.register(1);
     for &(offset, value, size) in writes {
         let mem = ctx.mem_access(ecx, offset.into(), size);
-        exec.move_resolved(&DestOperand::Memory(mem), ctx.constant(value.into()));
+        exec.write_memory(&mem, ctx.constant(value.into()));
     }
     let mut analysis =
         FuncAnalysis::custom_state(binary, ctx, step_order, exec, Default::default());
@@ -1275,12 +1275,11 @@ pub(crate) fn analyze_order_train<'e, E: ExecutionState<'e>>(
     };
     let mut exec = E::initial_state(ctx, binary);
     // Use secondary order state 2
-    let mem = ctx.mem_access(
+    let mem = ctx.mem_access8(
         ctx.register(1),
         E::struct_layouts().unit_secondary_order_state(),
-        MemAccessSize::Mem8,
     );
-    exec.move_resolved(&DestOperand::Memory(mem), ctx.constant(2));
+    exec.write_memory(&mem, ctx.constant(2));
     let mut analysis =
         FuncAnalysis::custom_state(binary, ctx, order_train, exec, Default::default());
     analysis.analyze(&mut analyzer);

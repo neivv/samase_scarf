@@ -14,7 +14,7 @@ use crate::call_tracker::CallTracker;
 use crate::linked_list::DetectListAdd;
 use crate::util::{
     ControlExt, OperandExt, OptionExt, MemAccessExt, bumpvec_with_capacity, if_arithmetic_eq_neq,
-    if_callable_const, single_result_assign, is_stack_address, is_global, ExecStateExt,
+    single_result_assign, is_stack_address, is_global, ExecStateExt,
 };
 
 #[derive(Clone)]
@@ -91,7 +91,8 @@ pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
             for global_ref in globals {
                 let entry = global_ref.func_entry;
                 if is_branchless_leaf(analysis, entry) {
-                    rng_refs.extend(functions.find_callers(analysis, entry));
+                    let callers = functions.find_callers(analysis, entry);
+                    rng_refs.extend_from_slice_copy(&callers);
                 } else {
                     rng_refs.push(global_ref.use_address);
                 }
@@ -163,7 +164,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     ctrl.end_analysis();
                     return;
                 }
-                if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     let cached = self.checked_vision_funcs.iter()
                         .find(|x| x.0 == dest)
                         .map(|x| x.1);
@@ -340,7 +341,7 @@ pub(crate) fn game<'e, E: ExecutionState<'e>>(
         call_depth: 0,
         jump_limit: 0,
         result: None,
-        binary,
+        phantom: Default::default(),
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
@@ -350,7 +351,7 @@ struct FindGame<'e, E: ExecutionState<'e>> {
     call_depth: u8,
     jump_limit: u8,
     result: Option<Operand<'e>>,
-    binary: &'e BinaryFile<E::VirtualAddress>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
 impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGame<'e, E> {
@@ -360,7 +361,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGame<'e, E> {
         match *op {
             Operation::Call(dest) => {
                 if self.call_depth < 3 {
-                    if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         let jump_limit = self.jump_limit;
                         self.jump_limit = 3;
                         self.call_depth += 1;
@@ -778,12 +779,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let exec_state = ctrl.exec_state();
                         if self.inline_depth == 0 {
                             for &(dest, value) in &self.depth_0_arg1_global_stores {
-                                exec_state.move_resolved(
-                                    &DestOperand::Memory(
-                                        ctx.mem_access(dest, 0, MemAccessSize::Mem32)
-                                    ),
-                                    value,
-                                );
+                                exec_state.write_memory(&ctx.mem_access32(dest, 0), value);
                             }
                         }
 
@@ -1438,13 +1434,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                     let flags_offset = E::struct_layouts().unit_flags();
                                     x.if_mem8_offset(flags_offset + 1)
                                 })
-                                .filter(|&x| Some(x) == self.result.first_dying_unit)
-                                .is_some()
+                                .is_some_and(|x| Some(x) == self.result.first_dying_unit)
                         } else {
                             let sprite_offset = E::struct_layouts().unit_sprite();
                             ctrl.if_mem_word_offset(inner, sprite_offset)
-                                .filter(|&x| Some(x) == self.result.first_dying_unit)
-                                .is_some()
+                                .is_some_and(|x| Some(x) == self.result.first_dying_unit)
                         };
                         if ok {
                             let continue_on_zero;
@@ -1580,8 +1574,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if self.state == StepObjectsAnalysisState::LastDyingUnit {
                         let value = ctrl.resolve(value);
                         let ok = ctrl.if_mem_word_offset(value, 0)
-                            .filter(|&x| Some(x) == self.result.first_dying_unit)
-                            .is_some();
+                            .is_some_and(|x| Some(x) == self.result.first_dying_unit);
                         if ok {
                             let mem = ctrl.resolve_mem(mem);
                             self.result.last_dying_unit = Some(ctx.memory(&mem));
@@ -1702,8 +1695,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 x.0.if_arithmetic_and_const(0x3)?
                                     .if_mem8_offset(E::struct_layouts().unit_flags() + 1)
                             })
-                            .filter(|&x| x == self.first_active_unit)
-                            .is_some();
+                            .is_some_and(|x| x == self.first_active_unit);
                         if ok {
                             self.cloak_state_checked = true;
                             ctrl.clear_unchecked_branches();
@@ -1957,8 +1949,8 @@ fn analyze_simulate_short<'e, E: ExecutionState<'e>>(
     }
 
     let mut exec = E::initial_state(ctx, binary);
-    exec.move_resolved(
-        &DestOperand::Memory(ctx.mem_access(ctx.register(4), 0, E::WORD_SIZE)),
+    exec.write_memory(
+        &ctx.mem_access(ctx.register(4), 0, E::WORD_SIZE),
         ctx.mem_any(E::WORD_SIZE, ctx.register(4), 0),
     );
     exec.set_register(4, ctx.sub_const(ctx.register(4), E::VirtualAddress::SIZE as u64));

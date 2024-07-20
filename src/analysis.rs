@@ -292,7 +292,14 @@ results! {
         StepHiddenUnitFrame => step_hidden_unit_frame => cache_step_objects,
         StepBulletFrame => step_bullet_frame => cache_step_objects,
         StepBullets => step_bullets => cache_step_objects,
+        // a1 x_tile, a2 y_tile, a3 cb, a4 cb_param
+        // cb: a1 u16 *original_tile, a2 u8 *tile_borders, a3 u8 *out_status,
+        //      a4 u16 *current_tile, a5 cb_param
+        //          - out_status 0 = set, 1 = clear, 2 = border
+        //          - return 0 for no change
         CreepModifyState => creep_modify_state => cache_step_objects,
+        // a1 x_tile, a2 y_tile, a3 cb, a4 cb_param
+        // cb: a1 direction, a2 u16 *original_tile, a3 x_tile, a4 y_tile, a5 cb_param
         ForEachSurroundingile => for_each_surrounding_tile => cache_step_objects,
         CreepUpdateBorderForTile => creep_update_border_for_tile => cache_step_objects,
         GetCreepSpreadArea => get_creep_spread_area => cache_step_objects,

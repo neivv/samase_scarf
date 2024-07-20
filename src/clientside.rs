@@ -1102,9 +1102,9 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for TargetingLclickAnaly
             if arg2 == self.arg_cache.on_entry(0) {
                 // event_coords_to_game, use Custom(0) for x and Custom(1) for y
                 let mem = ctx.mem_access(arg1, 0, MemAccessSize::Mem32);
-                ctrl.move_resolved(&DestOperand::Memory(mem), ctx.custom(0));
+                ctrl.write_memory(&mem, ctx.custom(0));
                 let mem = mem.with_offset_size(4, MemAccessSize::Mem32);
-                ctrl.move_resolved(&DestOperand::Memory(mem), ctx.custom(1));
+                ctrl.write_memory(&mem, ctx.custom(1));
             } else if Operand::and_masked(arg2).0.if_custom() == Some(1) &&
                 Operand::and_masked(arg1).0.if_custom() == Some(0)
             {
@@ -1395,10 +1395,7 @@ pub(crate) fn analyze_center_view_action<'e, E: ExecutionState<'e>>(
     // Center view has move-screen-over-time logic in single player,
     // this analysis just cares about instant move so set multiplayer = 1
     if let Some(mem) = is_multiplayer.if_memory() {
-        exec.move_to(
-            &DestOperand::Memory(*mem),
-            ctx.const_1(),
-        );
+        exec.write_memory(mem, ctx.const_1());
     }
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, action, exec, Default::default());
     analysis.analyze(&mut analyzer);

@@ -334,8 +334,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
             Operation::Move(DestOperand::Memory(ref mem), val) => {
                 let dest = ctrl.resolve_mem(mem);
                 let is_setting_rng_enable = self.rng_enable.if_memory()
-                    .filter(|&x| x == &dest)
-                    .is_some();
+                    .is_some_and(|x| x == &dest);
                 if is_setting_rng_enable {
                     if let Some(c) = ctrl.resolve(val).if_constant() {
                         self.rng_enabled = c != 0;

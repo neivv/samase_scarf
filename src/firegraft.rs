@@ -34,7 +34,7 @@ pub(crate) fn find_buttonsets<'e, E: ExecutionState<'e>>(
         }
         true
     });
-    result.into_iter().map(|x| data.virtual_address + x.0).collect()
+    result.iter().map(|&x| data.virtual_address + x.0).collect()
 }
 
 pub(crate) fn find_unit_status_funcs<'e, E: ExecutionState<'e>>(
@@ -47,7 +47,8 @@ pub(crate) fn find_unit_status_funcs<'e, E: ExecutionState<'e>>(
     if str_refs.is_empty() {
         str_refs = functions.string_refs(analysis, b"statdata.ui");
         // Currently rez and filename are separate but do this just in case.
-        str_refs.extend(functions.string_refs(analysis, b"rez\\statdata.ui"));
+        let more = functions.string_refs(analysis, b"rez\\statdata.ui");
+        str_refs.extend_from_slice_copy(&more);
     }
     let funcs = functions.functions();
     let statdata_bin_globals = str_refs.iter().flat_map(|str_ref| {
@@ -67,7 +68,8 @@ pub(crate) fn find_unit_status_funcs<'e, E: ExecutionState<'e>>(
     statdata_using_funcs.dedup();
     let mut statdata = Vec::with_capacity(statdata_using_funcs.len() * 2);
     for &addr in &statdata_using_funcs {
-        statdata.extend(find_unit_status_func_uses(analysis, addr));
+        let result = find_unit_status_func_uses(analysis, addr);
+        statdata.extend_from_slice(&result);
     }
     statdata.sort_unstable();
     statdata.dedup();
@@ -90,8 +92,6 @@ fn find_unit_status_func_uses<'acx, 'e, E: ExecutionState<'e>>(
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, func);
     analysis.analyze(&mut analyzer);
-    analyzer.result.sort_unstable();
-    analyzer.result.dedup();
     analyzer.result
 }
 

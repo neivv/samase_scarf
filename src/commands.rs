@@ -1,6 +1,6 @@
 use bumpalo::collections::Vec as BumpVec;
 
-use scarf::{BinaryFile, DestOperand, Operand, Operation};
+use scarf::{DestOperand, Operand, Operation};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress as VirtualAddressTrait};
 use scarf::operand::{ArithOpType, MemAccessSize, OperandCtx};
@@ -12,7 +12,7 @@ use crate::call_tracker::{CallTracker};
 use crate::switch::CompleteSwitch;
 use crate::struct_layouts;
 use crate::util::{
-    ControlExt, MemAccessExt, OptionExt, OperandExt, if_callable_const, read_u32_at,
+    ControlExt, MemAccessExt, OptionExt, OperandExt, read_u32_at,
     if_arithmetic_eq_neq, is_global, bumpvec_with_capacity, single_result_assign, ExecStateExt,
 };
 
@@ -227,7 +227,6 @@ pub(crate) fn send_command<'e, E: ExecutionState<'e>>(
     let mut analysis = FuncAnalysis::new(binary, ctx, stim_func);
     let mut analyzer = FindSendCommand {
         result: None,
-        binary,
         arg_cache,
         is_inlining: false,
     };
@@ -238,7 +237,6 @@ pub(crate) fn send_command<'e, E: ExecutionState<'e>>(
 struct FindSendCommand<'a, 'e, E: ExecutionState<'e>> {
     result: Option<E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
-    binary: &'e BinaryFile<E::VirtualAddress>,
     is_inlining: bool,
 }
 
@@ -249,7 +247,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'
         let ctx = ctrl.ctx();
         match *op {
             Operation::Call(dest) => {
-                if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     // Check if calling send_command(&[COMMAND_STIM], 1)
                     let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                     let arg1_addr = ctx.mem_access(arg1, 0, MemAccessSize::Mem8);

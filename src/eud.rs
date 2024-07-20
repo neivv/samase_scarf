@@ -384,15 +384,12 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
                 for i in 0..4 {
                     let (offset, size) = offsets_sizes[i];
                     let offset = len.wrapping_mul(eud_size).wrapping_add(offset as u64);
-                    exec_state.move_resolved(
-                        &DestOperand::Memory(ctx.mem_access(vec_buffer, offset, size)),
+                    exec_state.write_memory(
+                        &ctx.mem_access(vec_buffer, offset, size),
                         arg1_mem[i],
                     );
                 }
-                exec_state.move_resolved(
-                    &DestOperand::Memory(vec_len_addr),
-                    ctx.constant(len.wrapping_add(1)),
-                );
+                exec_state.write_memory(&vec_len_addr, ctx.constant(len.wrapping_add(1)));
                 true
             } else {
                 false

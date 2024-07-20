@@ -4,11 +4,11 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, FuncAnalysis, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{BinaryFile, Operation, Operand, OperandCtx, MemAccessSize, DestOperand};
+use scarf::{Operation, Operand, OperandCtx, MemAccessSize, DestOperand};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
-use crate::util::{single_result_assign, if_callable_const, OperandExt};
+use crate::util::{single_result_assign, ControlExt, OperandExt};
 
 #[derive(Clone, Debug)]
 pub struct Rng<'e> {
@@ -50,7 +50,6 @@ pub(crate) fn rng<'e, E: ExecutionState<'e>>(
                 arg_cache,
                 bump,
                 is_inlining: false,
-                binary,
                 use_address: global_ref.use_address,
                 branch_start: E::VirtualAddress::from_u64(0),
             };
@@ -80,7 +79,6 @@ struct FindRng<'a, 'e, E: ExecutionState<'e>> {
     no_jump_cond: Option<Operand<'e>>,
     jump_conds: BumpVec<'a, (E::VirtualAddress, Operand<'e>)>,
     is_inlining: bool,
-    binary: &'e BinaryFile<E::VirtualAddress>,
     use_address: E::VirtualAddress,
     branch_start: E::VirtualAddress,
 }
@@ -98,7 +96,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
         }
         match *op {
             Operation::Call(dest) => {
-                if let Some(dest) = if_callable_const(self.binary, dest, ctrl) {
+                if let Some(dest) = ctrl.resolve_va(dest) {
                     let arg1 = ctrl.resolve(self.arg_cache.on_call(0));
                     if arg1.if_constant() == Some(0x24) {
                         if !self.is_inlining {

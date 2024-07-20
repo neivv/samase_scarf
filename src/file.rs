@@ -3,21 +3,20 @@ use bumpalo::collections::Vec as BumpVec;
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{Operand};
-use scarf::{BinaryFile, BinarySection, DestOperand, MemAccessSize, Operation};
+use scarf::{BinaryFile, BinarySection, MemAccessSize, Operation};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::analysis_find::{FunctionFinder};
-use crate::util::{if_callable_const, single_result_assign, is_global, ControlExt, OperandExt};
+use crate::util::{single_result_assign, is_global, ControlExt, OperandExt};
 
 pub(crate) struct OpenFile<Va: VirtualAddress> {
     pub file_exists: Option<Va>,
 }
 
 struct FindLoadDat<'acx, 'e, E: ExecutionState<'e>> {
-    result: BumpVec<'acx, (E::VirtualAddress, E::VirtualAddress)>,
+    result: BumpVec<'acx, E::VirtualAddress>,
     string_address: E::VirtualAddress,
     arg_cache: &'acx ArgCache<'e, E>,
-    binary: &'e BinaryFile<E::VirtualAddress>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLoadDat<'a, 'e, E> {
@@ -25,24 +24,25 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLoadDat<'a, '
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         if let Operation::Call(dest) = *op {
-            let dest = if_callable_const(self.binary, dest, ctrl);
-            let arg1 = ctrl.resolve(self.arg_cache.on_call(0)).if_constant();
-            let arg2 = ctrl.resolve(self.arg_cache.on_call(1)).if_constant();
-            if let (Some(dest), Some(arg1), Some(_)) = (dest, arg1, arg2) {
-                if arg1 == self.string_address.as_u64() {
-                    self.result.push((ctrl.address(), dest));
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                let arg1 = ctrl.resolve(self.arg_cache.on_call(0)).if_constant();
+                let arg2 = ctrl.resolve(self.arg_cache.on_call(1)).if_constant();
+                if let (Some(arg1), Some(_)) = (arg1, arg2) {
+                    if arg1 == self.string_address.as_u64() {
+                        self.result.push(dest);
+                    }
                 }
             }
         }
     }
 }
 
-/// Return (Vec<(call_ins_address, call_dest)>, errors)
+/// Return Vec<call_dest>
 pub(crate) fn find_load_dat_fn<'acx, 'e, E: ExecutionState<'e>>(
     analysis: &'acx AnalysisCtx<'e, E>,
     parent: E::VirtualAddress,
     string_address: E::VirtualAddress,
-) -> BumpVec<'acx, (E::VirtualAddress, E::VirtualAddress)> {
+) -> BumpVec<'acx, E::VirtualAddress> {
     let arg_cache = &analysis.arg_cache;
     let ctx = analysis.ctx;
     let binary = analysis.binary;
@@ -52,11 +52,8 @@ pub(crate) fn find_load_dat_fn<'acx, 'e, E: ExecutionState<'e>>(
         result: BumpVec::new_in(bump),
         string_address,
         arg_cache,
-        binary,
     };
     analysis.analyze(&mut analyzer);
-    analyzer.result.sort_unstable();
-    analyzer.result.dedup();
     analyzer.result
 }
 
@@ -95,10 +92,11 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
         checked_functions.push(func.address);
 
         let mut state = E::initial_state(ctx, binary);
-        let arg1_store = ctx.mem64(ctx.custom(0), 0);
+        let arg1_store_addr = ctx.mem_access64(ctx.custom(0), 0);
+        let arg1_store = ctx.memory(&arg1_store_addr);
         let arg1_addr = arg_cache.on_entry(0);
         let arg1 = state.resolve(arg1_addr);
-        state.move_to(&DestOperand::from_oper(arg1_store), arg1);
+        state.write_memory(&arg1_store_addr, arg1);
         let mut analysis = FuncAnalysis::with_state(
             binary,
             ctx,
@@ -110,7 +108,6 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
             filename_arg: func.filename_arg,
             ok: false,
             arg1_store,
-            binary,
             rdata,
             arg_cache,
             inlining: false,
@@ -122,7 +119,6 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
             filename_arg: Arg,
             ok: bool,
             arg1_store: Operand<'e>,
-            binary: &'e BinaryFile<E::VirtualAddress>,
             rdata: &'e BinarySection<E::VirtualAddress>,
             arg_cache: &'acx ArgCache<'e, E>,
             inlining: bool,
@@ -134,16 +130,15 @@ fn find_open_file_fn<'acx, 'e, E: ExecutionState<'e>>(
             type Exec = E;
             fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
                 if let Operation::Call(dest) = *op {
-                    let dest = if_callable_const(self.binary, dest, ctrl);
-                    let new_arg_pos = find_name_arg(self.arg_cache, self.filename_arg, ctrl);
-                    if let (Some(dest), Some(new_arg)) = (dest, new_arg_pos) {
-                        self.functions.push(OpenFileFnIntermediate {
-                            address: dest,
-                            filename_arg: new_arg,
-                        });
-                    } else if self.filename_arg == Arg::Stack(1) && !self.ok {
-                        // Inline if arg1 is currently being passed as ecx
-                        if let Some(dest) = dest {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let new_arg_pos = find_name_arg(self.arg_cache, self.filename_arg, ctrl);
+                        if let Some(new_arg) = new_arg_pos {
+                            self.functions.push(OpenFileFnIntermediate {
+                                address: dest,
+                                filename_arg: new_arg,
+                            });
+                        } else if self.filename_arg == Arg::Stack(1) && !self.ok {
+                            // Inline if arg1 is currently being passed as ecx
                             if !self.inlining {
                                 let ecx = ctrl.resolve_register(1);
                                 if ecx == self.arg_cache.on_entry(0) {
@@ -217,13 +212,11 @@ pub(crate) fn open_file<'e, E: ExecutionState<'e>>(
     let str_refs = functions.string_refs(analysis, b"arr\\units.");
 
     let mut load_dat_fns = BumpVec::new_in(bump);
-    load_dat_fns.extend(
-        str_refs.iter().flat_map(|str_ref| {
-            let func = str_ref.func_entry;
-            let result = find_load_dat_fn(analysis, func, str_ref.string_address);
-            result.into_iter().map(|x| x.1)
-        })
-    );
+    for str_ref in &str_refs {
+        let func = str_ref.func_entry;
+        let result = find_load_dat_fn(analysis, func, str_ref.string_address);
+        load_dat_fns.extend_from_slice_copy(&result);
+    }
     if load_dat_fns.is_empty() {
         return None;
     }

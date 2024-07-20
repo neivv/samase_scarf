@@ -338,7 +338,7 @@ fn test_complex_x86_64_entry() {
     ]));
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct StringRefs<Va> {
     pub use_address: Va,
     pub func_entry: Va,
