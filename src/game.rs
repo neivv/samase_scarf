@@ -1,5 +1,4 @@
 use bumpalo::collections::Vec as BumpVec;
-use fxhash::FxHashMap;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -976,7 +975,6 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         active_iscript_unit,
         state: StepObjectsAnalysisState::DcreepUpdateCounter,
         continue_state: None,
-        simulated_funcs: FxHashMap::with_capacity_and_hasher(64, Default::default()),
         active_iscript_flingy_candidate: None,
         invisible_unit_inline_depth: 0,
         invisible_unit_checked_fns: bumpvec_with_capacity(0x10, &actx.bump),
@@ -987,6 +985,7 @@ pub(crate) fn analyze_step_objects<'e, E: ExecutionState<'e>>(
         dcreep_next_update_candidate: None,
         unit_count_candidate: None,
         list_add_tracker: DetectListAdd::new(None),
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 32),
     };
     loop {
         analysis.analyze(&mut analyzer);
@@ -1019,7 +1018,6 @@ struct StepObjectsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     // Used to kill all other analysis branches and continuing from there
     // (Avoid unnecessarily deep stack from using analyze_with_current_state)
     continue_state: Option<(Box<E>, E::VirtualAddress)>,
-    simulated_funcs: FxHashMap<E::VirtualAddress, Option<Operand<'e>>>,
     // (Value stored, operand stored to)
     active_iscript_flingy_candidate: Option<(Operand<'e>, Operand<'e>)>,
     invisible_unit_inline_depth: u8,
@@ -1031,6 +1029,7 @@ struct StepObjectsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     dcreep_next_update_candidate: Option<Operand<'e>>,
     unit_count_candidate: Option<Operand<'e>>,
     list_add_tracker: DetectListAdd<'e, E>,
+    call_tracker: CallTracker<'acx, 'e, E>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -1203,9 +1202,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     if is_x {
                         if self.state == StepObjectsAnalysisState::CreepFuncs {
                             if let Some(mem) = ctrl.if_mem_word(dest) {
-                                let base = mem.with_offset_size(
+                                let base = mem.with_offset(
                                     0u64.wrapping_sub(E::VirtualAddress::SIZE as u64 * 2),
-                                    mem.size,
                                 );
                                 self.result.creep_funcs = Some(base.address_op(ctx));
                                 ctrl.clear_all_branches();
@@ -1632,13 +1630,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                     self.inline_limit = 0;
                                     self.state = StepObjectsAnalysisState::FirstInvisibleUnit;
                                 }
+                                ctrl.clear_unchecked_branches();
                                 if let Some(vision_updated) = self.result.vision_updated {
                                     // Has to be done for revealer loop to run
-                                    let state = ctrl.exec_state();
-                                    state.move_to(
-                                        &DestOperand::from_oper(vision_updated),
-                                        ctx.const_1(),
-                                    );
+                                    if let Some(mem) = vision_updated.if_memory() {
+                                        ctrl.write_memory(mem, ctx.const_1());
+                                    }
                                 }
                                 return;
                             }
@@ -1723,6 +1720,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             StepObjectsAnalysisState::FirstInvisibleUnit => {
                 if let Operation::Call(dest) = *op {
                     if let Some(dest) = ctrl.resolve_va(dest) {
+                        if Some(dest) == self.result.step_hidden_frame {
+                            ctrl.end_branch();
+                            return;
+                        }
                         if self.check_large_stack_alloc(ctrl) {
                             return;
                         }
@@ -1819,8 +1820,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let condition = ctrl.resolve(condition);
                     let ok = condition.if_arithmetic_gt()
                         .and_either(|x| x.if_mem8_offset(E::struct_layouts().unit_order()))
-                        .filter(|&x| x.0 == self.first_active_bullet)
-                        .is_some();
+                        .is_some_and(|x| x.0 == self.first_active_bullet);
                     if ok {
                         if Some(self.func_entry) != self.result.step_bullets {
                             self.result.step_bullet_frame = Some(self.func_entry);
@@ -1867,31 +1867,19 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepObjectsAnalyzer<'a, 'acx, 'e, E> {
         ctrl: &mut Control<'e, '_, '_, Self>,
         func: E::VirtualAddress,
     ) -> bool {
-        let entry = self.simulated_funcs.entry(func);
-        let &mut result = entry.or_insert_with(|| {
-            analyze_simulate_short::<E>(ctrl.ctx(), ctrl.binary(), func)
-        });
-        if let Some(result) = result {
-            let result = ctrl.resolve(result);
-            ctrl.skip_operation();
-            ctrl.set_register(0, result);
-            true
-        } else {
-            false
+        let esp = ctrl.resolve_register(4);
+        let ret = self.call_tracker.add_call_resolve_with_branch_limit(ctrl, func, 1, false);
+        if E::VirtualAddress::SIZE == 4 {
+            // Assume that the calls won't offset stack
+            ctrl.set_register(4, esp);
         }
+        ret
     }
 
     fn check_large_stack_alloc(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) -> bool {
         if self.first_call_of_func {
             self.first_call_of_func = false;
-            let maybe_stack_alloc = ctrl.resolve_register(0)
-                .if_constant()
-                .filter(|&c| c >= 0x1000)
-                .is_some();
-            if maybe_stack_alloc {
-                ctrl.skip_operation();
-                return true;
-            }
+            return ctrl.check_stack_probe();
         }
         false
     }
@@ -1914,51 +1902,4 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepObjectsAnalyzer<'a, 'acx, 'e, E> {
         }
         None
     }
-}
-
-fn analyze_simulate_short<'e, E: ExecutionState<'e>>(
-    ctx: OperandCtx<'e>,
-    binary: &'e BinaryFile<E::VirtualAddress>,
-    func: E::VirtualAddress,
-) -> Option<Operand<'e>> {
-    struct Analyzer<'e, E: ExecutionState<'e>> {
-        result: Option<Operand<'e>>,
-        phantom: std::marker::PhantomData<(*const E, &'e ())>,
-    }
-    impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for Analyzer<'e, E> {
-        type State = analysis::DefaultState;
-        type Exec = E;
-        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-            match op {
-                Operation::Jump { .. } | Operation::Call(..) => {
-                    ctrl.end_analysis();
-                }
-                Operation::Move(DestOperand::Memory(mem), _) => {
-                    let address = ctrl.resolve(mem.address().0);
-                    if !is_stack_address(address) {
-                        ctrl.end_analysis();
-                    }
-                }
-                Operation::Return(..) => {
-                    self.result = Some(ctrl.resolve_register(0));
-                    ctrl.end_analysis();
-                }
-                _ => (),
-            }
-        }
-    }
-
-    let mut exec = E::initial_state(ctx, binary);
-    exec.write_memory(
-        &ctx.mem_access(ctx.register(4), 0, E::WORD_SIZE),
-        ctx.mem_any(E::WORD_SIZE, ctx.register(4), 0),
-    );
-    exec.set_register(4, ctx.sub_const(ctx.register(4), E::VirtualAddress::SIZE as u64));
-    let mut analysis = FuncAnalysis::custom_state(binary, ctx, func, exec, Default::default());
-    let mut analyzer: Analyzer<E> = Analyzer {
-        result: None,
-        phantom: Default::default(),
-    };
-    analysis.analyze(&mut analyzer);
-    analyzer.result
 }

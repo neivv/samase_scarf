@@ -138,10 +138,36 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         ctrl: &mut Control<'e, '_, '_, A>,
         address: E::VirtualAddress,
     ) {
+        self.add_call_resolve_with_branch_limit(ctrl, address, u32::MAX, true);
+    }
+
+    /// Registers and simulates a call to specific address, resolving immeditaly
+    /// instead of add_call which produces Custom(x). Also skips current operation.
+    ///
+    /// Returns true if was able to simulate the call with given branch limit.
+    ///
+    /// Note that this mean it clobbers volatile registers, usually Analyzer::operation() wants
+    /// to do this after everything else at call operation has been checked.
+    pub fn add_call_resolve_with_branch_limit<A: scarf::Analyzer<'e>>(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, A>,
+        address: E::VirtualAddress,
+        limit: u32,
+        always_set_result: bool,
+    ) -> bool {
         let ctx = ctrl.ctx();
         let custom = self.func_to_custom(ctx, address, &[]);
-        let val = ctrl.resolve(self.resolve_calls(custom));
-        ctrl.do_call_with_result(val)
+        let val = custom.if_custom().and_then(|x| self.resolve_custom(x, limit));
+        if let Some(val) = val {
+            let val = ctrl.resolve(val);
+            ctrl.do_call_with_result(val);
+            true
+        } else {
+            if always_set_result {
+                ctrl.do_call_with_result(custom);
+            }
+            false
+        }
     }
 
     /// Like add_call_resolve, but allows declaring constraint (for arguments)
