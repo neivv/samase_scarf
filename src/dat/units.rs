@@ -324,16 +324,24 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         match *op {
+            Operation::Move(ref dest, value) => {
+                self.dat_ctx.rdtsc_tracker.check(ctrl, dest, value);
+            }
             Operation::Jump { condition, to } => {
                 if self.inline_depth == 0 {
                     // Stop at switch jump
-                    let to = ctrl.resolve(to);
-                    if to.if_constant().is_none() {
+                    let ctx = ctrl.ctx();
+                    if condition == ctx.const_1() && to.if_constant().is_none() {
                         ctrl.end_branch();
                         return;
                     }
                 }
                 let condition = ctrl.resolve(condition);
+                if let Some(to) = ctrl.resolve_va(to) {
+                    if self.dat_ctx.rdtsc_tracker.check_rdtsc_jump(ctrl, condition, to) {
+                        return;
+                    }
+                }
                 // Train check
                 let mut ok = condition.if_arithmetic_gt()
                     .and_then(|x| {
@@ -376,8 +384,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             Operation::Call(dest) => {
                 if self.inline_depth < 2 {
-                    if let Some(dest) = ctrl.resolve(dest).if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
+                    if let Some(dest) = ctrl.resolve_va(dest) {
                         self.inline_depth += 1;
                         ctrl.analyze_with_current_state(self, dest);
                         self.inline_depth -= 1;

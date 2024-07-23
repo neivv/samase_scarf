@@ -337,6 +337,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
         } else if let Operation::Jump { condition, to } = *op {
             if let Some(to) = ctrl.resolve_va(to) {
+                let condition = ctrl.resolve(condition);
                 if self.rdtsc_tracker.check_rdtsc_jump(ctrl, condition, to) {
                     return;
                 }
@@ -381,7 +382,12 @@ pub struct RdtscTracker<'e> {
 }
 
 impl<'e> RdtscTracker<'e> {
+    /// rdtsc_custom should be Custom(x) masked with ffff_ffff
     pub fn new(rdtsc_custom: Operand<'e>) -> RdtscTracker<'e> {
+        debug_assert!(
+            rdtsc_custom.if_and_with_const()
+                .is_some_and(|(x, c)| x.if_custom().is_some() && c == 0xffff_ffff)
+        );
         RdtscTracker {
             rdtsc_custom,
             custom_no_mask: Operand::and_masked(rdtsc_custom).0,
@@ -391,17 +397,17 @@ impl<'e> RdtscTracker<'e> {
     /// Special case rdtsc to move Custom() that will be checked
     /// later on in jumps.
     ///
-    /// Call on Operation::Move(dest, val).
+    /// Call on Operation::Move(dest, val). (Both unresolved)
     /// Returns true if the operation was skipped.
     #[inline]
     pub fn check<A: analysis::Analyzer<'e>>(
         &self,
         ctrl: &mut Control<'e, '_, '_, A>,
-        dest: &DestOperand<'e>,
+        _dest: &DestOperand<'e>,
         val: Operand<'e>,
     ) -> bool {
         if val.is_undefined() {
-            self.check_move_main(ctrl, dest)
+            self.check_move_main(ctrl)
         } else {
             false
         }
@@ -410,14 +416,17 @@ impl<'e> RdtscTracker<'e> {
     fn check_move_main<A: analysis::Analyzer<'e>>(
         &self,
         ctrl: &mut Control<'e, '_, '_, A>,
-        dest: &DestOperand<'e>,
     ) -> bool {
         let binary = ctrl.binary();
         let ins_address = ctrl.address();
         if let Ok(slice) = binary.slice_from_address(ins_address, 2) {
             if slice == &[0x0f, 0x31] {
-                ctrl.move_resolved(dest, self.rdtsc_custom);
-                ctrl.skip_operation();
+                // Rdtsc writes eax and edx (Always 32bit).
+                // Relies on rdtsc_custom being masked.
+                // (Will do this redundtantly twice since it has two operations that reach this
+                // code, but set_register is very cheap)
+                ctrl.set_register(0, self.rdtsc_custom);
+                ctrl.set_register(2, self.rdtsc_custom);
                 return true;
             }
         }
@@ -426,6 +435,8 @@ impl<'e> RdtscTracker<'e> {
 
     /// If this is jump on `rdtsc mod C`, assume it to be unconditional, patch it to
     /// be unconditional and skip the non-jump branch.
+    ///
+    /// Condition must be resolved.
     pub fn check_rdtsc_jump<A: analysis::Analyzer<'e>>(
         &self,
         ctrl: &mut Control<'e, '_, '_, A>,
