@@ -1182,6 +1182,19 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.shareable.ctx
     }
 
+    /// Mainly for clearer profiling which won't mix global search costs in first
+    /// operand / address analysis needing them.
+    #[inline(never)]
+    pub fn load_globals(&mut self) {
+        self.enter(|x, _| {
+            x.functions();
+            x.functions_with_callers();
+            x.globals_with_values();
+            x.relocs();
+            x.unwind_functions();
+        });
+    }
+
     fn is_valid_function(address: E::VirtualAddress) -> bool {
         address.as_u64() & 0xf == 0
     }

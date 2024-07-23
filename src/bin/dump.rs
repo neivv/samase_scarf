@@ -185,10 +185,13 @@ fn dump<'e, E: ExecutionState<'e>>(
     let mut out = if args.dump_vtables {
         dump_vtables(binary, &mut analysis)
     } else if args.dump_euds {
+        analysis.load_globals();
         samase_scarf::dump::dump_euds(&mut analysis)
     } else if args.dump_dat_patches {
+        analysis.load_globals();
         samase_scarf::dump::dump_dat_patches(&mut analysis, true)
     } else {
+        analysis.load_globals();
         let arg2 = std::env::args_os().nth(2);
         let arg2 = arg2.as_ref();
         let filter = arg2.and_then(|x| x.to_str()).filter(|&x| x != "-");
