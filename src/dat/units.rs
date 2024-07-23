@@ -302,10 +302,18 @@ pub(crate) fn command_analysis<'a, 'acx, 'e, E: ExecutionState<'e>>(
         let mut analyzer = CommandPatch {
             dat_ctx,
             inline_depth: 0,
-            done: false,
+            done: 0,
+            expected_done: if case == 0x1f { 1 } else { 2 },
+            half_done: false,
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, branch);
         analysis.analyze(&mut analyzer);
+        if analyzer.done != analyzer.expected_done {
+            dat_warn!(
+                dat_ctx, "Did not find all command patches for command {:x} (Found {})",
+                case, analyzer.done,
+            );
+        }
     }
 
     Some(())
@@ -314,7 +322,11 @@ pub(crate) fn command_analysis<'a, 'acx, 'e, E: ExecutionState<'e>>(
 pub struct CommandPatch<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
     inline_depth: u8,
-    done: bool,
+    done: u8,
+    expected_done: u8,
+    /// If zerg building morph check is two comparisons for min/max id instead
+    /// of `x - 82 > 16`, mark this true for the first comparison.
+    half_done: bool,
 }
 
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
@@ -323,6 +335,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        ctrl.aliasing_memory_fix(op);
         match *op {
             Operation::Move(ref dest, value) => {
                 self.dat_ctx.rdtsc_tracker.check(ctrl, dest, value);
@@ -358,14 +371,28 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 if !ok {
                     // Zerg building morph check.
                     // (((Mem16[(x + 1)] - 82) & ffff) > 16)
+                    // and
+                    // (((unit_id - 82) & ffff) > 16)
+                    // ffff mask may not exist depending on codegen details
                     ok = condition.if_arithmetic_gt_const(0x16)
                         .and_then(|l| {
-                            let l = l.if_arithmetic_and_const(0xffff)?;
-                            let l = l.if_arithmetic_sub_const(0x82)?;
-                            l.if_mem16_offset(1)?;
+                            let l = l.if_arithmetic_and_const(0xffff).unwrap_or(l);
+                            l.if_arithmetic_sub_const(0x82)?;
                             Some(())
                         })
                         .is_some();
+                }
+                let mut half_done = false;
+                if !ok {
+                    // Zerg building morph check halves
+                    // as 82 > x or x > 98
+                    if condition.if_arithmetic_gt_const(0x98).is_some() ||
+                        condition.if_arithmetic_gt()
+                            .is_some_and(|x| x.0.if_constant() == Some(0x82))
+                    {
+                        ok = true;
+                        half_done = true;
+                    }
                 }
                 if ok {
                     let nops = [0x90; 0x10];
@@ -378,17 +405,28 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                         self.dat_ctx.add_replace_patch(address, nops);
                     }
-                    self.done = true;
-                    ctrl.end_analysis();
+                    if half_done {
+                        if self.half_done {
+                            self.half_done = false;
+                            self.done += 1;
+                        } else {
+                            self.half_done = true;
+                        }
+                    } else {
+                        self.done += 1;
+                    }
+                    if self.done == self.expected_done {
+                        ctrl.end_analysis();
+                    }
                 }
             }
             Operation::Call(dest) => {
-                if self.inline_depth < 2 {
+                if self.inline_depth < 1 {
                     if let Some(dest) = ctrl.resolve_va(dest) {
                         self.inline_depth += 1;
                         ctrl.analyze_with_current_state(self, dest);
                         self.inline_depth -= 1;
-                        if self.done {
+                        if self.done != 0 {
                             ctrl.end_analysis();
                         }
                     }
