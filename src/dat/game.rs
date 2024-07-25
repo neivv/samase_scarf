@@ -15,12 +15,49 @@ use super::{
     DatPatches, DatPatch, ExtArrayPatch, RequiredStableAddressesMap, RequiredStableAddresses,
     FunctionHookContext,
 };
+use super::util::RdtscTracker;
+
+// These should never be in a function that dat extensions need, so
+// early exit here. Of course with lot more eager inlining in codegen this could backfire..
+//
+// 90 cumulative_minerals
+// dc team_game_main_player
+// e0 e2 screen_pos_tiles
+// e4 e6 map_width_height_tiles
+// f2 player_race
+// 14c frame_count
+// 150 saved_elapsed_seconds
+// 154 campaign_mission
+// 156 next_scenario
+// d70 10a0 selection_hotkeys
+// 2c7a self_alliance_colors
+// 2ce5, 2ce6 player_minimap_color
+// 30b4 3144 31d4 max_supply
+// 3204 custom_score
+// e4c0 forces
+// e550 alliances[1][..] (In some unrolled loop)
+// e59f alliances[7][7] (In game init code setting players ally to themselves)
+// e604 countdown timer
+// e608 elapsed_seconds
+// e60c some save migration thing
+// e610 player_victory_status
+// e61c leaderboard_type
+// eb70 eb74 eb78 eb7c locations
+// 1035a 1035b 1035c 1035d color_rgba
+// 1038a player_color_preference
+static KNOWN_UNNEEDED_OFFSETS: &[u32] = &[
+    0x90, 0xdc, 0xe0, 0xe2, 0xe4, 0xe6, /* 0xf2, */ 0x14c, 0x150, 0x154, 0x156, 0xd70, 0x10a0,
+    0x2c7a, 0x2ce5, 0x2ce6, 0x30b4, 0x3144, 0x31d4, 0x3204, 0xe4c0, 0xe550, 0xe59f, 0xe604, 0xe608,
+    0xe60c, 0xe610, 0xe61c, 0xeb70, 0xeb74, 0xeb78, 0xeb7c, 0x1035a, 0x1035b, 0x1035c, 0x1035d,
+    0x1038a,
+];
 
 pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
     cache: &mut AnalysisCache<'e, E>,
     analysis: &'acx AnalysisCtx<'e, E>,
     required_stable_addresses: &mut RequiredStableAddressesMap<'acx, E::VirtualAddress>,
     result: &mut DatPatches<'e, E::VirtualAddress>,
+    rdtsc_tracker: &RdtscTracker<'e>,
 ) -> Option<()> {
     let ctx = analysis.ctx;
     let relocs = cache.globals_with_values();
@@ -46,12 +83,19 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
     let checked_functions =
         HashSet::with_capacity_and_hasher(unchecked_refs.len(), Default::default());
     let ai_build_limit_offset = E::struct_layouts().player_ai_build_limits();
+    let mut known_unneeded_offsets =
+        HashSet::with_capacity_and_hasher(KNOWN_UNNEEDED_OFFSETS.len(), Default::default());
+    for &offset in KNOWN_UNNEEDED_OFFSETS {
+        known_unneeded_offsets.insert(offset);
+    }
     let mut game_ctx = GameContext {
         analysis,
+        rdtsc_tracker,
         functions: &functions,
         result,
         unchecked_refs,
         checked_functions,
+        known_unneeded_offsets,
         game,
         game_address,
         patched_addresses: HashMap::with_capacity_and_hasher(128, Default::default()),
@@ -139,10 +183,12 @@ fn find_game_refs<'e, E: ExecutionState<'e>>(
 
 pub struct GameContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     analysis: &'acx AnalysisCtx<'e, E>,
+    rdtsc_tracker: &'a RdtscTracker<'e>,
     functions: &'a FunctionFinder<'a, 'e, E>,
     result: &'a mut DatPatches<'e, E::VirtualAddress>,
     unchecked_refs: HashSet<E::VirtualAddress>,
     checked_functions: HashSet<E::VirtualAddress>,
+    known_unneeded_offsets: HashSet<u32>,
     game: Operand<'e>,
     game_address: E::VirtualAddress,
     patched_addresses: HashMap<E::VirtualAddress, (usize, Operand<'e>)>,
@@ -294,6 +340,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         self.greatest_address = self.greatest_address.max(address);
         match *op {
             Operation::Move(ref dest, unres_val) => {
+                self.game_ctx.rdtsc_tracker.check(ctrl, dest, unres_val);
                 // Any instruction referring to a global must be at least 5 bytes
                 let instruction_len = ctrl.current_instruction_end().as_u64()
                     .wrapping_sub(address.as_u64());
@@ -324,9 +371,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
                 if let DestOperand::Memory(ref mem) = *dest {
                     // Allowing writing intial constant to scmain_state breaks things
-                    if Some(mem) == self.game_ctx.scmain_state {
-                        ctrl.skip_operation();
-                        return;
+                    if let Some(scmain_state) = self.game_ctx.scmain_state {
+                        if mem.size == scmain_state.size {
+                            let mem = ctrl.resolve_mem(mem);
+                            if mem.address() == scmain_state.address() {
+                                ctrl.skip_operation();
+                                return;
+                            }
+                        }
                     }
                 }
                 if !self.game_ref_seen {
@@ -357,6 +409,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         return;
                     } else {
                         self.greatest_address = self.greatest_address.max(to);
+                    }
+                    let condition = ctrl.resolve(condition);
+                    if self.game_ctx.rdtsc_tracker.check_rdtsc_jump(ctrl, condition, to) {
+                        return;
                     }
                     let binary = self.binary;
                     if let Err(e) = self.required_stable_addresses.add_jump_dest(binary, to) {
@@ -530,15 +586,17 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         mem: &MemAccess<'e>,
     ) {
         let ctx = ctrl.ctx();
-        let game = self.game_ctx.game;
-        let bump = &self.game_ctx.analysis.bump;
+        let game_ctx = &mut *self.game_ctx;
+        let game = game_ctx.game;
+        let bump = &game_ctx.analysis.bump;
         let (base, offset) = mem.address();
-        if offset < 0x18c || offset > 0x1034f {
-            return;
-        }
         let offset = offset as u32;
         let mut terms = crate::add_terms::collect_arith_add_terms(base, bump);
         if !terms.remove_one(|x, _neg| x == game) {
+            return;
+        }
+        if game_ctx.known_unneeded_offsets.contains(&offset) {
+            ctrl.end_analysis();
             return;
         }
         let index = terms.join(ctx);

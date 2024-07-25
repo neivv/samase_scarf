@@ -541,6 +541,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         &dat_ctx.analysis,
         &mut dat_ctx.required_stable_addresses,
         &mut dat_ctx.result,
+        &dat_ctx.rdtsc_tracker,
     );
     units::command_analysis(dat_ctx)?;
     wireframe::grp_index_patches(dat_ctx)?;
