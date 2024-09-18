@@ -973,21 +973,6 @@ impl<'e, E: ExecutionState<'e>> ArgCache<'e, E> {
         }
     }
 
-    pub fn on_call_u8(&self, index: u8) -> Operand<'e> {
-        let val = self.on_call(index);
-        self.ctx.and_const(val, 0xff)
-    }
-
-    pub fn on_call_u16(&self, index: u8) -> Operand<'e> {
-        let val = self.on_call(index);
-        self.ctx.and_const(val, 0xffff)
-    }
-
-    pub fn on_call_u32(&self, index: u8) -> Operand<'e> {
-        let val = self.on_call(index);
-        self.ctx.and_const(val, 0xffff_ffff)
-    }
-
     pub fn on_call_f32(&self, index: u8) -> Operand<'e> {
         if E::VirtualAddress::SIZE == 8 {
             if index < 4 {
@@ -1009,16 +994,6 @@ impl<'e, E: ExecutionState<'e>> ArgCache<'e, E> {
         } else {
             self.on_call(index + 1)
         }
-    }
-
-    pub fn on_thiscall_call_u8(&self, index: u8) -> Operand<'e> {
-        let val = self.on_thiscall_call(index);
-        self.ctx.and_const(val, 0xff)
-    }
-
-    pub fn on_thiscall_call_u32(&self, index: u8) -> Operand<'e> {
-        let val = self.on_thiscall_call(index);
-        self.ctx.and_const(val, 0xffff_ffff)
     }
 
     /// Returns operand corresponding to location of argument *on function entry*.

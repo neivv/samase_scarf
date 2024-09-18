@@ -670,7 +670,7 @@ pub(crate) struct RequiredStableAddresses<'acx, Va: VirtualAddress> {
 }
 
 impl<'acx, Va: VirtualAddress> RequiredStableAddressesMap<'acx, Va> {
-    pub fn with_capacity(cap: usize, bump: &'acx Bump) -> RequiredStableAddressesMap<Va> {
+    pub fn with_capacity(cap: usize, bump: &'acx Bump) -> RequiredStableAddressesMap<'acx, Va> {
         RequiredStableAddressesMap {
             map: HashMap::with_capacity_and_hasher(cap, Default::default()),
             bump,
