@@ -193,9 +193,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindNetPlayerArr<'
                 })
         }
         if let Some(value) = self.delay_eax_move.take() {
-            let exec_state = ctrl.exec_state();
-            let eax = DestOperand::Register64(0);
-            exec_state.move_resolved(&eax, value);
+            ctrl.set_register(0, value);
         }
         let ctx = ctrl.ctx();
         match *op {

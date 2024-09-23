@@ -305,7 +305,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
                 }
                 if E::VirtualAddress::SIZE == 4 && self.is_entry {
                     ctrl.skip_call_preserve_esp();
-                    ctrl.move_resolved(&DestOperand::Register64(4), ctx.custom(0));
+                    ctrl.set_register(4, ctx.custom(0));
                 }
             }
             _ => (),

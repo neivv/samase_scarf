@@ -727,10 +727,7 @@ impl<'a, 'b, 'e, A: scarf::analysis::Analyzer<'e>> ControlExt<'e, A::Exec, A::St
                                     r,
                                 )
                             };
-                            exec_state.move_resolved(
-                                &scarf::DestOperand::Register64(register),
-                                new,
-                            );
+                            exec_state.set_register(register, new);
                         }
                     }
                     self.continue_at_address(assign_branch);
