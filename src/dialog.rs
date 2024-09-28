@@ -2,7 +2,7 @@ use bumpalo::collections::Vec as BumpVec;
 use fxhash::FxHashMap;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
-use scarf::exec_state::{ExecutionState, VirtualAddress};
+use scarf::exec_state::{ExecutionState, OperandCtxExtX86, VirtualAddress};
 use scarf::operand::{ArithOpType, MemAccessSize};
 use scarf::{BinaryFile, BinarySection, DestOperand, MemAccess, Operation, Operand, OperandCtx};
 

@@ -302,7 +302,7 @@ pub(crate) fn analyze_make_path<'e, E: ExecutionState<'e>>(
         call_tracker: CallTracker::with_capacity(actx, 0, 32),
         path_null_jump_seen: false,
         this_is_a1: bump.alloc_slice_copy(
-            &[(DestOperand::Register64(1), actx.arg_cache.on_entry(0))]
+            &[(DestOperand::register(1), actx.arg_cache.on_entry(0))]
         ),
         maybe_region_ids: bumpvec_with_capacity(0x20, bump),
     };

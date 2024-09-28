@@ -330,12 +330,14 @@ impl<'e, E: ExecutionState<'e>> Analyzer<'e, E> {
         is_call: bool,
     ) {
         match *value.ty() {
-            OperandType::Register(reg) => {
-                if reg != 4 {
-                    if is_call {
-                        self.call_registers |= 1 << (reg & 15);
-                    } else {
-                        self.registers |= 1 << (reg & 15);
+            OperandType::Arch(arch) => {
+                if let Some(reg) = arch.if_register() {
+                    if reg != 4 {
+                        if is_call {
+                            self.call_registers |= 1 << (reg & 15);
+                        } else {
+                            self.registers |= 1 << (reg & 15);
+                        }
                     }
                 }
             }

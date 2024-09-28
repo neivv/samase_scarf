@@ -605,10 +605,10 @@ sfxdata.dat: None
 portdata.dat: 140c65520 (entry size 24)
 mapdata.dat: 140c90ce0 (entry size 48)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress64(14018db3e), 2) })
-sprite_x: ((((((((((Mem32[Mem64[60] + 18] << 20) ^ ((2ba7a907 - (Custom_0 & ffff)) << 20)) ^ ((((Mem8[140cfa502] >> 7) | (Mem32[140cfa4ff] * 2)) + (((Custom_0 & ffff) ^ Mem32[Mem64[60] + 18]) ^ 417294c2)) << 20)) ^ (Mem16[140cfa908] << 35)) ^ (((Custom_0 & ffff) + ((Mem8[140cfa90f] >> 7) | (Mem32[140cfa90c] * 2))) << 20)) ^ ((Custom_0 & ffff) << 20)) ^ ((Mem32[140cfa909] & fffff8) << 1d)) ^ (Custom_0 & ffff)) ^ Mem64[Mem64[60] + 18]) ^ d47a810417294c2)
+sprite_x: (((((((((((2ba7a907 - (Custom_0 & ffff)) << 20) ^ (Mem32[Mem64[60] + 18] << 20)) ^ ((((Mem8[140cfa502] >> 7) | (Mem32[140cfa4ff] * 2)) + (((Custom_0 & ffff) ^ Mem32[Mem64[60] + 18]) ^ 417294c2)) << 20)) ^ (((Custom_0 & ffff) + ((Mem8[140cfa90f] >> 7) | (Mem32[140cfa90c] * 2))) << 20)) ^ ((Custom_0 & ffff) << 20)) ^ (Mem16[140cfa908] << 35)) ^ ((Mem32[140cfa909] & fffff8) << 1d)) ^ (Custom_0 & ffff)) ^ Mem64[Mem64[60] + 18]) ^ d47a810417294c2)
 sprite_x_offset: Some(20)
 sprite_x_size: Some(Mem64)
-sprite_y: ((((((((((Mem32[Mem64[60] + 18] << 20) ^ ((2ba7a907 - (Custom_0 & ffff)) << 20)) ^ ((((Mem8[140cfa502] >> 7) | (Mem32[140cfa4ff] * 2)) + (((Custom_0 & ffff) ^ Mem32[Mem64[60] + 18]) ^ 417294c2)) << 20)) ^ (Mem16[140cfa908] << 35)) ^ (((Custom_0 & ffff) + ((Mem8[140cfa90f] >> 7) | (Mem32[140cfa90c] * 2))) << 20)) ^ ((Custom_0 & ffff) << 20)) ^ ((Mem32[140cfa909] & fffff8) << 1d)) ^ (Custom_0 & ffff)) ^ Mem64[Mem64[60] + 18]) ^ d47a810417294c2)
+sprite_y: (((((((((((2ba7a907 - (Custom_0 & ffff)) << 20) ^ (Mem32[Mem64[60] + 18] << 20)) ^ ((((Mem8[140cfa502] >> 7) | (Mem32[140cfa4ff] * 2)) + (((Custom_0 & ffff) ^ Mem32[Mem64[60] + 18]) ^ 417294c2)) << 20)) ^ (((Custom_0 & ffff) + ((Mem8[140cfa90f] >> 7) | (Mem32[140cfa90c] * 2))) << 20)) ^ ((Custom_0 & ffff) << 20)) ^ (Mem16[140cfa908] << 35)) ^ ((Mem32[140cfa909] & fffff8) << 1d)) ^ (Custom_0 & ffff)) ^ Mem64[Mem64[60] + 18]) ^ d47a810417294c2)
 sprite_y_offset: Some(28)
 sprite_y_size: Some(Mem64)
 799 euds

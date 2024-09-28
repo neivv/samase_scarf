@@ -120,7 +120,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindPrismShaders<'a,
                     let ctx = ctrl.ctx();
                     let addr = match *unresolved.ty() {
                         OperandType::Memory(mem) => mem.address_op(ctx),
-                        OperandType::Register(_) => unresolved,
+                        OperandType::Arch(_) => unresolved,
                         _ => return,
                     };
                     let addr = ctrl.resolve(addr);

@@ -92,51 +92,55 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                     let address = ctrl.address();
                     let mut patched = false;
                     match *dest {
-                        DestOperand::Register64(reg) | DestOperand::Register32(reg) => {
-                            let patch_len = if reg < 8 { 5 } else { 6 };
-                            let instruction_len = ctrl.current_instruction_end().as_u64()
-                                .wrapping_sub(address.as_u64()) as usize;
-                            if instruction_len >= patch_len {
-                                // Replace instruction with `mov reg, const32`
-                                // and add patch in two parts: instruction start
-                                // and sprites.dat entry count patch
-                                let nop_count = instruction_len - patch_len;
-                                if nop_count < 4 {
-                                    let mut buffer = [0u8; 8];
-                                    for i in 0..nop_count {
-                                        buffer[i] = 0x90;
-                                    }
-                                    let mut i = nop_count;
-                                    if reg >= 8 {
-                                        buffer[i] = 0x41;
+                        DestOperand::Arch(arch) => {
+                            if let Some(reg) = arch.if_register()
+                                .or_else(|| arch.if_x86_register_32())
+                            {
+                                let patch_len = if reg < 8 { 5 } else { 6 };
+                                let instruction_len = ctrl.current_instruction_end().as_u64()
+                                    .wrapping_sub(address.as_u64()) as usize;
+                                if instruction_len >= patch_len {
+                                    // Replace instruction with `mov reg, const32`
+                                    // and add patch in two parts: instruction start
+                                    // and sprites.dat entry count patch
+                                    let nop_count = instruction_len - patch_len;
+                                    if nop_count < 4 {
+                                        let mut buffer = [0u8; 8];
+                                        for i in 0..nop_count {
+                                            buffer[i] = 0x90;
+                                        }
+                                        let mut i = nop_count;
+                                        if reg >= 8 {
+                                            buffer[i] = 0x41;
+                                            i += 1;
+                                        }
+                                        buffer[i] = 0xb8 | (reg & 7);
                                         i += 1;
+                                        let patch = &buffer[..i];
+                                        let dat_ctx = &mut self.dat_ctx;
+                                        let binary = ctrl.binary();
+                                        // Sometimes this is just a `mov reg, const32`
+                                        // instruction already, sometimes it is result
+                                        // of a more complex instruction chain that
+                                        // scarf can fold to constant.
+                                        // If it is just a move, don't add patch for it.
+                                        let already_same = binary
+                                            .slice_from_address_to_end(address)
+                                            .map(|slice| slice.starts_with(patch))
+                                            .unwrap_or(false);
+                                        if !already_same {
+                                            dat_ctx.add_replace_patch(address, patch);
+                                        }
+                                        dat_ctx.result.patches.push(
+                                            DatPatch::EntryCount(DatEntryCountPatch {
+                                                dat: DatType::Sprites,
+                                                size_bytes: 4,
+                                                multiply: 1,
+                                                address: address + i as u32,
+                                            })
+                                        );
+                                        patched = true;
                                     }
-                                    buffer[i] = 0xb8 | (reg & 7);
-                                    i += 1;
-                                    let patch = &buffer[..i];
-                                    let dat_ctx = &mut self.dat_ctx;
-                                    let binary = ctrl.binary();
-                                    // Sometimes this is just a `mov reg, const32`
-                                    // instruction already, sometimes it is result
-                                    // of a more complex instruction chain that
-                                    // scarf can fold to constant.
-                                    // If it is just a move, don't add patch for it.
-                                    let already_same = binary
-                                        .slice_from_address_to_end(address)
-                                        .map(|slice| slice.starts_with(patch))
-                                        .unwrap_or(false);
-                                    if !already_same {
-                                        dat_ctx.add_replace_patch(address, patch);
-                                    }
-                                    dat_ctx.result.patches.push(
-                                        DatPatch::EntryCount(DatEntryCountPatch {
-                                            dat: DatType::Sprites,
-                                            size_bytes: 4,
-                                            multiply: 1,
-                                            address: address + i as u32,
-                                        })
-                                    );
-                                    patched = true;
                                 }
                             }
                         }

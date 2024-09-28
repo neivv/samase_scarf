@@ -1,6 +1,6 @@
 use scarf::analysis::{self, Analyzer, Control};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{DestOperand, Operation, OperandCtx};
+use scarf::{Operation, OperandCtx};
 
 /// A struct to be used as component in analyzer.
 ///
@@ -50,8 +50,8 @@ impl<'e, E: ExecutionState<'e>> DetectTailCall<'e, E> {
         op: &Operation<'e>,
     ) -> bool {
         if !self.esp_write_seen {
-            if let Operation::Move(DestOperand::Register64(reg), _) = *op {
-                if reg == 4 {
+            if let Operation::Move(dest, _) = *op {
+                if dest.if_register() == Some(4) {
                     self.esp_write_seen = true;
                 }
             }

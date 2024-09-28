@@ -2,7 +2,7 @@ use bumpalo::collections::Vec as BumpVec;
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{OperandHashByAddress};
-use scarf::{Operand, Operation, OperandCtx};
+use scarf::{DestOperand, Operand, Operation, OperandCtx};
 
 use crate::analysis_find::{entry_of_until, EntryOf};
 use crate::hash_map::{HashMap, HashSet};
@@ -322,7 +322,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                     instruction_len,
                                     // Assuming that (rax & ffff_ffff) can just use
                                     // rax instead. Makes patching bit simpler.
-                                    dest: Operand::and_masked(dest.as_operand(ctx)).0,
+                                    dest: dest_to_operand_widen_32(dest, ctx),
                                     base,
                                     index_bytes: index,
                                     mem_offset: offset,
@@ -360,6 +360,15 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
         self.first_branch = false;
         self.inline_limit = self.inline_limit.saturating_sub(1);
     }
+}
+
+fn dest_to_operand_widen_32<'e>(dest: &DestOperand<'e>, ctx: OperandCtx<'e>) -> Operand<'e> {
+    if let DestOperand::Arch(arch) = *dest {
+        if let Some(reg) = arch.if_x86_register_32() {
+            return ctx.register(reg);
+        }
+    }
+    dest.as_operand(ctx)
 }
 
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GrpIndexAnalyzer<'a, 'b, 'acx, 'e, E> {

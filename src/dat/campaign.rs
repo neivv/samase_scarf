@@ -81,7 +81,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 self.string_size_add_seen = false;
             } else if let Operation::Move(dest, value) = *op {
                 // Not counting additions to stack
-                if dest != DestOperand::Register64(4) {
+                if dest.if_register() != Some(4) {
                     // Assume string to be at least 3 words large.
                     // Likely has inline buffer adding more size but staying
                     // flexible wrt that

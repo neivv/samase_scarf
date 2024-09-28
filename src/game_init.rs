@@ -2434,9 +2434,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindOrigPlayerTyp
                     .is_some();
                 if input_ok {
                     let dest = ctrl.resolve_mem(dest);
-                    let ctx = ctrl.ctx();
-                    self.result = EntryOf::Ok(dest.address_op(ctx));
-                    ctrl.end_analysis();
+                    if dest.is_global() {
+                        let ctx = ctrl.ctx();
+                        self.result = EntryOf::Ok(dest.address_op(ctx));
+                        ctrl.end_analysis();
+                    }
                 }
             }
             _ => (),

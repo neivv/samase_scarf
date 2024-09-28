@@ -821,8 +821,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
             Operation::Move(ref dest, value) => {
                 match *dest {
-                    DestOperand::Register64(reg) if E::VirtualAddress::SIZE == 4 => {
-                        if reg == 5 && value.if_memory().is_some() {
+                    DestOperand::Arch(arch) if E::VirtualAddress::SIZE == 4 => {
+                        if arch.if_register() == Some(5) && value.if_memory().is_some() {
                             // Make pop ebp always be mov esp, orig_esp
                             // even if current esp is considered unknown
                             let ctx = ctrl.ctx();

@@ -4,7 +4,7 @@ use bumpalo::Bump;
 use byteorder::{ByteOrder, LittleEndian};
 
 use scarf::analysis::{FuncCallPair, RelocValues};
-use scarf::exec_state::{ExecutionState, VirtualAddress};
+use scarf::exec_state::{ExecutionState, OperandCtxExtX86, VirtualAddress};
 use scarf::{BinaryFile, BinarySection, MemAccessSize, Operand, OperandCtx};
 
 use crate::ai::{self, AiScriptHook};

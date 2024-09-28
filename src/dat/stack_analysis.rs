@@ -118,7 +118,11 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
         match *op {
             Operation::Move(ref dest, val) => {
                 let ctx = ctrl.ctx();
-                if matches!(dest, DestOperand::Register64(4)) {
+                let reg_dest = match dest {
+                    DestOperand::Arch(x) => x.if_register(),
+                    _ => None,
+                };
+                if reg_dest == Some(4) {
                     let constant = val.if_add_with_const()
                         .filter(|x| x.0 == ctx.register(4))
                         .and_then(|x| i32::try_from(x.1).ok())
@@ -171,7 +175,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> StackSizeTracker<'acx, 'e, E> {
                         }
                     }
                 } else {
-                    if let DestOperand::Register64(..) = *dest {
+                    if reg_dest.is_some() {
                         let val_unres = val;
                         // Check for moving esp to other register
                         // (Or esp +- offset)

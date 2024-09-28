@@ -253,6 +253,8 @@ impl<'e> FloatEqState<'e> {
 
 #[cfg(test)]
 mod test {
+    use scarf::exec_state::OperandCtxExtX86;
+
     use super::*;
 
     #[test]

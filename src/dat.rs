@@ -46,7 +46,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use lde::Isa;
 
 use scarf::analysis::{self, Cfg, Control, FuncAnalysis, RelocValues};
-use scarf::exec_state::{ExecutionState, VirtualAddress};
+use scarf::exec_state::{ExecutionState, OperandExtX86, VirtualAddress};
 use scarf::operand::{ArithOperand, ArithOpType, MemAccessSize, OperandType, OperandHashByAddress};
 use scarf::{
     BinaryFile, BinarySection, DestOperand, FlagArith, FlagUpdate, Operand, OperandCtx,
@@ -1386,6 +1386,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         }
     }
 
+    /// op is expected to be resolved.
     fn contains_u8_operand(&mut self, op: Operand<'e>) -> Option<U8Operand> {
         let key = op.hash_by_address();
         if let Some(&result) = self.operand_to_u8_op.get(&key) {
@@ -1705,8 +1706,22 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         // This shares quite a lot of code with flags below..
                         let left = ctrl.resolve(arith.left);
                         let right = ctrl.resolve(arith.right);
-                        self.check_u8_instruction(ctrl, Some(dest), left, arith.left);
-                        self.check_u8_instruction(ctrl, Some(dest), right, arith.right);
+                        // check_u8_instruction only registers one type of operand per access,
+                        // one that gets first gets the priority. Prioritize memory operands,
+                        // which is arbitrary choice, and it would arguably be better to maybe
+                        // change check_u8_instruction to accept at least two values where
+                        // sensible, but this keeps same results as older scarf had.
+                        //
+                        // (What was before `Mem[x] + (rax & ff)`, is now `Arch(al) + Mem[x]`
+                        // due to OperandType discriminant ordering being
+                        // Arch < Memory < Arithmetic)
+                        if arith.right.if_memory().is_none() {
+                            self.check_u8_instruction(ctrl, Some(dest), left, arith.left);
+                            self.check_u8_instruction(ctrl, Some(dest), right, arith.right);
+                        } else {
+                            self.check_u8_instruction(ctrl, Some(dest), right, arith.right);
+                            self.check_u8_instruction(ctrl, Some(dest), left, arith.left);
+                        }
                         if self.mode == DatFuncAnalysisMode::ArrayIndex {
                             let new_left =
                                 self.check_memory_read(ctrl, Some(dest), arith.left, left);
@@ -3515,35 +3530,33 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 let resolved = ctrl.resolve(val);
                 self.check_u8_instruction(ctrl, Some(dest), resolved, val);
                 match *dest {
-                    DestOperand::Register32(r) | DestOperand::Register64(r) => {
+                    DestOperand::Arch(arch) => {
                         if let Some(op) = self.needed_operand {
-                            if Operand::and_masked(op).0.if_register()
-                                .filter(|&x| x == r)
+                            let r = arch.value() as u8;
+                            if Operand::and_masked(op).0.if_any_sized_register()
+                                .filter(|&(x, _)| x == r)
                                 .is_some()
                             {
-                                // I feel like this doesn't need to be a branch rerun..
-                                // (It wouldn't hurt but would be just a bit more time spent)
-                                // But saving this as an assigning instruction that needs widening
-                                // catches an edge case where [ebp - xx] needs to be relocated.
-                                // Specifically `mov r32, [ebp - xx]`
-                                self.set_assigning_instruction(ctrl, dest, val, address);
-                            }
-                        }
-                    }
-                    DestOperand::Register8Low(r) => {
-                        // We want to also patch assignment like mov al, 82,
-                        // but that isn't caught by check_u8_instruction
-                        if let Some(op) = self.needed_operand {
-                            if Operand::and_masked(op).0.if_register()
-                                .filter(|&x| x == r)
-                                .is_some()
-                            {
-                                self.set_assigning_instruction(ctrl, dest, val, address);
-                                self.instruction_lists.clear();
-                                // Ask the branch to be rerun with
-                                // self.final_address set to this instruction
-                                // This operand should be unresolved, pretty sure..
-                                self.rerun_branch = Some((self.branch, val, address));
+                                if let Some(_) = arch.if_register()
+                                    .or_else(|| arch.if_x86_register_32())
+                                {
+                                    // I feel like this doesn't need to be a branch rerun..
+                                    // (It wouldn't hurt but would be just a bit more time spent)
+                                    // But saving this as an assigning instruction that needs
+                                    // widening catches an edge case where [ebp - xx] needs to be
+                                    // relocated.
+                                    // Specifically `mov r32, [ebp - xx]`
+                                    self.set_assigning_instruction(ctrl, dest, val, address);
+                                } else if let Some(_) = arch.if_x86_register_8_low() {
+                                    // We want to also patch assignment like mov al, 82,
+                                    // but that isn't caught by check_u8_instruction
+                                    self.set_assigning_instruction(ctrl, dest, val, address);
+                                    self.instruction_lists.clear();
+                                    // Ask the branch to be rerun with
+                                    // self.final_address set to this instruction
+                                    // This operand should be unresolved, pretty sure..
+                                    self.rerun_branch = Some((self.branch, val, address));
+                                }
                             }
                         }
                     }
@@ -3563,7 +3576,6 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             self.rerun_branch = Some((self.branch, val, address));
                         }
                     }
-                    _ => (),
                 }
                 if address == self.final_address {
                     if self.needed_operand.is_none() {
@@ -3746,9 +3758,9 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 
             return;
         }
         match *Operand::and_masked(op).0.ty() {
-            OperandType::Register(reg) => {
+            OperandType::Arch(arch) => {
                 if E::VirtualAddress::SIZE == 8 && self.branch == self.func_entry {
-                    let arg = match reg {
+                    let arg = match arch.value() {
                         1 => 0,
                         2 => 1,
                         8 => 2,

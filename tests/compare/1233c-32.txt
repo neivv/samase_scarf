@@ -603,10 +603,10 @@ sfxdata.dat: None
 portdata.dat: e0b340 (entry size 16)
 mapdata.dat: e33b50 (entry size 32)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress32(005682c0), 2) })
-sprite_x: (((((((((((Mem16[e87860] * 2) + ((Custom_0 ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)) + 27e0)) ^ 19b7)) << 10) ^ (Mem16[e87cd0] << 10)) ^ (Mem16[e87cce] << 10)) ^ (Custom_0 << 10)) ^ ((((Mem16[Mem32[30] + 12] << 9) | (Mem8[Mem32[30] + 10] << 19)) + 27e00000) & ffff0000)) ^ (Custom_0 & ffff)) ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)) - 2864d820)) ^ f0f719b7) & ffffffff)
+sprite_x: (((((((((Mem16[e87cd0] << 10) ^ (Mem16[e87cce] << 10)) ^ (((Mem16[e87860] * 2) + ((Custom_0 ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)) + 27e0)) ^ 19b7)) << 10)) ^ (Custom_0 << 10)) ^ (Custom_0 & ffff)) ^ ((((Mem16[Mem32[30] + 12] << 9) | (Mem8[Mem32[30] + 10] << 19)) + 27e00000) & ffff0000)) ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)) - 2864d820)) ^ f0f719b7) & ffffffff)
 sprite_x_offset: Some(14)
 sprite_x_size: Some(Mem32)
-sprite_y: (((((((((((Mem16[e87860] * 2) + ((Custom_0 ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)) + 27e0)) ^ 19b7)) << 10) ^ (Mem16[e87cd0] << 10)) ^ (Mem16[e87cce] << 10)) ^ (Custom_0 << 10)) ^ ((((Mem16[Mem32[30] + 12] << 9) | (Mem8[Mem32[30] + 10] << 19)) + 27e00000) & ffff0000)) ^ (Custom_0 & ffff)) ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)) - 2864d820)) ^ f0f719b7) & ffffffff)
+sprite_y: (((((((((Mem16[e87cd0] << 10) ^ (Mem16[e87cce] << 10)) ^ (((Mem16[e87860] * 2) + ((Custom_0 ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem8[Mem32[30] + 10] << 9)) + 27e0)) ^ 19b7)) << 10)) ^ (Custom_0 << 10)) ^ (Custom_0 & ffff)) ^ ((((Mem16[Mem32[30] + 12] << 9) | (Mem8[Mem32[30] + 10] << 19)) + 27e00000) & ffff0000)) ^ (((Mem16[Mem32[30] + 12] >> 7) | (Mem32[Mem32[30] + 10] << 9)) - 2864d820)) ^ f0f719b7) & ffffffff)
 sprite_y_offset: Some(18)
 sprite_y_size: Some(Mem32)
 799 euds

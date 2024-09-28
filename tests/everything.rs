@@ -2436,7 +2436,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
 
 fn op_register_anywidth(op: Operand<'_>) -> Option<u8> {
     match *op.ty() {
-        OperandType::Register(s) => Some(s),
+        OperandType::Arch(s) => s.if_register(),
         _ => op.if_and_masked_register().map(|x| x.0)
     }
 }

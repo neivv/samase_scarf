@@ -605,10 +605,10 @@ sfxdata.dat: None
 portdata.dat: 140c9d520 (entry size 24)
 mapdata.dat: 140cc8b40 (entry size 48)
 step iscript hook: Some(StepIscriptHook { script_operand_at_switch: rdx, opcode_check: (VirtualAddress64(14018dbfe), 2) })
-sprite_x: (((((((((Mem32[140d326ae] << 20) ^ (Mem16[140d3227e] << 35)) ^ ((29dbffaa - (((Custom_0 & ffff) ^ ((Mem32[Mem64[60] + 18] * 2) + 2901bb72)) ^ a214a864)) << 20)) ^ (((Custom_0 & ffff) + ((Mem8[140d326b5] >> 7) | (Mem32[140d326b2] * 2))) << 20)) ^ ((Mem32[140d3227f] & fffff8) << 1d)) ^ (Custom_0 & ffff)) ^ ((Mem32[Mem64[60] + 18] << 21) + 2901bb7200000000)) ^ ((Mem64[Mem64[60] + 18] * 2) + 51f8ce2a2901bb72)) ^ fa84a933a214a864)
+sprite_x: (((((((((Mem32[140d326ae] << 20) ^ ((29dbffaa - (((Custom_0 & ffff) ^ ((Mem32[Mem64[60] + 18] * 2) + 2901bb72)) ^ a214a864)) << 20)) ^ (((Custom_0 & ffff) + ((Mem8[140d326b5] >> 7) | (Mem32[140d326b2] * 2))) << 20)) ^ (Mem16[140d3227e] << 35)) ^ ((Mem32[140d3227f] & fffff8) << 1d)) ^ (Custom_0 & ffff)) ^ ((Mem64[Mem64[60] + 18] * 2) + 51f8ce2a2901bb72)) ^ ((Mem32[Mem64[60] + 18] << 21) + 2901bb7200000000)) ^ fa84a933a214a864)
 sprite_x_offset: Some(20)
 sprite_x_size: Some(Mem64)
-sprite_y: (((((((((Mem32[140d326ae] << 20) ^ (Mem16[140d3227e] << 35)) ^ ((29dbffaa - (((Custom_0 & ffff) ^ ((Mem32[Mem64[60] + 18] * 2) + 2901bb72)) ^ a214a864)) << 20)) ^ (((Custom_0 & ffff) + ((Mem8[140d326b5] >> 7) | (Mem32[140d326b2] * 2))) << 20)) ^ ((Mem32[140d3227f] & fffff8) << 1d)) ^ (Custom_0 & ffff)) ^ ((Mem32[Mem64[60] + 18] << 21) + 2901bb7200000000)) ^ ((Mem64[Mem64[60] + 18] * 2) + 51f8ce2a2901bb72)) ^ fa84a933a214a864)
+sprite_y: (((((((((Mem32[140d326ae] << 20) ^ ((29dbffaa - (((Custom_0 & ffff) ^ ((Mem32[Mem64[60] + 18] * 2) + 2901bb72)) ^ a214a864)) << 20)) ^ (((Custom_0 & ffff) + ((Mem8[140d326b5] >> 7) | (Mem32[140d326b2] * 2))) << 20)) ^ (Mem16[140d3227e] << 35)) ^ ((Mem32[140d3227f] & fffff8) << 1d)) ^ (Custom_0 & ffff)) ^ ((Mem64[Mem64[60] + 18] * 2) + 51f8ce2a2901bb72)) ^ ((Mem32[Mem64[60] + 18] << 21) + 2901bb7200000000)) ^ fa84a933a214a864)
 sprite_y_offset: Some(28)
 sprite_y_size: Some(Mem64)
 799 euds
