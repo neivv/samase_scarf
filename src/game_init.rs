@@ -38,8 +38,13 @@ pub struct GameInit<'e, Va: VirtualAddress> {
 }
 
 /// Data related to game (map) (gameplay state) initialization
-pub struct InitGame<'e, Va: VirtualAddress> {
+pub struct InitGameMap<'e, Va: VirtualAddress> {
     pub loaded_save: Option<Operand<'e>>,
+    pub init_game: Option<Va>,
+    pub init_game_map: Option<Va>,
+}
+
+pub struct InitGame<Va: VirtualAddress> {
     pub init_game: Option<Va>,
 }
 
@@ -1787,24 +1792,27 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindLobbyState<'e, E>
     }
 }
 
-pub(crate) fn init_game<'e, E: ExecutionState<'e>>(
+pub(crate) fn init_game_map<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     init_units: E::VirtualAddress,
     functions: &FunctionFinder<'_, 'e, E>,
-) -> InitGame<'e, E::VirtualAddress> {
+) -> InitGameMap<'e, E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let bump = &analysis.bump;
 
-    let mut result = InitGame {
+    let mut result = InitGameMap {
         loaded_save: None,
         init_game: None,
+        init_game_map: None,
     };
 
     let callers = functions.find_callers(analysis, init_units);
     let functions = functions.functions();
     // Find caller of init_units that compares a ptr against 0xffff_ffff constant
-    // thrice before init_units call. This handle will be loaded_save handle.
+    // thrice. This handle will be loaded_save handle.
+    // If the init_units call is seen before second comparison, this is init_game_map,
+    // otherwise assuming that init_game_map is inlined and that this is init_game
     for call in callers {
         let mut invalid_handle_cmps: BumpVec<'_, (E::VirtualAddress, _)> =
             bumpvec_with_capacity(8, bump);
@@ -1819,9 +1827,13 @@ pub(crate) fn init_game<'e, E: ExecutionState<'e>>(
             analysis.analyze(&mut analyzer);
             analyzer.result
         }).into_option_with_entry();
-        if let Some((entry, loaded_save)) = val {
+        if let Some((entry, (loaded_save, is_init_game_map))) = val {
             result.loaded_save = Some(loaded_save);
-            result.init_game = Some(entry);
+            if is_init_game_map {
+                result.init_game_map = Some(entry);
+            } else {
+                result.init_game = Some(entry);
+            }
             break;
         }
     }
@@ -1831,7 +1843,7 @@ pub(crate) fn init_game<'e, E: ExecutionState<'e>>(
 
 struct InitGameAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     invalid_handle_cmps: &'a mut BumpVec<'acx, (E::VirtualAddress, Operand<'e>)>,
-    result: EntryOf<Operand<'e>>,
+    result: EntryOf<(Operand<'e>, bool)>,
     init_units: E::VirtualAddress,
 }
 
@@ -1862,7 +1874,17 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let ok = (&self.invalid_handle_cmps[1..]).iter()
                             .all(|x| x.1 == *first);
                         if ok {
-                            self.result = EntryOf::Ok(self.invalid_handle_cmps.swap_remove(0).1);
+                            let loaded_save = self.invalid_handle_cmps.swap_remove(0).1;
+                            let is_init_game_map = if matches!(self.result, EntryOf::Stop) {
+                                // init_units was seen already, so this is the smaller function
+                                // that hasn't been inlined
+                                true
+                            } else {
+                                // 3 save comparisons before init unit; init_game_map got inlined
+                                // to init_game
+                                false
+                            };
+                            self.result = EntryOf::Ok((loaded_save, is_init_game_map));
                             ctrl.end_analysis();
                         }
                     }
@@ -1871,11 +1893,154 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             Operation::Call(dest) => {
                 if let Some(dest) = ctrl.resolve_va(dest) {
                     if dest == self.init_units {
-                        self.result = EntryOf::Stop;
+                        if matches!(self.result, EntryOf::Stop) == false {
+                            self.result = EntryOf::Stop;
+                            if self.invalid_handle_cmps.len() != 1 {
+                                // Should have seen 1 handle compare if this is init_game_map,
+                                // else at least 3 before init_units
+                                ctrl.end_analysis();
+                            }
+                        }
                     }
                 }
             }
             _ => (),
+        }
+    }
+}
+
+pub(crate) fn init_game<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    game_loop: E::VirtualAddress,
+    rng_enable: Operand<'e>,
+) -> InitGame<E::VirtualAddress> {
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    let mut result = InitGame {
+        init_game: None,
+    };
+
+    let rng_enable = match rng_enable.if_memory() {
+        Some(s) => s,
+        None => return result,
+    };
+    let mut analyzer = FindInitGame::<E> {
+        result: &mut result,
+        rng_enable,
+        inline_depth: 0,
+        state: FindInitGameState::FindRngOn,
+        done: false,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, game_loop);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+struct FindInitGame<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut InitGame<E::VirtualAddress>,
+    rng_enable: &'e MemAccess<'e>,
+    inline_depth: u8,
+    state: FindInitGameState,
+    done: bool,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum FindInitGameState {
+    /// Find rng_enable = 1 write, or call to a trivial function doing that.
+    FindRngOn,
+    /// Next call should be init_game
+    InitGame,
+    /// Followed by rng_enable = 0
+    FindRngOff,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindInitGame<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let state = self.state;
+        match state {
+            FindInitGameState::FindRngOn | FindInitGameState::FindRngOff => {
+                if self.inline_depth != 0 {
+                    match *op {
+                        Operation::Jump { .. } | Operation::Call(..) => {
+                            ctrl.end_analysis();
+                            return;
+                        }
+                        _ => (),
+                    }
+                }
+                let expected_constant = if state == FindInitGameState::FindRngOn {
+                    1u64
+                } else {
+                    0u64
+                };
+                match *op {
+                    Operation::Move(DestOperand::Memory(ref dest), value) => {
+                        let dest = ctrl.resolve_mem(dest);
+                        if dest == *self.rng_enable {
+                            let value = ctrl.resolve(value);
+                            if value.if_constant() == Some(expected_constant) {
+                                if state == FindInitGameState::FindRngOn {
+                                    self.state = FindInitGameState::InitGame;
+                                } else {
+                                    self.done = true;
+                                }
+                                if self.inline_depth != 0 ||
+                                    state == FindInitGameState::FindRngOn
+                                {
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                    Operation::Jump { .. } => {
+                        if state == FindInitGameState::FindRngOff {
+                            // Wasn't correct rng enable?
+                            self.state = FindInitGameState::FindRngOn;
+                            self.result.init_game = None;
+                        }
+                    }
+                    Operation::Call(dest) => {
+                        let arg1 = ctrl.resolve_arg_u8(0);
+                        // Inline to set_enable_rng
+                        if arg1.if_constant() == Some(expected_constant) {
+                            if let Some(dest) = ctrl.resolve_va(dest) {
+                                self.inline_depth = 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth = 0;
+                                if self.done {
+                                    ctrl.end_analysis();
+                                    return;
+                                }
+                            }
+                        }
+                        if state == FindInitGameState::FindRngOff {
+                            // Wasn't correct rng enable?
+                            self.state = FindInitGameState::FindRngOn;
+                            self.result.init_game = None;
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            FindInitGameState::InitGame => {
+                match *op {
+                    Operation::Jump { .. } => {
+                        // Wasn't correct rng enable?
+                        self.state = FindInitGameState::FindRngOn;
+                    }
+                    Operation::Call(dest) => {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            self.result.init_game = Some(dest);
+                            self.state = FindInitGameState::FindRngOff;
+                        }
+                    }
+                    _ => (),
+                }
+            }
         }
     }
 }

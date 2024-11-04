@@ -220,7 +220,13 @@ results! {
         AiAddMilitaryToRegion => ai_add_military_to_region,
         GetRegion => get_region => cache_regions,
         ChangeAiRegionState => change_ai_region_state => cache_regions,
+        // Very large game initialization function.
         InitGame => init_game => cache_init_game,
+        // Smaller helper function inside init_game, initing game logic objects,
+        // map, terrain, etc. Calls init_terrain, init_images, init_sprites, init_units
+        // and other functions.
+        // Sometimes inlined.
+        InitGameMap => init_game_map => cache_init_game_map,
         CreateLoneSprite => create_lone_sprite => cache_sprites,
         CreateUnit => create_unit => cache_unit_creation,
         FinishUnitPre => finish_unit_pre => cache_unit_creation,
@@ -615,7 +621,7 @@ results! {
         RngSeed => rng_seed => cache_rng,
         RngEnable => rng_enable => cache_rng,
         AiRegions => ai_regions => cache_regions,
-        LoadedSave => loaded_save => cache_init_game,
+        LoadedSave => loaded_save => cache_init_game_map,
         SpriteHlines => sprite_hlines => cache_sprites,
         SpriteHlinesEnd => sprite_hlines_end => cache_sprites,
         FirstFreeSprite => first_free_sprite => cache_sprites,
@@ -2669,20 +2675,52 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    fn cache_init_game_map(&mut self, actx: &AnalysisCtx<'e, E>) {
+        self.cache_many(
+            &[AddressAnalysis::InitGameMap],
+            &[OperandAnalysis::LoadedSave],
+            |s| {
+                let init_units = s.init_units(actx)?;
+                let result = game_init::init_game_map(actx, init_units, &s.function_finder());
+                #[cfg(feature = "test_assertions")]
+                {
+                    if let Some(init) = result.init_game {
+                        let init_game = s.init_game(actx);
+                        assert_eq!(Some(init), init_game);
+                    }
+                }
+                Some(([result.init_game_map], [result.loaded_save]))
+            })
+    }
+
+    /// init_game_map or init_game if init_game_map was inlined.
+    fn init_units_caller(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.init_game_map(actx)
+            .or_else(|| self.init_game(actx))
+    }
+
+    fn init_game_map(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::InitGameMap, |s| s.cache_init_game_map(actx))
+    }
+
+    fn loaded_save(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::LoadedSave, |s| s.cache_init_game_map(actx))
+    }
+
     fn cache_init_game(&mut self, actx: &AnalysisCtx<'e, E>) {
-        self.cache_many(&[AddressAnalysis::InitGame], &[OperandAnalysis::LoadedSave], |s| {
-            let init_units = s.init_units(actx)?;
-            let result = game_init::init_game(actx, init_units, &s.function_finder());
-            Some(([result.init_game], [result.loaded_save]))
-        })
+        self.cache_many(
+            &[AddressAnalysis::InitGame],
+            &[],
+            |s| {
+                let game_loop = s.game_loop(actx)?;
+                let rng_enable = s.rng_enable(actx)?;
+                let result = game_init::init_game(actx, game_loop, rng_enable);
+                Some(([result.init_game], []))
+            })
     }
 
     fn init_game(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::InitGame, |s| s.cache_init_game(actx))
-    }
-
-    fn loaded_save(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
-        self.cache_many_op(OperandAnalysis::LoadedSave, |s| s.cache_init_game(actx))
     }
 
     fn cache_sprites(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -3269,7 +3307,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             &[InitGameBeforeMapLoadHook, CreateStartingUnits, CreateTeamGameStartingUnits],
             &[UnitStrength, SpriteIncludeInVisionSync, TeamGameTeams],
             |s| {
-                let init_game = s.init_game(actx)?;
+                let init_game = s.init_units_caller(actx)?;
                 let init_units = s.init_units(actx)?;
                 let loaded_save = s.loaded_save(actx)?;
                 let is_multiplayer = s.is_multiplayer(actx)?;
@@ -4802,7 +4840,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 MinitileGraphics, MinitileData, FoliageState, CreepOriginalTiles,
                 CreepTileBorders],
             |s| {
-                let init_game = s.init_game(actx)?;
+                let init_game = s.init_units_caller(actx)?;
                 let init_images = s.init_images(actx)?;
                 let r = map::init_terrain(actx, init_game, init_images);
                 Some(([r.init_terrain], [r.tileset_indexed_map_tiles, r.vx4_map_tiles,

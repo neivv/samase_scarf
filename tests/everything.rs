@@ -297,9 +297,9 @@ fn everything_1213b() {
         }
         assert_eq!(analysis.process_commands().unwrap().0, 0x00696d80);
 
-        let init_game = analysis.init_game();
+        let init_game_map = analysis.init_game_map();
         let loaded_save = analysis.loaded_save();
-        assert_eq!(init_game.unwrap().0, 0x00643460);
+        assert_eq!(init_game_map.unwrap().0, 0x00643460);
         assert_eq!(loaded_save.unwrap(), ctx.mem32c(0x00c666dc));
 
         let command_user = analysis.command_user().unwrap();
@@ -588,9 +588,9 @@ fn everything_1222c() {
 #[test]
 fn everything_1222d() {
     test_with_extra_checks(Path::new("1222d.exe"), |ctx, analysis| {
-        let init_game = analysis.init_game();
+        let init_game_map = analysis.init_game_map();
         let loaded_save = analysis.loaded_save();
-        assert_eq!(init_game.unwrap().0, 0x00694330);
+        assert_eq!(init_game_map.unwrap().0, 0x00694330);
         assert_eq!(loaded_save.unwrap(), ctx.mem32c(0x00da61cc));
     })
 }
@@ -1619,7 +1619,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 LookupSoundId | SFileOpenFileEx | SFileReadFileEx | SFileCloseFile |
                 LoadConsoles | InitConsoles | GetUiConsoles | GetStatResIconsDdsGrp |
                 GetUnitSkin | JoinCustomGame | FindFileWithCrc | ForFilesInDir |
-                SimpleFileMatchCallback | GetLocales => continue,
+                SimpleFileMatchCallback | GetLocales | InitGameMap => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -2396,6 +2396,108 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(map_names.is_none());
     } else {
         check_global_struct_opt(map_names, binary, "campaign_map_names")
+    }
+
+    // init_game_map is very inconsistently inlined on 32bit
+    // Also don't check it either way for future 32bit versions to reduce work in
+    // adding new versions to tests as it may be inlined or not there.
+    let has_init_game_map = if E::VirtualAddress::SIZE == 4 {
+        if version < (1, 21, 2, b'a') {
+            Some(true)
+        } else if version > (1, 23, 10, b'f') {
+            None
+        } else if is_ptr {
+            if minor_version == 22 {
+                Some(true)
+            } else if minor_version == 23 {
+                Some(false)
+            } else {
+                unreachable!()
+            }
+        } else {
+            match version {
+                (1, 21, 2, _) => Some(false),
+                (1, 21, 3, _) => Some(true),
+                (1, 21, 4, b'a') => Some(false),
+                (1, 21, 4, b'b') => Some(true),
+                (1, 21, 4, b'c') => Some(false),
+                (1, 21, 5, b'a' ..= b'c') => Some(false),
+                (1, 21, 5, b'd' ..= b'f') => Some(true),
+                (1, 21, 5, b'g' ..= b'i') => Some(false),
+                (1, 22, 0, b'a') => Some(false),
+                (1, 22, 0, b'b' ..= b'f') => Some(true),
+                (1, 22, 0, b'g' ..= b'h') => Some(false),
+                (1, 22, 1, b'a') => Some(true),
+                (1, 22, 1, b'b') => Some(false),
+                (1, 22, 1, b'c') => Some(true),
+                (1, 22, 2, _) => Some(true),
+                (1, 22, 3, b'a') => Some(false),
+                (1, 22, 3, b'b') => Some(true),
+                (1, 22, 3, b'c') => Some(false),
+                (1, 22, 3, b'd' ..= b'e') => Some(true),
+                (1, 22, 4, b'a') => Some(true),
+                (1, 22, 4, b'b') => Some(false),
+                (1, 22, 4, b'c') => Some(true),
+                (1, 23, 0, b'a' ..= b'b') => Some(true),
+                (1, 23, 0, b'c') => Some(false),
+                (1, 23, 0, b'd' ..= b'e') => Some(true),
+                (1, 23, 0, b'f') => Some(false),
+                (1, 23, 0, b'g') => Some(true),
+                (1, 23, 0, b'h') => Some(false),
+                (1, 23, 0, b'i' ..= b'j') => Some(true),
+                (1, 23, 1, b'a') => Some(false),
+                (1, 23, 2, b'a' ..= b'c') => Some(false),
+                (1, 23, 2, b'd') => Some(true),
+                (1, 23, 2, b'e') => Some(false),
+                (1, 23, 3, b'a') => Some(false),
+                (1, 23, 3, b'b') => Some(true),
+                (1, 23, 3, b'c' ..= b'd') => Some(false),
+                (1, 23, 3, b'e' ..= b'f') => Some(true),
+                (1, 23, 3, b'g') => Some(false),
+                (1, 23, 3, b'h') => Some(true),
+                (1, 23, 3, b'i') => Some(false),
+                (1, 23, 4, b'a') => Some(true),
+                (1, 23, 4, b'b') => Some(false),
+                (1, 23, 4, b'c') => Some(true),
+                (1, 23, 4, b'd') => Some(false),
+                (1, 23, 5, b'a') => Some(false),
+                (1, 23, 5, b'b' ..= b'g') => Some(true),
+                (1, 23, 5, b'h') => Some(false),
+                (1, 23, 6, b'a') => Some(true),
+                (1, 23, 6, b'b') => Some(false),
+                (1, 23, 7, b'a') => Some(false),
+                (1, 23, 8, b'a' ..= b'b') => Some(true),
+                (1, 23, 8, b'c' ..= b'd') => Some(false),
+                (1, 23, 8, b'e') => Some(true),
+                (1, 23, 8, b'f') => Some(false),
+                (1, 23, 9, b'a') => Some(false),
+                (1, 23, 9, b'b' ..= b'd') => Some(true),
+                (1, 23, 10, b'a') => Some(true),
+                (1, 23, 10, b'b') => Some(false),
+                (1, 23, 10, b'c') => Some(true),
+                (1, 23, 10, b'd' ..= b'f') => Some(false),
+                _ => unreachable!(),
+            }
+        }
+    } else {
+        // 64bit almost never inlines init_game_map
+        if version > (1, 23, 10, b'f') {
+            Some(true)
+        } else {
+            match version {
+                (1, 23, 0, b'a') => Some(true),
+                (1, 23, 0, b'b') => Some(false),
+                (1, 23, 0, b'c' ..= b'i') => Some(true),
+                (1, 23, 0, b'j') => Some(false),
+                (1, 23, 1, _) => Some(false),
+                (1, 23, 2 ..= 10, _) => Some(true),
+                _ => unreachable!(),
+            }
+        }
+    };
+    if let Some(has_init_game_map) = has_init_game_map {
+        let init_game_map = analysis.init_game_map();
+        assert_eq!(init_game_map.is_some(), has_init_game_map);
     }
 
     // Bug was introduced in 64bit (struct layout independent) save code,
