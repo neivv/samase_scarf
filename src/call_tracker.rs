@@ -214,7 +214,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> CallTracker<'acx, 'e, E> {
         })
     }
 
-    fn resolve_custom(&mut self, custom_id: u32, limit: u32) -> Option<Operand<'e>> {
+    pub fn resolve_custom(&mut self, custom_id: u32, limit: u32) -> Option<Operand<'e>> {
         let ctx = self.ctx;
         let binary = self.binary;
         let index = custom_id.checked_sub(self.first_custom)? as usize;
@@ -308,13 +308,27 @@ fn analyze_func_return_c<'e, E: ExecutionState<'e>>(
                 // Detect it by prev instruction being xor ecx, ebp
                 let prev_ins_len = ctrl.address().as_u64()
                     .wrapping_sub(self.prev_ins_address.as_u64());
-                if prev_ins_len == 2 {
-                    let binary = ctrl.binary();
-                    if let Ok(prev_ins_bytes) =
-                        binary.slice_from_address(self.prev_ins_address, 2)
-                    {
-                        if prev_ins_bytes == &[0x33, 0xcd] {
-                            ctrl.skip_operation();
+                if E::VirtualAddress::SIZE == 4 {
+                    if prev_ins_len == 2 {
+                        let binary = ctrl.binary();
+                        if let Ok(prev_ins_bytes) =
+                            binary.slice_from_address(self.prev_ins_address, 2)
+                        {
+                            if prev_ins_bytes == &[0x33, 0xcd] {
+                                ctrl.skip_operation();
+                            }
+                        }
+                    }
+                } else {
+                    // xor rcx, rsp on 64bit
+                    if prev_ins_len == 3 {
+                        let binary = ctrl.binary();
+                        if let Ok(prev_ins_bytes) =
+                            binary.slice_from_address(self.prev_ins_address, 3)
+                        {
+                            if prev_ins_bytes == &[0x48, 0x33, 0xcc] {
+                                ctrl.skip_operation();
+                            }
                         }
                     }
                 }

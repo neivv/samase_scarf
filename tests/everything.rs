@@ -1709,7 +1709,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 SpriteIncludeInVisionSync | DrawCommands | CreepFuncs | DcreepLookup |
                 DcreepListBegin | DcreepListSize | ReplayHeader | GameScreenRectWinPx |
                 RunDialogStack | LurkerHits | ResourceAreas | HpBarImages | HpBarState |
-                SelectionCircles | PlacementImages | PlacementRects | ShieldOverlays =>
+                SelectionCircles | PlacementImages | PlacementRects | ShieldOverlays | ImagesRel =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }

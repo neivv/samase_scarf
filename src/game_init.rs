@@ -85,11 +85,14 @@ pub(crate) struct LoadImagesAnalysis<'e, Va: VirtualAddress> {
     pub anim_asset_change_cb: Option<Va>,
     pub load_image_grps: Option<Va>,
     pub load_image_overlays: Option<Va>,
+    pub get_base_anim_set: Option<Va>,
+    pub get_images_rel: Option<Va>,
     pub base_anim_set: Option<Operand<'e>>,
     pub image_grps: Option<Operand<'e>>,
     pub image_overlays: Option<Operand<'e>>,
     pub shield_overlays: Option<Operand<'e>>,
     pub fire_overlay_max: Option<Operand<'e>>,
+    pub images_rel: Option<Operand<'e>>,
     pub anim_struct_size: u16,
 }
 
@@ -2626,12 +2629,15 @@ pub(crate) fn analyze_load_images<'e, E: ExecutionState<'e>>(
         add_asset_change_cb: None,
         anim_asset_change_cb: None,
         base_anim_set: None,
+        get_base_anim_set: None,
         image_grps: None,
         image_overlays: None,
         shield_overlays: None,
         load_image_grps: None,
         load_image_overlays: None,
         fire_overlay_max: None,
+        images_rel: None,
+        get_images_rel: None,
         anim_struct_size: 0,
     };
     let binary = actx.binary;
@@ -2670,6 +2676,13 @@ pub(crate) fn analyze_load_images<'e, E: ExecutionState<'e>>(
     let mut analysis = FuncAnalysis::custom_state(binary, ctx, load_images, exec, state);
     analysis.analyze(&mut analyzer);
     analyzer.finish(ctx, binary);
+    // Try to get images.rel from
+    // get_base_anim_set -> init_base_anim_set -> get_images_rel
+    if let Some(get_base_anim_set) = result.get_base_anim_set {
+        if let Some(base_anim_set) = result.base_anim_set {
+            analyze_init_base_anim_set(actx, get_base_anim_set, base_anim_set, &mut result);
+        }
+    }
     result
 }
 
@@ -2724,8 +2737,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                                 x.if_constant()
                                     .map(E::VirtualAddress::from_u64)
                                     .and_then(|x| binary.slice_from_address(x, cmp_len).ok())
-                                    .filter(|&x| x == cmp)
-                                    .is_some()
+                                    .is_some_and(|x| x == cmp)
                             });
                             if ok {
                                 self.inline_limit = 0;
@@ -2946,7 +2958,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
         let this = ctrl.resolve_register(1);
         let is_single_file = arg1 == ctx.const_0() &&
             arg2 == ctx.const_1() &&
-            this.if_arithmetic_add().and_then(|x| x.1.if_constant()).is_some();
+            this.if_add_with_const().is_some();
         if is_single_file {
             self.custom_to_func_addr.push((func, Some(this)));
             return (true, false);
@@ -3043,10 +3055,10 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                     // Check for add_asset_change_cb(&local, func_vtbl, func_cb, ...)
                     arg2.if_constant()
                         .map(E::VirtualAddress::from_u64)
-                        .filter(|&x| is_in_section(self.rdata, x))
+                        .filter(|&x| self.rdata.contains(x))
                         .and_then(|_| arg3.if_constant())
                         .map(E::VirtualAddress::from_u64)
-                        .filter(|&x| is_in_section(self.text, x))
+                        .filter(|&x| self.text.contains(x))
                         .or_else(|| {
                             // Alt function struct, 32bit only since the check
                             // assumes that a2 points to a3 which cannot be done with
@@ -3059,11 +3071,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                             }
                             arg3.if_constant()
                                 .map(E::VirtualAddress::from_u64)
-                                .filter(|&x| is_in_section(self.rdata, x))?;
+                                .filter(|&x| self.rdata.contains(x))?;
                             let param = ctrl.resolve_arg(3)
                                 .if_constant()
                                 .map(E::VirtualAddress::from_u64)
-                                .filter(|&x| is_in_section(self.text, x))?;
+                                .filter(|&x| self.text.contains(x))?;
                             let arg3_loc = self.arg_cache.on_call(2).if_memory()?.address_op(ctx);
                             if arg2 != ctrl.resolve(arg3_loc) {
                                 None
@@ -3079,7 +3091,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                     let address = ctx.mem_access(arg1, 0, MemAccessSize::Mem64);
                     ctrl.read_memory(&address).if_constant()
                         .map(E::VirtualAddress::from_u64)
-                        .filter(|&x| is_in_section(self.rdata, x))
+                        .filter(|&x| self.rdata.contains(x))
                         .map(|_| {
                             let address = ctx.mem_access(this, 0, MemAccessSize::Mem64);
                             ctrl.read_memory(&address)
@@ -3091,7 +3103,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                         })
                         .and_then(Operand::if_constant)
                         .map(E::VirtualAddress::from_u64)
-                        .filter(|&x| is_in_section(self.text, x))
+                        .filter(|&x| self.text.contains(x))
                 };
                 if let Some(cb) = asset_change_cb {
                     self.result.add_asset_change_cb = Some(dest);
@@ -3105,7 +3117,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
                 let is_vtable_fn = ctrl.if_mem_word(dest)
                     .and_then(|x| x.if_constant_address())
                     .map(E::VirtualAddress::from_u64)
-                    .filter(|&x| is_in_section(self.rdata, x))
+                    .filter(|&x| self.rdata.contains(x))
                     .is_some();
                 if is_vtable_fn && arg1 == ctx.const_0() {
                     // Assuming to be func.vtable.delete(0), add 4 to esp to
@@ -3119,13 +3131,23 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
     }
 
     fn finish(&mut self, ctx: OperandCtx<'e>, binary: &'e BinaryFile<E::VirtualAddress>) {
+        let funcs = &self.custom_to_func_addr;
+        // If base_anim_set is a function call, store it in result
+        if let Some(base_anim_set) = self.result.base_anim_set {
+            if let Some(custom) = base_anim_set.if_custom() {
+                if let Some(&(func, _)) = funcs.get(custom as usize) {
+                    self.result.get_base_anim_set = Some(func);
+                }
+            }
+        }
+
+        // Convert func calls to constant returns
         let mut ops = [
             &mut self.result.base_anim_set,
             &mut self.result.image_grps,
             &mut self.result.image_overlays,
             &mut self.result.fire_overlay_max,
         ];
-        let funcs = &self.custom_to_func_addr;
         for ref mut op in ops.iter_mut() {
             if let Some(ref mut op) = *op {
                 *op = ctx.transform(*op, 8, |op| {
@@ -3204,8 +3226,110 @@ fn check_actual_open_anim_multi_file<'e, E: ExecutionState<'e>>(
     analyzer.result
 }
 
-fn is_in_section<Va: VirtualAddress>(section: &BinarySection<Va>, addr: Va) -> bool {
-    section.virtual_address <= addr && section.virtual_address + section.virtual_size > addr
+fn analyze_init_base_anim_set<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    get_fn: E::VirtualAddress,
+    base_anim_set: Operand<'e>,
+    result: &mut LoadImagesAnalysis<'e, E::VirtualAddress>,
+) {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = InitBaseAnimSetAnalyzer::<E> {
+        result,
+        state: InitBaseAnimSetState::Init,
+        base_anim_set,
+        inline_depth: 0,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000_0000, 0x20),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, get_fn);
+    analysis.analyze(&mut analyzer);
+}
+
+struct InitBaseAnimSetAnalyzer<'acx, 'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut LoadImagesAnalysis<'e, E::VirtualAddress>,
+    state: InitBaseAnimSetState,
+    base_anim_set: Operand<'e>,
+    inline_depth: u8,
+    call_tracker: CallTracker<'acx, 'e, E>,
+}
+
+enum InitBaseAnimSetState {
+    /// Analysis starts in get_base_anim_set
+    /// init fn is either call to init(this = base_anim_set)
+    /// or inlined.
+    /// If call with this = base_anim_set is found, it may be init or construct_anim(&set.first)
+    /// if a1 to that function is "anim/main\0" cstring, then it is construct_anim and
+    /// a2 is images_rel (Likely a function).
+    /// Else assume init_base_anim_set() and inline there.
+    Init,
+}
+
+impl<'acx, 'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    InitBaseAnimSetAnalyzer<'acx, 'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            InitBaseAnimSetState::Init => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve_register(1);
+                        if this == self.base_anim_set {
+                            let arg1 = ctrl.resolve_arg_thiscall(0);
+                            // Check for "anim/main\0"
+                            // Likely a stack constructed string so call read_memory for u64
+                            let address = ctx.mem_access(arg1, 0, MemAccessSize::Mem64);
+                            let value = ctrl.read_memory(&address);
+                            if let Some(c) = value.if_constant() {
+                                if c == u64::from_le_bytes(*b"anim/mai") {
+                                    let arg2 = ctrl.resolve_arg_thiscall(1);
+                                    if self.check_images_rel(arg2) {
+                                        ctrl.end_analysis();
+                                        return;
+                                    }
+                                }
+                            }
+                            if self.inline_depth == 0 {
+                                self.inline_depth = 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                if self.result.images_rel.is_some() {
+                                    ctrl.end_analysis();
+                                    return;
+                                }
+                                self.inline_depth = 0;
+                            }
+                        }
+                        self.call_tracker.add_call_preserve_esp(ctrl, dest);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'acx, 'a, 'e, E: ExecutionState<'e>> InitBaseAnimSetAnalyzer<'acx, 'a, 'e, E> {
+    fn check_images_rel(&mut self, value: Operand<'e>) -> bool {
+        if let Some(c) = value.if_custom() {
+            // Need high limit since get_images_rel can have inlined the init function into
+            // itself. Maybe would be nice to have specialized analyzer that only follows
+            // the inited branch.
+            if let Some(value) = self.call_tracker.resolve_custom(c, 0x80) {
+                if is_global(value) {
+                    self.result.images_rel = Some(value);
+                    self.result.get_images_rel = self.call_tracker.custom_id_to_func(c);
+                    return true;
+                }
+            }
+        } else {
+            if is_global(value) {
+                self.result.images_rel = Some(value);
+                return true;
+            }
+        }
+        false
+    }
 }
 
 pub(crate) fn analyze_game_loop<'e, E: ExecutionState<'e>>(

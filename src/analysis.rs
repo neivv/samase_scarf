@@ -297,6 +297,7 @@ results! {
         LoadImageGrps => load_image_grps => cache_image_loading,
         // a1 u8 **out, a2 usize *overlay_string_offsets, a3 void *images_tbl, a4 image_count
         LoadImageOverlays => load_image_overlays => cache_image_loading,
+        GetImagesRel => get_images_rel => cache_image_loading,
         InitRealTimeLighting => init_real_time_lighting => cache_images_loaded,
         StepActiveUnitFrame => step_active_unit_frame => cache_step_objects,
         StepHiddenUnitFrame => step_hidden_unit_frame => cache_step_objects,
@@ -682,6 +683,7 @@ results! {
         ImageOverlays => image_overlays => cache_image_loading,
         ShieldOverlays => shield_overlays => cache_image_loading,
         FireOverlayMax => fire_overlay_max => cache_image_loading,
+        ImagesRel => images_rel => cache_image_loading,
         AssetScale => asset_scale => cache_images_loaded,
         ImagesLoaded => images_loaded => cache_images_loaded,
         VisionUpdateCounter => vision_update_counter => cache_step_objects,
@@ -3819,9 +3821,11 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use OperandAnalysis::*;
         self.cache_many(&[
             OpenAnimSingleFile, OpenAnimMultiFile, InitSkins,
-            AddAssetChangeCallback, AnimAssetChangeCb, LoadImageGrps, LoadImageOverlays
+            AddAssetChangeCallback, AnimAssetChangeCb, LoadImageGrps, LoadImageOverlays,
+            GetImagesRel,
         ], &[
             BaseAnimSet, ImageGrps, ImageOverlays, ShieldOverlays, FireOverlayMax,
+            ImagesRel,
         ], |s| {
             let load_images = s.load_images(actx)?;
             let load_dat = s.load_dat(actx)?;
@@ -3836,10 +3840,11 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             Some(([
                 result.open_anim_single_file, result.open_anim_multi_file, result.init_skins,
                 result.add_asset_change_cb, result.anim_asset_change_cb,
-                result.load_image_grps, result.load_image_overlays,
+                result.load_image_grps, result.load_image_overlays, result.get_images_rel,
             ], [
                 result.base_anim_set, result.image_grps,
                 result.image_overlays, result.shield_overlays, result.fire_overlay_max,
+                result.images_rel,
             ]))
         })
     }
