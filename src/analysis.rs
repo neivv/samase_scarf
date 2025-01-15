@@ -293,6 +293,10 @@ results! {
         InitSkins => init_skins => cache_image_loading,
         AddAssetChangeCallback => add_asset_change_callback => cache_image_loading,
         AnimAssetChangeCb => anim_asset_change_cb => cache_image_loading,
+        // a1 Grp *out, a2 usize *images_dat_grp_in, a3 void *images_tbl, a4 image_count
+        LoadImageGrps => load_image_grps => cache_image_loading,
+        // a1 u8 **out, a2 usize *overlay_string_offsets, a3 void *images_tbl, a4 image_count
+        LoadImageOverlays => load_image_overlays => cache_image_loading,
         InitRealTimeLighting => init_real_time_lighting => cache_images_loaded,
         StepActiveUnitFrame => step_active_unit_frame => cache_step_objects,
         StepHiddenUnitFrame => step_hidden_unit_frame => cache_step_objects,
@@ -3815,7 +3819,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         use OperandAnalysis::*;
         self.cache_many(&[
             OpenAnimSingleFile, OpenAnimMultiFile, InitSkins,
-            AddAssetChangeCallback, AnimAssetChangeCb,
+            AddAssetChangeCallback, AnimAssetChangeCb, LoadImageGrps, LoadImageOverlays
         ], &[
             BaseAnimSet, ImageGrps, ImageOverlays, ShieldOverlays, FireOverlayMax,
         ], |s| {
@@ -3832,6 +3836,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             Some(([
                 result.open_anim_single_file, result.open_anim_multi_file, result.init_skins,
                 result.add_asset_change_cb, result.anim_asset_change_cb,
+                result.load_image_grps, result.load_image_overlays,
             ], [
                 result.base_anim_set, result.image_grps,
                 result.image_overlays, result.shield_overlays, result.fire_overlay_max,

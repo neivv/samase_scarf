@@ -83,6 +83,8 @@ pub(crate) struct LoadImagesAnalysis<'e, Va: VirtualAddress> {
     pub init_skins: Option<Va>,
     pub add_asset_change_cb: Option<Va>,
     pub anim_asset_change_cb: Option<Va>,
+    pub load_image_grps: Option<Va>,
+    pub load_image_overlays: Option<Va>,
     pub base_anim_set: Option<Operand<'e>>,
     pub image_grps: Option<Operand<'e>>,
     pub image_overlays: Option<Operand<'e>>,
@@ -2627,6 +2629,8 @@ pub(crate) fn analyze_load_images<'e, E: ExecutionState<'e>>(
         image_grps: None,
         image_overlays: None,
         shield_overlays: None,
+        load_image_grps: None,
+        load_image_overlays: None,
         fire_overlay_max: None,
         anim_struct_size: 0,
     };
@@ -2799,7 +2803,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 // load_grps(image_grps, images_dat_grp, &mut out, 999)
                 // load_lo_set(&image_overlays[0], images_dat_attack_overlay, &mut out, 999)
                 // load_lo_set(&shield_overlays, images_dat_shield_overlay, &mut out, 999)
-                if let Operation::Call(_) = *op {
+                if let Operation::Call(dest) = *op {
                     let is_find_grps = state == LoadImagesAnalysisState::FindImageGrps;
                     let out = &mut self.result;
                     let result = Some(()).and_then(|()| {
@@ -2808,15 +2812,15 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let arg2 = ctrl.resolve_arg(1);
                         let out = if is_find_grps {
                             if arg2 == self.images_dat_grp {
-                                &mut out.image_grps
+                                (&mut out.image_grps, &mut out.load_image_grps)
                             } else {
                                 return None;
                             }
                         } else {
                             if arg2 == self.images_dat_attack_overlay {
-                                &mut out.image_overlays
+                                (&mut out.image_overlays, &mut out.load_image_overlays)
                             } else if arg2 == self.images_dat_shield_overlay {
-                                &mut out.shield_overlays
+                                (&mut out.shield_overlays, &mut out.load_image_overlays)
                             } else {
                                 return None;
                             }
@@ -2824,8 +2828,11 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         let arg1 = ctrl.resolve_arg(0);
                         Some((out, arg1))
                     });
-                    if let Some((out_var, result)) = result {
+                    if let Some(((out_var, out_fn), result)) = result {
                         single_result_assign(Some(result), out_var);
+                        if let Some(func) = ctrl.resolve_va(dest) {
+                            single_result_assign(Some(func), out_fn);
+                        }
                         if is_find_grps {
                             ctrl.user_state().set(LoadImagesAnalysisState::FindImageOverlays);
                             self.min_state = LoadImagesAnalysisState::FindImageOverlays;
