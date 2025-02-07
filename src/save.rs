@@ -217,7 +217,7 @@ pub(crate) fn deserialize_lone_sprite_patch<'e, E: ExecutionState<'e>>(
     let funcs = functions.functions();
 
     for &caller in &callers {
-        let val = entry_of_until(binary, funcs, caller, |entry| {
+        let val = entry_of_until(binary, &funcs, caller, |entry| {
             let mut analyzer = DeserializeLoneSpriteAnalyzer::<E> {
                 entry_of: EntryOf::Retry,
                 inline_depth: 0,

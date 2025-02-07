@@ -4,20 +4,22 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, Operation};
 
+use crate::analysis::{AnalysisCache};
 use crate::util::{ControlExt, OperandExt};
 use super::{DatPatchContext};
 
 /// Patches unit id checks in conditions / actions. They differ
 /// from other checks in that they check for `unit_id < 0xe9` since
 /// there are supported group ids.
-pub(crate) fn trigger_analysis<'a, 'e, E: ExecutionState<'e>>(
-    dat_ctx: &mut DatPatchContext<'a, '_, 'e, E>,
+pub(crate) fn trigger_analysis<'e, E: ExecutionState<'e>>(
+    dat_ctx: &mut DatPatchContext<'_, 'e, E>,
+    cache: &mut AnalysisCache<'e, E>,
 ) -> Option<()> {
     let analysis = &dat_ctx.analysis;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let conditions = dat_ctx.cache.trigger_conditions(analysis)?;
-    let actions = dat_ctx.cache.trigger_actions(analysis)?;
+    let conditions = cache.trigger_conditions(analysis)?;
+    let actions = cache.trigger_actions(analysis)?;
 
     // Most of these aren't necessary unless there's aggressive inlining,
     // only command + kills + deaths would suffice.
@@ -58,14 +60,14 @@ pub(crate) fn trigger_analysis<'a, 'e, E: ExecutionState<'e>>(
     Some(())
 }
 
-pub struct TriggerPatchAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
-    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
+pub struct TriggerPatchAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
     checked_functions: &'a mut FxHashSet<E::VirtualAddress>,
     is_action: bool,
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    TriggerPatchAnalyzer<'a, 'b, 'acx, 'e, E>
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    TriggerPatchAnalyzer<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;
@@ -116,7 +118,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> TriggerPatchAnalyzer<'a, 'b, 'acx, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> TriggerPatchAnalyzer<'a, 'acx, 'e, E> {
     fn convert_jae_to_je(
         &mut self,
         binary: &'e BinaryFile<E::VirtualAddress>,

@@ -153,7 +153,7 @@ pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
     let mut result = None;
     let functions = functions.functions();
     for (global_addr, global_ref) in weapon_order_refs {
-        let val = entry_of_until(binary, functions, global_ref.use_address, |entry| {
+        let val = entry_of_until(binary, &functions, global_ref.use_address, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             let mut analyzer = ActiveHiddenAnalyzer::<E> {
                 candidates: bumpvec_with_capacity(8, bump),

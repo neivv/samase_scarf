@@ -864,7 +864,7 @@ pub(crate) fn step_replay_commands<'e, E: ExecutionState<'e>>(
     let mut result = None;
     let callers = functions.find_callers(analysis, process_commands);
     for caller in callers {
-        let new = entry_of_until(binary, funcs, caller, |entry| {
+        let new = entry_of_until(binary, &funcs, caller, |entry| {
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             let mut analyzer = IsStepReplayCommands::<E> {
                 result: EntryOf::Retry,

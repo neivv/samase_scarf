@@ -396,7 +396,7 @@ pub(crate) fn tooltip_related<'e, E: ExecutionState<'e>>(
         str_refs = functions.string_refs(analysis, b"stat_f10.ui");
     }
     for str_ref in &str_refs {
-        entry_of_until(binary, funcs, str_ref.use_address, |entry| {
+        entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let arg_cache = &analysis.arg_cache;
             let exec_state = E::initial_state(ctx, binary);
             let state =

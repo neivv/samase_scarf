@@ -7,7 +7,7 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{ArithOpType};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
-use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
+use crate::analysis_find::{EntryOf, FunctionFinder, FunctionList, entry_of_until};
 use crate::analysis_state::{AnalysisState, StateEnum, EudState};
 use crate::util::{ControlExt, bumpvec_with_capacity};
 
@@ -123,7 +123,7 @@ fn find_init_eud_table_from_parent<'acx, 'e, E: ExecutionState<'e>>(
     ctx: OperandCtx<'e>,
     bump: &'acx Bump,
     binary: &'e BinaryFile<E::VirtualAddress>,
-    funcs: &[E::VirtualAddress],
+    funcs: &FunctionList<'_, E::VirtualAddress>,
     addr: E::VirtualAddress,
 ) -> Option<E::VirtualAddress> {
     struct Analyzer<'acx, 'e, E: ExecutionState<'e>> {
@@ -194,7 +194,7 @@ fn find_init_eud_table_from_parent<'acx, 'e, E: ExecutionState<'e>>(
         }
     }
 
-    entry_of_until(binary, funcs, addr, |entry| {
+    entry_of_until(binary, &funcs, addr, |entry| {
         let mut analyzer = Analyzer {
             result: EntryOf::Retry,
             phantom: Default::default(),
@@ -422,7 +422,7 @@ fn analyze_eud_init_fn<'e, E: ExecutionState<'e>>(
 fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
     ctx: OperandCtx<'e>,
     binary: &'e BinaryFile<E::VirtualAddress>,
-    funcs: &[E::VirtualAddress],
+    funcs: &FunctionList<'_, E::VirtualAddress>,
     addr: E::VirtualAddress,
 ) -> Option<(E::VirtualAddress, u32)> {
     struct Analyzer<'e, E: ExecutionState<'e>> {

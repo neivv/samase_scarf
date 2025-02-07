@@ -2,18 +2,20 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{Operation};
 
+use crate::analysis::{AnalysisCache};
 use crate::struct_layouts;
 
 use super::{DatPatchContext};
 
 /// Patches change button set action, which has `button_set < 0xfa` conditional move.
-pub(crate) fn cmdbtn_analysis<'a, 'e, E: ExecutionState<'e>>(
-    dat_ctx: &mut DatPatchContext<'a, '_, 'e, E>,
+pub(crate) fn cmdbtn_analysis<'e, E: ExecutionState<'e>>(
+    dat_ctx: &mut DatPatchContext<'_, 'e, E>,
+    cache: &mut AnalysisCache<'e, E>,
 ) -> Option<()> {
     let actx = &dat_ctx.analysis;
     let binary = actx.binary;
     let ctx = actx.ctx;
-    let &buttonsets = dat_ctx.cache.firegraft_addresses(actx).buttonsets.get(0)?;
+    let &buttonsets = cache.firegraft_addresses(actx).buttonsets.get(0)?;
 
     let scv_basic_buildings =
         struct_layouts::button_set_index_to_action(binary, buttonsets, 7, 6)?;
@@ -25,12 +27,12 @@ pub(crate) fn cmdbtn_analysis<'a, 'e, E: ExecutionState<'e>>(
     Some(())
 }
 
-pub struct SetButtonsAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
-    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
+pub struct SetButtonsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    SetButtonsAnalyzer<'a, 'b, 'acx, 'e, E>
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    SetButtonsAnalyzer<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;

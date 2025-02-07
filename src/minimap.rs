@@ -55,7 +55,7 @@ pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
     let mut i = 0;
     while i < first_fow_uses.len() {
         let use_address = first_fow_uses[i];
-        let entry = entry_of_until(binary, funcs, use_address, |entry| {
+        let entry = entry_of_until(binary, &funcs, use_address, |entry| {
             let mut analyzer = ReplayFowAnalyzer::<E> {
                 result: &mut result,
                 entry_of: EntryOf::Retry,

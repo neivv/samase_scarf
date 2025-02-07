@@ -468,7 +468,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     let mut dat_ctx = DatPatchContext::new(cache, analysis);
     let dat_ctx = dat_ctx.as_mut()?;
     for &dat in &dats {
-        let table = dat_ctx.cache.dat(dat, analysis)?;
+        let table = cache.dat(dat, analysis)?;
         let address = table.address.if_constant().map(|x| E::VirtualAddress::from_u64(x))?;
         dat_ctx.add_dat(dat, address, table.entry_size).ok()?;
     }
@@ -501,7 +501,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
             buttonset_size,
             false,
         );
-        units::button_use_analysis(dat_ctx, buttons)?;
+        units::button_use_analysis(dat_ctx, cache, buttons)?;
     }
     if let Some(sync) = sprite_sync.if_constant() {
         let sync = E::VirtualAddress::from_u64(sync);
@@ -511,15 +511,15 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
 
     // This will also use add_dat_global_refs, specifically for wireframe type array.
     // Must be done before instructions_needing_verify.build_lookup
-    units::init_units_analysis(dat_ctx)?;
+    units::init_units_analysis(dat_ctx, cache)?;
 
     dat_ctx.unchecked_refs.build_lookup();
     dat_ctx.instructions_needing_verify.build_lookup();
 
-    dat_ctx.add_patches_from_code_refs();
+    dat_ctx.add_patches_from_code_refs(cache);
     // Always analyze step_ai_script as it has checks for unit ids in every opcode,
     // and the function is hard to reach otherwise.
-    if let Some(step_ai_script) = dat_ctx.cache.step_ai_script(dat_ctx.analysis) {
+    if let Some(step_ai_script) = cache.step_ai_script(dat_ctx.analysis) {
         dat_ctx.analyze_function_without_goal(step_ai_script);
     }
     while !dat_ctx.funcs_needing_retval_patch.is_empty() ||
@@ -527,8 +527,8 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         !dat_ctx.func_arg_widen_queue.is_empty()
     {
         dat_ctx.retval_patch_funcs();
-        dat_ctx.add_u8_func_patches();
-        dat_ctx.add_func_arg_patches();
+        dat_ctx.add_u8_func_patches(cache);
+        dat_ctx.add_func_arg_patches(cache);
     }
     if dat_ctx.unknown_global_u8_mem.len() != 1 {
         dat_warn!(
@@ -537,19 +537,19 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         );
     }
     game::dat_game_analysis(
-        &mut dat_ctx.cache,
+        cache,
         &dat_ctx.analysis,
         &mut dat_ctx.required_stable_addresses,
         &mut dat_ctx.result,
         &dat_ctx.rdtsc_tracker,
     );
-    units::command_analysis(dat_ctx)?;
-    wireframe::grp_index_patches(dat_ctx)?;
-    triggers::trigger_analysis(dat_ctx)?;
-    cmdbtns::cmdbtn_analysis(dat_ctx)?;
-    sprites::patch_hp_bar_init(dat_ctx)?;
-    campaign::patch_mapdata_names(dat_ctx)?;
-    dat_ctx.finish_all_patches();
+    units::command_analysis(dat_ctx, cache)?;
+    wireframe::grp_index_patches(dat_ctx, cache)?;
+    triggers::trigger_analysis(dat_ctx, cache)?;
+    cmdbtns::cmdbtn_analysis(dat_ctx, cache)?;
+    sprites::patch_hp_bar_init(dat_ctx, cache)?;
+    campaign::patch_mapdata_names(dat_ctx, cache)?;
+    dat_ctx.finish_all_patches(cache);
     dat_ctx.result.warnings = get_warnings_tls();
     if crate::test_assertions() {
         // is_sorted_by_key(|x| x.0)
@@ -560,7 +560,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     Some(mem::replace(&mut dat_ctx.result, DatPatches::empty()))
 }
 
-pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
+pub(crate) struct DatPatchContext<'acx, 'e, E: ExecutionState<'e>> {
     relocs: Rc<Vec<RelocValues<E::VirtualAddress>>>,
     array_lookup: HashMap<E::VirtualAddress, (DatType, u8)>,
     units: DatTable<E::VirtualAddress>,
@@ -598,7 +598,6 @@ pub(crate) struct DatPatchContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     u8_funcs_pos: usize,
     operand_to_u8_op: HashMap<OperandHashByAddress<'e>, Option<U8Operand>>,
     analysis: &'acx AnalysisCtx<'e, E>,
-    cache: &'a mut AnalysisCache<'e, E>,
     patched_addresses: HashSet<E::VirtualAddress>,
     analyzed_functions: HashMap<Rva, Box<DatFuncAnalysisState<'acx, 'e, E>>>,
     /// Maps array address patch -> index in result vector.
@@ -797,11 +796,11 @@ enum U8Operand {
     Return(u32),
 }
 
-impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
+impl<'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'acx, 'e, E> {
     fn new(
-        cache: &'a mut AnalysisCache<'e, E>,
+        cache: &mut AnalysisCache<'e, E>,
         analysis: &'acx AnalysisCtx<'e, E>,
-    ) -> Option<DatPatchContext<'a, 'acx, 'e, E>> {
+    ) -> Option<DatPatchContext<'acx, 'e, E>> {
         fn dat_table<Va: VirtualAddress>(field_count: u32) -> DatTable<Va> {
             DatTable {
                 table_address: Va::from_u64(0),
@@ -843,7 +842,6 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
             relocs: cache.globals_with_values(),
             text,
             analysis,
-            cache,
             result: DatPatches {
                 patches: Vec::with_capacity(1024),
                 code_bytes: Vec::with_capacity(2048),
@@ -1131,8 +1129,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         }
     }
 
-    fn add_patches_from_code_refs(&mut self) {
-        let functions = self.cache.functions();
+    fn add_patches_from_code_refs(
+        &mut self,
+        cache: &mut AnalysisCache<'e, E>,
+    ) {
+        let functions = cache.function_finder();
+        let functions = functions.functions();
         let binary = self.binary;
         loop {
             let rva = match self.unchecked_refs.pop() {
@@ -1194,8 +1196,12 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         }
     }
 
-    fn add_u8_func_patches(&mut self) {
-        let functions = self.cache.functions();
+    fn add_u8_func_patches(
+        &mut self,
+        cache: &mut AnalysisCache<'e, E>,
+    ) {
+        let function_finder = cache.function_finder();
+        let functions = function_finder.functions();
         let binary = self.binary;
         let mut checked_funcs = HashSet::with_capacity_and_hasher(64, Default::default());
         for i in self.u8_funcs_pos.. {
@@ -1207,7 +1213,6 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
                 }
             };
             let func = binary.base + func_rva.0;
-            let function_finder = self.cache.function_finder();
             let callers = function_finder.find_callers(self.analysis, func);
             for &address in &callers {
                 entry_of_until(binary, &functions, address, |entry| {
@@ -1255,12 +1260,16 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         }
     }
 
-    fn add_func_arg_patches(&mut self) {
-        let functions = self.cache.functions();
+    fn add_func_arg_patches(
+        &mut self,
+        cache: &mut AnalysisCache<'e, E>,
+    ) {
+        let function_finder = cache.function_finder();
+        let functions = function_finder.functions();
         let binary = self.binary;
         while let Some(child_func) = self.func_arg_widen_queue.pop() {
             // TODO: This does not find tail calls.
-            let callers = self.cache.function_finder().find_callers(self.analysis, child_func);
+            let callers = function_finder.find_callers(self.analysis, child_func);
             for &address in &callers {
                 if self.found_func_arg_widen_refs.contains(&address) {
                     continue;
@@ -1280,10 +1289,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
         }
     }
 
-    fn finish_all_patches(&mut self) {
+    fn finish_all_patches(
+        &mut self,
+        cache: &mut AnalysisCache<'e, E>,
+    ) {
         let binary = self.binary;
         if E::VirtualAddress::SIZE == 8 {
-            self.verify_remaining_instructions();
+            self.verify_remaining_instructions(cache);
             let bad_patch_rvas = self.instructions_needing_verify.finish(&self.analysis.bump);
             if !bad_patch_rvas.is_empty() {
                 // TODO: This would be better(?) with swap_remove, but some code
@@ -1338,17 +1350,22 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
     /// instructions_needing_verify will have most of the instructions verified in
     /// dat ref analysis, but that is not done for all of the array patches, which
     /// will be handled here.
-    fn verify_remaining_instructions(&mut self) {
+    fn verify_remaining_instructions(&mut self, cache: &mut AnalysisCache<'e, E>) {
         let mut pos = 0usize;
         let base = self.binary.base();
         while let Some(rva) = self.instructions_needing_verify.next_unverified(&mut pos) {
             let address = base + rva.0;
-            self.analyze_for_instruction_verify(address);
+            self.analyze_for_instruction_verify(cache, address);
         }
     }
 
-    fn analyze_for_instruction_verify(&mut self, address: E::VirtualAddress) {
-        let functions = self.cache.functions();
+    fn analyze_for_instruction_verify(
+        &mut self,
+        cache: &mut AnalysisCache<'e, E>,
+        address: E::VirtualAddress,
+    ) {
+        let functions = cache.function_finder();
+        let functions = functions.functions();
         let binary = self.binary;
         let ctx = self.analysis.ctx;
         entry_of_until(binary, &functions, address, |entry| {
@@ -1469,8 +1486,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'a, 'acx, 'e, E> {
     }
 }
 
-struct DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
-    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
+struct DatReferringFuncAnalysis<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
     state: Box<DatFuncAnalysisState<'acx, 'e, E>>,
     partial_register_moves: PartialRegisterMoves,
     ref_address: E::VirtualAddress,
@@ -1582,8 +1599,8 @@ fn is_widened_dat_field(dat: DatType, field_id: u8) -> bool {
     }
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E>
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    DatReferringFuncAnalysis<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;
@@ -1843,15 +1860,15 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'acx, 'e, E> {
     pub fn new(
-        dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
+        dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
         text: &'e BinarySection<E::VirtualAddress>,
         required_stable_addresses: &'a mut RequiredStableAddresses<'acx, E::VirtualAddress>,
         entry: E::VirtualAddress,
         ref_address: E::VirtualAddress,
         mode: DatFuncAnalysisMode,
-    ) -> DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E> {
+    ) -> DatReferringFuncAnalysis<'a, 'acx, 'e, E> {
         let binary = dat_ctx.binary;
         let bump = &dat_ctx.analysis.bump;
         DatReferringFuncAnalysis {
@@ -1894,12 +1911,12 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'b, '
     }
 
     pub fn rebuild(
-        dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
+        dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
         text: &'e BinarySection<E::VirtualAddress>,
         required_stable_addresses: &'a mut RequiredStableAddresses<'acx, E::VirtualAddress>,
         state: Box<DatFuncAnalysisState<'acx, 'e, E>>,
         mode: DatFuncAnalysisMode,
-    ) -> DatReferringFuncAnalysis<'a, 'b, 'acx, 'e, E> {
+    ) -> DatReferringFuncAnalysis<'a, 'acx, 'e, E> {
         let binary = dat_ctx.binary;
         let bump = &dat_ctx.analysis.bump;
         DatReferringFuncAnalysis {
@@ -3482,7 +3499,7 @@ fn contains_u8(op: Operand<'_>) -> bool {
     }
 }
 
-struct CfgAnalyzer<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> {
+struct CfgAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     branch: E::VirtualAddress,
     // Only used for the first branch when needed_operand is None
     final_address: E::VirtualAddress,
@@ -3498,7 +3515,7 @@ struct CfgAnalyzer<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> {
         BumpVec<'acx, (E::VirtualAddress, Operand<'e>, E::VirtualAddress, Option<MemAccess<'e>>)>,
     added_unchecked_branches:
         HashSet<(E::VirtualAddress, OperandHashByAddress<'e>, E::VirtualAddress)>,
-    parent: &'a mut DatReferringFuncAnalysis<'b, 'c, 'acx, 'e, E>,
+    parent: &'a mut DatReferringFuncAnalysis<'b, 'acx, 'e, E>,
     cfg: &'a mut Cfg<'e, E, analysis::DefaultState>,
     predecessors: &'a scarf::cfg::Predecessors,
     // High bit of rva here is used to tell if instruction writes to stack memory.
@@ -3514,8 +3531,8 @@ struct CfgAnalyzer<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> {
     ending: bool,
 }
 
-impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    CfgAnalyzer<'a, 'b, 'c, 'acx, 'e, E>
+impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    CfgAnalyzer<'a, 'b, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;
@@ -3613,7 +3630,7 @@ impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-impl<'a, 'b, 'c, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'c, 'acx, 'e, E> {
+impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> CfgAnalyzer<'a, 'b, 'acx, 'e, E> {
     fn set_assigning_instruction(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
@@ -3932,12 +3949,12 @@ impl<'acx, 'a, K: Hash + Eq> Iterator for U8InstructionListsIter<'acx, 'a, K> {
     }
 }
 
-struct RecognizeDatPatchFunc<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
+struct RecognizeDatPatchFunc<'a, 'acx, 'e, E: ExecutionState<'e>> {
     flags: u8,
     inlining: bool,
     inline_ok: bool,
     returns: BumpVec<'acx, Operand<'e>>,
-    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
+    dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
 }
 
 const SUBUNIT_READ: u8 = 0x1;
@@ -3946,8 +3963,8 @@ const GROUND_WEAPON_READ: u8 = 0x4;
 const ORDER_WEAPON_READ: u8 = 0x8;
 const UNIT_ID_IS_INF_KERRIGAN: u8 = 0x10;
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    RecognizeDatPatchFunc<'a, 'b, 'acx, 'e, E>
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    RecognizeDatPatchFunc<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;
@@ -4016,10 +4033,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> RecognizeDatPatchFunc<'a, 'b, 'acx, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> RecognizeDatPatchFunc<'a, 'acx, 'e, E> {
     fn new(
-        dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
-    ) -> RecognizeDatPatchFunc<'a, 'b, 'acx, 'e, E> {
+        dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
+    ) -> RecognizeDatPatchFunc<'a, 'acx, 'e, E> {
         let bump = &dat_ctx.analysis.bump;
         RecognizeDatPatchFunc {
             flags: 0,

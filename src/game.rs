@@ -108,7 +108,7 @@ pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
     let mut checked_functions = bumpvec_with_capacity(8, bump);
     'outer: for &first_candidate_only in &[true, false] {
         for &addr in &rng_refs {
-            let res = entry_of_until(binary, funcs, addr, |entry| {
+            let res = entry_of_until(binary, &funcs, addr, |entry| {
                 let mut analyzer: IsStepObjects<E> = IsStepObjects {
                     vision_state: VisionStepState::new(),
                     checked_vision_funcs: &mut checked_vision_funcs,

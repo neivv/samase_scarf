@@ -255,7 +255,7 @@ fn filter_requirement_results<'e, E: ExecutionState<'e>>(
             continue;
         }
         let mut result_pos = i;
-        entry_of_until(binary, functions, result[i].0, |entry| {
+        entry_of_until(binary, &functions, result[i].0, |entry| {
             let mut analyzer = RequirementResultFilter::<E> {
                 entry_of: EntryOf::Retry,
                 result,

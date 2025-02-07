@@ -1850,10 +1850,19 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         if self.functions_with_callers.is_none() {
             self.functions_with_callers();
         }
+        if self.unwind_functions.is_none() {
+            self.unwind_functions();
+        }
         let functions = self.functions.0.as_deref().unwrap();
         let globals_with_values = self.globals_with_values.0.as_deref().unwrap();
         let functions_with_callers = self.functions_with_callers.0.as_deref().unwrap();
-        FunctionFinder::new(functions, globals_with_values, functions_with_callers)
+        let unwind_functions = self.unwind_functions.0.as_deref().unwrap();
+        FunctionFinder::new(
+            functions,
+            globals_with_values,
+            functions_with_callers,
+            unwind_functions,
+        )
     }
 
     pub fn unwind_functions(&mut self) -> Rc<x86_64_unwind::UnwindFunctions> {

@@ -121,7 +121,7 @@ pub(crate) fn init_storm_networking<'e, E: ExecutionState<'e>>(
             let address = rdata.virtual_address + rva.0;
             let global_refs = functions.find_functions_using_global(analysis, address);
             for global_ref in global_refs {
-                entry_of_until(binary, funcs, global_ref.use_address, |entry| {
+                entry_of_until(binary, &funcs, global_ref.use_address, |entry| {
                     let mut analyzer = FindInitStormNetworking::<E> {
                         result: &mut result,
                         inlining: false,
@@ -353,7 +353,7 @@ pub(crate) fn start_udp_server<'e, E: ExecutionState<'e>>(
     let mut result = None;
     let funcs = functions.functions();
     for string in str_refs {
-        let new = entry_of_until(binary, funcs, string.use_address, |entry| {
+        let new = entry_of_until(binary, &funcs, string.use_address, |entry| {
             let mut analyzer = IsStartUdpServer::<E> {
                 result: EntryOf::Retry,
                 use_address: string.use_address,
@@ -447,7 +447,7 @@ pub(crate) fn anaylze_net_format_turn_rate<'e, E: ExecutionState<'e>>(
     let funcs = functions.functions();
 
     for string in str_refs {
-        let val = entry_of_until(binary, funcs, string.use_address, |entry| {
+        let val = entry_of_until(binary, &funcs, string.use_address, |entry| {
 
             let mut analyzer = IsNetUserLatency::<E> {
                 result: EntryOf::Retry,
@@ -552,7 +552,7 @@ pub(crate) fn step_lobby_network<'e, E: ExecutionState<'e>>(
     let callers = functions.find_callers(actx, step_network);
     let funcs = functions.functions();
     for caller in callers {
-        let new = entry_of_until(binary, funcs, caller, |entry| {
+        let new = entry_of_until(binary, &funcs, caller, |entry| {
             let mut analyzer = StepLobbyNetworkAnalyzer::<E> {
                 result: &mut result,
                 entry_of: EntryOf::Retry,
@@ -697,7 +697,7 @@ pub(crate) fn step_lobby_state<'e, E: ExecutionState<'e>>(
     let funcs = functions.functions();
     for caller in callers {
         // Can match two different functions that both work for async command
-        entry_of_until(binary, funcs, caller, |entry| {
+        entry_of_until(binary, &funcs, caller, |entry| {
             let mut analyzer = StepLobbyStateAnalyzer::<E> {
                 result: &mut result,
                 entry_of: EntryOf::Retry,

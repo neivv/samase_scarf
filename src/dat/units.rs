@@ -4,15 +4,16 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, DestOperand, Operand, Operation};
 
+use crate::analysis::{AnalysisCache};
 use crate::analysis_find::{entry_of_until, EntryOf};
 use crate::util::{bumpvec_with_capacity, ControlExt, ExecStateExt, OperandExt};
 use super::{DatType, DatPatchContext, DatArrayPatch, reloc_address_of_instruction};
 
-pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
-    dat_ctx: &mut DatPatchContext<'a, '_, 'e, E>,
+pub(crate) fn init_units_analysis<'e, E: ExecutionState<'e>>(
+    dat_ctx: &mut DatPatchContext<'_, 'e, E>,
+    cache: &mut AnalysisCache<'e, E>,
 ) -> Option<()> {
     let analysis = &dat_ctx.analysis;
-    let cache = &mut dat_ctx.cache;
     let init_units = cache.init_units(analysis)?;
     let load_dat = cache.load_dat(analysis)?;
     let (units_dat, field_size) = cache.dat_virtual_address(DatType::Units, analysis)?;
@@ -37,8 +38,8 @@ pub(crate) fn init_units_analysis<'a, 'e, E: ExecutionState<'e>>(
     Some(())
 }
 
-pub struct InitUnitsAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
-    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
+pub struct InitUnitsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
     load_dat: E::VirtualAddress,
     units_dat_target_acq_range: E::VirtualAddress,
     units_dat_dimensionbox_end: E::VirtualAddress,
@@ -58,8 +59,8 @@ enum InitUnitsState<'e> {
     Done,
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    InitUnitsAnalyzer<'a, 'b, 'acx, 'e, E>
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    InitUnitsAnalyzer<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;
@@ -171,18 +172,19 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-pub(crate) fn button_use_analysis<'a, 'acx, 'e, E: ExecutionState<'e>>(
-    dat_ctx: &mut DatPatchContext<'a, 'acx, 'e, E>,
+pub(crate) fn button_use_analysis<'acx, 'e, E: ExecutionState<'e>>(
+    dat_ctx: &mut DatPatchContext<'acx, 'e, E>,
+    cache: &mut AnalysisCache<'e, E>,
     buttons: E::VirtualAddress,
 ) -> Option<()> {
     // For some reason, button condition param is passed as u8 to the condition function.
     // Widen it to u16.
-    let functions = dat_ctx.cache.function_finder();
+    let functions = cache.function_finder();
     let analysis = &dat_ctx.analysis;
     let globals = functions.find_functions_using_global(analysis, buttons);
     let binary = analysis.binary;
     let ctx = analysis.ctx;
-    let functions = dat_ctx.cache.functions();
+    let functions = functions.functions();
     for global in &globals {
         entry_of_until(binary, &functions, global.use_address, |entry| {
             let mut analyzer = ButtonUseAnalyzer {
@@ -201,16 +203,16 @@ pub(crate) fn button_use_analysis<'a, 'acx, 'e, E: ExecutionState<'e>>(
     Some(())
 }
 
-pub struct ButtonUseAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
-    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
+pub struct ButtonUseAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
     result: EntryOf<()>,
     use_address: E::VirtualAddress,
     candidate_instruction: Option<E::VirtualAddress>,
     binary: &'e BinaryFile<E::VirtualAddress>,
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    ButtonUseAnalyzer<'a, 'b, 'acx, 'e, E>
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    ButtonUseAnalyzer<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;
@@ -257,7 +259,7 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     }
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> ButtonUseAnalyzer<'a, 'b, 'acx, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> ButtonUseAnalyzer<'a, 'acx, 'e, E> {
     fn widen_instruction(&mut self, address: E::VirtualAddress) {
         // Would be nice if this could be shared with DatReferringFuncAnalysis::widen_instruction,
         // but seems inconvinient to implement..
@@ -287,13 +289,14 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> ButtonUseAnalyzer<'a, 'b, 'acx, 'e
     }
 }
 
-pub(crate) fn command_analysis<'a, 'acx, 'e, E: ExecutionState<'e>>(
-    dat_ctx: &mut DatPatchContext<'a, 'acx, 'e, E>,
+pub(crate) fn command_analysis<'acx, 'e, E: ExecutionState<'e>>(
+    dat_ctx: &mut DatPatchContext<'acx, 'e, E>,
+    cache: &mut AnalysisCache<'e, E>,
 ) -> Option<()> {
     // Remove unit_id <= 105 check from Command_train,
     // unit_id >= 130 && unit_id <= 152 from zerg building morph
     let analysis = &dat_ctx.analysis;
-    let switch = dat_ctx.cache.process_commands_switch(analysis)?;
+    let switch = cache.process_commands_switch(analysis)?;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     for &case in &[0x1f, 0x35] {
@@ -319,8 +322,8 @@ pub(crate) fn command_analysis<'a, 'acx, 'e, E: ExecutionState<'e>>(
     Some(())
 }
 
-pub struct CommandPatch<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
-    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
+pub struct CommandPatch<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
     inline_depth: u8,
     done: u8,
     expected_done: u8,
@@ -329,8 +332,8 @@ pub struct CommandPatch<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     half_done: bool,
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    CommandPatch<'a, 'b, 'acx, 'e, E>
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    CommandPatch<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;

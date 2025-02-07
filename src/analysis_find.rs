@@ -8,14 +8,16 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{BinaryFile, Rva};
 
 use crate::analysis::{AnalysisCtx};
+use crate::x86_64_unwind::UnwindFunctions;
 
 // Tries to return a func index to the address less or equal to `entry` that is definitely a
 // function entry. Has still a hard limit.
 fn first_definite_entry<Va: VirtualAddress>(
     binary: &BinaryFile<Va>,
     entry: Va,
-    funcs: &[Va],
+    func_list: &FunctionList<'_, Va>,
     limit: usize,
+    lowest_allowed: Va,
 ) -> (usize, usize) {
     fn is_definitely_entry<Va: VirtualAddress>(
         binary: &BinaryFile<Va>,
@@ -72,6 +74,7 @@ fn first_definite_entry<Va: VirtualAddress>(
             false
         }
     }
+    let funcs = func_list.functions;
     let mut index = funcs.binary_search_by(|&x| match x <= entry {
         true => std::cmp::Ordering::Less,
         false => std::cmp::Ordering::Greater,
@@ -80,7 +83,20 @@ fn first_definite_entry<Va: VirtualAddress>(
     if index != 0 {
         index -= 1;
     }
-    while index != 0 && !is_definitely_entry(binary, funcs[index]) && end - index < limit {
+    while index != 0 {
+        let address = funcs[index];
+        if address < lowest_allowed {
+            if index + 1 != funcs.len() {
+                index += 1;
+                break;
+            }
+        }
+        if is_definitely_entry(binary, address) {
+            break;
+        }
+        if end - index >= limit {
+            break;
+        }
         index -= 1;
     }
     (index, end)
@@ -403,7 +419,7 @@ impl<R, Va: VirtualAddress> EntryOfResult<R, Va> {
 /// helps against false positive func entries.
 pub fn entry_of_until<'a, Va: VirtualAddress, R, F>(
     binary: &BinaryFile<Va>,
-    funcs: &[Va],
+    funcs: &FunctionList<'_, Va>,
     caller: Va,
     mut cb: F,
 ) -> EntryOfResult<R, Va>
@@ -414,15 +430,30 @@ where F: FnMut(Va) -> EntryOf<R>
 
 pub fn entry_of_until_with_limit<'a, Va: VirtualAddress, R, F>(
     binary: &BinaryFile<Va>,
-    funcs: &[Va],
+    funcs: &FunctionList<'_, Va>,
     caller: Va,
     limit: usize,
     mut cb: F,
 ) -> EntryOfResult<R, Va>
 where F: FnMut(Va) -> EntryOf<R>
 {
-    let (start, end) = first_definite_entry(binary, caller, funcs, limit);
-    for &entry in funcs.iter().take(end).skip(start) {
+    let lowest_allowed;
+    if let Some((start, end)) = funcs.unwind_functions.previous_unwind_function(binary, caller) {
+        // Inside unwind info, assume start to be the real entry
+        if end > caller {
+            match cb(start) {
+                EntryOf::Ok(s) => return EntryOfResult::Ok(start, s),
+                EntryOf::Stop => return EntryOfResult::Entry(start),
+                EntryOf::Retry => return EntryOfResult::None,
+            }
+        }
+        // Else it should not be further than this address
+        lowest_allowed = end;
+    } else {
+        lowest_allowed = Va::from_u64(0);
+    }
+    let (start, end) = first_definite_entry(binary, caller, funcs, limit, lowest_allowed);
+    for &entry in funcs.functions.iter().take(end).skip(start) {
         match cb(entry) {
             EntryOf::Ok(s) => return EntryOfResult::Ok(entry, s),
             EntryOf::Stop => return EntryOfResult::Entry(entry),
@@ -437,6 +468,15 @@ pub struct FunctionFinder<'a, 'e, E: ExecutionState<'e>> {
     functions: &'a [E::VirtualAddress],
     globals_with_values: &'a [RelocValues<E::VirtualAddress>],
     functions_with_callers: &'a [FuncCallPair<E::VirtualAddress>],
+    unwind_functions: &'a UnwindFunctions,
+}
+
+/// What originally was just sorted list of functions, now also carries
+/// unwind info for better entry_of results.
+/// Maybe could just take FunctionFinder reference though now.
+pub struct FunctionList<'a, Va: VirtualAddress> {
+    pub functions: &'a [Va],
+    unwind_functions: &'a UnwindFunctions,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> FunctionFinder<'a, 'e, E> {
@@ -444,16 +484,21 @@ impl<'a, 'e, E: ExecutionState<'e>> FunctionFinder<'a, 'e, E> {
         functions: &'a [E::VirtualAddress],
         globals_with_values: &'a [RelocValues<E::VirtualAddress>],
         functions_with_callers: &'a [FuncCallPair<E::VirtualAddress>],
+        unwind_functions: &'a UnwindFunctions,
     ) -> FunctionFinder<'a, 'e, E> {
         FunctionFinder {
             functions,
             globals_with_values,
             functions_with_callers,
+            unwind_functions,
         }
     }
 
-    pub fn functions(&self) -> &[E::VirtualAddress] {
-        &self.functions
+    pub fn functions(&self) -> FunctionList<'_, E::VirtualAddress> {
+        FunctionList {
+            functions: self.functions,
+            unwind_functions: self.unwind_functions,
+        }
     }
 
     pub fn globals_with_values(&self) -> &[RelocValues<E::VirtualAddress>] {
@@ -516,7 +561,7 @@ impl<'a, 'e, E: ExecutionState<'e>> FunctionFinder<'a, 'e, E> {
         use std::cmp::Ordering;
 
         let relocs = self.globals_with_values();
-        let functions = self.functions();
+        let functions = self.functions().functions;
         let start = relocs.binary_search_by(|x| match x.value >= addr {
             true => Ordering::Greater,
             false => Ordering::Less,

@@ -135,7 +135,7 @@ fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
     let mut result: Option<(E::VirtualAddress, Operand<'e>)> = None;
     let mut entries = BumpVec::new_in(bump);
     'outer: for &(middle_of_func, global_addr) in candidates {
-        let res = entry_of_until(binary, funcs, middle_of_func, |entry| {
+        let res = entry_of_until(binary, &funcs, middle_of_func, |entry| {
             if checked_functions.contains(&entry) {
                 return EntryOf::Stop;
             }
@@ -166,7 +166,7 @@ fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
                 for f in callers {
                     let res: EntryOfResult<(), E::VirtualAddress> = entry_of_until(
                         binary,
-                        funcs,
+                        &funcs,
                         f,
                         |entry| {
                             let mut analyzer = WasInstructionRan::<E> {
@@ -1493,7 +1493,7 @@ pub(crate) fn init_ingame_ui<'e, E: ExecutionState<'e>>(
     let callers = functions.find_callers(actx, init_statlb);
     let funcs = functions.functions();
     for caller in callers {
-        let entry_of_result = entry_of_until(binary, funcs, caller, |entry| {
+        let entry_of_result = entry_of_until(binary, &funcs, caller, |entry| {
             let mut analyzer = InitIngameUiAnalyzer {
                 result: &mut result,
                 rdata: actx.binary_sections.rdata,

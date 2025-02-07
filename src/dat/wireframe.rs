@@ -4,24 +4,24 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{OperandHashByAddress};
 use scarf::{DestOperand, Operand, Operation, OperandCtx};
 
+use crate::analysis::{AnalysisCache};
 use crate::analysis_find::{entry_of_until, EntryOf};
 use crate::hash_map::{HashMap, HashSet};
 use crate::unresolve::unresolve;
 use crate::util::{ControlExt, ExecStateExt, OptionExt, OperandExt, bumpvec_with_capacity};
 use super::{DatPatchContext, DatPatch, GrpTexturePatch, reloc_address_of_instruction};
 
-pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
-    dat_ctx: &mut DatPatchContext<'a, '_, 'e, E>,
+pub(crate) fn grp_index_patches<'e, E: ExecutionState<'e>>(
+    dat_ctx: &mut DatPatchContext<'_, 'e, E>,
+    cache: &mut AnalysisCache<'e, E>,
 ) -> Option<()> {
     // Hook any indexing of wirefram/grpwire/tranwire grp/ddsgrps
     // so that they can be indexed by using .dat value instead of plain unit id
 
     let analysis = dat_ctx.analysis;
-    let cache = &mut dat_ctx.cache;
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let bump = &analysis.bump;
-    let functions = cache.functions();
     let text = dat_ctx.text;
     let text_end = text.virtual_address + text.virtual_size;
 
@@ -69,6 +69,8 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
     // Functions that are known to refer the grps but aren't relevant
     let mut bad_functions = bumpvec_with_capacity(4, bump);
     bad_functions.push(init_status_screen);
+    let function_finder = cache.function_finder();
+    let functions = function_finder.functions();
     while let Some(ref_addr) = refs_to_check.pop() {
         if !checked_refs.insert(ref_addr) {
             continue;
@@ -101,7 +103,7 @@ pub(crate) fn grp_index_patches<'a, 'e, E: ExecutionState<'e>>(
             let entry_of = analyzer.entry_of;
             if let Some(grp) = analyzer.returns_grp {
                 if functions_returning_grp.insert(entry, grp).is_none() {
-                    let callers = dat_ctx.cache.function_finder().find_callers(analysis, entry);
+                    let callers = function_finder.find_callers(analysis, entry);
                     for address in callers {
                         refs_to_check.push(address);
                     }
@@ -123,9 +125,9 @@ enum GrpType {
     DdsGrpSet,
 }
 
-struct GrpIndexAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
+struct GrpIndexAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     ref_addr: E::VirtualAddress,
-    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
+    dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
     checked_refs: &'a mut HashSet<E::VirtualAddress>,
     functions_returning_grp: &'a HashMap<E::VirtualAddress, GrpType>,
     grp_operands: &'a HashMap<OperandHashByAddress<'e>, GrpType>,
@@ -151,8 +153,8 @@ struct GrpIndexAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     current_custom10_register: Option<Operand<'e>>,
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    GrpIndexAnalyzer<'a, 'b, 'acx, 'e, E>
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    GrpIndexAnalyzer<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;
@@ -371,7 +373,7 @@ fn dest_to_operand_widen_32<'e>(dest: &DestOperand<'e>, ctx: OperandCtx<'e>) -> 
     dest.as_operand(ctx)
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GrpIndexAnalyzer<'a, 'b, 'acx, 'e, E> {
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> GrpIndexAnalyzer<'a, 'acx, 'e, E> {
     fn try_add_patch_for_ddsgrp_set_deref(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,

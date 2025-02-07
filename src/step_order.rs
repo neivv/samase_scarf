@@ -582,7 +582,7 @@ pub(crate) fn step_order<'e, E: ExecutionState<'e>>(
     let init_arbiter_callers = functions.find_callers(analysis, order_init_arbiter);
     let mut result = None;
     for caller in init_arbiter_callers {
-        let val = entry_of_until(binary, funcs, caller, |entry| {
+        let val = entry_of_until(binary, &funcs, caller, |entry| {
             let mut analyzer = IsStepOrder::<E> {
                 ok: false,
                 call_found: false,

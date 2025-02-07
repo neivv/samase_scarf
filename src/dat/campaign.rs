@@ -2,6 +2,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{DestOperand, Operation, Operand};
 
+use crate::analysis::{AnalysisCache};
 use crate::analysis_find::{entry_of_until, EntryOf};
 use crate::util::{ControlExt, MemAccessExt};
 
@@ -13,8 +14,9 @@ use super::{DatPatchContext};
 /// followed by a loop initializing the 0x41 entries
 ///
 /// Sets a hook point after the loop for patcher to init remaining entries.
-pub(crate) fn patch_mapdata_names<'a, 'e, E: ExecutionState<'e>>(
-    dat_ctx: &mut DatPatchContext<'a, '_, 'e, E>,
+pub(crate) fn patch_mapdata_names<'e, E: ExecutionState<'e>>(
+    dat_ctx: &mut DatPatchContext<'_, 'e, E>,
+    cache: &mut AnalysisCache<'e, E>,
 ) -> Option<()> {
     let mapdata_dat = &dat_ctx.mapdata;
     let actx = dat_ctx.analysis;
@@ -22,9 +24,9 @@ pub(crate) fn patch_mapdata_names<'a, 'e, E: ExecutionState<'e>>(
     let ctx = actx.ctx;
     let mapdata_dat_tbl = binary.read_address(mapdata_dat.table_address).ok()?;
 
-    let functions = dat_ctx.cache.function_finder();
+    let functions = cache.function_finder();
     let global_refs = functions.find_functions_using_global(actx, mapdata_dat_tbl);
-    let funcs = dat_ctx.cache.functions();
+    let funcs = functions.functions();
     for global in &global_refs {
         let ok = entry_of_until(binary, &funcs, global.use_address, |entry| {
             let mut analyzer = MapDataNamesanalyzer::<E> {
@@ -46,8 +48,8 @@ pub(crate) fn patch_mapdata_names<'a, 'e, E: ExecutionState<'e>>(
     Some(())
 }
 
-pub struct MapDataNamesanalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
-    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
+pub struct MapDataNamesanalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
     result: EntryOf<()>,
     use_address: E::VirtualAddress,
     map_filenames: Option<Operand<'e>>,
@@ -56,8 +58,8 @@ pub struct MapDataNamesanalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     string_size_add_seen: bool,
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    MapDataNamesanalyzer<'a, 'b, 'acx, 'e, E>
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    MapDataNamesanalyzer<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;

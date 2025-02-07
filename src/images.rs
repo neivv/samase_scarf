@@ -63,7 +63,7 @@ pub(crate) fn init_images<'e, E: ExecutionState<'e>>(
     global_refs.dedup_by_key(|x| x.func_entry);
 
     for global in global_refs {
-        let ok = entry_of_until(binary, funcs, global.use_address, |entry| {
+        let ok = entry_of_until(binary, &funcs, global.use_address, |entry| {
             let mut analyzer = InitImagesAnalyzer::<E> {
                 result: &mut result,
                 inline_depth: 0,

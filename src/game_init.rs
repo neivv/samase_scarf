@@ -225,7 +225,7 @@ pub(crate) fn play_smk<'e, E: ExecutionState<'e>>(
 
     let mut result = None;
     for (global, smk_names) in global_refs {
-        let new = entry_of_until(binary, funcs, global.use_address, |entry| {
+        let new = entry_of_until(binary, &funcs, global.use_address, |entry| {
             let mut analyzer = IsPlaySmk::<E> {
                 result: EntryOf::Retry,
                 arg_cache,
@@ -293,7 +293,7 @@ pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let funcs = functions.functions();
     for caller in callers {
-        let new = entry_of_until(binary, funcs, caller, |entry| {
+        let new = entry_of_until(binary, &funcs, caller, |entry| {
             let mut analyzer = IsScMain::<E> {
                 result: EntryOf::Retry,
                 play_smk,
@@ -539,7 +539,7 @@ pub(crate) fn init_map_from_path<'e, E: ExecutionState<'e>>(
     let ctx = analysis.ctx;
     let mut result = None;
     for (chk_funcs_rva, addr) in call_points {
-        let new = entry_of_until(binary, funcs, addr, |entry| {
+        let new = entry_of_until(binary, &funcs, addr, |entry| {
             let state = IsInitMapFromPathState {
                 jump_count: 0,
                 is_after_arg3_check: false,
@@ -683,7 +683,7 @@ pub(crate) fn choose_snp<'e, E: ExecutionState<'e>>(
     if let Some(addr) = result {
         let mut analyzer = FindRealChooseSnp::<E> {
             result: None,
-            funcs,
+            funcs: funcs.functions,
             ctx,
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, addr);
@@ -804,7 +804,7 @@ pub(crate) fn choose_snp_fallback<'e, E: ExecutionState<'e>>(
         let address = rdata.virtual_address + rva.0;
         let global_refs = functions.find_functions_using_global(actx, address);
         for global in global_refs {
-            entry_of_until(binary, funcs, global.use_address, |entry| {
+            entry_of_until(binary, &funcs, global.use_address, |entry| {
                 verify_choose_snp(actx, entry, &mut full_result);
                 if full_result.choose_snp.is_some() {
                     EntryOf::Ok(())
@@ -924,7 +924,7 @@ pub(crate) fn single_player_start<'e, E: ExecutionState<'e>>(
     let funcs = functions.functions();
     let arg_cache = &analysis.arg_cache;
     for caller in callers {
-        let ok = entry_of_until(binary, funcs, caller, |entry| {
+        let ok = entry_of_until(binary, &funcs, caller, |entry| {
             let mut analyzer = SinglePlayerStartAnalyzer {
                 result: &mut result,
                 arg_cache,
@@ -1178,7 +1178,7 @@ pub(crate) fn select_map_entry<'e, E: ExecutionState<'e>>(
     let arg_cache = &analysis.arg_cache;
     let bump = &analysis.bump;
     for caller in callers {
-        entry_of_until(binary, funcs, caller, |entry| {
+        entry_of_until(binary, &funcs, caller, |entry| {
             let mut analyzer = FindSelectMapEntry::<E> {
                 arg_cache,
                 first_branch: true,
@@ -1291,7 +1291,7 @@ pub(crate) fn load_images<'e, E: ExecutionState<'e>>(
     let str_refs = functions.string_refs(analysis, b"scripts\\iscript.bin\0");
     let mut result = None;
     for string in str_refs {
-        let new = entry_of_until(binary, funcs, string.use_address, |entry| {
+        let new = entry_of_until(binary, &funcs, string.use_address, |entry| {
             let mut analyzer = IsLoadImages::<E> {
                 result: EntryOf::Retry,
                 use_address: string.use_address,
@@ -1363,7 +1363,7 @@ pub(crate) fn images_loaded<'e, E: ExecutionState<'e>>(
     let funcs = functions.functions();
     let callers = functions.find_callers(analysis, load_images);
     for caller in callers {
-        let res = entry_of_until(binary, funcs, caller, |entry| {
+        let res = entry_of_until(binary, &funcs, caller, |entry| {
             let mut analyzer = FindImagesLoaded::<E> {
                 result: EntryOf::Retry,
                 load_images,
@@ -1821,7 +1821,7 @@ pub(crate) fn init_game_map<'e, E: ExecutionState<'e>>(
     for call in callers {
         let mut invalid_handle_cmps: BumpVec<'_, (E::VirtualAddress, _)> =
             bumpvec_with_capacity(8, bump);
-        let val = entry_of_until(binary, functions, call, |entry| {
+        let val = entry_of_until(binary, &functions, call, |entry| {
             invalid_handle_cmps.clear();
             let mut analyzer = InitGameAnalyzer::<E> {
                 result: EntryOf::Retry,
@@ -2360,7 +2360,7 @@ pub(crate) fn join_game<'e, E: ExecutionState<'e>>(
     let mut result = None;
     let arg_cache = &analysis.arg_cache;
     for global in global_refs {
-        let new = entry_of_until(binary, funcs, global.use_address, |entry| {
+        let new = entry_of_until(binary, &funcs, global.use_address, |entry| {
             let mut analyzer = IsJoinGame::<E> {
                 result: EntryOf::Retry,
                 use_address: global.use_address,
@@ -2557,7 +2557,7 @@ pub(crate) fn original_chk_player_types<'e, E: ExecutionState<'e>>(
     let arg_cache = &analysis.arg_cache;
     let mut result = None;
     for global in &global_refs {
-        let new_result = entry_of_until(binary, funcs, global.use_address, |entry| {
+        let new_result = entry_of_until(binary, &funcs, global.use_address, |entry| {
             let mut analyzer = FindOrigPlayerTypes::<E> {
                 result: EntryOf::Retry,
                 arg_cache,
@@ -5122,7 +5122,7 @@ pub(crate) fn join_custom_game<'e, E: ExecutionState<'e>>(
     let callers = functions.find_callers(actx, join_game);
     let funcs = functions.functions();
     for caller in callers {
-        let new = entry_of_until(binary, funcs, caller, |entry| {
+        let new = entry_of_until(binary, &funcs, caller, |entry| {
             let mut analyzer = JoinCustomGameAnalyzer::<E> {
                 arg_cache,
                 result: &mut result,

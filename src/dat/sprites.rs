@@ -2,6 +2,7 @@ use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::{DestOperand, Operation, Rva};
 
+use crate::analysis::{AnalysisCache};
 use crate::analysis_find::{entry_of_until, EntryOf};
 use crate::util::{ControlExt};
 
@@ -12,8 +13,9 @@ use super::{
 
 /// init_hp_bar_texture() has hardcoded constant of 183 which should be replaced
 /// with sprite entry count. Find by the function also referring to sprites_dat_hp_bar (Arr 1)
-pub(crate) fn patch_hp_bar_init<'a, 'e, E: ExecutionState<'e>>(
-    dat_ctx: &mut DatPatchContext<'a, '_, 'e, E>,
+pub(crate) fn patch_hp_bar_init<'e, E: ExecutionState<'e>>(
+    dat_ctx: &mut DatPatchContext<'_, 'e, E>,
+    cache: &mut AnalysisCache<'e, E>,
 ) -> Option<()> {
     let sprites_dat = &dat_ctx.sprites;
     let actx = dat_ctx.analysis;
@@ -22,9 +24,9 @@ pub(crate) fn patch_hp_bar_init<'a, 'e, E: ExecutionState<'e>>(
     let sprites_dat_hp_bar = binary.read_address(
         sprites_dat.table_address + sprites_dat.entry_size * 1
     ).ok()?;
-    let functions = dat_ctx.cache.function_finder();
+    let functions = cache.function_finder();
     let global_refs = functions.find_functions_using_global(actx, sprites_dat_hp_bar);
-    let funcs = dat_ctx.cache.functions();
+    let funcs = functions.functions();
     for global in &global_refs {
         let ok = entry_of_until(binary, &funcs, global.use_address, |entry| {
             let mut analyzer = HpBarInitAnalyzer::<E> {
@@ -59,16 +61,16 @@ pub(crate) fn patch_hp_bar_init<'a, 'e, E: ExecutionState<'e>>(
     Some(())
 }
 
-pub struct HpBarInitAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
-    dat_ctx: &'a mut DatPatchContext<'b, 'acx, 'e, E>,
+pub struct HpBarInitAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    dat_ctx: &'a mut DatPatchContext<'acx, 'e, E>,
     result: EntryOf<()>,
     use_address: E::VirtualAddress,
     sprites_dat_hp_bar_end: E::VirtualAddress,
     jump_limit: u8,
 }
 
-impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
-    HpBarInitAnalyzer<'a, 'b, 'acx, 'e, E>
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    HpBarInitAnalyzer<'a, 'acx, 'e, E>
 {
     type State = analysis::DefaultState;
     type Exec = E;

@@ -210,7 +210,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
         let functions = self.functions.functions();
         let mut function_ends = HashMap::with_capacity_and_hasher(64, Default::default());
         while let Some(game_ref_addr) = self.unchecked_refs.iter().cloned().next() {
-            let result = entry_of_until(binary, functions, game_ref_addr, |entry| {
+            let result = entry_of_until(binary, &functions, game_ref_addr, |entry| {
                 if self.checked_functions.insert(entry) {
                     let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
                     let rsa = required_stable_addresses.get(entry_rva);
@@ -268,7 +268,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
         let bump = &self.analysis.bump;
         let functions = self.functions.functions();
         while let Some(ref_addr) = self.unchecked_refs.iter().cloned().next() {
-            let result = entry_of_until(binary, functions, ref_addr, |entry| {
+            let result = entry_of_until(binary, &functions, ref_addr, |entry| {
                 if self.checked_functions.insert(entry) {
                     let entry_rva = Rva((entry.as_u64() - binary.base.as_u64()) as u32);
                     let rsa = required_stable_addresses.get(entry_rva);

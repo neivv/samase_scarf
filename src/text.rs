@@ -46,7 +46,7 @@ pub(crate) fn fonts<'e, E: ExecutionState<'e>>(
     let mut result = None;
     for cand in candidates {
         let use_address = cand.use_address;
-        let val = entry_of_until(binary, funcs, use_address, |entry| {
+        let val = entry_of_until(binary, &funcs, use_address, |entry| {
             let mut analyzer = FontsAnalyzer::<E> {
                 result: EntryOf::Retry,
                 use_address,
@@ -176,7 +176,7 @@ pub(crate) fn font_render<'e, E: ExecutionState<'e>>(
     let arg_cache = &analysis.arg_cache;
     for ttf_init in ttf_init_candidates {
         let use_address = ttf_init.use_address;
-        entry_of_until(binary, funcs, use_address, |entry| {
+        entry_of_until(binary, &funcs, use_address, |entry| {
             let mut analyzer = FindCacheRenderAscii::<E> {
                 result: &mut result,
                 use_address,
