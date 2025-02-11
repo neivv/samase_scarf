@@ -281,7 +281,9 @@ pub enum DatPatch<'e, Va: VirtualAddress> {
     TwoStepHook(Va, Va, u32, u8, u8),
     ReplaceFunc(Va, DatReplaceFunc),
     ExtendedArray(ExtArrayPatch<'e, Va>),
-    /// Address, array ids (1-based)
+    /// Address, extended array ids (1-based).
+    ///     - Expect for image overlays that are in a single extended array, 0xf0 .. 0xf6
+    ///         get used as array ids.
     /// Expected to be on call instruction.
     ExtendedArrayArg(Va, [u8; 4]),
     GrpIndexHook(Va),
@@ -308,6 +310,8 @@ pub struct DatArrayPatch<Va: VirtualAddress> {
     ///     0xfe: Unit buttons
     /// Sprites:
     ///     0xff: Include in vision sync
+    /// Images:
+    ///     0xff: Image grps
     pub field_id: u8,
     /// Unaligned address of a pointer in .text (Or .data/.rdata, whynot)
     /// (e.g. casting it to *const usize and reading it would give pointer to the orig
@@ -465,6 +469,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
     ];
     let firegraft = cache.firegraft_addresses(analysis);
     let sprite_sync = cache.sprite_include_in_vision_sync(analysis)?;
+    let image_grps = cache.image_grps(analysis)?;
     let mut dat_ctx = DatPatchContext::new(cache, analysis);
     let dat_ctx = dat_ctx.as_mut()?;
     for &dat in &dats {
@@ -472,6 +477,8 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         let address = table.address.if_constant().map(|x| E::VirtualAddress::from_u64(x))?;
         dat_ctx.add_dat(dat, address, table.entry_size).ok()?;
     }
+
+    let ptr_size = E::VirtualAddress::SIZE;
 
     // Status screen array (Using unit 0xff)
     let (buttonset_size, status_func_size) = match E::VirtualAddress::SIZE == 4 {
@@ -507,6 +514,24 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
         let sync = E::VirtualAddress::from_u64(sync);
         let end_ptr = sync + 0x205;
         dat_ctx.add_dat_global_refs(DatType::Sprites, 0xff, sync, end_ptr, 0, 0x1, false);
+    }
+    let image_arrays = [
+        (image_grps, 999, 0xff),
+    ];
+    for &(op, len, id) in &image_arrays {
+        if let Some(array) = op.if_constant() {
+            let array = E::VirtualAddress::from_u64(array);
+            let end_ptr = array + len * ptr_size;
+            dat_ctx.add_dat_global_refs(
+                DatType::Images,
+                id,
+                array,
+                end_ptr,
+                0,
+                ptr_size as u8,
+                false,
+            );
+        }
     }
 
     // This will also use add_dat_global_refs, specifically for wireframe type array.

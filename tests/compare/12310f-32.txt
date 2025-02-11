@@ -1642,6 +1642,9 @@ WARN Unknown Upgrades dat offset @ VirtualAddress32(0079a283): Mem8[Mem32[Mem32[
 WARN Unknown Upgrades dat offset @ VirtualAddress32(0079a298): Mem8[Mem32[Mem32[rsp + 8] + 40] + e]
 WARN Unknown Weapons dat offset @ VirtualAddress32(00574b1c): Mem8[Undefined]
 WARN Unknown Weapons dat offset @ VirtualAddress32(00574b1c): Mem8[Undefined]
+WARN Unexpected image overlay index ((rsi * 4) + f98) at VirtualAddress32(005734de)
+WARN Unexpected image overlay index ((Undefined_f * 4) + f98) at VirtualAddress32(005734de)
+WARN Unexpected image overlay index ((Undefined_f * 4) + f98) at VirtualAddress32(005734de)
 Units entry count patches: [f2e530, f2e540, f2e550, f2e560, f2e570, f2e580, f2e590, f2e5a0, f2e5b0, f2e5c0, f2e5d0, f2e5e0, f2e5f0, f2e600, f2e610, f2e620, f2e630, f2e640, f2e650, f2e660, f2e670, f2e680, f2e690, f2e6a0, f2e6b0, f2e6c0, f2e6d0, f2e6e0, f2e6f0, f2e700, f2e710, f2e720, f2e730, f2e740, f2e750, f2e760, f2e770, f2e780, f2e790, f2e7a0, f2e7b0, f2e7c0, f2e7d0, f2e7e0, f2e7f0, f2e800, f2e810, f2e820, f2e830, f2e840, f2e850, f2e860, f2e870, f2e880]
 Units array patches:
     00: [57c7d8, 59283e, 5a9a46, 5b015d, 5b01bd, 5b021e, 5d3e00, 5d8846, 5dd2ad, 5de795, 764de5, 765b99, f2e528, f2e8c4]
@@ -1783,6 +1786,9 @@ Sprites array patches:
     04: ["571067:0+0", "571363:0+0", "f2e3f0:82+0", "f2e420:82+0"]
     05: ["571081:0+0", "571388:0+0", "f2e400:82+0", "f2e428:82+0"]
     ff: [57c7e6, 57d046, 630e99]
+Images entry count patches: []
+Images array patches:
+    ff: ["571074:231+0", "571215:0+0", "571375:0+0", "571bc9:0+0", "5729cd:0+0", "572aa9:0+0", "572af9:0+0", "572c71:248+0", "573133:0+0", "57373a:0+0", "574fac:0+0"]
 Orders entry count patches: [f2e1b8, f2e1c8, f2e1d8, f2e1e8, f2e1f8, f2e208, f2e218, f2e228, f2e238, f2e248, f2e258, f2e268, f2e278, f2e288, f2e298, f2e2a8, f2e2b8, f2e2c8, f2e2d8]
 Orders array patches:
     00: [f2e1b0, f2e328]
@@ -2247,7 +2253,19 @@ MapData array patches:
 0e: VirtualAddress32(006634f4):3 = ((rcx + (rax * 4)) - 100d360)
 0e: VirtualAddress32(0066351e):7 = ((rax * 4) + 2a0)
 0e: VirtualAddress32(006647be):7 = (rax * 4)
+11: VirtualAddress32(00571996):6 = 1c80
+11: VirtualAddress32(00571a3f):7 = ((rax * 18) + 8)
+11: VirtualAddress32(00572a5c):7 = ((Mem8[rsp + 10] + (Mem16[rcx + 8] * 6)) * 4)
+11: VirtualAddress32(00572ca7):7 = ((rax * 18) + 14)
+11: VirtualAddress32(005734de):7 = ((rsi * 18) + 4)
+11: VirtualAddress32(00573db0):7 = ((rax * 18) + 8)
 --- Extended array arg patches ---
+00573756: [(0, 239)]
+0057376e: [(0, 240)]
+00573786: [(0, 241)]
+005737a1: [(0, 242)]
+005737b9: [(0, 243)]
+005737d1: [(0, 244)]
 00663892: [(0, 14), (1, 8)]
 006638a8: [(0, 13), (1, 7)]
 006642fa: [(0, 14)]

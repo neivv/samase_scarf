@@ -3,7 +3,9 @@ use bumpalo::collections::Vec as BumpVec;
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 use scarf::operand::{OperandType};
-use scarf::{BinaryFile, DestOperand, MemAccess, MemAccessSize, Operand, Operation, Rva};
+use scarf::{
+    BinaryFile, DestOperand, MemAccess, MemAccessSize, Operand, Operation, Rva, OperandCtx,
+};
 
 use crate::analysis::{AnalysisCache, AnalysisCtx};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
@@ -68,6 +70,8 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
     let player_ai = cache.player_ai(analysis)?;
     let trigger_all_units = cache.trigger_all_units_cache(analysis)?;
     let trigger_completed_units = cache.trigger_completed_units_cache(analysis)?;
+    let image_overlays = cache.image_overlays(analysis)?;
+    let shield_overlays = cache.shield_overlays(analysis)?;
     let scmain_state = cache.scmain_state(analysis)
         .and_then(|x| x.if_memory());
     let game_address = game.iter_no_mem_addr()
@@ -103,6 +107,8 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
         ai_build_limit: ctx.add_const(player_ai, ai_build_limit_offset),
         trigger_all_units,
         trigger_completed_units,
+        image_overlays,
+        shield_overlays,
         scmain_state,
     };
     game_ctx.do_analysis(required_stable_addresses);
@@ -123,6 +129,14 @@ pub(crate) fn dat_game_analysis<'acx, 'e, E: ExecutionState<'e>>(
         trigger_completed_units.if_constant().map(|x| {
             let start = E::VirtualAddress::from_u64(x);
             (start, start + 0xe4 * 12 * 4)
+        }),
+        image_overlays.if_constant().map(|x| {
+            let start = E::VirtualAddress::from_u64(x);
+            (start, start + 0x3e7 * 5 * E::VirtualAddress::SIZE)
+        }),
+        shield_overlays.if_constant().map(|x| {
+            let start = E::VirtualAddress::from_u64(x);
+            (start, start + 0x3e7 * E::VirtualAddress::SIZE)
         }),
     ];
     for (start, end) in other_globals.iter().flat_map(|&x| x) {
@@ -196,6 +210,8 @@ pub struct GameContext<'a, 'acx, 'e, E: ExecutionState<'e>> {
     ai_build_limit: Operand<'e>,
     trigger_all_units: Operand<'e>,
     trigger_completed_units: Operand<'e>,
+    image_overlays: Operand<'e>,
+    shield_overlays: Operand<'e>,
     scmain_state: Option<&'e MemAccess<'e>>,
 }
 
@@ -492,14 +508,25 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         } else if arg1 == self.game_ctx.trigger_completed_units {
             Some(0x0e)
         } else {
+            if let Some(c) = arg1.if_constant() {
+                if let Some(overlays_start) = self.game_ctx.image_overlays.if_constant() {
+                    let overlays_end = overlays_start + 0x3e7 * 5 * E::VirtualAddress::SIZE as u64;
+                    if c >= overlays_start && c < overlays_end {
+                        let offset = c - overlays_start;
+                        self.patch_image_overlays_array_call(ctrl, offset, false, is_tail_call);
+                        return;
+                    }
+                }
+            }
+            if arg1 == self.game_ctx.shield_overlays {
+                self.patch_image_overlays_array_call(ctrl, 0, true, is_tail_call);
+            }
             None
         };
+
         if let Some(id) = ext_array_id {
-            // Hacky way to reuse the patched addr array
-            let dummy = self.game_ctx.game;
             let address = ctrl.address();
-            if self.game_ctx.patched_addresses.insert(address, (!0, dummy)).is_some()
-            {
+            if self.check_add_array_call_patch(address) {
                 return;
             }
             // Arg2 may be pointer to a game table (if memcpy)
@@ -538,6 +565,66 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         }
     }
 
+    fn patch_image_overlays_array_call(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        offset: u64,
+        shields: bool,
+        is_tail_call: bool,
+    ) {
+        let address = ctrl.address();
+        if self.check_add_array_call_patch(address) {
+            return;
+        }
+        if is_tail_call {
+            dat_warn!(self, "Didn't expect tail call at {:?}", address);
+            return;
+        }
+        // Only patch load_image_overlay_array(overlays, _, _, 0x3e7)
+        let arg4 = ctrl.resolve_arg(3);
+        if arg4.if_constant() != Some(0x3e7) {
+            return;
+        }
+        let array_id = if shields {
+            0xf5
+        } else {
+            let div = E::VirtualAddress::SIZE * 0x3e7;
+            if (offset as u32) % div != 0 {
+                dat_warn!(
+                    self, "Expected overlay array argument to be at image 0 at {:?}", address,
+                );
+                return;
+            }
+            let overlay_id = (offset as u32) / div;
+            0xf0 + overlay_id as u8
+        };
+        let args = [
+            array_id,
+            0,
+            0,
+            0,
+        ];
+        let patches = &mut self.game_ctx.result.patches;
+        patches.push(DatPatch::ExtendedArrayArg(address, args));
+        if let Err(e) = self.required_stable_addresses.try_add_for_patch(
+            self.binary,
+            address,
+            ctrl.current_instruction_end(),
+        ) {
+            dat_warn!(
+                self, "Can't add stable address for patch @ {:?}, conflict {:?}",
+                address, e,
+            );
+        }
+    }
+
+    /// Return true if the address was already patched
+    fn check_add_array_call_patch(&mut self, address: E::VirtualAddress) -> bool {
+        // Hacky way to reuse the patched addr array
+        let dummy = self.game_ctx.game;
+        self.game_ctx.patched_addresses.insert(address, (!0, dummy)).is_some()
+    }
+
     fn check_mem_access(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
@@ -551,6 +638,8 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                 (self.game_ctx.ai_build_limit, 0xe4),
                 (self.game_ctx.trigger_all_units, 0xe4 * 4 * 12),
                 (self.game_ctx.trigger_completed_units, 0xe4 * 4 * 12),
+                (self.game_ctx.image_overlays, 0x3e7 * 5 * E::VirtualAddress::SIZE as u64),
+                (self.game_ctx.shield_overlays, 0x3e7 * E::VirtualAddress::SIZE as u64),
             ];
             let (index, base) = mem.address();
             for &(start, len) in &others {
@@ -571,6 +660,10 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
                                 0x0e
                             };
                             self.patch_unit_counts(ctrl, index, id);
+                        } else if start == self.game_ctx.image_overlays {
+                            self.patch_image_overlays(ctrl, index, false);
+                        } else if start == self.game_ctx.shield_overlays {
+                            self.patch_image_overlays(ctrl, index, true);
                         }
                     }
                 }
@@ -1332,6 +1425,90 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         self.add_patch(ctrl, ext_array_id, index);
     }
 
+    fn patch_image_overlays(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        index: Operand<'e>,
+        shield_overlays: bool,
+    ) {
+        let ctx = ctrl.ctx();
+        let pointer_size = E::VirtualAddress::SIZE as u64;
+        // index = (overlay_type * 3e7 + image_id) * pointer_size
+        // => ptr_index = index / pointer_size
+        // => image_id = ptr_index % 3e7
+        //      overlay_type = ptr_index / 3e7
+        let (image_id, overlay_type) =
+            match extract_image_overlay_index::<E::VirtualAddress>(ctx, index)
+        {
+            Some(s) => s,
+            None => {
+                dat_warn!(
+                    self, "Unexpected image overlay index {} at {:?}", index, ctrl.address(),
+                );
+                return;
+            }
+        };
+        if shield_overlays && overlay_type != ctx.const_0() {
+            dat_warn!(
+                self, "Unexpected shield overlay index {} at {:?}", index, ctrl.address(),
+            );
+            return;
+        }
+        let (image_id, overlay_type) =
+            match (self.unresolve(ctrl, image_id), self.unresolve(ctrl, overlay_type))
+        {
+            (Some(a), Some(b)) => (a, b),
+            (Some(image_id), None) => {
+                if let Some(index_unres) = self.unresolve(ctrl, index) {
+                    let overlay_type = ctx.div(
+                        ctx.sub(
+                            index_unres,
+                            ctx.mul_const(image_id, pointer_size),
+                        ),
+                        ctx.constant(0x3e7 * pointer_size),
+                    );
+                    (image_id, overlay_type)
+                } else {
+                    dat_warn!(self, "Unable to find operands for overlay/id");
+                    return;
+                }
+            }
+            (None, Some(overlay_type)) => {
+                if let Some(index_unres) = self.unresolve(ctrl, index) {
+                    let image_id = ctx.div(
+                        ctx.sub(
+                            index_unres,
+                            ctx.mul_const(overlay_type, 0x3e7 * pointer_size),
+                        ),
+                        ctx.constant(pointer_size),
+                    );
+                    (image_id, overlay_type)
+                } else {
+                    dat_warn!(self, "Unable to find operands for overlay/id");
+                    return;
+                }
+            }
+            _ => {
+                dat_warn!(self, "Unable to find operands for overlay/id");
+                return;
+            }
+        };
+        // Convert to (overlay_type + image_id * 0x6) * pointer_size
+        let overlay_type = if shield_overlays {
+            ctx.constant(5)
+        } else {
+            overlay_type
+        };
+        let index = ctx.mul_const(
+            ctx.add(
+                overlay_type,
+                ctx.mul_const(image_id, 0x6),
+            ),
+            pointer_size,
+        );
+        self.add_patch(ctrl, 0x11, index);
+    }
+
     fn unresolve(
         &mut self,
         ctrl: &mut Control<'e, '_, '_, Self>,
@@ -1395,4 +1572,50 @@ fn if_const_or_mem_const<'e, E: ExecutionState<'e>>(
                 .and_then(|x| x.if_constant_address())
         })
         .map(|x| E::VirtualAddress::from_u64(x))
+}
+
+/// Returns (image_id, overlay_type)
+fn extract_image_overlay_index<'e, Va: VirtualAddress>(
+    ctx: OperandCtx<'e>,
+    index: Operand<'e>,
+) -> Option<(Operand<'e>, Operand<'e>)> {
+    let pointer_size = Va::SIZE as u64;
+    if let Some(c) = index.if_constant() {
+        // Constant index
+        if c & (pointer_size - 1) != 0 {
+            return None;
+        }
+        let ptr_index = match Va::SIZE {
+            4 => c / 4,
+            8 | _ => c / 8,
+        };
+        Some((ctx.constant(ptr_index % 0x3e7), ctx.constant(ptr_index / 0x3e7)))
+    } else if let Some((l, r)) = index.if_arithmetic_add() {
+        if let Some(c) = r.if_constant() {
+            // x * 8 + constant => Assuming to be constant overlay type with image id
+            if c & (pointer_size - 1) != 0 {
+                return None;
+            }
+            let ptr_index = match Va::SIZE {
+                4 => c / 4,
+                8 | _ => c / 8,
+            };
+            if ptr_index % 0x3e7 != 0 {
+                return None;
+            }
+            let image_id = l.if_arithmetic_mul_const(pointer_size)?;
+            Some((image_id, ctx.constant(ptr_index / 0x3e7)))
+        } else {
+            None
+        }
+    } else if let Some(x) = index.if_arithmetic_mul_const(pointer_size) {
+        // Assuming (image_id + overlay * 3e7) * 8
+        let result = x.if_arithmetic_add()
+            .and_either(|x| x.if_arithmetic_mul_const(0x3e7))
+            .map(|(overlay, id)| (id, overlay))
+            .unwrap_or_else(|| (x, ctx.const_0()));
+        Some(result)
+    } else {
+        None
+    }
 }

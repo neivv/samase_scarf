@@ -1795,6 +1795,9 @@ Sprites array patches:
     04: ["1401724c7:0+0", "140173be0:0+0", "140b93630:82+0", "140b93678:82+0"]
     05: ["1401724ed:0+0", "140173bfd:0+0", "140b93648:82+0", "140b93688:82+0"]
     ff: [14017b561, 14017bde8, 14021d305]
+Images entry count patches: []
+Images array patches:
+    ff: ["140172332:0+0", "1401724d9:0+0", "140172e43:0+0", "1401737b8:0+0", "1401738b6:0+0", "140173925:0+0", "140173b23:248+0", "140173be8:231+0", "140174361:0+0", "14017492d:0+0", "140176909:0+0"]
 Orders entry count patches: [140b932ac, 140b932c4, 140b932dc, 140b932f4, 140b9330c, 140b93324, 140b9333c, 140b93354, 140b9336c, 140b93384, 140b9339c, 140b933b4, 140b933cc, 140b933e4, 140b933fc, 140b93414, 140b9342c, 140b93444, 140b9345c]
 Orders array patches:
     00: [140b932a0, 140b934f0]
@@ -2287,7 +2290,23 @@ MapData array patches:
 0e: VirtualAddress64(140258aa4):8 = (rdx * 4)
 0e: VirtualAddress64(140258adb):8 = ((rax * 4) + 2a0)
 0e: VirtualAddress64(14025a1d6):7 = (rax * 4)
+11: VirtualAddress64(140172c5e):7 = 3900
+11: VirtualAddress64(140172cf9):4 = ((rax * 30) + 10)
+11: VirtualAddress64(140173851):4 = (((Mem16[rcx + 10] * 6) + (((r8 * 8) - (Mem16[rcx + 10] * 8)) / 1f38)) * 8)
+11: VirtualAddress64(140173b5b):4 = ((rax * 30) + 28)
+11: VirtualAddress64(1401741df):8 = ((r11 * 30) + 8)
+11: VirtualAddress64(140175029):4 = ((rax * 30) + 10)
+11: VirtualAddress64(140175540):8 = ((Mem8[rbx - 2] + (Mem16[r14 + 10] * 6)) * 8)
+11: VirtualAddress64(1401755c2):8 = ((Mem8[rbx - 2] + (Mem16[r14 + 10] * 6)) * 8)
+11: VirtualAddress64(1401757d2):8 = ((Mem8[rbx - 1] + (Mem16[r14 + 10] * 6)) * 8)
+11: VirtualAddress64(140175a43):8 = ((rax * 30) + 10)
 --- Extended array arg patches ---
+14017494d: [(0, 239)]
+140174969: [(0, 240)]
+140174985: [(0, 241)]
+1401749a1: [(0, 242)]
+1401749bd: [(0, 243)]
+1401749d9: [(0, 244)]
 140258fca: [(0, 14), (1, 8)]
 140258fec: [(0, 13), (1, 7)]
 140259c2e: [(0, 14)]

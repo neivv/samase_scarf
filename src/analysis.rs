@@ -3858,6 +3858,24 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    pub(crate) fn image_grps(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::ImageGrps, |s| {
+            s.cache_image_loading(actx)
+        })
+    }
+
+    pub(crate) fn image_overlays(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::ImageOverlays, |s| {
+            s.cache_image_loading(actx)
+        })
+    }
+
+    pub(crate) fn shield_overlays(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::ShieldOverlays, |s| {
+            s.cache_image_loading(actx)
+        })
+    }
+
     fn cache_step_objects(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;

@@ -1784,6 +1784,9 @@ Sprites array patches:
     04: ["565877:0+0", "565b73:0+0", "e033f0:82+0", "e03420:82+0"]
     05: ["565891:0+0", "565b98:0+0", "e03400:82+0", "e03428:82+0"]
     ff: [570496, 570ee6, 620637]
+Images entry count patches: []
+Images array patches:
+    ff: ["565884:231+0", "565a25:0+0", "565b85:0+0", "566559:0+0", "566e2e:0+0", "566f09:0+0", "566f59:0+0", "5670d1:248+0", "567593:0+0", "567b35:0+0", "5690d6:0+0"]
 Orders entry count patches: [e031b8, e031c8, e031d8, e031e8, e031f8, e03208, e03218, e03228, e03238, e03248, e03258, e03268, e03278, e03288, e03298, e032a8, e032b8, e032c8, e032d8]
 Orders array patches:
     00: [e031b0, e03328]
@@ -2249,7 +2252,19 @@ MapData array patches:
 0e: VirtualAddress32(0064cd86):7 = (rax * 4)
 0e: VirtualAddress32(0064cdb4):7 = ((rax * 4) + 2a0)
 0e: VirtualAddress32(0064e05e):7 = (rax * 4)
+11: VirtualAddress32(00566326):6 = 1c80
+11: VirtualAddress32(005663cf):7 = ((rax * 18) + 8)
+11: VirtualAddress32(00566ebc):7 = ((Mem8[rsp + 10] + (Mem16[rcx + 8] * 6)) * 4)
+11: VirtualAddress32(00567107):7 = ((rax * 18) + 14)
+11: VirtualAddress32(005678fe):7 = ((rsi * 18) + 4)
+11: VirtualAddress32(00567fb0):7 = ((rax * 18) + 8)
 --- Extended array arg patches ---
+00567b51: [(0, 239)]
+00567b69: [(0, 240)]
+00567b81: [(0, 241)]
+00567b9c: [(0, 242)]
+00567bb4: [(0, 243)]
+00567bcc: [(0, 244)]
 0064d132: [(0, 14), (1, 8)]
 0064d148: [(0, 13), (1, 7)]
 0064db9a: [(0, 14)]

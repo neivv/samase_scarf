@@ -1783,6 +1783,9 @@ Sprites array patches:
     04: ["1404b2d77:0+0", "1404b4780:0+0", "140e30c90:82+0", "140e30cd8:82+0"]
     05: ["1404b2d9d:0+0", "1404b479d:0+0", "140e30ca8:82+0", "140e30ce8:82+0"]
     ff: [1404c2dd1, 1404c3748, 1409081a3]
+Images entry count patches: []
+Images array patches:
+    ff: ["1404b2be2:0+0", "1404b2d89:0+0", "1404b3733:0+0", "1404b4488:0+0", "1404b4586:0+0", "1404b45f5:0+0", "1404b46d3:248+0", "1404b4788:231+0", "1404b4f01:0+0", "1404b5560:0+0", "1404b7589:0+0"]
 Orders entry count patches: [140e308bc, 140e308d4, 140e308ec, 140e30904, 140e3091c, 140e30934, 140e3094c, 140e30964, 140e3097c, 140e30994, 140e309ac, 140e309c4, 140e309dc, 140e309f4, 140e30a0c, 140e30a24, 140e30a3c, 140e30a54, 140e30a6c]
 Orders array patches:
     00: [140e308b0, 140e30b00]
@@ -2264,11 +2267,27 @@ MapData array patches:
 0e: VirtualAddress64(14045bd95):3 = ((rcx + (rax * 4)) - 140ece6c0)
 0e: VirtualAddress64(14045bdc2):8 = ((rax * 4) + 2a0)
 0e: VirtualAddress64(14045d4c6):7 = (rax * 4)
+11: VirtualAddress64(1404b354e):7 = 3900
+11: VirtualAddress64(1404b35e9):4 = ((rax * 30) + 10)
+11: VirtualAddress64(1404b4521):4 = (((Mem16[rcx + 10] * 6) + (((r8 * 8) - (Mem16[rcx + 10] * 8)) / 1f38)) * 8)
+11: VirtualAddress64(1404b470b):4 = ((rax * 30) + 28)
+11: VirtualAddress64(1404b4d7f):8 = ((r11 * 30) + 8)
+11: VirtualAddress64(1404b5c79):4 = ((rax * 30) + 10)
+11: VirtualAddress64(1404b6192):8 = ((Mem8[rbx - 2] + (Mem16[r14 + 10] * 6)) * 8)
+11: VirtualAddress64(1404b6214):8 = ((Mem8[rbx - 2] + (Mem16[r14 + 10] * 6)) * 8)
+11: VirtualAddress64(1404b647a):8 = ((Mem8[rbx - 1] + (Mem16[r14 + 10] * 6)) * 8)
+11: VirtualAddress64(1404b66c5):8 = ((rax * 30) + 10)
 --- Extended array arg patches ---
 14045c2ba: [(0, 14), (1, 8)]
 14045c2dc: [(0, 13), (1, 7)]
 14045cf1e: [(0, 14)]
 14045cf32: [(0, 13)]
+1404b5581: [(0, 239)]
+1404b559e: [(0, 240)]
+1404b55bb: [(0, 241)]
+1404b55d8: [(0, 242)]
+1404b55f5: [(0, 243)]
+1404b5612: [(0, 244)]
 --- Grp texture hooks ---
 140451f74:6: rbx <= Mem16[rcx, (r11 * 8) + 6]
 140451f7a:4: r15 <= rcx, (r11 * 8)
