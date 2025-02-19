@@ -70,10 +70,11 @@ impl<'bump> UncheckedRefs<'bump> {
 }
 
 pub struct InstructionsNeedingVerify<'bump> {
-    // Bits 0xc000_0000 in RVA are state
+    // Bits 0xe000_0000 in RVA are state
     // 0 = Not checked
     // 0x4000_0000 = Checked, good
     // 0x8000_0000 = Checked, bad
+    // 0x2000_0000 = Require array index
     // RVA itself is at instruction end
     list: BumpVec<'bump, Rva>,
     sorted: bool,
@@ -84,7 +85,7 @@ pub struct InsVerifyIter<Va: VirtualAddress> {
     next: Va,
 }
 
-const INS_VERIFY_RVA_MASK: u32 = 0x3fff_ffff;
+const INS_VERIFY_RVA_MASK: u32 = 0x1fff_ffff;
 
 impl<'bump> InstructionsNeedingVerify<'bump> {
     pub fn new(bump: &'bump Bump, capacity: usize) -> InstructionsNeedingVerify<'bump> {
@@ -95,15 +96,22 @@ impl<'bump> InstructionsNeedingVerify<'bump> {
     }
 
     /// Rva needs to be at instruction *end*
-    pub fn push(&mut self, rva: Rva) {
+    pub fn push(&mut self, rva: Rva, require_array_index: bool,) {
         debug_assert!(rva.0 & !INS_VERIFY_RVA_MASK == 0);
         debug_assert!(!self.sorted);
+        let rva = if require_array_index {
+            Rva(rva.0 | 0x2000_0000)
+        } else {
+            rva
+        };
         self.list.push(rva);
     }
 
     pub fn build_lookup(&mut self) {
         if !self.sorted {
-            self.list.sort_unstable();
+            self.list.sort_unstable_by_key(|x| {
+                (x.0 & (INS_VERIFY_RVA_MASK | 0x2000_0000)).rotate_left(3)
+            });
             // There are bunch of duplicates dues to arrays[n] + entry_count == arrays[n + 1]
             // Would be probably better to fix in dat array addition (Currently it just happens
             // to work since the arrays don't get randomly reordered and higher ids go after lower)
@@ -118,9 +126,9 @@ impl<'bump> InstructionsNeedingVerify<'bump> {
     pub fn next_unverified(&mut self, pos: &mut usize) -> Option<Rva> {
         let idx = *pos;
         for (i, &val) in self.list.get(idx..)?.iter().enumerate() {
-            if val.0 & !INS_VERIFY_RVA_MASK == 0 {
+            if val.0 & 0xc000_0000 == 0 {
                 *pos = idx + i + 1;
-                return Some(val);
+                return Some(Rva(val.0 & INS_VERIFY_RVA_MASK));
             }
         }
         *pos = usize::MAX;
@@ -236,11 +244,13 @@ impl<Va: VirtualAddress> InsVerifyIter<Va> {
         address >= self.next
     }
 
-    pub fn at_instruction_end(
+    pub fn at_instruction_end<'e, E: ExecutionState<'e>>(
         &mut self,
         address: Va,
         binary: &BinaryFile<Va>,
         parent: &mut InstructionsNeedingVerify<'_>,
+        exec: &mut E,
+        op: &Operation<'e>,
     ) {
         if !self.near_instruction_end(address) {
             return;
@@ -251,7 +261,17 @@ impl<Va: VirtualAddress> InsVerifyIter<Va> {
         };
         if address == self.next {
             // Ok, good
-            current.0 |= 0x4000_0000;
+            if current.0 & 0x2000_0000 != 0 {
+                if is_array_read_op(exec, op) {
+                    // Ok
+                    current.0 |= 0x4000_0000;
+                } else {
+                    // Bad
+                    current.0 |= 0x8000_0000;
+                }
+            } else {
+                current.0 |= 0x4000_0000;
+            }
         } else {
             // Bad
             current.0 |= 0x8000_0000;
@@ -259,10 +279,43 @@ impl<Va: VirtualAddress> InsVerifyIter<Va> {
         self.list_pos += 1;
         self.next = parent.get_rva(self.list_pos).map(|x| binary.base() + x)
             .unwrap_or_else(|| Va::from_u64(u64::MAX));
+        if address == self.next {
+            // Had second one that was marked as requiring array index.
+            // Move past that.
+            let current = match parent.list.get_mut(self.list_pos) {
+                Some(s) => s,
+                None => return,
+            };
+            debug_assert!(current.0 & 0x2000_0000 != 0);
+            current.0 |= 0x4000_0000;
+            self.list_pos += 1;
+            self.next = parent.get_rva(self.list_pos).map(|x| binary.base() + x)
+                .unwrap_or_else(|| Va::from_u64(u64::MAX));
+        }
     }
 
     pub fn next_address(&self) -> Va {
         self.next
+    }
+}
+
+fn is_array_read_op<'e, E: ExecutionState<'e>>(
+    exec: &mut E,
+    op: &Operation<'e>,
+) -> bool {
+    match op {
+        Operation::Move(_, value) => {
+            if let Some(mem) = value.if_memory() {
+                let mem = exec.resolve_mem(mem);
+                let (base, _) = mem.address();
+                let ctx = exec.ctx();
+                if base != ctx.const_0()  {
+                    return true;
+                }
+            }
+            false
+        }
+        _ => false,
     }
 }
 
@@ -318,10 +371,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 .wrapping_sub(address.as_u64() as u32);
             if end_start_diff >= 5 {
                 let binary = ctrl.binary();
+                let exec = ctrl.exec_state();
                 self.instruction_verify_pos.at_instruction_end(
                     instruction_verify_end,
                     binary,
                     self.instructions_needing_verify,
+                    exec,
+                    op,
                 );
                 self.entry_of = EntryOf::Ok(());
                 if self.instruction_verify_pos.next_address() > ctrl.address() + 0x4000 {
@@ -492,16 +548,19 @@ fn test_quick_reset() {
     let bump = bumpalo::Bump::new();
     let mut ins = InstructionsNeedingVerify::new(&bump, 64);
     for i in 0..0x10 {
-        ins.push(Rva(i * 0x1000));
+        ins.push(Rva(i * 0x1000), false);
     }
     ins.build_lookup();
     let mut iter = InsVerifyIter::empty();
     iter.reset(VirtualAddress(0x1800), binary, &mut ins);
-    iter.at_instruction_end(VirtualAddress(0x2000), binary, &mut ins);
+    let op = &Operation::Return(0); // Dummy value
+    let ctx = &scarf::OperandContext::new();
+    let exec = &mut scarf::ExecutionStateX86::new(ctx); // Dummy value
+    iter.at_instruction_end(VirtualAddress(0x2000), binary, &mut ins, exec, op);
     assert!(iter.quick_reset(VirtualAddress(0x1800), binary, 0x1800, &mut ins));
     assert_eq!(iter.next.0, 0x2000);
-    iter.at_instruction_end(VirtualAddress(0x2000), binary, &mut ins);
-    iter.at_instruction_end(VirtualAddress(0x3000), binary, &mut ins);
+    iter.at_instruction_end(VirtualAddress(0x2000), binary, &mut ins, exec, op);
+    iter.at_instruction_end(VirtualAddress(0x3000), binary, &mut ins, exec, op);
     assert!(iter.quick_reset(VirtualAddress(0x1800), binary, 0x1800, &mut ins));
     assert_eq!(iter.next.0, 0x2000);
 

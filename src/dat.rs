@@ -527,7 +527,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
                 id,
                 array,
                 end_ptr,
-                0,
+                1,
                 ptr_size as u8,
                 false,
             );
@@ -1012,7 +1012,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'acx, 'e, E> {
                 orig_entry: offset,
                 byte_offset,
             };
-            if !self.add_dat_array_patch_unverified(array_patch) {
+            if !self.add_dat_array_patch_unverified(array_patch, false) {
                 continue;
             }
             // Assuming that array ref analysis for hardcoded indices isn't important.
@@ -1027,6 +1027,12 @@ impl<'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'acx, 'e, E> {
             }
         }
         if start_index != 0 {
+            if E::VirtualAddress::SIZE == 4 && dat == DatType::Images {
+                // Image grps -1 offset relies on instructions_needing_verify, which
+                // is not ran on 32bit.
+                // Just leave that patch not findable.
+                return;
+            }
             // If there's a reloc for array_ptr - start_index * field_size,
             // assume it's meant for array[id - start_index]
             let zero_ptr = array_ptr - start_index.wrapping_mul(field_size as u32);
@@ -1052,7 +1058,8 @@ impl<'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'acx, 'e, E> {
                         orig_entry: 0,
                         byte_offset,
                     };
-                    self.add_dat_array_patch_unverified(patch);
+                    let require_array_index = true;
+                    self.add_dat_array_patch_unverified(patch, require_array_index);
                 } else {
                     break;
                 }
@@ -1065,9 +1072,14 @@ impl<'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'acx, 'e, E> {
     /// Adds the patch, but adds the address to instructions_needing_verify list.
     /// The verification is needed to avoid global false positives in 64bit,
     /// but will also be done in 32bit for consistency. Shouldn't be too expensive?
+    ///
+    /// `require_array_index`: Access must not be at constant Mem[c] address.
+    ///     Used for patches that are array[x - offset] to avoid mixing up
+    ///     with whatever global is at `array - offset`
     fn add_dat_array_patch_unverified(
         &mut self,
         patch: DatArrayPatch<E::VirtualAddress>,
+        require_array_index: bool,
     ) -> bool {
         let address = patch.address;
         if !self.add_or_override_dat_array_patch(patch) {
@@ -1079,7 +1091,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'acx, 'e, E> {
         if E::VirtualAddress::SIZE == 8 && address >= text.virtual_address && address < text_end {
             // Address should be 4 bytes from instruction end..
             let rva = Rva(self.binary.rva_32(address).wrapping_add(4));
-            self.instructions_needing_verify.push(rva);
+            self.instructions_needing_verify.push(rva, require_array_index);
         }
         true
     }
@@ -1717,10 +1729,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 .wrapping_sub(ins_address.as_u64() as u32);
             // See commment in InstructionVerifyOnlyAnalyzer::operation
             if end_start_diff >= 5 {
+                let exec = ctrl.exec_state();
                 self.instruction_verify_pos.at_instruction_end(
                     instruction_verify_end,
                     binary,
                     &mut self.dat_ctx.instructions_needing_verify,
+                    exec,
+                    op,
                 );
             }
         }
