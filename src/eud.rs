@@ -435,7 +435,7 @@ fn find_stack_reserve_entry<'e, E: ExecutionState<'e>>(
         fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
             let mut call_reserve = 0;
             let ctx = ctrl.ctx();
-            let stop = match op {
+            let stop = match *op {
                 Operation::Move(ref to, from) => {
                     if let Some(mem) = from.if_memory() {
                         // Don't stop on fs:[0] read

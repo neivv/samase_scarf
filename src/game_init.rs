@@ -1059,7 +1059,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             }
                         }
                     }
-                } else if let Operation::Special(ref bytes) = op {
+                } else if let Operation::Special(ref bytes) = *op {
                     // (Rep) movs dword
                     if &bytes[..] == &[0xf3, 0xa5] {
                         let len = ctrl.resolve_register(1);
@@ -3142,13 +3142,13 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> LoadImagesAnalyzer<'a, 'acx, 'e, E> {
         }
 
         // Convert func calls to constant returns
-        let mut ops = [
+        let ops = [
             &mut self.result.base_anim_set,
             &mut self.result.image_grps,
             &mut self.result.image_overlays,
             &mut self.result.fire_overlay_max,
         ];
-        for ref mut op in ops.iter_mut() {
+        for op in ops.into_iter() {
             if let Some(ref mut op) = *op {
                 *op = ctx.transform(*op, 8, |op| {
                     if let Some(idx) = op.if_custom() {

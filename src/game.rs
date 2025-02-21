@@ -1377,7 +1377,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                         }
                     }
                 } else if let Operation::Move(ref dest, value) = *op {
-                    if let DestOperand::Memory(ref mem) = dest {
+                    if let DestOperand::Memory(ref mem) = *dest {
                         if mem.size == E::WORD_SIZE {
                             let mem = ctrl.resolve_mem(mem);
                             let dest_op = ctx.memory(&mem);

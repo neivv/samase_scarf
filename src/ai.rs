@@ -204,7 +204,7 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiscriptHookAnalyzer<
             Operation::Move(ref dest, val) => {
                 // Try to find script->pos += 1
                 if self.aiscript_operand.is_none() {
-                    if let DestOperand::Memory(ref mem) = dest {
+                    if let DestOperand::Memory(ref mem) = *dest {
                         if mem.size == MemAccessSize::Mem32 {
                             let mem = ctrl.resolve_mem(mem);
                             let (base, offset) = mem.address();

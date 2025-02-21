@@ -390,7 +390,7 @@ pub fn dump_euds<'e, E: ExecutionState<'e>>(
 }
 
 fn check_filter(filter: &Option<&str>, compare: &str) -> bool {
-    if let Some(ref filter) = filter {
+    if let Some(filter) = filter {
         if !compare.contains(filter) {
             return false;
         }

@@ -506,14 +506,14 @@ pub fn is_global_struct<'e, E: ExecutionState<'e>>(op: Operand<'_>) -> bool {
 fn is_global_rec(op: Operand<'_>) -> bool {
     let mut op = op;
     loop {
-        if let OperandType::Arithmetic(arith) = op.ty() {
+        if let OperandType::Arithmetic(ref arith) = *op.ty() {
             // Nicer for tail calls to check right first as it doesn't recurse in operand chains
             if !is_global_rec(arith.right) {
                 return false;
             }
             op = arith.left;
             continue;
-        } else if let OperandType::Memory(ref mem) = op.ty() {
+        } else if let OperandType::Memory(ref mem) = *op.ty() {
             op = mem.address().0;
             continue;
         } else if op.if_constant().is_some() {

@@ -567,7 +567,7 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> TooltipAnalyzer<'a, 'acx, 'e, E>
                 }
                 let value = ctrl.resolve(value);
                 let ctx = ctrl.ctx();
-                if let TooltipState::FindTooltipCtrl(ref mut state) =
+                if let TooltipState::FindTooltipCtrl(state) =
                     ctrl.user_state().get::<TooltipState>()
                 {
                     if value.is_undefined() {
