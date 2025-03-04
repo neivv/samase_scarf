@@ -126,6 +126,11 @@ pub(crate) struct OrderUnitMorph<Va: VirtualAddress> {
     pub check_resources_for_building: Option<Va>,
 }
 
+pub(crate) struct ShowUnit<Va: VirtualAddress> {
+    pub add_to_position_search: Option<Va>,
+    pub foliage_mark_area_for_resource: Option<Va>,
+}
+
 pub(crate) fn active_hidden_units<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     orders_dat: (E::VirtualAddress, u32),
@@ -3426,4 +3431,181 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
             }
         }
     }
+}
+
+pub(crate) fn analyze_show_unit<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    show_unit: E::VirtualAddress,
+    update_unit_visibility: E::VirtualAddress,
+) -> ShowUnit<E::VirtualAddress> {
+    let mut result = ShowUnit {
+        add_to_position_search: None,
+        foliage_mark_area_for_resource: None,
+    };
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+
+    let mut analysis = FuncAnalysis::new(binary, ctx, show_unit);
+    let mut analyzer = ShowUnitAnalyzer::<E> {
+        result: &mut result,
+        state: ShowUnitState::UpdateVisibility,
+        update_unit_visibility,
+        call_tracker: CallTracker::with_capacity(actx, 0, 16),
+        inline_depth: 0,
+        jump_limit: 0,
+        func_entry: show_unit,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct ShowUnitAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut ShowUnit<E::VirtualAddress>,
+    state: ShowUnitState,
+    update_unit_visibility: E::VirtualAddress,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    inline_depth: u8,
+    jump_limit: u8,
+    func_entry: E::VirtualAddress,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum ShowUnitState {
+    /// Find update_unit_visibility(this = this) call
+    UpdateVisibility,
+    /// Next call should be unit_add_to_map(this = this), though account for it being inlined.
+    /// unit_add_to_map then calls immediately add_to_position_search(this = this), which
+    /// is recognized from it doing `units_dat_flags[unit_id] & 10` (Subunit turret) jump
+    UnitAddToMap,
+    AddToPositionSearch,
+    /// Still inside unit_add_to_map, follow unit.flags & 2 == 0 branch
+    LandedBuildingCheck,
+    FoliageResourceCall,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    ShowUnitAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            ShowUnitState::UpdateVisibility => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        if dest == self.update_unit_visibility {
+                            ctrl.clear_unchecked_branches();
+                            self.state = ShowUnitState::UnitAddToMap;
+                        }
+                    }
+                }
+            }
+            ShowUnitState::UnitAddToMap => {
+                if let Operation::Call(dest) = *op {
+                    if seems_assertion_call(ctrl) {
+                        return;
+                    }
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve_register(1);
+                        if this == ctx.register(1) {
+                            let old_entry = self.func_entry;
+                            if self.inline_depth == 0 {
+                                self.inline_depth += 1;
+                                self.func_entry = dest;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.func_entry = old_entry;
+                                self.inline_depth -= 1;
+                                if self.state != ShowUnitState::LandedBuildingCheck {
+                                    ctrl.end_analysis();
+                                }
+                            } else {
+                                self.inline_depth += 1;
+                                self.state = ShowUnitState::AddToPositionSearch;
+                                self.jump_limit = 12;
+                                self.func_entry = dest;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.func_entry = old_entry;
+                                self.inline_depth -= 1;
+                                if self.state == ShowUnitState::AddToPositionSearch {
+                                    self.jump_limit = 12;
+                                }
+                                // Either found add_to_position_search and state is now
+                                // LandedBuildingCheck, or didn't so assume that this
+                                // function is add_to_position_search and that unit_add_to_map
+                                // was inlined.
+                            }
+                        }
+                    }
+                }
+            }
+            ShowUnitState::AddToPositionSearch | ShowUnitState::LandedBuildingCheck => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve_register(1);
+                        if this == ctx.register(1) {
+                            self.call_tracker.add_call(ctrl, dest);
+                        }
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    if self.jump_limit == 0 {
+                        ctrl.end_analysis();
+                        return;
+                    }
+                    self.jump_limit -= 1;
+
+                    let condition = ctrl.resolve(condition);
+                    let condition =
+                        self.call_tracker.resolve_calls_with_branch_limit(condition, 1);
+                    if self.state == ShowUnitState::AddToPositionSearch {
+                        if let Some(..) = condition.if_and_mask_eq_neq(0x10) {
+                            self.result.add_to_position_search = Some(self.func_entry);
+                            self.state = ShowUnitState::LandedBuildingCheck;
+                            self.jump_limit = 4;
+                            ctrl.end_analysis();
+                        }
+                    } else {
+                        if let Some((x, eq_zero)) = condition.if_and_mask_eq_neq(0x2) {
+                            let ok = x.if_mem8_offset(E::struct_layouts().unit_flags()) ==
+                                Some(ctx.register(1));
+                            if ok {
+                                ctrl.clear_unchecked_branches();
+                                ctrl.continue_at_eq_address(eq_zero, to);
+                                self.state = ShowUnitState::FoliageResourceCall;
+                            }
+                        }
+                    }
+                }
+            }
+            ShowUnitState::FoliageResourceCall => {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let this = ctrl.resolve_register(1);
+                        if this == ctx.register(1) {
+                            self.call_tracker.add_call(ctrl, dest);
+                        } else {
+                            let a4 = ctx.and_const(ctrl.resolve_arg(3), 0x7fff)
+                                .unwrap_and_mask();
+                            let a5 = ctx.and_const(ctrl.resolve_arg(4), 0x7fff)
+                                .unwrap_and_mask();
+                            let ok = seems_int_div_by_32(a4) && seems_int_div_by_32(a5);
+                            if ok {
+                                self.result.foliage_mark_area_for_resource = Some(dest);
+                                ctrl.end_analysis();
+                            } else {
+                                ctrl.skip_call_preserve_esp();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn seems_int_div_by_32<'e>(op: Operand<'e>) -> bool {
+    op.if_arithmetic_rsh_const(5)
+        .and_then(|x| x.if_arithmetic_add())
+        .and_either_other(|x| x.if_arithmetic_and_const(0x1f))
+        .is_some()
 }

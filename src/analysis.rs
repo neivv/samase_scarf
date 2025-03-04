@@ -571,6 +571,12 @@ results! {
             cache_ai_place_building,
         // a1 x, a2 y, a3 rect, a4 filter_func, a5 filter_param
         FindNearestUnitInAreaPoint => find_nearest_unit_in_area_point => cache_ai_place_building,
+        AddToPositionSearch => add_to_position_search => cache_show_unit,
+        // foliage_state, x_tile, y_tile, width, height
+        // Noteworthy for being a function that happens to not do anything for preplaced
+        // units due to foliage not being initialized when they are created, but
+        // causes a buffer overflow when operating on Y = 255.
+        FoliageMarkAreaForResource => foliage_mark_area_for_resource => cache_show_unit,
     }
 }
 
@@ -4436,6 +4442,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             });
     }
 
+    fn show_unit(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::ShowUnit, |s| s.cache_order_nuke_launch(actx))
+    }
+
     fn hide_unit(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::HideUnit, |s| s.cache_order_nuke_launch(actx))
     }
@@ -5144,6 +5154,17 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let r = ai::analyze_place_building(actx, place_building);
                 Some(([r.update_building_placement_state, r.ai_update_building_placement_state,
                     r.find_nearest_unit_in_area_point], []))
+            })
+    }
+
+    fn cache_show_unit(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[AddToPositionSearch, FoliageMarkAreaForResource], &[],
+            |s| {
+                let show_unit = s.show_unit(actx)?;
+                let update_unit_visibility = s.update_unit_visibility(actx)?;
+                let r = units::analyze_show_unit(actx, show_unit, update_unit_visibility);
+                Some(([r.add_to_position_search, r.foliage_mark_area_for_resource], []))
             })
     }
 }
