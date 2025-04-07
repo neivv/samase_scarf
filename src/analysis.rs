@@ -234,6 +234,8 @@ results! {
         InitSprites => init_sprites => cache_init_sprites,
         SerializeSprites => serialize_sprites => cache_sprite_serialization,
         DeserializeSprites => deserialize_sprites => cache_sprite_serialization,
+        SerializeImages => serialize_images => cache_image_serialization,
+        DoSave => do_save => cache_image_serialization,
         FontCacheRenderAscii => font_cache_render_ascii => cache_font_render,
         TtfCacheCharacter => ttf_cache_character => cache_font_render,
         TtfRenderSdf => ttf_render_sdf => cache_font_render,
@@ -3036,11 +3038,32 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    fn serialize_sprites(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::SerializeSprites,
+            |s| s.cache_sprite_serialization(actx),
+        )
+    }
+
     fn deserialize_sprites(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(
             AddressAnalysis::DeserializeSprites,
             |s| s.cache_sprite_serialization(actx),
         )
+    }
+
+    fn cache_image_serialization(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[SerializeImages, DoSave], &[], |s| {
+            let serialize_sprites = s.serialize_sprites(actx)?;
+            let funcs = s.function_finder();
+            let result = save::do_save(
+                actx,
+                serialize_sprites,
+                &funcs,
+            );
+            Some(([result.serialize_images, result.do_save], []))
+        })
     }
 
     fn limits(&mut self, actx: &AnalysisCtx<'e, E>) -> Rc<Limits<'e, E::VirtualAddress>> {

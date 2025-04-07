@@ -13,6 +13,12 @@ pub struct SpriteSerialization<Va: VirtualAddress> {
     pub deserialize_sprites: Option<Va>,
 }
 
+#[derive(Clone)]
+pub struct DoSave<Va: VirtualAddress> {
+    pub serialize_images: Option<Va>,
+    pub do_save: Option<Va>,
+}
+
 pub(crate) fn sprite_serialization<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     sprite_hlines_end: Operand<'e>,
@@ -314,6 +320,86 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     }
                     ctrl.end_analysis();
                 }
+            }
+        }
+    }
+}
+
+pub(crate) fn do_save<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    serialize_sprites: E::VirtualAddress,
+    function_finder: &FunctionFinder<'_, 'e, E>,
+) -> DoSave<E::VirtualAddress> {
+    // Search for caller of serialize_sprites,
+    // it should be do_save()
+    // which calls serialize_images(a1) right before serialize_sprites(a1)
+    let mut result = DoSave {
+        serialize_images: None,
+        do_save: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let callers = function_finder.find_callers(actx, serialize_sprites);
+    let funcs = function_finder.functions();
+    for &caller in &callers {
+        let val = entry_of_until(binary, &funcs, caller, |entry| {
+            let mut analyzer = DoSaveAnalyzer::<E> {
+                entry_of: EntryOf::Retry,
+                serialize_sprites,
+                serialize_images_candidate: None,
+                entry: entry,
+                result: &mut result,
+                arg_cache: &actx.arg_cache,
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.entry_of
+        }).into_option();
+        if val.is_some() {
+            break;
+        }
+    }
+
+    result
+}
+
+struct DoSaveAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    entry_of: EntryOf<()>,
+    serialize_sprites: E::VirtualAddress,
+    serialize_images_candidate: Option<E::VirtualAddress>,
+    result: &'a mut DoSave<E::VirtualAddress>,
+    entry: E::VirtualAddress,
+    arg_cache: &'a ArgCache<'e, E>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DoSaveAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if ctrl.resolve_arg(0) == self.arg_cache.on_entry(0) {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    if dest == self.serialize_sprites {
+                        if let Some(cand) = self.serialize_images_candidate {
+                            self.result.serialize_images = Some(cand);
+                            self.result.do_save = Some(self.entry);
+                            self.entry_of = EntryOf::Ok(());
+                        } else {
+                            self.entry_of = EntryOf::Stop;
+                        }
+                        ctrl.end_analysis();
+                        return;
+                    }
+                    self.serialize_images_candidate = Some(dest);
+                    // Assume that any call that takes in the save file returns nonzero
+                    // to simplify analysis a bit.
+                    let ctx = ctrl.ctx();
+                    ctrl.do_call_with_result(ctx.const_1());
+                }
+            } else {
+                self.serialize_images_candidate = None;
             }
         }
     }
