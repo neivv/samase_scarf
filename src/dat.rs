@@ -85,6 +85,14 @@ static SPRITE_ARRAY_WIDTHS: &[u8] = &[
     2, 1, 1, 1, 1, 1,
 ];
 
+static IMAGE_ARRAY_WIDTHS_32: &[u8] = &[
+    4, 1, 1, 1, 1, 1, 1, 4,  4, 4, 4, 4, 4, 4,
+];
+
+static IMAGE_ARRAY_WIDTHS_64: &[u8] = &[
+    8, 1, 1, 1, 1, 1, 1, 4,  8, 8, 8, 8, 8, 8,
+];
+
 static UPGRADE_ARRAY_WIDTHS: &[u8] = &[
     2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1,
 ];
@@ -463,7 +471,7 @@ pub(crate) fn dat_patches<'e, E: ExecutionState<'e>>(
 ) -> Option<DatPatches<'e, E::VirtualAddress>> {
     init_warnings_tls();
     let dats = [
-        DatType::Units, DatType::Weapons, DatType::Flingy, DatType::Sprites,
+        DatType::Units, DatType::Weapons, DatType::Flingy, DatType::Sprites, DatType::Images,
         DatType::Upgrades, DatType::TechData, DatType::PortData, DatType::MapData,
         DatType::Orders,
     ];
@@ -592,6 +600,7 @@ pub(crate) struct DatPatchContext<'acx, 'e, E: ExecutionState<'e>> {
     weapons: DatTable<E::VirtualAddress>,
     flingy: DatTable<E::VirtualAddress>,
     sprites: DatTable<E::VirtualAddress>,
+    images: DatTable<E::VirtualAddress>,
     upgrades: DatTable<E::VirtualAddress>,
     techdata: DatTable<E::VirtualAddress>,
     portdata: DatTable<E::VirtualAddress>,
@@ -858,6 +867,7 @@ impl<'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'acx, 'e, E> {
             weapons: dat_table(0x18),
             flingy: dat_table(0x7),
             sprites: dat_table(0x6),
+            images: dat_table(0xe),
             upgrades: dat_table(0xc),
             techdata: dat_table(0xb),
             portdata: dat_table(0x6),
@@ -907,6 +917,13 @@ impl<'acx, 'e, E: ExecutionState<'e>> DatPatchContext<'acx, 'e, E> {
             DatType::Sprites => (&mut self.sprites, 0x205, &SPRITE_ARRAY_WIDTHS),
             DatType::Upgrades => (&mut self.upgrades, 0x3d, &UPGRADE_ARRAY_WIDTHS),
             DatType::TechData => (&mut self.techdata, 0x2c, &TECHDATA_ARRAY_WIDTHS),
+            DatType::Images => {
+                if E::VirtualAddress::SIZE == 4 {
+                    (&mut self.images, 0x3e7, &IMAGE_ARRAY_WIDTHS_32)
+                } else {
+                    (&mut self.images, 0x3e7, &IMAGE_ARRAY_WIDTHS_64)
+                }
+            }
             DatType::PortData => {
                 if E::VirtualAddress::SIZE == 4 {
                     (&mut self.portdata, 0x6e, &PORTDATA_ARRAY_WIDTHS_32)

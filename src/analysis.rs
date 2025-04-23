@@ -322,6 +322,7 @@ results! {
         StepUnitMovement => step_unit_movement => cache_step_active_unit,
         StepUnitTimers => step_unit_timers => cache_step_hidden_unit,
         InitMapFromPath => init_map_from_path => cache_init_map,
+        // Chk section handlers for non-SC:R maps. SC:R callback table is slightly different.
         MapInitChkCallbacks => map_init_chk_callbacks => cache_init_map,
         StepNetwork => step_network => cache_game_loop,
         ReceiveStormTurns => receive_storm_turns => cache_step_network,
