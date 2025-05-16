@@ -1178,6 +1178,10 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.shareable.ctx
     }
 
+    pub fn binary(&self) -> &'e BinaryFile<E::VirtualAddress> {
+        &self.shareable.binary
+    }
+
     /// Mainly for clearer profiling which won't mix global search costs in first
     /// operand / address analysis needing them.
     #[inline(never)]
