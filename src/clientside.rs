@@ -120,6 +120,11 @@ pub(crate) struct ShowPortrait<'e> {
     pub video_id: Option<Operand<'e>>,
 }
 
+pub(crate) struct LoadAllCursors<Va: VirtualAddress> {
+    pub load_all_cursors: Option<Va>,
+    pub load_ddsgrp_cursor: Option<Va>,
+}
+
 // Candidates are either a global ref with Some(global), or a call with None
 fn game_screen_rclick_inner<'acx, 'e, E: ExecutionState<'e>>(
     analysis: &'acx AnalysisCtx<'e, E>,
@@ -2711,6 +2716,74 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for ShowPortraitAnalyzer
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+pub(crate) fn find_load_all_cursors<'acx, 'e, E: ExecutionState<'e>>(
+    actx: &'acx AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> LoadAllCursors<E::VirtualAddress> {
+    let mut result = LoadAllCursors {
+        load_all_cursors: None,
+        load_ddsgrp_cursor: None,
+    };
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let str_refs = functions.string_refs(actx, b"cursor\\");
+    let funcs = functions.functions();
+    for str_ref in &str_refs {
+        entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+            let mut analyzer = LoadAllCursorsAnalyzer::<E> {
+                entry,
+                use_address: str_ref.use_address,
+                result: &mut result,
+                entry_of: EntryOf::Retry,
+            };
+
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            analyzer.entry_of
+        });
+        if result.load_all_cursors.is_some() {
+            break;
+        }
+    }
+    result
+}
+
+struct LoadAllCursorsAnalyzer<'e, 'a, E: ExecutionState<'e>> {
+    entry: E::VirtualAddress,
+    use_address: E::VirtualAddress,
+    result: &'a mut LoadAllCursors<E::VirtualAddress>,
+    entry_of: EntryOf<()>,
+}
+
+impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for LoadAllCursorsAnalyzer<'e, 'a, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.use_address.as_u64().wrapping_sub(ctrl.address().as_u64()) < 0x10 {
+            self.entry_of = EntryOf::Stop;
+        }
+        if let Operation::Call(dest) = *op {
+            let ok = if E::VirtualAddress::SIZE == 4 {
+                ctrl.resolve_arg_u8(1).if_mem8().is_some() &&
+                    ctrl.resolve_arg(2).if_mem32().is_some() &&
+                    ctrl.resolve_arg(3).if_mem32().is_some() &&
+                    ctrl.resolve_arg_u32(4).if_constant() == Some(0xa)
+            } else {
+                ctrl.resolve_arg_u8(1).if_mem8().is_some() &&
+                    ctrl.resolve_arg(2).if_mem64().is_some() &&
+                    ctrl.resolve_arg_u32(3).if_constant() == Some(0xa)
+            };
+            if ok && let Some(dest) = ctrl.resolve_va(dest) {
+                self.result.load_all_cursors = Some(self.entry);
+                self.result.load_ddsgrp_cursor = Some(dest);
+                self.entry_of = EntryOf::Ok(());
+                ctrl.end_analysis();
             }
         }
     }

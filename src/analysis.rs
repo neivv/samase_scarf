@@ -580,6 +580,8 @@ results! {
         // units due to foliage not being initialized when they are created, but
         // causes a buffer overflow when operating on Y = 255.
         FoliageMarkAreaForResource => foliage_mark_area_for_resource => cache_show_unit,
+        LoadAllCursors => load_all_cursors => cache_load_all_cursors,
+        LoadDdsGrpCursor => load_ddsgrp_cursor => cache_load_all_cursors,
     }
 }
 
@@ -5193,6 +5195,16 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let update_unit_visibility = s.update_unit_visibility(actx)?;
                 let r = units::analyze_show_unit(actx, show_unit, update_unit_visibility);
                 Some(([r.add_to_position_search, r.foliage_mark_area_for_resource], []))
+            })
+    }
+
+    fn cache_load_all_cursors(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[LoadAllCursors, LoadDdsGrpCursor], &[],
+            |s| {
+                let funcs = s.function_finder();
+                let r = clientside::find_load_all_cursors(actx, &funcs);
+                Some(([r.load_all_cursors, r.load_ddsgrp_cursor], []))
             })
     }
 }
