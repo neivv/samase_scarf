@@ -934,6 +934,7 @@ pub struct AnalysisCache<'e, E: ExecutionState<'e>> {
     trigger_unit_count_caches: Cached<TriggerUnitCountCaches<'e>>,
     replay_minimap_unexplored_fog_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
     deserialize_lone_sprite_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
+    cursor_dimension_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
     crt_fastfail: Cached<Rc<Vec<E::VirtualAddress>>>,
     unwind_functions: Cached<Rc<x86_64_unwind::UnwindFunctions>>,
     dat_tables: DatTables<'e>,
@@ -1158,6 +1159,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
                 trigger_unit_count_caches: Default::default(),
                 replay_minimap_unexplored_fog_patch: Default::default(),
                 deserialize_lone_sprite_patch: Default::default(),
+                cursor_dimension_patch: Default::default(),
                 crt_fastfail: Default::default(),
                 unwind_functions: Default::default(),
                 dat_tables: DatTables::new(),
@@ -1650,6 +1652,11 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
 
     pub fn file_read_fatal_error(&mut self) -> Option<E::VirtualAddress> {
         self.enter(AnalysisCache::file_read_fatal_error)
+    }
+
+    /// A patch to remove 64px limit from hardware cursors
+    pub fn cursor_dimension_patch(&mut self) -> Option<Rc<Patch<E::VirtualAddress>>> {
+        self.enter(AnalysisCache::cursor_dimension_patch)
     }
 
     /// Mainly for tests/dump
@@ -5206,6 +5213,26 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let r = clientside::find_load_all_cursors(actx, &funcs);
                 Some(([r.load_all_cursors, r.load_ddsgrp_cursor], []))
             })
+    }
+
+    fn load_ddsgrp_cursor(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::LoadDdsGrpCursor, |s| s.cache_load_all_cursors(actx))
+    }
+
+    fn cursor_dimension_patch(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<Rc<Patch<E::VirtualAddress>>> {
+        if let Some(cached) = self.cursor_dimension_patch.cached() {
+            return cached;
+        }
+        let result = Some(()).and_then(|()| {
+            let load_ddsgrp_cursor = self.load_ddsgrp_cursor(actx)?;
+            clientside::cursor_dimension_patch(actx, load_ddsgrp_cursor)
+        });
+        let patch = result.map(Rc::new);
+        self.cursor_dimension_patch.cache(&patch);
+        patch
     }
 }
 

@@ -3,6 +3,7 @@
 //! Almost everything is reimported at crate root for backwards compat, though probably
 //! should now prefer importing directly from this module.
 
+use arrayvec::ArrayVec;
 use bumpalo::Bump;
 use bumpalo::collections::Vec as BumpVec;
 use byteorder::{ByteOrder, LittleEndian};
@@ -963,6 +964,25 @@ pub fn resolve_rdata_const<'e, Va: VirtualAddress>(
         } else {
             None
         }
+    }
+}
+
+pub fn make_jump_unconditional<Va: VirtualAddress>(
+    binary: &BinaryFile<Va>,
+    address: Va,
+) -> Option<ArrayVec<u8, 0x8>> {
+    let bytes = binary.slice_from_address(address, 0x10).ok()?;
+    assert!(bytes.len() == 0x10);
+
+    let mut out = ArrayVec::new();
+    if bytes[0] == 0x0f && matches!(bytes[1], 0x80 ..= 0x8f) {
+        let _ = out.try_extend_from_slice(&[0x90, 0xe9, bytes[2], bytes[3], bytes[4], bytes[5]]);
+        Some(out)
+    } else if matches!(bytes[0], 0x70 ..= 0x7f) {
+        let _ = out.try_extend_from_slice(&[0xeb, bytes[1]]);
+        Some(out)
+    } else {
+        None
     }
 }
 

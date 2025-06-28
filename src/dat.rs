@@ -2828,19 +2828,8 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> DatReferringFuncAnalysis<'a, 'acx, 'e,
             return;
         }
 
-        let bytes = match self.binary.slice_from_address(address, 0x10) {
-            Ok(o) => o,
-            Err(_) => {
-                dat_warn!(self, "Can't uncond @ {:?}", address);
-                return;
-            }
-        };
-        assert!(bytes.len() == 0x10);
-
-        if bytes[0] == 0x0f && matches!(bytes[1], 0x80 ..= 0x8f) {
-            self.add_patch(address, &[0x90, 0xe9, bytes[2], bytes[3], bytes[4], bytes[5]], 6);
-        } else if matches!(bytes[0], 0x70 ..= 0x7f) {
-            self.add_patch(address, &[0xeb, bytes[1]], 2);
+        if let Some(patch) = crate::util::make_jump_unconditional(self.binary, address) {
+            self.add_patch(address, &patch, patch.len() as u8);
         } else {
             dat_warn!(self, "Can't uncond @ {:?}", address);
         }

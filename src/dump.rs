@@ -239,6 +239,11 @@ pub fn dump<'e, E: ExecutionState<'e>>(
             &mut out, "deserialize_lone_sprite_patch: {:x?}",
             patch.as_ref().map(|x| (x.address, &x.data)),
         );
+        let patch = analysis.cursor_dimension_patch();
+        out!(
+            &mut out, "cursor_dimension_patch: {:x?}",
+            patch.as_ref().map(|x| (x.address, &x.data)),
+        );
 
         out!(&mut out, "crt_fastfail: {:?}", analysis.crt_fastfail());
         for i in 0..0xbc {

@@ -2519,6 +2519,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
     } else {
         assert!(analysis.deserialize_lone_sprite_patch().is_some());
     }
+    assert!(analysis.cursor_dimension_patch().is_some());
 
     let dump_text = samase_scarf::dump::dump_all(analysis);
     let compare_path = if E::VirtualAddress::SIZE == 4 {

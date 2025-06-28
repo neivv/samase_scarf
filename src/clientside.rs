@@ -7,7 +7,7 @@ use scarf::{
     Operation, Rva, ArithOpType,
 };
 
-use crate::analysis::{AnalysisCtx, ArgCache};
+use crate::analysis::{AnalysisCtx, ArgCache, Patch};
 use crate::analysis_find::{EntryOf, EntryOfResult, FunctionFinder, entry_of_until};
 use crate::analysis_state::{
     AnalysisState, StateEnum, MiscClientSideAnalyzerState, HandleTargetedClickState,
@@ -17,7 +17,7 @@ use crate::hash_map::HashMap;
 use crate::struct_layouts;
 use crate::util::{
     ControlExt, MemAccessExt, OperandExt, OptionExt, single_result_assign, if_arithmetic_eq_neq,
-    is_global, bumpvec_with_capacity, ExecStateExt,
+    is_global, bumpvec_with_capacity, ExecStateExt, make_jump_unconditional,
 };
 use crate::vtables::Vtables;
 
@@ -2786,5 +2786,130 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for LoadAllCursorsAnalyz
                 ctrl.end_analysis();
             }
         }
+    }
+}
+
+pub(crate) fn cursor_dimension_patch<'acx, 'e, E: ExecutionState<'e>>(
+    actx: &'acx AnalysisCtx<'e, E>,
+    load_ddsgrp_cursor: E::VirtualAddress,
+) -> Option<Patch<E::VirtualAddress>> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    // This function has a large branch depending on arg1 bool, the patch point
+    // is after that so make sure to walk through just one branch to save bit of time.
+    // (Both branches of if/else are big though)
+    let mut exec = E::initial_state(ctx, binary);
+    exec.move_resolved(
+        &DestOperand::from_oper(actx.arg_cache.on_entry(1)),
+        ctx.constant(0),
+    );
+    let mut analysis = FuncAnalysis::with_state(binary, ctx, load_ddsgrp_cursor, exec);
+    let mut analyzer = CursorDimensionPatchAnalyzer {
+        result: None,
+        state: CursorDimensionPatchState::Patch,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct CursorDimensionPatchAnalyzer<'e, E: ExecutionState<'e>> {
+    result: Option<Patch<E::VirtualAddress>>,
+    state: CursorDimensionPatchState,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum CursorDimensionPatchState {
+    /// Find jump `41 > x`, patch it to always jump.
+    Patch,
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CursorDimensionPatchAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match self.state {
+            CursorDimensionPatchState::Patch => {
+                if let Operation::Jump { condition, .. } = *op {
+                    let binary = ctrl.binary();
+                    let condition = ctrl.resolve(condition);
+                    let mut ok = condition.if_arithmetic_gt()
+                        .is_some_and(|(l, _)| l.if_constant() == Some(0x41));
+                    if !ok {
+                        // Some old versions used float comparison which is lot messier to unpack:
+                        // or of 3 checks, one of which is f32 cmp (Mem32[x] > _) where
+                        // x is rdata address to constant 64.0
+                        let check_f32_cmp = |op: Operand<'_>| {
+                            if let Some((l, _)) =
+                                    op.if_arithmetic_float(ArithOpType::GreaterThan) &&
+                                let Some(mem) = l.if_mem32() &&
+                                let Some(addr) = mem.if_constant_address() &&
+                                let Ok(value) =
+                                    binary.read_u32(E::VirtualAddress::from_u64(addr)) &&
+                                value == 0x4280_0000
+                            {
+                                true
+                            } else {
+                                false
+                            }
+                        };
+                        let mut op = condition;
+                        while let Some((l, r)) = op.if_arithmetic_or() {
+                            if check_f32_cmp(r) {
+                                ok = true;
+                                break;
+                            }
+                            op = l;
+                        }
+                        if !ok {
+                            ok = check_f32_cmp(op);
+                        }
+                    }
+                    if ok {
+                        let address = ctrl.address();
+                        if let Some(patch) = make_jump_unconditional(binary, address) {
+                            self.result = Some(Patch {
+                                address,
+                                data: Vec::from(&patch[..]),
+                            });
+                        }
+                        ctrl.end_analysis();
+                    }
+                } else if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
+                    // Ignore moves of 0 to stack variables as that's sometimes used in vec
+                    // init, and then that vec size is changed in a function we don't see to
+                    // and we don't reach correct point in analysis due to that.
+                    let value = ctrl.resolve(value);
+                    let ctx = ctrl.ctx();
+                    if value == ctx.const_0() {
+                        let mem = ctrl.resolve_mem(mem);
+                        if is_stack_memory::<E::VirtualAddress>(&mem, ctx) {
+                            ctrl.skip_operation();
+                            ctrl.write_memory(&mem, ctx.new_undef());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn is_stack_memory<'e, Va: VirtualAddress>(mem: &MemAccess<'e>, ctx: OperandCtx<'e>) -> bool {
+    let base = mem.address().0;
+    if base == ctx.register(4) {
+        true
+    } else if Va::SIZE == 4 {
+        // May be stack pointer which was aligned to 16 bytes
+        // (rsp - x) & ffff_fff8 or such
+        if let Some((l, r)) = base.if_and_with_const() &&
+            r & 0xffff_fff0 == 0xffff_fff0 &&
+            let Some((l, _)) = l.if_sub_with_const() &&
+            l == ctx.register(4)
+        {
+            true
+        } else {
+            false
+        }
+    } else {
+        false
     }
 }
