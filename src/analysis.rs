@@ -325,6 +325,8 @@ results! {
         // Chk section handlers for non-SC:R maps. SC:R callback table is slightly different.
         MapInitChkCallbacks => map_init_chk_callbacks => cache_init_map,
         StepNetwork => step_network => cache_game_loop,
+        // a1 zero?, a2 player_count, a3 void **out_player_turns, a4 u32 *out_player_turns_size,
+        // a4 u32 *out_net_player_flags
         ReceiveStormTurns => receive_storm_turns => cache_step_network,
         AiStepRegion => ai_step_region => cache_ai_step_frame,
         AiSpendMoney => ai_spend_money => cache_ai_step_frame,
@@ -406,6 +408,7 @@ results! {
         CheckFowOrderTargeting => check_fow_order_targeting => cache_handle_targeted_click,
         AiFocusDisabled => ai_focus_disabled => cache_step_order,
         AiFocusAir => ai_focus_air => cache_step_order,
+        // out_name, out_name_len, filename, open_params
         FileExists => file_exists => cache_open_file,
         // Hook after unit strength / sprite vision sync init is done, but
         // before map is loaded.
@@ -887,6 +890,10 @@ results! {
         StatportTalkingPortraitActive => statport_talking_portrait_active => cache_show_portrait,
         // Which of 3 possible talking portraits is being shown
         StatportVideoId => statport_video_id => cache_show_portrait,
+        // Storm list { usize, void *prev, void *next }
+        // Local player list should have size of 1.
+        SnetLocalPlayerList => snet_local_player_list => cache_snet_recv_packets,
+        SnetPlayerList => snet_player_list => cache_snet_recv_packets,
     }
 }
 
@@ -3517,6 +3524,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    fn snet_recv_packets(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::SnetRecvPackets,
+            |s| s.cache_snet_handle_packets(actx),
+        )
+    }
+
     fn chk_init_players(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
         self.cache_single_operand(OperandAnalysis::ChkInitPlayers, |s| {
             let chk_callbacks = s.map_init_chk_callbacks(actx)?;
@@ -5233,6 +5247,20 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         let patch = result.map(Rc::new);
         self.cursor_dimension_patch.cache(&patch);
         patch
+    }
+
+    fn cache_snet_recv_packets(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[], &[SnetLocalPlayerList, SnetPlayerList],
+            |s| {
+                let recv_packets = s.snet_recv_packets(actx)?;
+                let r = network::analyze_snet_recv_packets(actx, recv_packets);
+                Some((
+                    [],
+                    [r.snet_local_player_list, r.snet_player_list],
+                ))
+            })
     }
 }
 

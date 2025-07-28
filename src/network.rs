@@ -7,8 +7,12 @@ use scarf::{MemAccessSize, Operand, OperandCtx, Operation, BinarySection, Binary
 use crate::analysis::{AnalysisCtx};
 use crate::analysis_find::{FunctionFinder, find_bytes, entry_of_until, EntryOf};
 use crate::add_terms::collect_arith_add_terms;
+use crate::call_tracker::{CallTracker};
 use crate::switch::CompleteSwitch;
-use crate::util::{ControlExt, OperandExt, OptionExt, single_result_assign, if_arithmetic_eq_neq};
+use crate::util::{
+    ControlExt, OperandExt, OptionExt, single_result_assign, if_arithmetic_eq_neq,
+    MemAccessExt,
+};
 use crate::vtables::Vtables;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,6 +43,11 @@ pub struct StepLobbyNetwork<Va: VirtualAddress> {
 pub struct StepLobbyState<Va: VirtualAddress> {
     pub process_async_lobby_command: Option<Va>,
     pub command_lobby_map_p2p: Option<Va>,
+}
+
+pub struct SnetRecvPackets<'e> {
+    pub snet_local_player_list: Option<Operand<'e>>,
+    pub snet_player_list: Option<Operand<'e>>,
 }
 
 pub(crate) fn snp_definitions<'e, E: ExecutionState<'e>>(
@@ -861,5 +870,181 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepLobbyStateAna
                 }
             }
         }
+    }
+}
+
+pub(crate) fn analyze_snet_recv_packets<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    snet_recv_packets: E::VirtualAddress,
+) -> SnetRecvPackets<'e> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = SnetRecvPackets {
+        snet_local_player_list: None,
+        snet_player_list: None,
+    };
+
+    let mut analyzer = SnetRecvAnalyzer::<E> {
+        result: &mut result,
+        state: SnetRecvState::Init,
+        call_tracker: CallTracker::with_capacity(actx, 0x1000, 0x8),
+        inline_depth: 0,
+        ctx,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, snet_recv_packets);
+    analysis.analyze(&mut analyzer);
+
+    result
+}
+
+struct SnetRecvAnalyzer<'acx, 'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut SnetRecvPackets<'e>,
+    call_tracker: CallTracker<'acx, 'e, E>,
+    state: SnetRecvState,
+    inline_depth: u8,
+    ctx: OperandCtx<'e>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum SnetRecvState {
+    /// Find call to fnptr(&mut sockaddr_in, ..), write Custom(0) to that ptr (sockaddr)
+    /// and Custom(1) to arg 2 (data)
+    Init,
+    /// Find jump on packet.flags & 4, follow zero branch
+    PacketFlags4,
+    /// Inline once to find_snet_player_by_sockaddr(*a1 = Custom(0)),
+    /// then find check of bit1 of list.next
+    PlayerList,
+    /// Find jump on a func return value from before being nonnull, then use same
+    /// logic as in PlayerList. If the func was inlined then the list got already set in
+    /// PacketFlags4 state.
+    LocalPlayerList,
+    /// Same as PlayerList
+    LocalPlayerListGetFn,
+}
+
+impl<'acx, 'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    SnetRecvAnalyzer<'acx, 'a, 'e, E>
+{
+    type Exec = E;
+    type State = analysis::DefaultState;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            SnetRecvState::Init => {
+                if let Operation::Call(dest) = *op {
+                    let dest = ctrl.resolve(dest);
+                    if ctrl.if_mem_word(dest).is_some() {
+                        let a1 = ctrl.resolve_arg(0);
+                        let a1_mem = ctx.mem_access(a1, 0, E::WORD_SIZE);
+                        ctrl.write_memory(&a1_mem, ctx.custom(0));
+
+                        let a2 = ctrl.resolve_arg(1);
+                        let a2_mem = ctx.mem_access(a2, 0, E::WORD_SIZE);
+                        ctrl.write_memory(&a2_mem, ctx.custom(1));
+
+                        ctrl.do_call_with_result(ctx.const_1());
+                        self.state = SnetRecvState::PacketFlags4;
+                    }
+                }
+            }
+            SnetRecvState::PacketFlags4 => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let result = condition.if_and_mask_eq_neq(0x4);
+                    if let Some((_, eq_zero)) = result {
+                        ctrl.continue_at_eq_address(eq_zero, to);
+                        self.state = SnetRecvState::PlayerList;
+                    } else if let Some(cand) = self.check_player_list_head_bit1(condition) {
+                        self.result.snet_local_player_list = Some(cand);
+                    }
+                } else if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.call_tracker.add_call(ctrl, dest);
+                    }
+                }
+            }
+            SnetRecvState::PlayerList | SnetRecvState::LocalPlayerListGetFn => {
+                if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some(result) = self.check_player_list_head_bit1(condition) {
+                        if self.state == SnetRecvState::PlayerList {
+                            self.result.snet_player_list = Some(result);
+                            if self.result.snet_local_player_list.is_some() {
+                                // local player list access was inlined, and found in
+                                // flag4 check, can stop now
+                                ctrl.end_analysis();
+                            } else {
+                                if self.inline_depth != 0 {
+                                    ctrl.end_analysis();
+                                }
+                                self.state = SnetRecvState::LocalPlayerList;
+                            }
+                        } else {
+                            self.result.snet_local_player_list = Some(result);
+                            ctrl.end_analysis();
+                        }
+                    }
+                } else if let Operation::Call(dest) = *op {
+                    if self.inline_depth == 0 {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            let a1 = ctrl.resolve_arg(0);
+                            let a1_mem = ctx.mem_access(a1, 0, E::WORD_SIZE);
+                            let a1_mem_value = ctrl.read_memory(&a1_mem);
+                            let inline = ctrl.if_mem_word(a1_mem_value)
+                                .is_some_and(|x| x.address().0.if_custom() == Some(0));
+                            if inline {
+                                self.inline_depth += 1;
+                                ctrl.analyze_with_current_state(self, dest);
+                                self.inline_depth -= 1;
+                                if self.result.snet_player_list.is_some() &&
+                                    self.result.snet_local_player_list.is_some()
+                                {
+                                    // local player list access was inlined, and found in
+                                    // flag4 check, can stop now
+                                    ctrl.end_analysis();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            SnetRecvState::LocalPlayerList => {
+                if let Operation::Jump { condition, .. } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some(x) = condition.if_arithmetic_eq_neq_zero(ctx) &&
+                        let Some(custom) = x.0.unwrap_and_mask().if_custom()
+                    {
+                        if let Some(addr) = self.call_tracker.custom_id_to_func(custom) {
+                            self.state = SnetRecvState::LocalPlayerListGetFn;
+                            self.inline_depth += 1;
+                            ctrl.analyze_with_current_state(self, addr);
+                            self.inline_depth -= 1;
+                            if self.result.snet_local_player_list.is_some() {
+                                ctrl.end_analysis();
+                            } else {
+                                self.state = SnetRecvState::LocalPlayerList;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'acx, 'a, 'e, E: ExecutionState<'e>> SnetRecvAnalyzer<'acx, 'a, 'e, E> {
+    fn check_player_list_head_bit1(&self, condition: Operand<'e>) -> Option<Operand<'e>> {
+        let ctx = self.ctx;
+        condition.if_and_mask_eq_neq(0x1)
+            .and_then(|x| {
+                let mem = x.0.if_memory()?;
+                if mem.is_global() {
+                    let offset = 0u64.wrapping_sub(2 * E::VirtualAddress::SIZE as u64);
+                    Some(mem.with_offset(offset).address_op(ctx))
+                } else {
+                    None
+                }
+            })
     }
 }
