@@ -45,7 +45,7 @@ fn everything_1208() {
         // There's also snet_recv_server_packets for this version that would be confused
         // with snet_recv_packets if it was ordered before.
         assert_eq!(analysis.snet_send_packets().unwrap().0, 0x009ae6a0);
-        assert_eq!(analysis.snet_recv_packets().unwrap().0, 0x009b14f0);
+        assert_eq!(analysis.snet_recv_packets().unwrap().0, 0x009b15c0);
 
         assert_eq!(analysis.menu_swish_in().unwrap().0, 0x0077a7c0);
         assert_eq!(analysis.menu_swish_out().unwrap().0, 0x00779e70);

@@ -225,7 +225,8 @@ pub(crate) fn snet_handle_packets<'e, E: ExecutionState<'e>>(
     };
     // Look for snet functions in packet received handler of UdpServer (vtable fn #3)
     // First one - receive - immediately calls a function pointer to receive the packets,
-    // send is verified by looking for a comparision (a - Mem32[b + C]) < 0xc350
+    // send is verified by looking for a comparision (a - Mem32[b + C]) < 0xc350,
+    // and by then also verifying that it checks bit 4 on the packet flags
     let vtables = BumpVec::from_iter_in(
         vtables.vtables_starting_with(b".?AVUdpServer@").map(|x| x.address),
         bump,
@@ -241,6 +242,7 @@ pub(crate) fn snet_handle_packets<'e, E: ExecutionState<'e>>(
                 root_inline_limit,
                 checking_candidate: false,
                 inlining_entry: E::VirtualAddress::from_u64(0),
+                verify_recv_packets: false,
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, func);
             analysis.analyze(&mut analyzer);
@@ -259,6 +261,7 @@ struct SnetHandlePacketsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     // Do first with no inlining, then with one level of inlining.
     root_inline_limit: u8,
     inlining_entry: E::VirtualAddress,
+    verify_recv_packets: bool,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SnetHandlePacketsAnalyzer<'a, 'e, E> {
@@ -267,76 +270,101 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for SnetHandlePackets
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
         let searching_for_recv = self.result.recv_packets.is_none();
         let ctx = ctrl.ctx();
-        match *op {
-            Operation::Call(dest) => {
-                let dest = ctrl.resolve(dest);
-                if !self.checking_candidate {
-                    if let Some(dest) = dest.if_constant() {
-                        let dest = E::VirtualAddress::from_u64(dest);
-                        self.inlining_entry = dest;
-                        if self.root_inline_limit == 0 {
-                            self.checking_candidate = true;
-                        } else {
-                            self.root_inline_limit -= 1;
+        if self.verify_recv_packets {
+            match *op {
+                Operation::Jump { condition, .. } => {
+                    let condition = ctrl.resolve(condition);
+                    if condition.if_and_mask_eq_neq(0x4).is_some() {
+                        self.result.recv_packets = Some(self.inlining_entry);
+                        ctrl.end_analysis();
+                    }
+                }
+                _ => (),
+            }
+        } else {
+            match *op {
+                Operation::Call(dest) => {
+                    let dest = ctrl.resolve(dest);
+                    if !self.checking_candidate {
+                        if let Some(dest) = dest.if_constant() {
+                            let dest = E::VirtualAddress::from_u64(dest);
+                            self.inlining_entry = dest;
+                            if self.root_inline_limit == 0 {
+                                self.checking_candidate = true;
+                            } else {
+                                self.root_inline_limit -= 1;
+                            }
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.verify_recv_packets = false;
+                            if self.checking_candidate {
+                                self.checking_candidate = false;
+                            } else {
+                                self.root_inline_limit += 1;
+                            }
+                            if self.result.send_packets.is_some() {
+                                ctrl.end_analysis();
+                            }
                         }
-                        ctrl.analyze_with_current_state(self, dest);
-                        if self.checking_candidate {
-                            self.checking_candidate = false;
-                        } else {
-                            self.root_inline_limit += 1;
-                        }
-                        if self.result.send_packets.is_some() {
-                            ctrl.end_analysis();
+                    } else {
+                        if searching_for_recv {
+                            let ok = Some(())
+                                .filter(|_| dest.if_memory().is_some())
+                                .filter(|_| {
+                                    // All arguments are out arguments initialized to 0
+                                    (0..3).all(|i| {
+                                        Some(())
+                                            .map(|_| ctrl.resolve_arg(i))
+                                            .map(|x| {
+                                                let mem = ctx.mem_access(x, 0, MemAccessSize::Mem32);
+                                                ctrl.read_memory(&mem)
+                                            })
+                                            .filter(|&x| x == ctx.const_0())
+                                            .is_some()
+                                    })
+                                })
+                                .is_some();
+                            if ok {
+                                // Write results that the func won't return
+                                let a1 = ctrl.resolve_arg(0);
+                                let a1_mem = ctx.mem_access(a1, 0, E::WORD_SIZE);
+                                ctrl.write_memory(&a1_mem, ctx.custom(0));
+
+                                let a2 = ctrl.resolve_arg(1);
+                                let a2_mem = ctx.mem_access(a2, 0, E::WORD_SIZE);
+                                ctrl.write_memory(&a2_mem, ctx.custom(1));
+
+                                ctrl.do_call_with_result(ctx.const_1());
+                                self.verify_recv_packets = true;
+                            } else {
+                                // End even if it isn't recv_packets, the [snp_functions + x] call
+                                // should be first.
+                                ctrl.end_analysis();
+                            }
                         }
                     }
-                } else {
-                    if searching_for_recv {
-                        let ok = Some(())
-                            .filter(|_| dest.if_memory().is_some())
-                            .filter(|_| {
-                                // All arguments are out arguments initialized to 0
-                                (0..3).all(|i| {
-                                    Some(())
-                                        .map(|_| ctrl.resolve_arg(i))
-                                        .map(|x| {
-                                            let mem = ctx.mem_access(x, 0, MemAccessSize::Mem32);
-                                            ctrl.read_memory(&mem)
-                                        })
-                                        .filter(|&x| x == ctx.const_0())
-                                        .is_some()
-                                })
+                }
+                Operation::Jump { condition, .. } => {
+                    if !searching_for_recv && self.checking_candidate {
+                        let condition = ctrl.resolve(condition);
+                        let ok = condition.if_arithmetic_gt()
+                            .filter(|x| x.0.if_constant() == Some(0xc350))
+                            .and_then(|x| {
+                                let mem = Operand::and_masked(x.1).0
+                                    .if_arithmetic_sub()?.1
+                                    .if_mem32()?;
+                                let (base, _offset) = mem.address();
+                                base.if_memory()?;
+                                Some(())
                             })
                             .is_some();
                         if ok {
-                            self.result.recv_packets = Some(self.inlining_entry);
+                            self.result.send_packets = Some(self.inlining_entry);
+                            ctrl.end_analysis();
                         }
-                        // End even if it isn't recv_packets, the [snp_functions + x] call
-                        // should be first.
-                        ctrl.end_analysis();
                     }
                 }
+                _ => (),
             }
-            Operation::Jump { condition, .. } => {
-                if !searching_for_recv && self.checking_candidate {
-                    let condition = ctrl.resolve(condition);
-                    let ok = condition.if_arithmetic_gt()
-                        .filter(|x| x.0.if_constant() == Some(0xc350))
-                        .and_then(|x| {
-                            let mem = Operand::and_masked(x.1).0
-                                .if_arithmetic_sub()?.1
-                                .if_mem32()?;
-                            let (base, _offset) = mem.address();
-                            base.if_memory()?;
-                            Some(())
-                        })
-                        .is_some();
-                    if ok {
-                        self.result.send_packets = Some(self.inlining_entry);
-                        ctrl.end_analysis();
-                    }
-                }
-            }
-            _ => (),
         }
     }
 }
