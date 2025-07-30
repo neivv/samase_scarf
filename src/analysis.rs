@@ -894,6 +894,7 @@ results! {
         // Local player list should have size of 1.
         SnetLocalPlayerList => snet_local_player_list => cache_snet_recv_packets,
         SnetPlayerList => snet_player_list => cache_snet_recv_packets,
+        CursorScaleFactor => cursor_scale_factor,
     }
 }
 
@@ -1664,6 +1665,10 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
     /// A patch to remove 64px limit from hardware cursors
     pub fn cursor_dimension_patch(&mut self) -> Option<Rc<Patch<E::VirtualAddress>>> {
         self.enter(AnalysisCache::cursor_dimension_patch)
+    }
+
+    pub fn cursor_scale_factor(&mut self) -> Option<Operand<'e>> {
+        self.enter(AnalysisCache::cursor_scale_factor)
     }
 
     /// Mainly for tests/dump
@@ -5229,8 +5234,19 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             })
     }
 
+    fn load_all_cursors(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::LoadAllCursors, |s| s.cache_load_all_cursors(actx))
+    }
+
     fn load_ddsgrp_cursor(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::LoadDdsGrpCursor, |s| s.cache_load_all_cursors(actx))
+    }
+
+    fn cursor_scale_factor(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_single_operand(OperandAnalysis::CursorScaleFactor, |s| {
+            let load_all_cursors = s.load_all_cursors(actx)?;
+            clientside::cursor_scale_factor(actx, load_all_cursors)
+        })
     }
 
     fn cursor_dimension_patch(

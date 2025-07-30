@@ -1646,7 +1646,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 RgbColors | DisableColorChoice | UseMapSetRgbColor | SfxData | SoundChannels |
                 Images | TilesetCv5 | TilesetData | TilesetVx4Ex | TileDefaultFlags |
                 MinitileGraphics | MinitileData | FoliageState | CreepOriginalTiles |
-                CreepTileBorders =>
+                CreepTileBorders | CursorScaleFactor =>
             {
                 continue;
             }
@@ -2403,6 +2403,15 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(map_names.is_none());
     } else {
         check_global_struct_opt(map_names, binary, "campaign_map_names")
+    }
+
+    // Cursor scaling was added in 1.21.4
+    let cursor_scale_factor = analysis.cursor_scale_factor();
+    if minor_version < 21 || (minor_version == 21 && patch_version < 4) {
+        assert!(cursor_scale_factor.is_none());
+    } else {
+        assert!(cursor_scale_factor.is_some());
+        check_global(cursor_scale_factor.unwrap(), binary, "cursor_scale_factor");
     }
 
     // init_game_map is very inconsistently inlined on 32bit

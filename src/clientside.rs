@@ -2789,6 +2789,88 @@ impl<'e, 'a, E: ExecutionState<'e>> scarf::Analyzer<'e> for LoadAllCursorsAnalyz
     }
 }
 
+pub(crate) fn cursor_scale_factor<'acx, 'e, E: ExecutionState<'e>>(
+    actx: &'acx AnalysisCtx<'e, E>,
+    load_all_cursors: E::VirtualAddress,
+) -> Option<Operand<'e>> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+
+    let exec = E::initial_state(ctx, binary);
+    let mut analysis = FuncAnalysis::with_state(binary, ctx, load_all_cursors, exec);
+    let mut analyzer = CursorScaleFactorAnalyzer {
+        result: None,
+        state: CursorScaleFactorState::FindMax,
+        phantom: std::marker::PhantomData,
+        max_dest: None,
+    };
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct CursorScaleFactorAnalyzer<'e, E: ExecutionState<'e>> {
+    result: Option<Operand<'e>>,
+    state: CursorScaleFactorState,
+    phantom: std::marker::PhantomData<E>,
+    max_dest: Option<MemAccess<'e>>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum CursorScaleFactorState {
+    FindMax,
+    FindStore,
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CursorScaleFactorAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        let binary = ctrl.binary();
+
+        match self.state {
+            // Look for a max(value, 0.25f)
+            CursorScaleFactorState::FindMax => {
+                if let Operation::ConditionalMove(DestOperand::Memory(ref dest), src, cond) = *op {
+                    let condition = ctrl.resolve(cond);
+                    if condition.if_arithmetic_float(ArithOpType::GreaterThan).is_none() {
+                        return;
+                    }
+
+                    let r = ctrl.resolve(src);
+                    let Some(constant) = r.if_constant_or_read_binary(binary) else {
+                        return;
+                    };
+
+                    // 0.25f
+                    if constant == 0x3e800000 {
+                        let dest = ctrl.resolve_mem(dest);
+                        self.max_dest = Some(dest);
+                        self.state = CursorScaleFactorState::FindStore;
+                    }
+                }
+            }
+            // Look for storing that result in a global memory location
+            CursorScaleFactorState::FindStore => {
+                if let Operation::Move(DestOperand::Memory(ref mem), value) = *op
+                    && mem.size == MemAccessSize::Mem32
+                    && mem.is_global()
+                    && let Some(value) = value.if_mem32()
+                {
+                    let value = ctrl.resolve_mem(value);
+
+                    if self.max_dest == Some(value) {
+                        let result = ctrl.resolve_mem(mem);
+                        self.result = Some(ctx.memory(&result));
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn cursor_dimension_patch<'acx, 'e, E: ExecutionState<'e>>(
     actx: &'acx AnalysisCtx<'e, E>,
     load_ddsgrp_cursor: E::VirtualAddress,
