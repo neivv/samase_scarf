@@ -2802,7 +2802,6 @@ pub(crate) fn cursor_scale_factor<'acx, 'e, E: ExecutionState<'e>>(
         result: None,
         state: CursorScaleFactorState::FindMax,
         phantom: std::marker::PhantomData,
-        max_dest: None,
     };
     analysis.analyze(&mut analyzer);
     analyzer.result
@@ -2812,7 +2811,6 @@ struct CursorScaleFactorAnalyzer<'e, E: ExecutionState<'e>> {
     result: Option<Operand<'e>>,
     state: CursorScaleFactorState,
     phantom: std::marker::PhantomData<E>,
-    max_dest: Option<MemAccess<'e>>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -2832,7 +2830,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CursorScaleFactorAnalyze
         match self.state {
             // Look for a max(value, 0.25f)
             CursorScaleFactorState::FindMax => {
-                if let Operation::ConditionalMove(DestOperand::Memory(ref dest), src, cond) = *op {
+                if let Operation::ConditionalMove(ref dest, src, cond) = *op {
                     let condition = ctrl.resolve(cond);
                     if condition.if_arithmetic_float(ArithOpType::GreaterThan).is_none() {
                         return;
@@ -2845,8 +2843,8 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CursorScaleFactorAnalyze
 
                     // 0.25f
                     if constant == 0x3e800000 {
-                        let dest = ctrl.resolve_mem(dest);
-                        self.max_dest = Some(dest);
+                        ctrl.skip_operation();
+                        ctrl.move_unresolved(dest, ctx.custom(0));
                         self.state = CursorScaleFactorState::FindStore;
                     }
                 }
@@ -2855,13 +2853,11 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for CursorScaleFactorAnalyze
             CursorScaleFactorState::FindStore => {
                 if let Operation::Move(DestOperand::Memory(ref mem), value) = *op
                     && mem.size == MemAccessSize::Mem32
-                    && mem.is_global()
-                    && let Some(value) = value.if_mem32()
                 {
-                    let value = ctrl.resolve_mem(value);
+                    let result = ctrl.resolve_mem(mem);
+                    let value = ctrl.resolve(value);
 
-                    if self.max_dest == Some(value) {
-                        let result = ctrl.resolve_mem(mem);
+                    if value.unwrap_and_mask().if_custom() == Some(0) && result.is_global() {
                         self.result = Some(ctx.memory(&result));
                         ctrl.end_analysis();
                     }
