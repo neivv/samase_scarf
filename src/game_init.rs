@@ -19,6 +19,7 @@ use crate::analysis_state::{
 };
 use crate::add_terms::collect_arith_add_terms;
 use crate::call_tracker::{self, CallTracker};
+use crate::hash_map::HashSet;
 use crate::switch::CompleteSwitch;
 use crate::util::{
     ControlExt, ExecStateExt, OperandExt, OptionExt, MemAccessExt, is_global, is_stack_address,
@@ -34,7 +35,10 @@ pub struct GameInit<'e, Va: VirtualAddress> {
     pub mainmenu_entry_hook: Option<Va>,
     pub game_loop: Option<Va>,
     pub run_menus: Option<Va>,
+    pub init_ngdp: Option<Va>,
     pub scmain_state: Option<Operand<'e>>,
+    pub ngdp_enabled: Option<Operand<'e>>,
+    pub ngdp_instance: Option<Operand<'e>>,
 }
 
 /// Data related to game (map) (gameplay state) initialization
@@ -280,6 +284,9 @@ pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
         game_loop: None,
         run_menus: None,
         scmain_state: None,
+        init_ngdp: None,
+        ngdp_enabled: None,
+        ngdp_instance: None,
     };
     let bump = &analysis.bump;
     let mut game_pointers = bumpvec_with_capacity(4, bump);
@@ -312,6 +319,9 @@ pub(crate) fn game_init<'e, E: ExecutionState<'e>>(
         let mut analyzer = ScMainAnalyzer {
             result: &mut result,
             phantom: Default::default(),
+            inline_depth: 0,
+            checked_functions: HashSet::with_capacity_and_hasher(0x20, Default::default()),
+            call_tracker: CallTracker::with_capacity(analysis, 0, 0x20),
         };
         let state = StateEnum::ScMain(ScMainAnalyzerState::SearchingEntryHook);
         let state = AnalysisState::new(bump, state);
@@ -373,6 +383,9 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsScMain<'a, 'e, 
 struct ScMainAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
     result: &'a mut GameInit<'e, E::VirtualAddress>,
     phantom: std::marker::PhantomData<&'acx ()>,
+    inline_depth: u8,
+    checked_functions: HashSet<E::VirtualAddress>,
+    call_tracker: CallTracker<'acx, 'e, E>,
 }
 
 impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
@@ -381,8 +394,13 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
     type State = AnalysisState<'acx, 'e>;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        let ctx = ctrl.ctx();
         let state = *ctrl.user_state().get::<ScMainAnalyzerState>();
+        if self.result.init_ngdp.is_none() &&
+            matches!(state, ScMainAnalyzerState::SearchingEntryHook)
+        {
+            self.init_ngdp_operation(ctrl, op);
+        }
+        let ctx = ctrl.ctx();
         match *op {
             Operation::Jump { to, condition } => {
                 if let ScMainAnalyzerState::SwitchJumped(..) = state {
@@ -458,6 +476,81 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                 }
             }
             _ => (),
+        }
+    }
+}
+
+impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> ScMainAnalyzer<'a, 'acx, 'e, E> {
+    fn init_ngdp_operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.inline_depth == 0 {
+            if let Operation::Call(dest) = *op {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    if self.checked_functions.insert(dest) {
+                        self.inline_depth = 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth = 0;
+                        if self.result.ngdp_instance.is_some() {
+                            self.result.init_ngdp = Some(dest);
+                        } else {
+                            self.result.ngdp_enabled = None;
+                        }
+                    }
+                }
+            }
+        } else {
+            // init_ngdp should start with check of global ngdp_enabled jump,
+            // follow true branch.
+            // Then find a function
+            // open_ngdp_input_stream(this = out, a1 = ngdp_instance, ..,  ~a3~4~5 = 0x2_0000)
+            let ctx = ctrl.ctx();
+            if self.result.ngdp_enabled.is_none() {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    let result = condition.if_arithmetic_eq_neq_zero(ctx)
+                        .filter(|x| is_global(x.0) && x.0.if_memory().is_some());
+                    if let Some((result, eq)) = result {
+                        self.result.ngdp_enabled = Some(result);
+                        ctrl.continue_at_neq_address(eq, to);
+                    } else {
+                        ctrl.end_analysis();
+                        return;
+                    }
+                }
+            } else {
+                if let Operation::Call(dest) = *op {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let ok = (2..5).any(|x| {
+                            ctrl.resolve_arg_thiscall(x).if_constant() == Some(0x2_0000)
+                        });
+                        if ok {
+                            let instance = ctrl.resolve_arg_thiscall(0);
+                            let instance =
+                                self.call_tracker.resolve_calls_with_branch_limit(instance, 0x10);
+                            if is_global(instance) {
+                                self.result.ngdp_instance = Some(instance);
+                                ctrl.end_analysis();
+                                return;
+                            }
+                        }
+                        // Some of these calls are thiscalls (So preserve esp messes up
+                        // stack pointer a bit on 32bit, but it should be ok.. That's why
+                        // the constant 0x2_0000 check needs some flexibility for which arg n
+                        // contains it.)
+                        self.call_tracker.add_call_preserve_esp(ctrl, dest);
+                    }
+                } else if let Operation::Jump { condition, to } = *op {
+                    // Generally this part should not have jumps, but some exes check
+                    // key length <= 17 here
+                    let condition = ctrl.resolve(condition);
+                    if let Some((_, is_gt)) = condition.if_arithmetic_gt_le_const(0x17) {
+                        // for continue_at_neq/eq true <=> x == y, here true <=> x > 0x17;
+                        // a branch we don't want to go to.
+                        ctrl.continue_at_neq_address(is_gt, to);
+                    } else {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
         }
     }
 }

@@ -178,6 +178,8 @@ pub trait OperandExt<'e> {
     /// "eq" in this case "jump if zero" / "bit clear"
     /// Which may be confusing?
     fn if_and_mask_eq_neq(self, mask: u64) -> Option<(Operand<'e>, bool)>;
+    /// bool true => gt, bool false => le
+    fn if_arithmetic_gt_le_const(self, value: u64) -> Option<(Operand<'e>, bool)>;
 }
 
 impl<'e> OperandExt<'e> for Operand<'e> {
@@ -366,6 +368,17 @@ impl<'e> OperandExt<'e> for Operand<'e> {
             }
         }
         Some((val.if_arithmetic_and_const(mask)?, eq))
+    }
+
+    fn if_arithmetic_gt_le_const(self, value: u64) -> Option<(Operand<'e>, bool)> {
+        let (a, b) = self.if_arithmetic_gt()?;
+        if b.if_constant() == Some(value) {
+            Some((a, true))
+        } else if a.if_constant() == Some(value.wrapping_add(1)) {
+            Some((b, false))
+        } else {
+            None
+        }
     }
 }
 

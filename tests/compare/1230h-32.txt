@@ -139,6 +139,7 @@ init_images: 0055fda0
 init_ingame_ui: 007421b0
 init_map_from_path: 006c0cd0
 init_net_player: 006f6b10
+init_ngdp: 00539c30
 init_obs_ui: 005f7470
 init_real_time_lighting: 00560410
 init_skins: 0060ec30
@@ -476,6 +477,8 @@ net_players: fffc50
 net_user_latency: Mem32[ffef84]
 network_ready: Mem8[ffd3f5]
 next_game_step_tick: Mem32[fd53e0]
+ngdp_enabled: Mem8[df3b20]
+ngdp_instance: df3c30
 observer_ui: Mem32[e0943c]
 on_clip_cursor_end: Mem32[fd4ce4]
 order_timer_reset_counter: Mem32[e0288c]

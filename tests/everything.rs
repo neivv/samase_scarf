@@ -1693,7 +1693,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 FirstFreePlacementImage | LastFreePlacementImage | FirstFreePlacementRect |
                 LastFreePlacementRect | TilesetIndexedMapTiles | Vx4MapTiles | RepulseState |
                 TerrainFramebuf | StatportVideos | StatportTalkingPortraitActive |
-                StatportVideoId =>
+                StatportVideoId | NgdpEnabled =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1710,7 +1710,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 DcreepListBegin | DcreepListSize | ReplayHeader | GameScreenRectWinPx |
                 RunDialogStack | LurkerHits | ResourceAreas | HpBarImages | HpBarState |
                 SelectionCircles | PlacementImages | PlacementRects | ShieldOverlays | ImagesRel |
-                SnetLocalPlayerList | SnetPlayerList =>
+                SnetLocalPlayerList | SnetPlayerList | NgdpInstance =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }

@@ -256,6 +256,7 @@ results! {
         MainMenuEntryHook => mainmenu_entry_hook => cache_game_init,
         GameLoop => game_loop => cache_game_init,
         RunMenus => run_menus => cache_game_init,
+        InitNgdp => init_ngdp => cache_game_init,
         SinglePlayerStart => single_player_start => cache_single_player_start,
         InitUnits => init_units => cache_init_units,
         LoadDat => load_dat => cache_init_units,
@@ -677,6 +678,8 @@ results! {
         FirstPlayerUnit => first_player_unit => cache_replay_visions,
         NetPlayers => net_players,
         ScMainState => scmain_state => cache_game_init,
+        NgdpEnabled => ngdp_enabled => cache_game_init,
+        NgdpInstance => ngdp_instance => cache_game_init,
         LocalStormPlayerId => local_storm_player_id => cache_single_player_start,
         LocalUniquePlayerId => local_unique_player_id => cache_single_player_start,
         NetPlayerToGame => net_player_to_game => cache_single_player_start,
@@ -2631,15 +2634,19 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     fn cache_game_init(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
-        self.cache_many(&[ScMain, MainMenuEntryHook, GameLoop, RunMenus], &[ScMainState], |s| {
-            let play_smk = s.play_smk(actx)?;
-            let game = s.game(actx)?;
-            let result = game_init::game_init(actx, play_smk, game, &s.function_finder());
-            Some((
-                [result.sc_main, result.mainmenu_entry_hook, result.game_loop, result.run_menus],
-                [result.scmain_state],
-            ))
-        })
+        self.cache_many(
+            &[ScMain, MainMenuEntryHook, GameLoop, RunMenus, InitNgdp],
+            &[ScMainState, NgdpEnabled, NgdpInstance],
+            |s| {
+                let play_smk = s.play_smk(actx)?;
+                let game = s.game(actx)?;
+                let result = game_init::game_init(actx, play_smk, game, &s.function_finder());
+                Some((
+                    [result.sc_main, result.mainmenu_entry_hook, result.game_loop,
+                        result.run_menus, result.init_ngdp],
+                    [result.scmain_state, result.ngdp_enabled, result.ngdp_instance],
+                ))
+            })
     }
 
     fn game_loop(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
