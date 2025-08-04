@@ -1625,7 +1625,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 LookupSoundId | SFileOpenFileEx | SFileReadFileEx | SFileCloseFile |
                 LoadConsoles | InitConsoles | GetUiConsoles | GetStatResIconsDdsGrp |
                 GetUnitSkin | JoinCustomGame | FindFileWithCrc | ForFilesInDir |
-                SimpleFileMatchCallback | GetLocales | InitGameMap => continue,
+                SimpleFileMatchCallback | GetLocales | InitGameMap | SaveReplay => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -2320,6 +2320,16 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
         assert!(step_bullet_frame.is_none());
     } else {
         assert!(step_bullet_frame.is_some());
+    }
+
+    // save_replay was inlined from 1.20.7 until 1.20.11 (after that it had more callers so it was
+    // never inlined)
+    let save_replay = analysis.save_replay();
+    if minor_version == 20 && matches!(patch_version, 7..11)
+    {
+        assert!(save_replay.is_none());
+    } else {
+        assert!(save_replay.is_some());
     }
 
     // flingy_update_target_dir was inlined to bullet movement in all 1.22 patches
