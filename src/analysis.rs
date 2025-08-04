@@ -216,6 +216,7 @@ results! {
         PlaySound => play_sound,
         AiPrepareMovingTo => ai_prepare_moving_to,
         StepReplayCommands => step_replay_commands,
+        SaveReplay => save_replay,
         AiTrainMilitary => ai_train_military,
         AiAddMilitaryToRegion => ai_add_military_to_region,
         GetRegion => get_region => cache_regions,
@@ -1290,6 +1291,10 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.enter(AnalysisCache::is_replay)
     }
 
+    pub fn save_replay(&mut self) -> Option<E::VirtualAddress> {
+        self.enter(AnalysisCache::save_replay)
+    }
+
     pub fn send_command(&mut self) -> Option<E::VirtualAddress> {
         self.enter(AnalysisCache::send_command)
     }
@@ -2231,6 +2236,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_single_operand(OperandAnalysis::IsReplay, |s| {
             let switch = s.process_commands_switch(actx)?;
             commands::is_replay(actx, &switch)
+        })
+    }
+
+    fn save_replay(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_single_address(AddressAnalysis::SaveReplay, |s| {
+            let funcs = s.function_finder();
+            commands::save_replay(actx, &funcs)
         })
     }
 
