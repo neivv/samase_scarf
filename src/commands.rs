@@ -1583,3 +1583,167 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MorphAnalyzer<'a, 'e
         }
     }
 }
+
+pub(crate) fn save_replay<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> Option<E::VirtualAddress> {
+    let str_refs = functions.string_refs(analysis, b"strREPLACE_ERR_s");
+
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+    let funcs = functions.functions();
+    
+    let do_analysis = |entry: E::VirtualAddress| -> EntryOf<E::VirtualAddress> {
+        let mut analyzer = SaveReplayFunctionAnalyzer::<E> {
+                result: None,
+                arg_cache: &analysis.arg_cache,
+                state: SaveReplayState::FindFilenameCall,
+                filepath_operand: None,
+            };
+            // Assume the second parameter was 0 to get a simpler branch
+            // structure
+            let mut exec = E::initial_state(ctx, binary);
+            exec.move_resolved(
+                &DestOperand::from_oper(analysis.arg_cache.on_entry(1)),
+                ctx.constant(0),
+            );
+            let mut func_analysis = FuncAnalysis::with_state(binary, ctx, entry, exec);
+            func_analysis.analyze(&mut analyzer);
+            match analyzer.result {
+                Some(addr) => EntryOf::Ok(addr),
+                None => EntryOf::Retry,
+            }
+    };
+    
+    for str_ref in &str_refs {
+        let entry_result = entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+           do_analysis(entry) 
+        }).into_option();
+        
+        if entry_result.is_some() {
+            return entry_result;
+        }
+    }
+
+    // In older versions, the calling function has no strings, but *that* function can be found by a
+    // call of fn("LastReplay", 1)
+    let str_refs = functions.string_refs(analysis, b"LastReplay");
+    
+    for str_ref in &str_refs {
+        let entry_result = entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+            let mut analyzer = LastReplayCallAnalyzer::<E> {
+                result: None,
+                string_address: str_ref.string_address,
+            };
+            let mut func_analysis = FuncAnalysis::new(binary, ctx, entry);
+            func_analysis.analyze(&mut analyzer);
+            
+            let Some(target_func) = analyzer.result else {
+                return EntryOf::Retry;
+            };
+
+            // Now we can repeat the same analysis as newer versions
+            do_analysis(target_func)
+        }).into_option();
+        
+        if entry_result.is_some() {
+            return entry_result;
+        }
+    }
+    
+    None
+}
+
+struct LastReplayCallAnalyzer<'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    string_address: E::VirtualAddress,
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for LastReplayCallAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if let Some(dest_addr) = ctrl.resolve_va(dest) {
+                let arg0 = ctrl.resolve_arg(0);
+                
+                if let Some(arg0_const) = arg0.if_constant() {
+                    if arg0_const == self.string_address.as_u64() {
+                        let arg1 = ctrl.resolve_arg(1);
+                        if arg1.if_constant() == Some(1) {
+                            self.result = Some(dest_addr);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct SaveReplayFunctionAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    arg_cache: &'a ArgCache<'e, E>,
+    state: SaveReplayState,
+    filepath_operand: Option<scarf::Operand<'e>>,
+}
+
+enum SaveReplayState {
+    FindFilenameCall,
+    FindSaveReplayCall,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SaveReplayFunctionAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match self.state {
+            SaveReplayState::FindFilenameCall => {
+                match *op {
+                    Operation::Call(dest) => {
+                        if let Some(_dest_addr) = ctrl.resolve_va(dest) {
+                            let arg0 = ctrl.resolve_arg(0);
+                            let arg2 = ctrl.resolve_arg(2);
+                            
+                            // Look for a call to construct a full filepath:
+                            //   func(filename, output, MAX_PATH)
+                            if arg0 == self.arg_cache.on_entry(0) &&
+                               arg2.if_constant() == Some(0x104) {
+                                self.filepath_operand = Some(ctrl.resolve_arg(1));
+                                self.state = SaveReplayState::FindSaveReplayCall;
+                                // Assume this call returns non-zero for later branches
+                                let ctx = ctrl.ctx();
+                                ctrl.do_call_with_result(ctx.const_1());
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            SaveReplayState::FindSaveReplayCall => {
+                if let Operation::Call(dest) = *op {
+                    // Look for a call that passes just the full filepath
+                    if let Some(dest_addr) = ctrl.resolve_va(dest) {
+                        let arg0 = ctrl.resolve_arg(0);
+                        // The expected function only has 1 argument, but there are some versions
+                        // (namely <= 1.20.10) that have inlined the function and will instead have
+                        // a create_file call
+                        let arg1 = ctrl.resolve_arg(1);
+                        if arg1.if_constant() == Some(0x40000000) {
+                            ctrl.end_analysis();
+                            return;
+                        }
+
+                        if let Some(expected) = self.filepath_operand {
+                            if arg0 == expected {
+                                self.result = Some(dest_addr);
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
