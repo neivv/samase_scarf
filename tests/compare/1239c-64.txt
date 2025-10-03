@@ -2252,16 +2252,14 @@ MapData array patches:
 03: VirtualAddress64(1403bad05):8 = (r9 + (r10 * c))
 03: VirtualAddress64(1403bae98):8 = (r8 + (r9 * c))
 03: VirtualAddress64(1403baea5):8 = (r8 + (r9 * c))
-04: VirtualAddress64(1403cb98f):4 = ((((rdx - 102f0) % 8) * c) + ((rdx - 102f0) / 8))
-04: VirtualAddress64(1403cb996):3 = (((((r8 - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 102f0) % 8) * c) + (((r8 - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 102f0) / 8))
-04: VirtualAddress64(1403cba08):8 = (((rdx % 8) * c) + (rdx / 8))
-04: VirtualAddress64(1403cba8f):4 = ((((rdx - 102f0) % 8) * c) + ((rdx - 102f0) / 8))
-04: VirtualAddress64(1403cba96):3 = (((((r8 - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 102f0) % 8) * c) + (((r8 - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 102f0) / 8))
-05: VirtualAddress64(1403cb954):4 = (((((r9 - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 10140) % 6) * c) + (((r9 - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 10140) / 6))
-05: VirtualAddress64(1403cb95b):3 = (((((r9 - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 10140) % 6) * c) + (((r9 - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 10140) / 6))
-05: VirtualAddress64(1403cb9d8):5 = ((((r8 - 10140) % 6) * c) + ((r8 - 10140) / 6))
-05: VirtualAddress64(1403cba54):4 = (((((r9 - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 10140) % 6) * c) + (((r9 - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 10140) / 6))
-05: VirtualAddress64(1403cba5b):3 = (((((r9 - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 10140) % 6) * c) + (((r9 - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 10140) / 6))
+04: VirtualAddress64(1403cb98f):4 = ((((rcx >> 3) & 1f) * c) + (((rdx - ((rcx >> 3) & 1f)) - 102f0) / 8))
+04: VirtualAddress64(1403cb996):3 = ((((rcx >> 3) & 1f) * c) + ((((r8 - ((rcx >> 3) & 1f)) - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 102f0) / 8))
+04: VirtualAddress64(1403cba8f):4 = ((((rcx >> 3) & 1f) * c) + (((rdx - ((rcx >> 3) & 1f)) - 102f0) / 8))
+04: VirtualAddress64(1403cba96):3 = ((((rcx >> 3) & 1f) * c) + ((((r8 - ((rcx >> 3) & 1f)) - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 102f0) / 8))
+05: VirtualAddress64(1403cb954):4 = ((((rcx >> 3) & 1f) * c) + ((((r9 - ((rcx >> 3) & 1f)) - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 10140) / 6))
+05: VirtualAddress64(1403cb95b):3 = ((((rcx >> 3) & 1f) * c) + ((((r9 - ((rcx >> 3) & 1f)) - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 10140) / 6))
+05: VirtualAddress64(1403cba54):4 = ((((rcx >> 3) & 1f) * c) + ((((r9 - ((rcx >> 3) & 1f)) - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 10140) / 6))
+05: VirtualAddress64(1403cba5b):3 = ((((rcx >> 3) & 1f) * c) + ((((r9 - ((rcx >> 3) & 1f)) - (Mem64[140d560a8] ^ 2c98c804115c830c)) - 10140) / 6))
 06: VirtualAddress64(14027e76f):8 = (rcx + (rbx * c))
 06: VirtualAddress64(14033e0dc):7 = ((((rax + r8) % e4) * c) + ((rax + r8) / e4))
 07: VirtualAddress64(140146bc9):8 = ((r12 + (rax * c)) * 4)
@@ -2347,5 +2345,7 @@ Grp index hooks: ["1403d1699", "1403d40d4", "1403e34af"]
 1401b7710 = UnitCurrentUpgrade
 1401b8e10 = UnitOrderWeapon
 1401d4550 = UnitCloakTech
+1403cb9a0 = TechIsBeingResearched
+1403cb9e0 = UpgradeIsBeingResearched
 1403d4c00 = UpdateStatusScreenTooltip
 Campaign map name init hook: 14032bf3c

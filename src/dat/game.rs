@@ -1,4 +1,5 @@
 use bumpalo::collections::Vec as BumpVec;
+use bumpalo::Bump;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -7,7 +8,7 @@ use scarf::{
     BinaryFile, DestOperand, MemAccess, MemAccessSize, Operand, Operation, Rva, OperandCtx,
 };
 
-use crate::analysis::{AnalysisCache, AnalysisCtx};
+use crate::analysis::{AnalysisCache, AnalysisCtx, ArgCache};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::detect_tail_call::DetectTailCall;
 use crate::hash_map::{HashSet, HashMap};
@@ -15,7 +16,7 @@ use crate::util::{ExecStateExt, OperandExt, OptionExt, ControlExt};
 
 use super::{
     DatPatches, DatPatch, ExtArrayPatch, RequiredStableAddressesMap, RequiredStableAddresses,
-    FunctionHookContext,
+    FunctionHookContext, DatReplaceFunc,
 };
 use super::util::RdtscTracker;
 
@@ -241,17 +242,22 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
                         func_start: entry,
                         greatest_address: entry,
                         detect_tail_call: DetectTailCall::new(entry),
+                        do_bit_array_fallback: false,
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
                     analyzer.convert_to_two_step_hooks_where_needed();
+                    let switch_table = analyzer.switch_table;
+                    if analyzer.do_bit_array_fallback {
+                        self.try_bit_array_fallback(entry);
+                    }
                     // Using switch_table as a heuristic for function end.
                     // Some game_ref_addrs are in unreachable code, so assume
                     // that if the function end is after game_ref_addr it's fine
-                    if analyzer.switch_table > entry {
-                        function_ends.insert(entry, analyzer.switch_table);
+                    if switch_table > entry {
+                        function_ends.insert(entry, switch_table);
                     }
-                    if analyzer.switch_table < game_ref_addr &&
+                    if switch_table < game_ref_addr &&
                         self.unchecked_refs.contains(&game_ref_addr)
                     {
                         EntryOf::Retry
@@ -299,6 +305,7 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
                         func_start: entry,
                         greatest_address: entry,
                         detect_tail_call: DetectTailCall::new(entry),
+                        do_bit_array_fallback: false,
                     };
                     let mut analysis = FuncAnalysis::new(binary, ctx, entry);
                     analysis.analyze(&mut analyzer);
@@ -317,6 +324,25 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> GameContext<'a, 'acx, 'e, E> {
             }
         }
     }
+
+    fn try_bit_array_fallback(&mut self, entry: E::VirtualAddress) {
+        let binary = self.analysis.binary;
+        let ctx = self.analysis.ctx;
+        let bump = &self.analysis.bump;
+        let mut analyzer = DetectBitArrayGetFn::<E> {
+            result: None,
+            arg_cache: &self.analysis.arg_cache,
+            bump,
+            game: self.game,
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+        analysis.analyze(&mut analyzer);
+        if let Some(result) = analyzer.result {
+            self.result.patches.push(DatPatch::ReplaceFunc(entry, result));
+        } else {
+            dat_warn!(self, "Failed to find / unresolve bit array operands in {entry}");
+        }
+    }
 }
 
 pub struct GameAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
@@ -331,6 +357,73 @@ pub struct GameAnalyzer<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> {
     func_start: E::VirtualAddress,
     greatest_address: E::VirtualAddress,
     detect_tail_call: DetectTailCall<'e, E>,
+    // get_upgrade/tech_in_progress id/player is sometimes not possible to recover at array access
+    // point, detect bit get function without inlining and ask it to be hooked instead.
+    do_bit_array_fallback: bool,
+}
+
+pub struct DetectBitArrayGetFn<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: Option<DatReplaceFunc>,
+    arg_cache: &'a ArgCache<'e, E>,
+    bump: &'acx Bump,
+    game: Operand<'e>,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    DetectBitArrayGetFn<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Return(_) => {
+                let ret = ctrl.resolve_register(0);
+                let ctx = ctrl.ctx();
+                let a1 = self.arg_cache.on_entry(0);
+                // Match x & (1 << (a1 & 7))
+                let bit_mask_ok = ret.if_arithmetic_and()
+                    .and_either_other(|x| {
+                        let (l, r) = x.if_arithmetic_lsh()?;
+                        let ok = l == ctx.const_1() && r == ctx.and_const(a1, 7);
+                        ok.then_some(())
+                    });
+                if let Some(rest) = bit_mask_ok &&
+                    let Some(mem) = rest.if_mem8()
+                {
+                    let (base, _) = mem.address();
+                    let mut terms = crate::add_terms::collect_arith_add_terms(base, self.bump);
+                    if !terms.remove_one(|x, neg| x == self.game && !neg) {
+                        println!("ax");
+                        return;
+                    }
+                    if !terms.remove_one(|x, neg| {
+                        x.if_arithmetic_and_const(0x1f).and_then(|x| x.if_arithmetic_rsh_const(3))
+                            == Some(a1) && !neg
+                    }) {
+                        println!("a");
+                        return;
+                    }
+                    if let Some(rest) = terms.get_if_single() {
+                        if let Some((l, r)) = rest.if_mul_with_const() {
+                            let a2 = self.arg_cache.on_entry(1);
+                            if ctx.and_const(l, 0xffff_ffff) == ctx.and_const(a2, 0xffff_ffff) {
+                                if r == 6 {
+                                    self.result = Some(DatReplaceFunc::TechIsBeingResearched);
+                                } else if r == 8 {
+                                    self.result = Some(DatReplaceFunc::UpgradeIsBeingResearched);
+                                }
+                            }
+                        }
+                    }
+                }
+
+            }
+            Operation::Call(..) | Operation::Jump { .. } => {
+                ctrl.end_analysis();
+            }
+            _ => (),
+        }
+    }
 }
 
 impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
@@ -1045,19 +1138,23 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         // It'll be patched to
         // [player_0_bits_0_7, player_1_bits_0_7, ...]
         // index = (id >> 3) * 0xc + player
-        let player_id_from_index = |index| {
-            // player = index / expected_bytes_per_player
-            // id = index % expected_bytes_per_player
-            let divisor = ctx.constant(expected_bytes_per_player.into());
-            let id = ctx.modulo(
+
+        let id_from_index_player = |index, player| {
+            // index = player * expected_bytes_per_player + id
+            // => index - (player * expected_bytes_per_player)
+            ctx.sub(
                 index,
-                divisor,
-            );
-            let player = ctx.div(
-                index,
-                divisor,
-            );
-            (player, id)
+                ctx.mul_const(player, expected_bytes_per_player as u64),
+            )
+        };
+        let player_from_index_id = |index, id| {
+            // index = player * expected_bytes_per_player + id
+            // => (index - id) / expected_bytes_per_player
+            let arr_size = ctx.constant(expected_bytes_per_player as u64);
+            ctx.div(
+                ctx.sub(index, id),
+                arr_size,
+            )
         };
         let player_id = index.if_arithmetic_add()
             .and_either(|x| {
@@ -1090,16 +1187,18 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
         };
         let (player, id) = match (self.unresolve(ctrl, player), self.unresolve(ctrl, id)) {
             (Some(a), Some(b)) => (a, b),
-            _ => {
+            (a, b) => 'block: {
                 if let Some(index_unres) = self.unresolve(ctrl, index) {
-                    player_id_from_index(index_unres)
-                } else {
-                    dat_warn!(
-                        self, "Unable to find operands for player {} / id {} @ {:?}",
-                        player, id, ctrl.address(),
-                    );
-                    return;
+                    if let Some(player) = a {
+                        let id = id_from_index_player(index_unres, player);
+                        break 'block (player, id);
+                    } else if let Some(id) = b {
+                        let player = player_from_index_id(index_unres, id);
+                        break 'block (player, id);
+                    }
                 }
+                self.do_bit_array_fallback = true;
+                return;
             }
         };
         let mut index = ctx.add(ctx.mul_const(id, 0xc), player);
@@ -1125,6 +1224,9 @@ impl<'a, 'b, 'acx, 'e, E: ExecutionState<'e>> GameAnalyzer<'a, 'b, 'acx, 'e, E> 
     ) {
         let ctx = ctrl.ctx();
         let player_id_from_index = |index| {
+            // This breaks once reaching unit 0xe4 * 4? (0x390 / 912)
+            // Unit availability is already semibroken as it has u8 size, but
+            // only uses are in chk section writing it, and dat requirement check reading it.
             if first_index_is_player {
                 // player = index / (0xe4 * value_size)
                 // id = (index % (0xe4 * value_size)) / value_size

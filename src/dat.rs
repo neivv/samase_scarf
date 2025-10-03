@@ -308,6 +308,8 @@ pub enum DatReplaceFunc {
     UnitCloakTech,
     UnitCurrentUpgrade,
     UnitCurrentTech,
+    UpgradeIsBeingResearched,
+    TechIsBeingResearched,
 }
 
 pub struct DatArrayPatch<Va: VirtualAddress> {
