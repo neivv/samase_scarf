@@ -587,6 +587,8 @@ results! {
         FoliageMarkAreaForResource => foliage_mark_area_for_resource => cache_show_unit,
         LoadAllCursors => load_all_cursors => cache_load_all_cursors,
         LoadDdsGrpCursor => load_ddsgrp_cursor => cache_load_all_cursors,
+        ShowInfoMessageWithSound => show_info_message_with_sound =>
+            cache_check_resources_for_building,
     }
 }
 
@@ -5006,6 +5008,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             })
     }
 
+    fn check_resources_for_building(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::CheckResourcesForBuilding,
+            |s| s.cache_unit_morph(actx),
+        )
+    }
+
     fn cache_ai_step_region(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(
@@ -5295,6 +5304,16 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     [],
                     [r.snet_local_player_list, r.snet_player_list],
                 ))
+            })
+    }
+
+    fn cache_check_resources_for_building(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[ShowInfoMessageWithSound], &[],
+            |s| {
+                let check = s.check_resources_for_building(actx)?;
+                let r = game::analyze_check_resources_for_building(actx, check);
+                Some(([r.show_info_message_with_sound], []))
             })
     }
 }

@@ -69,6 +69,10 @@ pub(crate) struct StepObjectsAnalysis<'e, Va: VirtualAddress> {
     pub get_creep_spread_area: Option<Va>,
 }
 
+pub(crate) struct CheckResourcesForBuilding<Va: VirtualAddress> {
+    pub show_info_message_with_sound: Option<Va>,
+}
+
 pub(crate) fn step_objects<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     rng_enable: Operand<'e>,
@@ -1901,5 +1905,47 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> StepObjectsAnalyzer<'a, 'acx, 'e, E> {
             }
         }
         None
+    }
+}
+
+pub(crate) fn analyze_check_resources_for_building<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    check_resources_for_building: E::VirtualAddress,
+) -> CheckResourcesForBuilding<E::VirtualAddress> {
+    let mut result = CheckResourcesForBuilding {
+        show_info_message_with_sound: None,
+    };
+
+    let ctx = actx.ctx;
+    let binary = actx.binary;
+    let mut analysis = FuncAnalysis::new(binary, ctx, check_resources_for_building);
+    let mut analyzer = CheckResourcesForBuildingAnalyzer::<E> {
+        result: &mut result,
+    };
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct CheckResourcesForBuildingAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut CheckResourcesForBuilding<E::VirtualAddress>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    CheckResourcesForBuildingAnalyzer<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        // Just find show_info_message_with_sound(_, _, race + (0x34c | 0x34f))
+        if let Operation::Call(dest) = *op {
+            if ctrl.resolve_arg(2).if_add_with_const()
+                    .is_some_and(|(_, x)| x == 0x34c || x == 0x34f) &&
+                let Some(dest) = ctrl.resolve_va(dest)
+            {
+                self.result.show_info_message_with_sound = Some(dest);
+                ctrl.end_analysis();
+            }
+        }
+
     }
 }
