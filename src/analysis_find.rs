@@ -271,7 +271,10 @@ fn complex_x86_64_entry_check(bytes: &[u8; 64]) -> Option<bool> {
         if register_state[dest] != Any {
             return Some(false);
         }
-        register_state[dest] = Stack;
+        // Not used but conceptually this, if the code below is ever changed
+        #[allow(unused_assignments)] {
+            register_state[dest] = Stack;
+        }
         next = slice_to_arr_ref(&bytes[3..])?;
     }
 
