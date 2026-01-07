@@ -901,6 +901,7 @@ results! {
         SnetLocalPlayerList => snet_local_player_list => cache_snet_recv_packets,
         SnetPlayerList => snet_player_list => cache_snet_recv_packets,
         CursorScaleFactor => cursor_scale_factor,
+        MinimapColorMode => minimap_color_mode => cache_minimap_event_handler,
     }
 }
 
@@ -5314,6 +5315,16 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let check = s.check_resources_for_building(actx)?;
                 let r = game::analyze_check_resources_for_building(actx, check);
                 Some(([r.show_info_message_with_sound], []))
+            })
+    }
+
+    fn cache_minimap_event_handler(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(&[], &[MinimapColorMode],
+            |s| {
+                let funcs = s.function_finder();
+                let r = minimap::analyze_event_handler(actx, &funcs);
+                Some(([], [r.minimap_color_mode]))
             })
     }
 }

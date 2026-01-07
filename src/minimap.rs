@@ -1,12 +1,18 @@
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{Operand, Operation};
+use scarf::{DestOperand, MemAccessSize, Operand, Operation};
 
 use crate::analysis::{AnalysisCtx, Patch};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::analysis_state::{AnalysisState, StateEnum, ReplayVisionsState};
-use crate::util::{ControlExt, ExecStateExt, OperandExt, OptionExt, bumpvec_with_capacity};
+use crate::util::{
+    ControlExt, ExecStateExt, OperandExt, OptionExt, bumpvec_with_capacity, MemAccessExt,
+};
 use crate::struct_layouts::StructLayouts;
+
+pub(crate) struct EventHandler<'e> {
+    pub minimap_color_mode: Option<Operand<'e>>,
+}
 
 pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
@@ -416,3 +422,61 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
     }
 }
 
+pub(crate) fn analyze_event_handler<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> EventHandler<'e> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = EventHandler {
+        minimap_color_mode: None,
+    };
+    let event_handler = crate::dialog::run_dialog_analysis(
+        actx,
+        functions,
+        b"rez\\minimap",
+        b"minimap.ui",
+    ).event_handler;
+    let event_handler = match event_handler {
+        Some(s) => s,
+        None => return result,
+    };
+    let mut analyzer = EventHandlerAnalyzer::<E> {
+        result: &mut result,
+        phantom: Default::default(),
+    };
+    let mut state = E::initial_state(ctx, binary);
+    let a2 = actx.arg_cache.on_entry(1);
+    let event_type_addr =
+        ctx.mem_access(a2, E::struct_layouts().event_type(), MemAccessSize::Mem16);
+    state.write_memory(&event_type_addr, ctx.constant(0xf));
+    let mut func_analysis = FuncAnalysis::with_state(binary, ctx, event_handler, state);
+    func_analysis.analyze(&mut analyzer);
+    result
+}
+
+struct EventHandlerAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut EventHandler<'e>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for EventHandlerAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        // For event type 0xf (Key event), minimap_color_mode should be just
+        // write of constant 2 to a global
+        if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
+            let value = ctrl.resolve(value);
+            if value.if_constant() == Some(2) {
+                let dest = ctrl.resolve_mem(mem);
+                if dest.is_global() {
+                    let ctx = ctrl.ctx();
+                    let value = ctx.memory(&dest);
+                    self.result.minimap_color_mode = Some(value);
+                    ctrl.end_analysis();
+                }
+            }
+        }
+    }
+}

@@ -466,6 +466,7 @@ map_mpq: Mem32[e86b60]
 map_tile_flags: Mem32[cc33dc]
 map_width_pixels: Mem16[cfc424]
 menu_screen_id: (((((Mem8[c9e530] >> 6) | (Mem32[c9e52d] * 4)) - 44556c9f) ^ Mem32[e83b24]) & ffffffff)
+minimap_color_mode: Mem8[e89188]
 minimap_cursor_type: Mem16[e80430]
 minitile_data: None
 minitile_graphics: None

@@ -128,7 +128,7 @@ pub(crate) fn run_dialog<'e, E: ExecutionState<'e>>(
     run_dialog_analysis(analysis, functions, b"rez\\glucmpgn", b"glucmpgn.ui")
 }
 
-fn run_dialog_analysis<'e, E: ExecutionState<'e>>(
+pub(crate) fn run_dialog_analysis<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     functions: &FunctionFinder<'_, 'e, E>,
     old_string_ref: &[u8],
