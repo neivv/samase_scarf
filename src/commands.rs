@@ -44,6 +44,10 @@ pub(crate) struct PrintText<Va: VirtualAddressTrait> {
     pub add_to_replay_data: Option<Va>,
 }
 
+pub(crate) struct CancelUnit<Va: VirtualAddressTrait> {
+    pub cancel_unit: Option<Va>,
+}
+
 pub(crate) struct Cloak<Va: VirtualAddressTrait> {
     pub start_cloaking: Option<Va>,
 }
@@ -1593,7 +1597,7 @@ pub(crate) fn save_replay<'e, E: ExecutionState<'e>>(
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let funcs = functions.functions();
-    
+
     let do_analysis = |entry: E::VirtualAddress| -> EntryOf<E::VirtualAddress> {
         let mut analyzer = SaveReplayFunctionAnalyzer::<E> {
                 result: None,
@@ -1615,12 +1619,12 @@ pub(crate) fn save_replay<'e, E: ExecutionState<'e>>(
                 None => EntryOf::Retry,
             }
     };
-    
+
     for str_ref in &str_refs {
         let entry_result = entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
-           do_analysis(entry) 
+           do_analysis(entry)
         }).into_option();
-        
+
         if entry_result.is_some() {
             return entry_result;
         }
@@ -1629,7 +1633,7 @@ pub(crate) fn save_replay<'e, E: ExecutionState<'e>>(
     // In older versions, the calling function has no strings, but *that* function can be found by a
     // call of fn("LastReplay", 1)
     let str_refs = functions.string_refs(analysis, b"LastReplay");
-    
+
     for str_ref in &str_refs {
         let entry_result = entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
             let mut analyzer = LastReplayCallAnalyzer::<E> {
@@ -1638,7 +1642,7 @@ pub(crate) fn save_replay<'e, E: ExecutionState<'e>>(
             };
             let mut func_analysis = FuncAnalysis::new(binary, ctx, entry);
             func_analysis.analyze(&mut analyzer);
-            
+
             let Some(target_func) = analyzer.result else {
                 return EntryOf::Retry;
             };
@@ -1646,12 +1650,12 @@ pub(crate) fn save_replay<'e, E: ExecutionState<'e>>(
             // Now we can repeat the same analysis as newer versions
             do_analysis(target_func)
         }).into_option();
-        
+
         if entry_result.is_some() {
             return entry_result;
         }
     }
-    
+
     None
 }
 
@@ -1667,7 +1671,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for LastReplayCallAnalyzer<'
         if let Operation::Call(dest) = *op {
             if let Some(dest_addr) = ctrl.resolve_va(dest) {
                 let arg0 = ctrl.resolve_arg(0);
-                
+
                 if let Some(arg0_const) = arg0.if_constant() {
                     if arg0_const == self.string_address.as_u64() {
                         let arg1 = ctrl.resolve_arg(1);
@@ -1705,7 +1709,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SaveReplayFunctionAn
                         if let Some(_dest_addr) = ctrl.resolve_va(dest) {
                             let arg0 = ctrl.resolve_arg(0);
                             let arg2 = ctrl.resolve_arg(2);
-                            
+
                             // Look for a call to construct a full filepath:
                             //   func(filename, output, MAX_PATH)
                             if arg0 == self.arg_cache.on_entry(0) &&
@@ -1746,4 +1750,120 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SaveReplayFunctionAn
             }
         }
     }
+}
+
+pub(crate) fn cancel_unit<'e, E: ExecutionState<'e>>(
+    analysis: &AnalysisCtx<'e, E>,
+    process_commands: E::VirtualAddress,
+    process_commands_switch: &CompleteSwitch<'e>,
+) -> CancelUnit<E::VirtualAddress> {
+    struct Analyzer<'a, 'e, E: ExecutionState<'e>> {
+        result: &'a mut CancelUnit<E::VirtualAddress>,
+        branch: E::VirtualAddress,
+        player_check_seen: bool,
+        before_switch: bool,
+        inline_depth: u8,
+    }
+
+    impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'a, 'e, E> {
+        type State = analysis::DefaultState;
+        type Exec = E;
+        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+            match *op {
+                Operation::Call(dest) => {
+                    if self.before_switch {
+                        return;
+                    }
+                    if self.player_check_seen {
+                        self.result.cancel_unit = ctrl.resolve_va(dest);
+                        ctrl.end_analysis();
+                        return;
+                    } else {
+                        if self.inline_depth == 0 && let Some(dest) = ctrl.resolve_va(dest) {
+                            self.inline_depth = 1;
+                            ctrl.analyze_with_current_state(self, dest);
+                            self.inline_depth = 0;
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+                Operation::Jump { to, condition } => {
+                    if self.player_check_seen {
+                        ctrl.end_analysis();
+                        return;
+                    }
+                    if to.if_constant().is_none() {
+                        if self.before_switch {
+                            self.before_switch = false;
+                            ctrl.clear_all_branches();
+                            ctrl.end_branch();
+                            ctrl.add_branch_with_current_state(self.branch);
+                        } else {
+                            ctrl.end_branch();
+                        }
+                    } else {
+                        let condition = ctrl.resolve(condition);
+                        let player_offset = E::struct_layouts().unit_player();
+                        if let Some((l, r, eq)) = condition.if_arithmetic_eq_neq() &&
+                            Operand::either(l, r, |x| x.if_mem8_offset(player_offset)).is_some()
+                        {
+                            ctrl.continue_at_eq_address(eq, to);
+                            self.player_check_seen = true;
+                        }
+                    }
+                }
+                _ => (),
+            }
+        }
+    }
+
+    let binary = analysis.binary;
+    let ctx = analysis.ctx;
+
+    // cancel_unit is called for both command 0x18 (non-zerg cancel building),
+    // 0x19 (zerg cancel building), both check unit.player == command_user before
+    // calling cancel.
+    let mut result = CancelUnit {
+        cancel_unit: None,
+    };
+
+    let mut prev_result = None;
+    for command_id in [0x18, 0x19] {
+        let branch = match process_commands_switch.branch(binary, ctx, command_id) {
+            Some(s) => s,
+            None => return result,
+        };
+
+        let mut analyzer = Analyzer::<E> {
+            player_check_seen: false,
+            before_switch: true,
+            branch,
+            result: &mut result,
+            inline_depth: 0,
+        };
+
+        let mut exec_state = E::initial_state(ctx, binary);
+        // Set arg3 to 1 so the replay-specific switch will be skipped
+        exec_state.move_resolved(
+            &DestOperand::from_oper(analysis.arg_cache.on_entry(2)),
+            ctx.const_1(),
+        );
+        let mut analysis =
+            FuncAnalysis::custom_state(binary, ctx, process_commands, exec_state, Default::default());
+        analysis.analyze(&mut analyzer);
+        // Check both command ids in tests
+        if crate::test_assertions() {
+            let cancel = result.cancel_unit.expect("Failed");
+            if let Some(prev) = prev_result {
+                assert_eq!(prev, cancel);
+            } else {
+                prev_result = Some(cancel);
+            }
+        } else {
+            if result.cancel_unit.is_some() {
+                break;
+            }
+        }
+    }
+    result
 }

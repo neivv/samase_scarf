@@ -589,6 +589,7 @@ results! {
         LoadDdsGrpCursor => load_ddsgrp_cursor => cache_load_all_cursors,
         ShowInfoMessageWithSound => show_info_message_with_sound =>
             cache_check_resources_for_building,
+        CancelUnit => cancel_unit => cache_cancel_unit_finding,
     }
 }
 
@@ -5325,6 +5326,17 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let funcs = s.function_finder();
                 let r = minimap::analyze_event_handler(actx, &funcs);
                 Some(([], [r.minimap_color_mode]))
+            })
+    }
+
+    fn cache_cancel_unit_finding(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[CancelUnit], &[],
+            |s| {
+                let process_commands = s.process_commands(actx)?;
+                let switch = s.process_commands_switch(actx)?;
+                let result = commands::cancel_unit(actx, process_commands, &switch);
+                Some(([result.cancel_unit], []))
             })
     }
 }
