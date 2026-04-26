@@ -590,6 +590,7 @@ results! {
         ShowInfoMessageWithSound => show_info_message_with_sound =>
             cache_check_resources_for_building,
         CancelUnit => cancel_unit => cache_cancel_unit_finding,
+        RandSynced => rand_synced => cache_rng,
     }
 }
 
@@ -2069,10 +2070,12 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     }
 
     fn cache_rng(&mut self, actx: &AnalysisCtx<'e, E>) {
-        self.cache_many(&[], &[OperandAnalysis::RngSeed, OperandAnalysis::RngEnable], |s| {
+        self.cache_many(&[AddressAnalysis::RandSynced],
+            &[OperandAnalysis::RngSeed, OperandAnalysis::RngEnable], |s|
+        {
             let units_dat = s.dat_virtual_address(DatType::Units, actx)?;
             let rng = rng::rng(actx, units_dat, &s.function_finder());
-            Some(([], [rng.seed, rng.enable]))
+            Some(([rng.rand_synced], [rng.seed, rng.enable]))
         })
     }
 

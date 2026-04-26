@@ -8,19 +8,20 @@ use scarf::{Operation, Operand, OperandCtx, MemAccessSize, DestOperand};
 
 use crate::analysis::{AnalysisCtx};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
-use crate::util::{single_result_assign, ControlExt, OperandExt};
+use crate::util::{single_result_assign, ControlExt, OperandExt, test_assertions};
 
 #[derive(Clone, Debug)]
-pub struct Rng<'e> {
+pub struct Rng<'e, Va: VirtualAddress> {
     pub enable: Option<Operand<'e>>,
     pub seed: Option<Operand<'e>>,
+    pub rand_synced: Option<Va>,
 }
 
 pub(crate) fn rng<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     units_dat: (E::VirtualAddress, u32),
     functions: &FunctionFinder<'_, 'e, E>,
-) -> Rng<'e> {
+) -> Rng<'e, E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let bump = &analysis.bump;
@@ -59,20 +60,22 @@ pub(crate) fn rng<'e, E: ExecutionState<'e>>(
         }
     }
     match result {
-        Some((s, e)) => Rng {
+        Some((s, e, func)) => Rng {
             seed: Some(s),
             enable: Some(e),
+            rand_synced: func,
         },
         None => Rng {
             seed: None,
             enable: None,
+            rand_synced: None,
         },
     }
 }
 
 struct FindRng<'a, 'e, E: ExecutionState<'e>> {
     bump: &'a bumpalo::Bump,
-    result: EntryOf<(Operand<'e>, Operand<'e>)>,
+    result: EntryOf<(Operand<'e>, Operand<'e>, Option<E::VirtualAddress>)>,
     no_jump_cond: Option<Operand<'e>>,
     jump_conds: BumpVec<'a, (E::VirtualAddress, Operand<'e>)>,
     is_inlining: bool,
@@ -103,7 +106,11 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
                             ctrl.analyze_with_current_state(self, dest);
                             self.is_inlining = false;
                             self.jump_conds = jump_conds;
-                            if let EntryOf::Ok(..) = self.result {
+                            if let EntryOf::Ok((a, b, c)) = self.result {
+                                if test_assertions() {
+                                    assert!(c.is_none());
+                                }
+                                self.result = EntryOf::Ok((a, b, Some(dest)));
                                 ctrl.end_analysis();
                             }
                         }
@@ -132,7 +139,7 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindRng<'a, 'e, E
                             if let Some(rng_enable) = jump_cond {
                                 let dest = ctrl.resolve_mem(mem);
                                 let ctx = ctrl.ctx();
-                                let val = (ctx.memory(&dest), rng_enable);
+                                let val = (ctx.memory(&dest), rng_enable, None);
                                 self.result = EntryOf::Ok(val);
                                 ctrl.end_analysis();
                             }
