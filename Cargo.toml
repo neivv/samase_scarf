@@ -35,7 +35,7 @@ lde = { git = "https://github.com/CasualX/lde", rev = "6d8e287075eae41d0c6bae4c2
 log = "0.4"
 memchr = { version = "2.0", default-features = false }
 
-fern = { version = "0.6", optional = true }
+fern = { version = "0.7", optional = true }
 anyhow = { version = "1.0", optional = true }
 winapi = { version = "0.3", features = ["d3dcompiler"], optional = true }
 scopeguard = { version = "1.1", optional = true }
@@ -43,10 +43,10 @@ rayon = { version = "1.5", optional = true }
 
 [dependencies.scarf]
 git = "https://github.com/neivv/scarf"
-rev = "1df07d3e3ebd29173145fe46210d1e42b65e0a8d"
+rev = "e859c8bc890304e74a3fcfc161feadc717260f4d"
 
 [dev-dependencies]
-fern = "0.6"
+fern = "0.7"
 
 [features]
 test_assertions = []
