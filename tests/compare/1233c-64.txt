@@ -113,10 +113,13 @@ get_atlas_page_coords_for_terrain_tile: 1402a8220
 get_attack_range: 1401b11d0
 get_choke_point_regions: 1402ae150
 get_creep_spread_area: 14063f460
+get_force_color: 1403afd90
 get_images_rel: 140187d80
 get_locales: 14023ec90
 get_mouse_x: 1402eec40
 get_mouse_y: 1402eec60
+get_player_color: 1401a4ba0
+get_player_force_color: 1403afcf0
 get_region: 1403c8580
 get_render_target: 140782000
 get_sight_range: 1401b39c0
@@ -203,6 +206,7 @@ process_commands: 1403976e0
 process_events: 1402ef2d0
 process_lobby_commands: 1403973b0
 rand_synced: 1403a28c0
+randomize_player_colors: 1401a2fb0
 read_whole_mpq_file: 1405d79d0
 read_whole_mpq_file2: 1405d7a10
 receive_storm_turns: 14038cb80
@@ -402,6 +406,7 @@ flingy_y_new: Mem16[140d16830]
 flingy_y_old: Mem16[140d16838]
 foliage_state: 140d88858
 fonts: 140f82e28
+force_colors: 140f49e60
 game: (Mem64[140c6a590] ^ db3810900178ad2b)
 game_data: 140f468d0
 game_lobby: Mem64[140c68f78]
@@ -495,6 +500,7 @@ placement_images: 140d1ad10
 placement_rects: 140d1c320
 player_ai: 140d34d40
 player_ai_towns: 140d62190
+player_color_preference: ((Mem64[140c6a590] ^ db3810900178ad2b) + 1038a)
 player_skins: 140f452b0
 player_turns: 140f46de0
 player_turns_size: 140f46e40

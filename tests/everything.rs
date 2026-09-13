@@ -1625,7 +1625,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 LookupSoundId | SFileOpenFileEx | SFileReadFileEx | SFileCloseFile |
                 LoadConsoles | InitConsoles | GetUiConsoles | GetStatResIconsDdsGrp |
                 GetUnitSkin | JoinCustomGame | FindFileWithCrc | ForFilesInDir |
-                SimpleFileMatchCallback | GetLocales | InitGameMap | SaveReplay => continue,
+                SimpleFileMatchCallback | GetLocales | InitGameMap | SaveReplay |
+                RandomizePlayerColors => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -1646,7 +1647,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 RgbColors | DisableColorChoice | UseMapSetRgbColor | SfxData | SoundChannels |
                 Images | TilesetCv5 | TilesetData | TilesetVx4Ex | TileDefaultFlags |
                 MinitileGraphics | MinitileData | FoliageState | CreepOriginalTiles |
-                CreepTileBorders | CursorScaleFactor =>
+                CreepTileBorders | CursorScaleFactor | PlayerColorPreference =>
             {
                 continue;
             }
@@ -1710,7 +1711,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 DcreepListBegin | DcreepListSize | ReplayHeader | GameScreenRectWinPx |
                 RunDialogStack | LurkerHits | ResourceAreas | HpBarImages | HpBarState |
                 SelectionCircles | PlacementImages | PlacementRects | ShieldOverlays | ImagesRel |
-                SnetLocalPlayerList | SnetPlayerList | NgdpInstance =>
+                SnetLocalPlayerList | SnetPlayerList | NgdpInstance | ForceColors =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }

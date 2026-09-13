@@ -591,6 +591,13 @@ results! {
             cache_check_resources_for_building,
         CancelUnit => cancel_unit => cache_cancel_unit_finding,
         RandSynced => rand_synced => cache_rng,
+        // out *RGBA[4], player_id; resolves the color a player is drawn with
+        GetPlayerColor => get_player_color => cache_player_color_funcs,
+        // out *RGBA[4], force; force_colors[force - 1 clamped to 0..7]
+        GetForceColor => get_force_color => cache_player_color_funcs,
+        // out *RGBA[4], player; get_player_color, but force/team-colored in color mode 2
+        GetPlayerForceColor => get_player_force_color => cache_player_color_funcs,
+        RandomizePlayerColors => randomize_player_colors => cache_randomize_player_colors,
     }
 }
 
@@ -839,6 +846,15 @@ results! {
         GameLobby => game_lobby => cache_player_colors,
         // "In a game", but not necessarily in a started game.
         InLobbyOrGame => in_lobby_or_game => cache_player_colors,
+        // The 8 team/force colors (the standard player colors: red, blue, teal, ...).
+        // get_force_color / get_player_force_color look up force_colors[player.force - 1] to draw a
+        // player in its team's color in color mode 2 -- used where players are colored by absolute
+        // team rather than relative to you, i.e. minimap force markers and an observer's whole view
+        // (an observer has no self/ally/enemy relation). The relationship (self/ally/enemy) and
+        // normal color paths read main_palette instead.
+        ForceColors => force_colors => cache_player_color_funcs,
+        // game-relative u8[..]; per-player chosen lobby color (0x16 == random)
+        PlayerColorPreference => player_color_preference => cache_randomize_player_colors,
         GameScreenRectWinPx => game_screen_rect_winpx => cache_game_screen_lclick,
         OnClipCursorEnd => on_clip_cursor_end => cache_game_screen_lclick,
         SelectStartX => select_start_x => cache_game_screen_lclick,
@@ -2387,6 +2403,25 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_single_operand(OperandAnalysis::LocalPlayerId, |s| {
             players::local_player_id(actx, s.game_screen_rclick(actx)?)
         })
+    }
+
+    fn minimap_color_mode(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(
+            OperandAnalysis::MinimapColorMode,
+            |s| s.cache_minimap_event_handler(actx),
+        )
+    }
+
+    fn rgb_colors(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::RgbColors, |s| s.cache_player_colors(actx))
+    }
+
+    fn use_map_set_rgb_color(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::UseMapSetRgbColor, |s| s.cache_player_colors(actx))
+    }
+
+    fn rand_synced(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::RandSynced, |s| s.cache_rng(actx))
     }
 
     fn cache_game_screen_rclick(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -4736,6 +4771,57 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let r = commands::player_colors(actx, &switch);
                 Some(([], [r.use_rgb, r.rgb_colors, r.disable_choice, r.use_map_set_rgb,
                     r.game_lobby, r.in_lobby_or_game]))
+            })
+    }
+
+    fn cache_player_color_funcs(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[GetPlayerColor, GetForceColor, GetPlayerForceColor],
+            &[ForceColors],
+            |s| {
+                let minimap_color_mode = s.minimap_color_mode(actx)?;
+                // rgb_colors / custom player colors only exist from patch 1.23.1a on; without it
+                // get_player_color is still found through draw_image. (use_rgb_colors, rgb_colors,
+                // randomize_player_colors etc. are simply absent on older builds.)
+                let rgb_colors = s.rgb_colors(actx);
+                let draw_image = s.draw_image(actx);
+                let r = players::player_color_funcs(
+                    actx,
+                    &s.function_finder(),
+                    minimap_color_mode,
+                    rgb_colors,
+                    draw_image,
+                );
+                Some((
+                    [r.get_player_color, r.get_force_color, r.get_player_force_color],
+                    [r.force_colors],
+                ))
+            })
+    }
+
+    // randomize_player_colors and player_color_preference are part of the per-player color
+    // selection added in patch 1.23.1a (along with rgb_colors etc.) and are absent on older builds;
+    // the `?` on use_map_set_rgb_color below leaves both None there.
+    fn cache_randomize_player_colors(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[RandomizePlayerColors],
+            &[PlayerColorPreference],
+            |s| {
+                let use_map_set_rgb_color = s.use_map_set_rgb_color(actx)?;
+                let game = s.game(actx)?;
+                let rand_synced = s.rand_synced(actx)?;
+                let r = players::randomize_player_colors(
+                    actx,
+                    &s.function_finder(),
+                    use_map_set_rgb_color,
+                    game,
+                    rand_synced,
+                );
+                Some(([r.randomize_player_colors], [r.player_color_preference]))
             })
     }
 
