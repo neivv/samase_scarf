@@ -7,11 +7,14 @@ use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
 use crate::analysis_state::{AnalysisState, StateEnum, ReplayVisionsState};
 use crate::util::{
     ControlExt, ExecStateExt, OperandExt, OptionExt, bumpvec_with_capacity, MemAccessExt,
+    single_result_assign,
 };
 use crate::struct_layouts::StructLayouts;
 
-pub(crate) struct EventHandler<'e> {
+pub(crate) struct EventHandler<'e, E: ExecutionState<'e>> {
+    pub minimap_dialog_event_handler: Option<E::VirtualAddress>,
     pub minimap_color_mode: Option<Operand<'e>>,
+    pub minimap_terrain_hidden: Option<Operand<'e>>,
 }
 
 pub(crate) fn unexplored_fog_minimap_patch<'e, E: ExecutionState<'e>>(
@@ -422,14 +425,153 @@ impl<'a, 'acx, 'e: 'acx, E: ExecutionState<'e>> scarf::Analyzer<'e> for
     }
 }
 
+pub(crate) struct MinimapPlayerDrawFuncs<Va: VirtualAddress> {
+    pub draw_minimap_player_units: Option<Va>,
+    pub draw_minimap_main_player_units: Option<Va>,
+}
+
+pub(crate) fn player_draw_funcs<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    draw_minimap_units: E::VirtualAddress,
+) -> MinimapPlayerDrawFuncs<E::VirtualAddress> {
+    // draw_minimap_units draws each player's units as
+    // for player in (0..12).rev() {
+    //     if player >= 8 {
+    //         draw_minimap_player_units(player);
+    //     } else if player != local_player_id || is_replay {
+    //         draw_minimap_main_player_units(player);
+    //     }
+    // }
+    // (Local player's own units and neutral sprites are drawn separately after this loop)
+    // Find the player < 8 comparison, and on both sides of it, the call taking the
+    // compared player as arg 1. The loop counter is a constant when the loop is first
+    // reached, so the comparison only becomes visible once the loop-head merge makes it
+    // undefined; the branches are then analyzed separately with analyze_with_current_state
+    // as the >= 8 side had already been walked through with the constant counter and
+    // continuing there normally would merge the compared value away.
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = MinimapPlayerDrawFuncs {
+        draw_minimap_player_units: None,
+        draw_minimap_main_player_units: None,
+    };
+    let mut analyzer = PlayerDrawFuncAnalyzer::<E> {
+        result: &mut result,
+        inlining: false,
+        find_main: false,
+        player_index: None,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, draw_minimap_units);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct PlayerDrawFuncAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut MinimapPlayerDrawFuncs<E::VirtualAddress>,
+    inlining: bool,
+    find_main: bool,
+    player_index: Option<Operand<'e>>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for PlayerDrawFuncAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match *op {
+            Operation::Jump { condition, to } => {
+                if self.inlining {
+                    return;
+                }
+                let condition = ctrl.resolve(condition);
+                let (inner, jump_on_nonzero) = match condition.if_arithmetic_eq_neq_zero(ctx) {
+                    Some((inner, is_eq)) => (inner, !is_eq),
+                    None => (condition, true),
+                };
+                // Match player < 8 in either signed or unsigned form,
+                // with the constant on either side. bool is true when
+                // the comparison being true means player < 8.
+                let result = inner.if_arithmetic_gt()
+                    .and_then(|(l, r)| {
+                        if l.if_constant() == Some(0x8000_0008) {
+                            let index =
+                                ctx.and_const(ctx.add_const(r, 0x8000_0000), 0xffff_ffff);
+                            Some((index, true))
+                        } else if l.if_constant() == Some(8) {
+                            Some((r, true))
+                        } else if r.if_constant() == Some(0x8000_0007) {
+                            let index =
+                                ctx.and_const(ctx.add_const(l, 0x8000_0000), 0xffff_ffff);
+                            Some((index, false))
+                        } else if r.if_constant() == Some(7) {
+                            Some((l, false))
+                        } else {
+                            None
+                        }
+                    });
+                if let Some((index, gt_is_lt8)) = result {
+                    let to = match ctrl.resolve_va(to) {
+                        Some(s) => s,
+                        None => return,
+                    };
+                    let no_jump = ctrl.current_instruction_end();
+                    let taken_is_lt8 = gt_is_lt8 == jump_on_nonzero;
+                    let (ge8_addr, lt8_addr) = match taken_is_lt8 {
+                        true => (no_jump, to),
+                        false => (to, no_jump),
+                    };
+                    self.player_index = Some(index.unwrap_and_mask());
+                    self.inlining = true;
+                    self.find_main = false;
+                    ctrl.analyze_with_current_state(self, ge8_addr);
+                    self.find_main = true;
+                    ctrl.analyze_with_current_state(self, lt8_addr);
+                    self.inlining = false;
+                    if self.result.draw_minimap_player_units.is_some() ||
+                        self.result.draw_minimap_main_player_units.is_some()
+                    {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            Operation::Call(dest) => {
+                if !self.inlining {
+                    return;
+                }
+                if let Some(index) = self.player_index {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        let arg1 = ctrl.resolve_arg_u32(0)
+                            .unwrap_and_mask()
+                            .unwrap_sext()
+                            .unwrap_and_mask();
+                        if arg1 == index {
+                            let out = if self.find_main {
+                                &mut self.result.draw_minimap_main_player_units
+                            } else {
+                                &mut self.result.draw_minimap_player_units
+                            };
+                            if single_result_assign(Some(dest), out) {
+                                ctrl.end_analysis();
+                            }
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
 pub(crate) fn analyze_event_handler<'e, E: ExecutionState<'e>>(
     actx: &AnalysisCtx<'e, E>,
     functions: &FunctionFinder<'_, 'e, E>,
-) -> EventHandler<'e> {
+) -> EventHandler<'e, E> {
     let binary = actx.binary;
     let ctx = actx.ctx;
     let mut result = EventHandler {
+        minimap_dialog_event_handler: None,
         minimap_color_mode: None,
+        minimap_terrain_hidden: None,
     };
     let event_handler = crate::dialog::run_dialog_analysis(
         actx,
@@ -441,6 +583,9 @@ pub(crate) fn analyze_event_handler<'e, E: ExecutionState<'e>>(
         Some(s) => s,
         None => return result,
     };
+    // The function that owns the minimap_color_mode / minimap_terrain_hidden writes; both are
+    // toggled inline here (no standalone setter), so this is the hook point for those changes.
+    result.minimap_dialog_event_handler = Some(event_handler);
     let mut analyzer = EventHandlerAnalyzer::<E> {
         result: &mut result,
         phantom: Default::default(),
@@ -456,7 +601,7 @@ pub(crate) fn analyze_event_handler<'e, E: ExecutionState<'e>>(
 }
 
 struct EventHandlerAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    result: &'a mut EventHandler<'e>,
+    result: &'a mut EventHandler<'e, E>,
     phantom: std::marker::PhantomData<(*const E, &'e ())>,
 }
 
@@ -464,18 +609,29 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for EventHandlerAnalyzer
     type State = analysis::DefaultState;
     type Exec = E;
     fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
-        // For event type 0xf (Key event), minimap_color_mode should be just
-        // write of constant 2 to a global
+        // For event type 0xf (Tab key event) the handler branches on whether shift is held:
+        // - Shift+Tab cycles minimap_color_mode through 0..3; the observer snap path writes
+        //   constant 2 to that global, which is what is matched here.
+        // - Tab alone toggles minimap_terrain_hidden with `x = (x == 0)` (cmp global, 0 / sete),
+        //   which scarf resolves to a write of (global == 0) back to the same global.
         if let Operation::Move(DestOperand::Memory(ref mem), value) = *op {
+            let ctx = ctrl.ctx();
             let value = ctrl.resolve(value);
             if value.if_constant() == Some(2) {
                 let dest = ctrl.resolve_mem(mem);
                 if dest.is_global() {
-                    let ctx = ctrl.ctx();
-                    let value = ctx.memory(&dest);
-                    self.result.minimap_color_mode = Some(value);
-                    ctrl.end_analysis();
+                    self.result.minimap_color_mode = Some(ctx.memory(&dest));
                 }
+            } else if let Some((inner, true)) = value.if_arithmetic_eq_neq_zero(ctx) {
+                let dest = ctrl.resolve_mem(mem);
+                if dest.is_global() && inner == ctx.memory(&dest) {
+                    self.result.minimap_terrain_hidden = Some(ctx.memory(&dest));
+                }
+            }
+            if self.result.minimap_color_mode.is_some() &&
+                self.result.minimap_terrain_hidden.is_some()
+            {
+                ctrl.end_analysis();
             }
         }
     }

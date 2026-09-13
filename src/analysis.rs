@@ -252,6 +252,12 @@ results! {
         ResetUiEventHandlers => reset_ui_event_handlers => cache_ui_event_handlers,
         ClampZoom => clamp_zoom,
         DrawMinimapUnits => draw_minimap_units,
+        // draw_minimap_units calls draw_minimap_player_units(player) for players 8..12
+        // (drawing resources with the neutral color), and
+        // draw_minimap_main_player_units(player) for other non-local players.
+        DrawMinimapPlayerUnits => draw_minimap_player_units => cache_minimap_player_draw_funcs,
+        DrawMinimapMainPlayerUnits => draw_minimap_main_player_units =>
+            cache_minimap_player_draw_funcs,
         InitNetPlayer => init_net_player => cache_net_players,
         ScMain => sc_main => cache_game_init,
         MainMenuEntryHook => mainmenu_entry_hook => cache_game_init,
@@ -369,6 +375,7 @@ results! {
         DuplicateSprite => duplicate_sprite => cache_update_unit_visibility,
         InitStatusScreen => init_status_screen,
         StatusScreenEventHandler => status_screen_event_handler => cache_multi_wireframes,
+        MinimapDialogEventHandler => minimap_dialog_event_handler => cache_minimap_event_handler,
         NetFormatTurnRate => net_format_turn_rate,
         LoadReplayScenarioChk => load_replay_scenario_chk => cache_init_map_from_path,
         SfileCloseArchive => sfile_close_archive => cache_init_map_from_path,
@@ -904,6 +911,7 @@ results! {
         SnetPlayerList => snet_player_list => cache_snet_recv_packets,
         CursorScaleFactor => cursor_scale_factor,
         MinimapColorMode => minimap_color_mode => cache_minimap_event_handler,
+        MinimapTerrainHidden => minimap_terrain_hidden => cache_minimap_event_handler,
     }
 }
 
@@ -5323,12 +5331,31 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
     }
 
     fn cache_minimap_event_handler(&mut self, actx: &AnalysisCtx<'e, E>) {
-        use OperandAnalysis::*;
-        self.cache_many(&[], &[MinimapColorMode],
+        use AddressAnalysis::MinimapDialogEventHandler;
+        use OperandAnalysis::{MinimapColorMode, MinimapTerrainHidden};
+        self.cache_many(
+            &[MinimapDialogEventHandler],
+            &[MinimapColorMode, MinimapTerrainHidden],
             |s| {
                 let funcs = s.function_finder();
                 let r = minimap::analyze_event_handler(actx, &funcs);
-                Some(([], [r.minimap_color_mode]))
+                Some((
+                    [r.minimap_dialog_event_handler],
+                    [r.minimap_color_mode, r.minimap_terrain_hidden],
+                ))
+            })
+    }
+
+    fn cache_minimap_player_draw_funcs(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[DrawMinimapPlayerUnits, DrawMinimapMainPlayerUnits], &[],
+            |s| {
+                let draw_minimap_units = s.draw_minimap_units(actx)?;
+                let result = minimap::player_draw_funcs(actx, draw_minimap_units);
+                Some((
+                    [result.draw_minimap_player_units, result.draw_minimap_main_player_units],
+                    [],
+                ))
             })
     }
 

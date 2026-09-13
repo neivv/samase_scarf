@@ -82,6 +82,8 @@ draw_f10_menu_tooltip: 007335c0
 draw_game_layer: 005e4430
 draw_graphic_layers: 008ec640
 draw_image: 0056d570
+draw_minimap_main_player_units: 006b8290
+draw_minimap_player_units: 006b8060
 draw_minimap_units: 006b5b00
 draw_terrain: 006366b0
 draw_tooltip_layer: 005dc6a0
@@ -176,6 +178,7 @@ map_entry_load_save: 008a8230
 map_init_chk_callbacks: 00bc8f58
 menu_swish_in: 0069a7d0
 menu_swish_out: 00699e30
+minimap_dialog_event_handler: 006b6740
 move_screen: 00638800
 move_sprite: 0056fc80
 move_unit: 005c4480
@@ -470,6 +473,7 @@ map_width_pixels: Mem16[e8c990]
 menu_screen_id: ((Mem32[1010ca4] ^ Mem32[d1437f]) ^ 5352cef8)
 minimap_color_mode: Mem8[1016436]
 minimap_cursor_type: Mem16[100d5a4]
+minimap_terrain_hidden: Mem8[101656a]
 minitile_data: None
 minitile_graphics: None
 mouse_x: Mem16[1036bb0]
