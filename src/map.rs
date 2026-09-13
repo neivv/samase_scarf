@@ -1,4 +1,4 @@
-use scarf::{DestOperand, FlagUpdate, FlagArith, Operand, Operation};
+use scarf::{DestOperand, FlagUpdate, FlagArith, MemAccessSize, Operand, Operation};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
@@ -15,16 +15,18 @@ pub struct MapTileFlags<'e, Va: VirtualAddress> {
 }
 
 #[derive(Clone, Copy)]
-pub struct RunTriggers<Va: VirtualAddress> {
+pub struct RunTriggers<'e, Va: VirtualAddress> {
     pub conditions: Option<Va>,
     pub actions: Option<Va>,
+    pub trigger_execution_timer: Option<Operand<'e>>,
 }
 
-impl<Va: VirtualAddress> Default for RunTriggers<Va> {
+impl<'e, Va: VirtualAddress> Default for RunTriggers<'e, Va> {
     fn default() -> Self {
         RunTriggers {
             conditions: None,
             actions: None,
+            trigger_execution_timer: None,
         }
     }
 }
@@ -152,7 +154,7 @@ pub(crate) fn run_triggers<'e, E: ExecutionState<'e>>(
     rng_enable: Operand<'e>,
     step_objects: E::VirtualAddress,
     functions: &FunctionFinder<'_, 'e, E>,
-) -> RunTriggers<E::VirtualAddress> {
+) -> RunTriggers<'e, E::VirtualAddress> {
     let mut result = RunTriggers::default();
     // Search for main_game_loop which calls step_objects
     // main_game_loop also calls run_triggers -> run_player_triggers
@@ -174,6 +176,8 @@ pub(crate) fn run_triggers<'e, E: ExecutionState<'e>>(
                 rng_enable,
                 next_func_return_id: 0,
                 trigger_player: None,
+                decremented_timer: None,
+                reset_timer: None,
             };
             let mut analysis = FuncAnalysis::new(binary, ctx, entry);
             analysis.analyze(&mut analyzer);
@@ -195,9 +199,11 @@ struct RunTriggersAnalyzer<'a, 'e, E: ExecutionState<'e>> {
     rng_enable: Operand<'e>,
     caller_ref: E::VirtualAddress,
     entry_of: EntryOf<()>,
-    result: &'a mut RunTriggers<E::VirtualAddress>,
+    result: &'a mut RunTriggers<'e, E::VirtualAddress>,
     next_func_return_id: u32,
     trigger_player: Option<Operand<'e>>,
+    decremented_timer: Option<Operand<'e>>,
+    reset_timer: Option<Operand<'e>>,
 }
 
 impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyzer<'a, 'e, E> {
@@ -335,6 +341,34 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                 if is_setting_rng_enable {
                     if let Some(c) = ctrl.resolve(val).if_constant() {
                         self.rng_enabled = c != 0;
+                    }
+                }
+                // run_triggers counts trigger_execution_timer down every frame, and once it
+                // reaches zero it runs the triggers and reloads the timer with 0x1e.
+                // Nearby sibling timers are stepped with the exact same read-subtract-store
+                // shape, so the reload constant is what separates them from this one;
+                // require the countdown store and the 0x1e store to be for the same global.
+                if self.rng_enabled && self.inline_depth == 1 &&
+                    dest.size == MemAccessSize::Mem16 && dest.is_global()
+                {
+                    let val = ctrl.resolve(val);
+                    // The old timer value may have been made undefined by an unrelated call
+                    // in between the load and the store.
+                    let is_countdown = Operand::and_masked(val).0
+                        .if_arithmetic_sub_const(1)
+                        .is_some_and(|x| x.if_memory() == Some(&dest) || x.is_undefined());
+                    if is_countdown {
+                        self.decremented_timer = Some(ctx.memory(&dest));
+                    } else if val.if_constant() == Some(0x1e) {
+                        self.reset_timer = Some(ctx.memory(&dest));
+                    }
+                    if self.decremented_timer.is_some() &&
+                        self.decremented_timer == self.reset_timer
+                    {
+                        single_result_assign(
+                            self.decremented_timer,
+                            &mut self.result.trigger_execution_timer,
+                        );
                     }
                 }
             }

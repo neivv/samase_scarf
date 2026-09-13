@@ -797,6 +797,9 @@ results! {
         Renderer => renderer => cache_render_screen,
         DrawCommands => draw_commands => cache_render_screen,
         TriggerCurrentPlayer => trigger_current_player => cache_center_view_action,
+        // Frames until the triggers are run again; on the frame this reaches 0 the
+        // triggers are run and this is reset to 0x1e.
+        TriggerExecutionTimer => trigger_execution_timer => cache_trigger_execution_timer,
         // Game screen size in "BW pixels"
         //      - 1:1 with actual pixels in SD 640x480, and the coordinates used by gameplay logic.
         // Affected by zoom: zooming out => more pixels shown on screen => w/h grow
@@ -950,7 +953,7 @@ pub struct AnalysisCache<'e, E: ExecutionState<'e>> {
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
     dat_patches: Cached<Option<Rc<DatPatches<'e, E::VirtualAddress>>>>,
-    run_triggers: Cached<RunTriggers<E::VirtualAddress>>,
+    run_triggers: Cached<RunTriggers<'e, E::VirtualAddress>>,
     trigger_unit_count_caches: Cached<TriggerUnitCountCaches<'e>>,
     replay_minimap_unexplored_fog_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
     deserialize_lone_sprite_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
@@ -3502,7 +3505,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         )
     }
 
-    fn run_triggers(&mut self, actx: &AnalysisCtx<'e, E>) -> RunTriggers<E::VirtualAddress> {
+    fn run_triggers(&mut self, actx: &AnalysisCtx<'e, E>) -> RunTriggers<'e, E::VirtualAddress> {
         if let Some(cached) = self.run_triggers.cached() {
             return cached;
         }
@@ -3521,6 +3524,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
 
     pub fn trigger_actions(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.run_triggers(actx).actions
+    }
+
+    fn cache_trigger_execution_timer(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::TriggerExecutionTimer;
+        self.cache_single_operand(TriggerExecutionTimer, |s| {
+            s.run_triggers(actx).trigger_execution_timer
+        });
     }
 
     pub fn trigger_unit_count_caches(

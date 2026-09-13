@@ -1677,7 +1677,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 StatusScreen | MapMpq | ReplayScenarioChk | ReplayScenarioChkSize |
                 GameScreenLClickCallback | GameScreenRClickCallback | TargetedOrderFow |
                 TargetedOrderGround | TargetedOrderUnit | MinimapCursorType | TeamGameTeams |
-                Renderer | TriggerCurrentPlayer | GameScreenWidthBwpx | GameScreenHeightBwPx |
+                Renderer | TriggerCurrentPlayer | TriggerExecutionTimer |
+                GameScreenWidthBwpx | GameScreenHeightBwPx |
                 ZoomActionActive | ZoomActionMode | ZoomActionStart | ZoomActionTarget |
                 ZoomActionCompletion | FlingyFlagsTmp | FlingyXOld | FlingyYOld | FlingyXNew |
                 FlingyYNew | FlingyExactXNew | FlingyExactYNew | FlingyFlagsNew |
