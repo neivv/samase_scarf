@@ -39,6 +39,11 @@ pub(crate) struct StepReplayCommands<'e, Va: VirtualAddressTrait> {
     pub replay_header: Option<Operand<'e>>,
 }
 
+pub(crate) struct OutgoingCommands<'e> {
+    pub outgoing_command_buffer: Option<Operand<'e>>,
+    pub outgoing_command_length: Option<Operand<'e>>,
+}
+
 pub(crate) struct PrintText<Va: VirtualAddressTrait> {
     pub print_text: Option<Va>,
     pub add_to_replay_data: Option<Va>,
@@ -270,6 +275,505 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'e, E
                 }
             }
             _ => (),
+        }
+    }
+}
+
+/// Finds `outgoing_command_buffer` and `outgoing_command_length` from `send_command`.
+///
+/// `send_command` appends a command record to the local buffer with a tail call equivalent to
+///   string_concat(&outgoing_command_buffer[outgoing_command_length], src, len);
+///   outgoing_command_length += len;
+/// The two globals are anchored together: the concat destination is the constant buffer base
+/// indexed by the length global, and immediately after the length global is incremented by the
+/// (argument) append length. That pairing survives recompiles independently of any address.
+pub(crate) fn outgoing_commands<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    send_command: E::VirtualAddress,
+) -> OutgoingCommands<'e> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = OutgoingCommands {
+        outgoing_command_buffer: None,
+        outgoing_command_length: None,
+    };
+    let mut analyzer = OutgoingCommandsAnalyzer::<E> {
+        result: &mut result,
+        concat_candidate: None,
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, send_command);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct OutgoingCommandsAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut OutgoingCommands<'e>,
+    // (buffer_const_operand, length_mem_operand) of the last string_concat-shaped call
+    concat_candidate: Option<(Operand<'e>, Operand<'e>)>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for OutgoingCommandsAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match *op {
+            Operation::Call(_) => {
+                // string_concat(&outgoing_command_buffer[outgoing_command_length], ..)
+                // => arg1 has shape `buffer_const + Mem32[outgoing_command_length]`
+                // (the length index may be sign-extended to pointer width on 64bit)
+                let arg1 = ctrl.resolve_arg(0);
+                if let Some((l, r)) = arg1.if_arithmetic_add() {
+                    let buffer_len = match (l.if_constant(), r.if_constant()) {
+                        (Some(_), None) => Some((l, r)),
+                        (None, Some(_)) => Some((r, l)),
+                        _ => None,
+                    };
+                    if let Some((buffer, len)) = buffer_len {
+                        let len_mem = len.unwrap_sext();
+                        let is_global_len = len_mem.if_memory()
+                            .filter(|m| m.size == MemAccessSize::Mem32)
+                            .filter(|m| m.is_global())
+                            .is_some();
+                        if is_global_len {
+                            self.concat_candidate = Some((buffer, len_mem));
+                        }
+                    }
+                }
+            }
+            Operation::Move(ref dest, val) => {
+                if let DestOperand::Memory(mem) = dest {
+                    if mem.size == MemAccessSize::Mem32 {
+                        let dest = ctrl.resolve_mem(mem);
+                        if dest.is_global() {
+                            let dest_op = ctx.memory(&dest);
+                            // outgoing_command_length += len (truncated to 32bit on 64bit builds)
+                            let val = ctrl.resolve(val).unwrap_and_mask();
+                            let is_increment = val.if_arithmetic_add()
+                                .map(|(l, r)| l == dest_op || r == dest_op)
+                                .unwrap_or(false);
+                            if is_increment {
+                                if let Some((buffer, len_mem)) = self.concat_candidate {
+                                    if len_mem == dest_op {
+                                        self.result.outgoing_command_buffer = Some(buffer);
+                                        self.result.outgoing_command_length = Some(dest_op);
+                                        ctrl.end_analysis();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+/// Finds `flush_outgoing_command_turn`.
+///
+/// Anchored on the empty-turn keep-alive seed + reset that bracket the function:
+///   if (outgoing_command_length == 0) { outgoing_command_buffer[0] = 5; outgoing_command_length = 1; }
+///   ... send_turn_message(.., &outgoing_command_buffer, outgoing_command_length) ...
+///   outgoing_command_length = 0;
+/// (cmd id 5 = the empty-turn keep-alive). On some (older) builds the compiler also inlines a copy
+/// of this body into the latency loop, so the seed+reset pattern is not always unique. The real
+/// standalone `flush_outgoing_command_turn` is the one `send_command` calls from its overflow path
+/// (an inliner is never a callee), so that call relationship breaks the tie.
+pub(crate) fn flush_outgoing_command_turn<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    send_command: E::VirtualAddress,
+    outgoing_command_buffer: Operand<'e>,
+    outgoing_command_length: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> Option<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let bump = &actx.bump;
+    let buffer_addr = outgoing_command_buffer.if_constant()?;
+    let length_addr = outgoing_command_length.if_memory()?.if_constant_address()?;
+    let buffer_va = E::VirtualAddress::from_u64(buffer_addr);
+
+    let mut refs = functions.find_functions_using_global(actx, buffer_va);
+    refs.sort_unstable_by_key(|x| x.func_entry);
+    refs.dedup_by_key(|x| x.func_entry);
+    let funcs = functions.functions();
+
+    let mut candidates = bumpvec_with_capacity(4, bump);
+    for global_ref in refs.iter() {
+        let entry = entry_of_until(binary, &funcs, global_ref.use_address, |entry| {
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            let mut analyzer = FindFlushOutgoing::<E> {
+                result: EntryOf::Retry,
+                buffer_addr,
+                length_addr,
+                seen_seed_buffer: false,
+                seen_seed_length: false,
+                phantom: Default::default(),
+            };
+            analysis.analyze(&mut analyzer);
+            analyzer.result
+        }).into_option_with_entry().map(|x| x.0);
+        if let Some(entry) = entry {
+            if !candidates.contains(&entry) {
+                candidates.push(entry);
+            }
+        }
+    }
+    match candidates.len() {
+        0 => None,
+        1 => Some(candidates[0]),
+        _ => {
+            // Multiple seed+reset bodies (standalone flush + an inlined copy). Keep the one
+            // send_command calls directly.
+            let mut analysis = FuncAnalysis::new(binary, ctx, send_command);
+            let mut analyzer = FlushCalledBySendCommand::<E> {
+                candidates: &candidates,
+                result: None,
+                phantom: Default::default(),
+            };
+            analysis.analyze(&mut analyzer);
+            analyzer.result
+        }
+    }
+}
+
+struct FlushCalledBySendCommand<'a, 'e, E: ExecutionState<'e>> {
+    candidates: &'a [E::VirtualAddress],
+    result: Option<E::VirtualAddress>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FlushCalledBySendCommand<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                if self.candidates.contains(&dest) {
+                    self.result = Some(dest);
+                    ctrl.end_analysis();
+                }
+            }
+        }
+    }
+}
+
+struct FindFlushOutgoing<'e, E: ExecutionState<'e>> {
+    result: EntryOf<()>,
+    buffer_addr: u64,
+    length_addr: u64,
+    seen_seed_buffer: bool,
+    seen_seed_length: bool,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindFlushOutgoing<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Move(ref dest, val) = *op {
+            if let DestOperand::Memory(mem) = dest {
+                let dest = ctrl.resolve_mem(mem);
+                if let Some(addr) = dest.if_constant_address() {
+                    let val = ctrl.resolve(val);
+                    if addr == self.buffer_addr && val.if_constant() == Some(5) {
+                        self.seen_seed_buffer = true;
+                    } else if addr == self.length_addr {
+                        match val.if_constant() {
+                            // outgoing_command_length = 1: keep-alive seed length
+                            Some(1) => self.seen_seed_length = true,
+                            // outgoing_command_length = 0: reset after sending the turn.
+                            // This reset (paired with the keep-alive seed) is unique to flush,
+                            // disambiguating it from any sibling that only seeds the buffer.
+                            Some(0) => {
+                                if self.seen_seed_buffer && self.seen_seed_length {
+                                    self.result = EntryOf::Ok(());
+                                    ctrl.end_analysis();
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Finds `send_turn_message`.
+///
+/// It is the call inside `flush_outgoing_command_turn` that hands the assembled turn to Storm:
+///   send_turn_message(.., .., &outgoing_command_buffer, outgoing_command_length);
+///   outgoing_command_length = 0;
+/// The anti-tamper obfuscation corrupts scarf's argument tracking at that call (the buffer/length
+/// args resolve to undefined memory), so the call is pinned positionally instead: it is the call
+/// immediately preceding the `outgoing_command_length = 0` reset. The sync-command emitter is only
+/// invoked *after* the reset, so the last call before it is unambiguously `send_turn_message`.
+pub(crate) fn send_turn_message<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    flush_outgoing_command_turn: E::VirtualAddress,
+    outgoing_command_length: Operand<'e>,
+) -> Option<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let length_addr = outgoing_command_length.if_memory()?.if_constant_address()?;
+    let mut result = None;
+    let mut analyzer = FindSendTurnMessage::<E> {
+        result: &mut result,
+        length_addr,
+        candidate: None,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, flush_outgoing_command_turn);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct FindSendTurnMessage<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut Option<E::VirtualAddress>,
+    length_addr: u64,
+    candidate: Option<E::VirtualAddress>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendTurnMessage<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    self.candidate = Some(dest);
+                }
+            }
+            Operation::Move(ref dest, val) => {
+                if let DestOperand::Memory(mem) = dest {
+                    let dest = ctrl.resolve_mem(mem);
+                    if dest.if_constant_address() == Some(self.length_addr) &&
+                        ctrl.resolve(val).if_constant() == Some(0)
+                    {
+                        if let Some(candidate) = self.candidate {
+                            *self.result = Some(candidate);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+/// Finds `flush_local_turns_to_latency_depth` (the latency pipe loop).
+///
+///   outstanding = get_outstanding_turn_count();
+///   target = builtin_turn_latency;
+///   if (sync_active) target += net_user_latency;
+///   while (outstanding < target) flush_outgoing_command_turn(++outstanding);
+///
+/// `step_network` calls it once per turn after the receive pass. Among `step_network`'s direct
+/// call targets it is identified by reaching `flush_outgoing_command_turn` — either by calling it,
+/// or (on builds that inline flush into the loop) by writing the keep-alive seed `buffer[0] = 5`
+/// itself. That signature doesn't depend on `net_user_latency` (absent on old builds).
+pub(crate) fn flush_local_turns_to_latency_depth<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    step_network: E::VirtualAddress,
+    flush_outgoing_command_turn: E::VirtualAddress,
+    outgoing_command_buffer: Operand<'e>,
+) -> Option<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let bump = &actx.bump;
+    let buffer_addr = outgoing_command_buffer.if_constant()?;
+
+    let mut collector = CollectCallTargets::<E> {
+        targets: bumpvec_with_capacity(0x20, bump),
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, step_network);
+    analysis.analyze(&mut collector);
+    let targets = collector.targets;
+
+    for &target in targets.iter() {
+        if target == flush_outgoing_command_turn {
+            continue;
+        }
+        let mut analyzer = IsFlushLocalTurns::<E> {
+            flush: flush_outgoing_command_turn,
+            buffer_addr,
+            found: false,
+            limit: 0x200,
+            phantom: Default::default(),
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, target);
+        analysis.analyze(&mut analyzer);
+        if analyzer.found {
+            return Some(target);
+        }
+    }
+    None
+}
+
+struct CollectCallTargets<'b, 'e, E: ExecutionState<'e>> {
+    targets: BumpVec<'b, E::VirtualAddress>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CollectCallTargets<'b, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                if !self.targets.contains(&dest) {
+                    self.targets.push(dest);
+                }
+            }
+        }
+    }
+}
+
+/// Reports whether the analyzed function reaches `flush_outgoing_command_turn`: either by calling
+/// it, or (when flush is inlined) by writing the keep-alive seed `buffer[0] = 5`.
+struct IsFlushLocalTurns<'e, E: ExecutionState<'e>> {
+    flush: E::VirtualAddress,
+    buffer_addr: u64,
+    found: bool,
+    limit: u32,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsFlushLocalTurns<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match self.limit.checked_sub(1) {
+            Some(s) => self.limit = s,
+            None => {
+                ctrl.end_analysis();
+                return;
+            }
+        }
+        match *op {
+            Operation::Call(dest) => {
+                if ctrl.resolve_va(dest) == Some(self.flush) {
+                    self.found = true;
+                    ctrl.end_analysis();
+                }
+            }
+            Operation::Move(ref dest, val) => {
+                if let DestOperand::Memory(mem) = dest {
+                    let dest = ctrl.resolve_mem(mem);
+                    if dest.if_constant_address() == Some(self.buffer_addr) &&
+                        ctrl.resolve(val).if_constant() == Some(5)
+                    {
+                        self.found = true;
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+/// Finds `get_outstanding_turn_count`.
+///
+/// It is the first call `flush_local_turns_to_latency_depth` makes:
+///   outstanding = get_outstanding_turn_count(&local);
+///   if (outstanding == 0) return error;
+/// A Storm-boundary helper (reads `storm_provider_ready`, returns a difference of two turn
+/// sequence words), so it stays a separate function even on builds that inline flush into the loop.
+pub(crate) fn get_outstanding_turn_count<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    flush_local_turns_to_latency_depth: E::VirtualAddress,
+) -> Option<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = None;
+    let mut analyzer = FindGetOutstandingTurnCount::<E> {
+        result: &mut result,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, flush_local_turns_to_latency_depth);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct FindGetOutstandingTurnCount<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut Option<E::VirtualAddress>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    FindGetOutstandingTurnCount<'a, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            // Skip the 64bit stack probe so the first *real* call is taken.
+            if ctrl.check_stack_probe() {
+                return;
+            }
+            *self.result = ctrl.resolve_va(dest);
+            ctrl.end_analysis();
+        }
+    }
+}
+
+/// Finds `builtin_turn_latency`.
+///
+/// It is the global loaded as the base of the latency loop target in
+/// `flush_local_turns_to_latency_depth`:
+///   target = builtin_turn_latency;
+///   if (sync_active) target += net_user_latency;
+///   while (outstanding < target) flush(..);
+/// `sync_active` is seeded to 0 so the `net_user_latency` add is skipped, leaving the loop bound
+/// exactly `builtin_turn_latency` — the only global in the loop comparison.
+pub(crate) fn builtin_turn_latency<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    flush_local_turns_to_latency_depth: E::VirtualAddress,
+    sync_active: Operand<'e>,
+) -> Option<Operand<'e>> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let sync_mem = sync_active.if_memory()?;
+
+    let mut state = E::initial_state(ctx, binary);
+    state.write_memory(sync_mem, ctx.const_0());
+    let mut result = None;
+    let mut analyzer = FindBuiltinTurnLatency::<E> {
+        result: &mut result,
+        sync_active,
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::with_state(
+        binary, ctx, flush_local_turns_to_latency_depth, state);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct FindBuiltinTurnLatency<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut Option<Operand<'e>>,
+    sync_active: Operand<'e>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindBuiltinTurnLatency<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Jump { condition, .. } = *op {
+            let condition = ctrl.resolve(condition);
+            // The loop bound `outstanding < builtin_turn_latency` is the only comparison with a
+            // global memory operand (sync_active was seeded to a constant).
+            let global = condition.iter()
+                .filter(|&x| x != self.sync_active)
+                .find(|&x| x.if_memory().filter(|m| m.is_global()).is_some());
+            if let Some(global) = global {
+                *self.result = Some(global);
+                ctrl.end_analysis();
+            }
         }
     }
 }

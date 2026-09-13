@@ -591,6 +591,11 @@ results! {
             cache_check_resources_for_building,
         CancelUnit => cancel_unit => cache_cancel_unit_finding,
         RandSynced => rand_synced => cache_rng,
+        FlushOutgoingCommandTurn => flush_outgoing_command_turn => cache_flush_outgoing_command_turn,
+        SendTurnMessage => send_turn_message => cache_send_turn_message,
+        FlushLocalTurnsToLatencyDepth => flush_local_turns_to_latency_depth =>
+            cache_flush_local_turns,
+        GetOutstandingTurnCount => get_outstanding_turn_count => cache_get_outstanding_turn_count,
     }
 }
 
@@ -904,6 +909,9 @@ results! {
         SnetPlayerList => snet_player_list => cache_snet_recv_packets,
         CursorScaleFactor => cursor_scale_factor,
         MinimapColorMode => minimap_color_mode => cache_minimap_event_handler,
+        OutgoingCommandBuffer => outgoing_command_buffer => cache_outgoing_commands,
+        OutgoingCommandLength => outgoing_command_length => cache_outgoing_commands,
+        BuiltinTurnLatency => builtin_turn_latency => cache_builtin_turn_latency,
     }
 }
 
@@ -5340,6 +5348,105 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let switch = s.process_commands_switch(actx)?;
                 let result = commands::cancel_unit(actx, process_commands, &switch);
                 Some(([result.cancel_unit], []))
+            })
+    }
+
+    fn cache_outgoing_commands(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(&[], &[OutgoingCommandBuffer, OutgoingCommandLength],
+            |s| {
+                let send_command = s.send_command(actx)?;
+                let result = commands::outgoing_commands(actx, send_command);
+                Some(([], [result.outgoing_command_buffer, result.outgoing_command_length]))
+            })
+    }
+
+    fn outgoing_command_buffer(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::OutgoingCommandBuffer,
+                           |s| s.cache_outgoing_commands(actx))
+    }
+
+    fn outgoing_command_length(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::OutgoingCommandLength,
+                           |s| s.cache_outgoing_commands(actx))
+    }
+
+    fn cache_flush_outgoing_command_turn(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[FlushOutgoingCommandTurn], &[],
+            |s| {
+                let send_command = s.send_command(actx)?;
+                let buffer = s.outgoing_command_buffer(actx)?;
+                let length = s.outgoing_command_length(actx)?;
+                let funcs = s.function_finder();
+                let result = commands::flush_outgoing_command_turn(
+                    actx, send_command, buffer, length, &funcs);
+                Some(([result], []))
+            })
+    }
+
+    fn flush_outgoing_command_turn(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::FlushOutgoingCommandTurn,
+                             |s| s.cache_flush_outgoing_command_turn(actx))
+    }
+
+    fn cache_send_turn_message(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[SendTurnMessage], &[],
+            |s| {
+                let flush = s.flush_outgoing_command_turn(actx)?;
+                let length = s.outgoing_command_length(actx)?;
+                let result = commands::send_turn_message(actx, flush, length);
+                Some(([result], []))
+            })
+    }
+
+    fn cache_flush_local_turns(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[FlushLocalTurnsToLatencyDepth], &[],
+            |s| {
+                let step_network = s.step_network(actx)?;
+                let flush = s.flush_outgoing_command_turn(actx)?;
+                let buffer = s.outgoing_command_buffer(actx)?;
+                let result = commands::flush_local_turns_to_latency_depth(
+                    actx, step_network, flush, buffer);
+                Some(([result], []))
+            })
+    }
+
+    fn flush_local_turns_to_latency_depth(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::FlushLocalTurnsToLatencyDepth,
+                             |s| s.cache_flush_local_turns(actx))
+    }
+
+    fn cache_get_outstanding_turn_count(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[GetOutstandingTurnCount], &[],
+            |s| {
+                let flush_local = s.flush_local_turns_to_latency_depth(actx)?;
+                let result = commands::get_outstanding_turn_count(actx, flush_local);
+                Some(([result], []))
+            })
+    }
+
+    fn sync_active(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::SyncActive, |s| s.cache_game_loop(actx))
+    }
+
+    fn cache_builtin_turn_latency(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(&[], &[BuiltinTurnLatency],
+            |s| {
+                let flush_local = s.flush_local_turns_to_latency_depth(actx)?;
+                let sync_active = s.sync_active(actx)?;
+                let result = commands::builtin_turn_latency(actx, flush_local, sync_active);
+                Some(([], [result]))
             })
     }
 }

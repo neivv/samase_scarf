@@ -100,6 +100,8 @@ find_unit_for_click: 007a5300
 finish_unit_post: 005ae260
 finish_unit_pre: 005ae550
 flingy_update_target_dir: 005712f0
+flush_local_turns_to_latency_depth: 007339a0
+flush_outgoing_command_turn: 00734ce0
 foliage_mark_area_for_resource: 006c4780
 font_cache_render_ascii: 00974a10
 for_each_surrounding_tile: 009a3240
@@ -117,6 +119,7 @@ get_images_rel: 005769d0
 get_locales: 0061e4a0
 get_mouse_x: 006bca20
 get_mouse_y: 006bca30
+get_outstanding_turn_count: 00795b40
 get_region: 00757320
 get_render_target: 00abc5a0
 get_sight_range: 005a80c0
@@ -225,6 +228,7 @@ select_mouse_up: 007a44d0
 select_units: 00770a70
 send_command: 00734590
 send_queued_lobby_commands: 00714dd0
+send_turn_message: 007226f0
 serialize_images: 00578c90
 serialize_sprites: 0057ff30
 set_briefing_music: 006e5ac0
@@ -338,6 +342,7 @@ anti_troll: 1016598
 asset_scale: Mem32[f29d20]
 base_anim_set: fd1448
 bnet_controller: (Mem32[f58310] ^ 3956a5b3)
+builtin_turn_latency: Mem32[11d0528]
 campaigns: f57dd8
 cheat_flags: Mem32[11969b0]
 chk_init_players: 11d35d8
@@ -488,6 +493,8 @@ observer_ui: Mem32[fdadb8]
 on_clip_cursor_end: Mem32[11a7ac4]
 order_timer_reset_counter: Mem32[fd41f8]
 original_chk_player_types: 11d0474
+outgoing_command_buffer: 11d1df8
+outgoing_command_length: Mem32[11d1df4]
 palette_set: 11fd0c8
 path_array: Mem32[11e06a4]
 pathing: Mem32[11d7230]
