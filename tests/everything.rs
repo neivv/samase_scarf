@@ -1625,7 +1625,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 LookupSoundId | SFileOpenFileEx | SFileReadFileEx | SFileCloseFile |
                 LoadConsoles | InitConsoles | GetUiConsoles | GetStatResIconsDdsGrp |
                 GetUnitSkin | JoinCustomGame | FindFileWithCrc | ForFilesInDir |
-                SimpleFileMatchCallback | GetLocales | InitGameMap | SaveReplay => continue,
+                SimpleFileMatchCallback | GetLocales | InitGameMap | SaveReplay |
+                AdvanceTurnTimerAndStepNetwork | RecomputeTurnDurations => continue,
             _ => (),
         }
         assert!(result.is_some(), "Missing {}", addr.name());
@@ -1646,7 +1647,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 RgbColors | DisableColorChoice | UseMapSetRgbColor | SfxData | SoundChannels |
                 Images | TilesetCv5 | TilesetData | TilesetVx4Ex | TileDefaultFlags |
                 MinitileGraphics | MinitileData | FoliageState | CreepOriginalTiles |
-                CreepTileBorders | CursorScaleFactor =>
+                CreepTileBorders | CursorScaleFactor | TurnDurationBySpeed |
+                TurnTimerAccumulator | NetworkWaitingForTurns =>
             {
                 continue;
             }
@@ -1693,7 +1695,7 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 FirstFreePlacementImage | LastFreePlacementImage | FirstFreePlacementRect |
                 LastFreePlacementRect | TilesetIndexedMapTiles | Vx4MapTiles | RepulseState |
                 TerrainFramebuf | StatportVideos | StatportTalkingPortraitActive |
-                StatportVideoId | NgdpEnabled | MinimapColorMode =>
+                StatportVideoId | NgdpEnabled | MinimapColorMode | GameFrameCount =>
             {
                 check_global_opt(result, binary, op.name());
             }

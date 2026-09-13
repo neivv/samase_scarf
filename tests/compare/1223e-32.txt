@@ -8,6 +8,7 @@ add_pylon_aura: 0059a490
 add_to_position_search: 00557980
 add_to_replay_data: 00723950
 add_town_unit_ai: 00607020
+advance_turn_timer_and_step_network: 0069d300
 ai_add_military_to_region: 0061ff80
 ai_attack_clear: 00605870
 ai_attack_prepare: 00620e10
@@ -206,6 +207,7 @@ rand_synced: 00720760
 read_whole_mpq_file: None
 read_whole_mpq_file2: None
 receive_storm_turns: 00709e50
+recompute_turn_durations: 006b0df0
 refresh_ui: 00783400
 remove_from_client_selection: 00589fe0
 remove_from_selections: 007661a0
@@ -404,6 +406,7 @@ foliage_state: None
 fonts: 105fce8
 game: (Mem32[dcfb68] ^ 6845d8ce)
 game_data: 10283e8
+game_frame_count: Mem32[1026d0c]
 game_lobby: None
 game_screen_height_bwpx: Mem32[dceee4]
 game_screen_height_ratio: Mem32[dceeec]
@@ -481,6 +484,7 @@ net_player_to_unique: 1026c68
 net_players: 1029520
 net_user_latency: Mem32[102882c]
 network_ready: Mem8[1026cd1]
+network_waiting_for_turns: Mem8[ffdd55]
 next_game_step_tick: Mem32[ffdd30]
 ngdp_enabled: Mem8[e21af8]
 ngdp_instance: e21c24
@@ -564,6 +568,8 @@ tooltip_draw_func: Mem32[e30f80]
 tranwire_ddsgrp: 10386c4
 tranwire_grp: Mem32[10386ac]
 trigger_current_player: Mem32[103f6f4]
+turn_duration_by_speed: ffdcfc
+turn_timer_accumulator: Mem32[ffdd18]
 ui_consoles: None
 unique_command_user: Mem32[dd6904]
 unit_count: Mem32[e30b14]

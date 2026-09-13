@@ -13,7 +13,8 @@ use crate::switch::CompleteSwitch;
 use crate::struct_layouts;
 use crate::util::{
     ControlExt, MemAccessExt, OptionExt, OperandExt, read_u32_at,
-    if_arithmetic_eq_neq, is_global, bumpvec_with_capacity, single_result_assign, ExecStateExt,
+    if_arithmetic_eq_neq, is_global, is_stack_address, bumpvec_with_capacity,
+    single_result_assign, ExecStateExt,
 };
 
 #[derive(Clone, Debug)]
@@ -37,6 +38,17 @@ pub struct StepNetwork<'e, Va: VirtualAddressTrait> {
 pub(crate) struct StepReplayCommands<'e, Va: VirtualAddressTrait> {
     pub replay_end: Option<Va>,
     pub replay_header: Option<Operand<'e>>,
+}
+
+pub(crate) struct TurnTimer<'e, Va: VirtualAddressTrait> {
+    pub advance_turn_timer_and_step_network: Option<Va>,
+    pub turn_timer_accumulator: Option<Operand<'e>>,
+    pub network_waiting_for_turns: Option<Operand<'e>>,
+}
+
+pub(crate) struct TurnDurations<'e, Va: VirtualAddressTrait> {
+    pub recompute_turn_durations: Option<Va>,
+    pub turn_duration_by_speed: Option<Operand<'e>>,
 }
 
 pub(crate) struct PrintText<Va: VirtualAddressTrait> {
@@ -264,6 +276,341 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'e, E
                         ctrl.analyze_with_current_state(self, dest);
                         self.is_inlining = false;
                         if self.result.is_some() && !crate::test_assertions() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+/// Finds `game_frame_count`.
+///
+/// `step_network` increments it once per executed turn (`game_frame_count += 1`); it is the only
+/// global that is self-incremented by 1 in `step_network`.
+pub(crate) fn game_frame_count<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    step_network: E::VirtualAddress,
+) -> Option<Operand<'e>> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = None;
+    let mut analyzer = FindGameFrameCount::<E> {
+        result: &mut result,
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, step_network);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct FindGameFrameCount<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut Option<Operand<'e>>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindGameFrameCount<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Move(ref dest, val) = *op {
+            if let DestOperand::Memory(mem) = dest {
+                if mem.size == MemAccessSize::Mem32 {
+                    let dest = ctrl.resolve_mem(mem);
+                    if dest.is_global() {
+                        let dest_op = ctrl.ctx().memory(&dest);
+                        let val = ctrl.resolve(val).unwrap_and_mask();
+                        if val.if_arithmetic_add_const(1) == Some(dest_op) {
+                            *self.result = Some(dest_op);
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Finds `advance_turn_timer_and_step_network` and the per-turn globals it drives.
+///
+/// It is the caller of `step_network` whose body drains `turn_timer_accumulator -= 0x3e8` (1000
+/// µs/tick). Within it:
+///   turn_timer_accumulator -= 1000; ... if (step_network() == 0) { network_waiting_for_turns = 1; }
+///   ... if (turns_ready_this_step.b != 0) *out = 1;   // advance one sim frame
+/// `turns_ready_this_step` is the only byte global tested-but-never-written here (in contrast to
+/// `network_waiting_for_turns`, which is also written).
+pub(crate) fn analyze_turn_timer<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    step_network: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> TurnTimer<'e, E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = TurnTimer {
+        advance_turn_timer_and_step_network: None,
+        turn_timer_accumulator: None,
+        network_waiting_for_turns: None,
+    };
+    let funcs = functions.functions();
+    let callers = functions.find_callers(actx, step_network);
+    for caller in callers {
+        let found = entry_of_until(binary, &funcs, caller, |entry| {
+            let mut analyzer = AnalyzeTurnTimer::<E> {
+                turn_timer_accumulator: None,
+                network_waiting_for_turns: None,
+                has_drain: false,
+                phantom: Default::default(),
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            if analyzer.has_drain {
+                EntryOf::Ok((analyzer.turn_timer_accumulator,
+                    analyzer.network_waiting_for_turns))
+            } else {
+                EntryOf::Retry
+            }
+        }).into_option_with_entry();
+        if let Some((entry, (tta, nwft))) = found {
+            result.advance_turn_timer_and_step_network = Some(entry);
+            result.turn_timer_accumulator = tta;
+            result.network_waiting_for_turns = nwft;
+            break;
+        }
+    }
+    result
+}
+
+struct AnalyzeTurnTimer<'e, E: ExecutionState<'e>> {
+    turn_timer_accumulator: Option<Operand<'e>>,
+    network_waiting_for_turns: Option<Operand<'e>>,
+    has_drain: bool,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AnalyzeTurnTimer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        if let Operation::Move(ref dest, val) = *op {
+            if let DestOperand::Memory(mem) = dest {
+                let dest = ctrl.resolve_mem(mem);
+                if dest.is_global() {
+                    if mem.size == MemAccessSize::Mem32 {
+                        let dest_op = ctx.memory(&dest);
+                        let value = ctrl.resolve(val).unwrap_and_mask();
+                        // turn_timer_accumulator -= 0x3e8 (drains 1000 µs/tick)
+                        if value.if_arithmetic_sub_const(0x3e8) == Some(dest_op) {
+                            self.has_drain = true;
+                            self.turn_timer_accumulator = Some(dest_op);
+                        }
+                    }
+                    // network_waiting_for_turns = 1 (stall flag)
+                    if ctrl.resolve(val).if_constant() == Some(1) &&
+                        self.network_waiting_for_turns.is_none()
+                    {
+                        self.network_waiting_for_turns = Some(ctx.memory(&dest));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Finds `recompute_turn_durations` and `turn_duration_by_speed`.
+///
+/// `turn_duration_by_speed` is the only `.data` array read with a non-constant index inside
+/// `advance_turn_timer_and_step_network` (it tops up `turn_timer_accumulator += duration[speed]`).
+/// `recompute_turn_durations` is the function called by both turn-rate command handlers that fills
+/// that table as `1e6 / (speed_mult * turn_rate)` µs, clamped to a 0x3e8 (1000) floor after
+/// `memset(table, 0, 0x1c)`; among the table's referrers it is the one that writes the 0x3e8 floor
+/// (or memsets 0x1c) into it.
+pub(crate) fn turn_durations<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    advance_turn_timer_and_step_network: E::VirtualAddress,
+    process_commands_switch: &CompleteSwitch<'e>,
+) -> TurnDurations<'e, E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let bump = &actx.bump;
+    let mut result = TurnDurations {
+        recompute_turn_durations: None,
+        turn_duration_by_speed: None,
+    };
+
+    // turn_duration_by_speed: the .data array indexed in the accumulator top-up.
+    let mut reader = FindTurnDurationRead::<E> {
+        binary,
+        turn_duration_by_speed: None,
+        phantom: Default::default(),
+    };
+    FuncAnalysis::new(binary, ctx, advance_turn_timer_and_step_network).analyze(&mut reader);
+    let tdbs = match reader.turn_duration_by_speed {
+        Some(t) => t,
+        None => return result,
+    };
+    let tdbs_addr = match tdbs.if_constant() {
+        Some(c) => c,
+        None => return result,
+    };
+    result.turn_duration_by_speed = Some(tdbs);
+
+    // recompute_turn_durations: a call/tail-call target of a turn-rate command handler whose own
+    // body fills the table. Resolving it as a call target gives its exact entry (a global-reference
+    // search instead merges it with a neighbour when recompute is only ever tail-called).
+    // cmd_set_turn_rate (case 0x5f) tail-calls it; cmd_dynamic_turn_rate (case 0x66) regular-calls
+    // it — the latter keeps it a shallow call target even on 64bit, where the 0x5f handler is large.
+    let mut targets = bumpvec_with_capacity(0x40, bump);
+    for &case_id in &[0x5fu8, 0x66] {
+        let case = match process_commands_switch.branch(binary, ctx, case_id as u32) {
+            Some(s) => s,
+            None => continue,
+        };
+        let mut collector = CollectCallTailTargets::<E> {
+            targets: bumpvec_with_capacity(0x10, bump),
+            entry_esp: ctx.register(4),
+            phantom: Default::default(),
+        };
+        FuncAnalysis::new(binary, ctx, case).analyze(&mut collector);
+        let level1 = collector.targets;
+        for &t in level1.iter() {
+            if !targets.contains(&t) {
+                targets.push(t);
+            }
+            let mut collector = CollectCallTailTargets::<E> {
+                targets: bumpvec_with_capacity(0x10, bump),
+                entry_esp: ctx.register(4),
+                phantom: Default::default(),
+            };
+            FuncAnalysis::new(binary, ctx, t).analyze(&mut collector);
+            for &t2 in collector.targets.iter() {
+                if !targets.contains(&t2) {
+                    targets.push(t2);
+                }
+            }
+        }
+    }
+    for &target in targets.iter() {
+        let mut analyzer = FindTurnDurationFill::<E> {
+            table_addr: tdbs_addr,
+            found: false,
+            entry_esp: ctx.register(4),
+            phantom: Default::default(),
+        };
+        FuncAnalysis::new(binary, ctx, target).analyze(&mut analyzer);
+        if analyzer.found {
+            result.recompute_turn_durations = Some(target);
+            break;
+        }
+    }
+    result
+}
+
+struct CollectCallTailTargets<'b, 'e, E: ExecutionState<'e>> {
+    targets: BumpVec<'b, E::VirtualAddress>,
+    entry_esp: Operand<'e>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CollectCallTailTargets<'b, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Some((dest, _is_tail)) = ctrl.call_or_tail_call(op, self.entry_esp) {
+            if !self.targets.contains(&dest) {
+                self.targets.push(dest);
+            }
+        }
+    }
+}
+
+/// Recovers the base of the `.data` array indexed by a non-constant (the duration table).
+struct FindTurnDurationRead<'e, E: ExecutionState<'e>> {
+    binary: &'e scarf::BinaryFile<E::VirtualAddress>,
+    turn_duration_by_speed: Option<Operand<'e>>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+/// True if `addr` falls inside the `.data` section's virtual range (covers zero-initialized
+/// globals beyond the raw file size, which `section_by_addr` does not).
+fn is_data_global<'e, E: ExecutionState<'e>>(
+    binary: &scarf::BinaryFile<E::VirtualAddress>,
+    addr: u64,
+) -> bool {
+    if let Some(data) = binary.section(b".data\0\0\0") {
+        let a = E::VirtualAddress::from_u64(addr);
+        a >= data.virtual_address && a < data.virtual_address + data.virtual_size
+    } else {
+        false
+    }
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindTurnDurationRead<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        let value = match *op {
+            Operation::Move(_, val) => ctrl.resolve(val),
+            Operation::Jump { condition, .. } => ctrl.resolve(condition),
+            _ => return,
+        };
+        for part in value.iter() {
+            if let Some(mem) = part.if_mem32() {
+                let (base, offset) = mem.address();
+                if base.if_constant().is_none() && !is_stack_address(base) &&
+                    is_data_global::<E>(self.binary, offset)
+                {
+                    self.turn_duration_by_speed = Some(ctx.constant(offset));
+                    ctrl.end_analysis();
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// Reports whether the analyzed function fills `table_addr` (the 0x3e8 floor write or the
+/// `memset(table, 0, 0x1c)`), i.e. whether it is `recompute_turn_durations`.
+struct FindTurnDurationFill<'e, E: ExecutionState<'e>> {
+    table_addr: u64,
+    found: bool,
+    entry_esp: Operand<'e>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindTurnDurationFill<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Some((_, true)) = ctrl.call_or_tail_call(op, self.entry_esp) {
+            ctrl.end_analysis();
+            return;
+        }
+        match *op {
+            Operation::Call(_) => {
+                // memset(turn_duration_by_speed, 0, 0x1c)
+                if ctrl.resolve_arg(2).if_constant() == Some(0x1c) &&
+                    ctrl.resolve_arg(0).if_constant() == Some(self.table_addr)
+                {
+                    self.found = true;
+                    ctrl.end_analysis();
+                }
+            }
+            Operation::Move(ref dest, val) => {
+                if let DestOperand::Memory(mem) = dest {
+                    if mem.size == MemAccessSize::Mem32 &&
+                        ctrl.resolve(val).if_constant() == Some(0x3e8)
+                    {
+                        // turn_duration_by_speed[i] = 0x3e8 floor. The write lands inside the
+                        // 7-dword table; with a constant-folded index the array base shows up as
+                        // the address offset (table_addr + i*4), so accept any write in that range.
+                        let dest = ctrl.resolve_mem(mem);
+                        let (_, offset) = dest.address();
+                        if offset >= self.table_addr && offset < self.table_addr + 0x1c {
+                            self.found = true;
                             ctrl.end_analysis();
                         }
                     }
