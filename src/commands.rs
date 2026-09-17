@@ -1588,45 +1588,87 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for MorphAnalyzer<'a, 'e
     }
 }
 
+pub(crate) struct SaveReplayFuncs<Va: VirtualAddressTrait> {
+    pub save_replay: Option<Va>,
+    pub save_replay_by_name: Option<Va>,
+    pub build_replay_file_path: Option<Va>,
+}
+
+/// Finds `save_replay(path)` and the two functions the "save the replay of the game that just
+/// ended" path is built from: `save_replay_by_name(name, replace_existing)` and
+/// `build_replay_file_path(name, out, out_size)`.
+///
+/// `save_replay_by_name` is recognized by its shape: it turns its name argument into a path with
+/// `build_replay_file_path(name, buffer, 0x104)` and then hands that buffer to `save_replay`.
+/// It is reached either from the "strREPLACE_ERR_s" error string it uses when an existing replay
+/// file cannot be replaced, or, on versions which build that string inline instead of referencing
+/// it, from the `save_replay_by_name("LastReplay", 1)` call of the game teardown code.
 pub(crate) fn save_replay<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     functions: &FunctionFinder<'_, 'e, E>,
-) -> Option<E::VirtualAddress> {
-    let str_refs = functions.string_refs(analysis, b"strREPLACE_ERR_s");
-
+) -> SaveReplayFuncs<E::VirtualAddress> {
     let binary = analysis.binary;
     let ctx = analysis.ctx;
     let funcs = functions.functions();
-
-    let do_analysis = |entry: E::VirtualAddress| -> EntryOf<E::VirtualAddress> {
-        let mut analyzer = SaveReplayFunctionAnalyzer::<E> {
-                result: None,
-                arg_cache: &analysis.arg_cache,
-                state: SaveReplayState::FindFilenameCall,
-                filepath_operand: None,
-            };
-            // Assume the second parameter was 0 to get a simpler branch
-            // structure
-            let mut exec = E::initial_state(ctx, binary);
-            exec.move_resolved(
-                &DestOperand::from_oper(analysis.arg_cache.on_entry(1)),
-                ctx.constant(0),
-            );
-            let mut func_analysis = FuncAnalysis::with_state(binary, ctx, entry, exec);
-            func_analysis.analyze(&mut analyzer);
-            match analyzer.result {
-                Some(addr) => EntryOf::Ok(addr),
-                None => EntryOf::Retry,
-            }
+    let mut result = SaveReplayFuncs {
+        save_replay: None,
+        save_replay_by_name: None,
+        build_replay_file_path: None,
     };
 
+    let do_analysis = |func: E::VirtualAddress| -> EntryOf<SaveReplayFuncs<E::VirtualAddress>> {
+        let mut analyzer = SaveReplayFunctionAnalyzer::<E> {
+            result: SaveReplayFuncs {
+                save_replay: None,
+                save_replay_by_name: None,
+                build_replay_file_path: None,
+            },
+            arg_cache: &analysis.arg_cache,
+            state: SaveReplayState::FindFilenameCall,
+            filepath_operand: None,
+        };
+        // Assume the second parameter was 0 to get a simpler branch
+        // structure
+        let mut exec = E::initial_state(ctx, binary);
+        exec.move_resolved(
+            &DestOperand::from_oper(analysis.arg_cache.on_entry(1)),
+            ctx.constant(0),
+        );
+        let mut func_analysis = FuncAnalysis::with_state(binary, ctx, func, exec);
+        func_analysis.analyze(&mut analyzer);
+        if analyzer.result.build_replay_file_path.is_none() {
+            return EntryOf::Retry;
+        }
+        // The path building call is what makes this save_replay_by_name; the save_replay call
+        // after it is inlined on some versions.
+        analyzer.result.save_replay_by_name = Some(func);
+        EntryOf::Ok(analyzer.result)
+    };
+
+    // Keep looking for as long as save_replay itself hasn't been found, but don't discard
+    // save_replay_by_name from a version where save_replay is inlined.
+    let mut add_result = |new: SaveReplayFuncs<E::VirtualAddress>| {
+        if new.save_replay.is_some() {
+            result = new;
+            true
+        } else {
+            if result.save_replay_by_name.is_none() {
+                result = new;
+            }
+            false
+        }
+    };
+
+    let str_refs = functions.string_refs(analysis, b"strREPLACE_ERR_s");
     for str_ref in &str_refs {
         let entry_result = entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
-           do_analysis(entry)
+            do_analysis(entry)
         }).into_option();
 
-        if entry_result.is_some() {
-            return entry_result;
+        if let Some(new) = entry_result {
+            if add_result(new) {
+                return result;
+            }
         }
     }
 
@@ -1651,12 +1693,14 @@ pub(crate) fn save_replay<'e, E: ExecutionState<'e>>(
             do_analysis(target_func)
         }).into_option();
 
-        if entry_result.is_some() {
-            return entry_result;
+        if let Some(new) = entry_result {
+            if add_result(new) {
+                return result;
+            }
         }
     }
 
-    None
+    result
 }
 
 struct LastReplayCallAnalyzer<'e, E: ExecutionState<'e>> {
@@ -1687,7 +1731,7 @@ impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for LastReplayCallAnalyzer<'
 }
 
 struct SaveReplayFunctionAnalyzer<'a, 'e, E: ExecutionState<'e>> {
-    result: Option<E::VirtualAddress>,
+    result: SaveReplayFuncs<E::VirtualAddress>,
     arg_cache: &'a ArgCache<'e, E>,
     state: SaveReplayState,
     filepath_operand: Option<scarf::Operand<'e>>,
@@ -1706,7 +1750,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SaveReplayFunctionAn
             SaveReplayState::FindFilenameCall => {
                 match *op {
                     Operation::Call(dest) => {
-                        if let Some(_dest_addr) = ctrl.resolve_va(dest) {
+                        if let Some(dest_addr) = ctrl.resolve_va(dest) {
                             let arg0 = ctrl.resolve_arg(0);
                             let arg2 = ctrl.resolve_arg(2);
 
@@ -1714,6 +1758,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SaveReplayFunctionAn
                             //   func(filename, output, MAX_PATH)
                             if arg0 == self.arg_cache.on_entry(0) &&
                                arg2.if_constant() == Some(0x104) {
+                                self.result.build_replay_file_path = Some(dest_addr);
                                 self.filepath_operand = Some(ctrl.resolve_arg(1));
                                 self.state = SaveReplayState::FindSaveReplayCall;
                                 // Assume this call returns non-zero for later branches
@@ -1741,7 +1786,7 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SaveReplayFunctionAn
 
                         if let Some(expected) = self.filepath_operand {
                             if arg0 == expected {
-                                self.result = Some(dest_addr);
+                                self.result.save_replay = Some(dest_addr);
                                 ctrl.end_analysis();
                             }
                         }

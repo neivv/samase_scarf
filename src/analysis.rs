@@ -216,7 +216,15 @@ results! {
         PlaySound => play_sound,
         AiPrepareMovingTo => ai_prepare_moving_to,
         StepReplayCommands => step_replay_commands,
-        SaveReplay => save_replay,
+        SaveReplay => save_replay => cache_save_replay,
+        // save_replay_by_name(name, replace_existing) writes the replay of the game that just
+        // ended to "Maps\Replays\<name>.rep", showing an error dialog and returning -1 if
+        // an existing file with that name could not be replaced.
+        SaveReplayByName => save_replay_by_name => cache_save_replay,
+        // build_replay_file_path(name, out, out_size) -> bool writes the replay path
+        // "<user data dir>\Maps\Replays\<name>.rep" to `out`, creating the directory
+        // if it does not exist yet. First call of save_replay_by_name.
+        BuildReplayFilePath => build_replay_file_path => cache_save_replay,
         AiTrainMilitary => ai_train_military,
         AiAddMilitaryToRegion => ai_add_military_to_region,
         GetRegion => get_region => cache_regions,
@@ -1296,10 +1304,6 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
         self.enter(AnalysisCache::is_replay)
     }
 
-    pub fn save_replay(&mut self) -> Option<E::VirtualAddress> {
-        self.enter(AnalysisCache::save_replay)
-    }
-
     pub fn send_command(&mut self) -> Option<E::VirtualAddress> {
         self.enter(AnalysisCache::send_command)
     }
@@ -2246,10 +2250,15 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
-    fn save_replay(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
-        self.cache_single_address(AddressAnalysis::SaveReplay, |s| {
+    fn cache_save_replay(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(&[SaveReplay, SaveReplayByName, BuildReplayFilePath], &[], |s| {
             let funcs = s.function_finder();
-            commands::save_replay(actx, &funcs)
+            let result = commands::save_replay(actx, &funcs);
+            Some((
+                [result.save_replay, result.save_replay_by_name, result.build_replay_file_path],
+                [],
+            ))
         })
     }
 
