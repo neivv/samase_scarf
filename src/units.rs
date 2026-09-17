@@ -3609,3 +3609,54 @@ fn seems_int_div_by_32<'e>(op: Operand<'e>) -> bool {
         .and_either_other(|x| x.if_arithmetic_and_const(0x1f))
         .is_some()
 }
+
+/// Finds `unit_position_search_entry_count` from `add_to_position_search`.
+///
+/// The count is the shared length of the x and y search arrays, and the only global that
+/// `add_to_position_search` increments; it does so twice, once for the top left corner entry
+/// and once for the bottom right one.
+pub(crate) fn unit_position_search_entry_count<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    add_to_position_search: E::VirtualAddress,
+) -> Option<Operand<'e>> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = PositionSearchCountAnalyzer::<E> {
+        result: None,
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, add_to_position_search);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct PositionSearchCountAnalyzer<'e, E: ExecutionState<'e>> {
+    result: Option<Operand<'e>>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PositionSearchCountAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let Operation::Move(DestOperand::Memory(ref mem), value) = *op else {
+            return;
+        };
+        if mem.size != MemAccessSize::Mem32 {
+            return;
+        }
+        let dest = ctrl.resolve_mem(mem);
+        if dest.if_constant_address().is_none() {
+            return;
+        }
+        let value = ctrl.resolve(value).unwrap_and_mask();
+        let is_increment = value.if_arithmetic_add_const(1)
+            .and_then(|x| x.if_memory())
+            .is_some_and(|x| *x == dest);
+        if is_increment {
+            let ctx = ctrl.ctx();
+            self.result = Some(ctx.memory(&dest));
+            ctrl.end_analysis();
+        }
+    }
+}

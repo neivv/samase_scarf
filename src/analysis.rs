@@ -904,6 +904,10 @@ results! {
         SnetPlayerList => snet_player_list => cache_snet_recv_packets,
         CursorScaleFactor => cursor_scale_factor,
         MinimapColorMode => minimap_color_mode => cache_minimap_event_handler,
+        // u32 length shared by the x and y unit position search arrays. A unit takes two
+        // entries in both of them, so this counts collision box edges and not units.
+        UnitPositionSearchEntryCount => unit_position_search_entry_count =>
+            cache_unit_position_search_entry_count,
     }
 }
 
@@ -945,6 +949,7 @@ pub struct AnalysisCache<'e, E: ExecutionState<'e>> {
     create_game_dialog_vtbl_on_multiplayer_create: u16,
     join_param_variant_type_offset: u16,
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
+    dynamic_pathing: Cached<pathing::DynamicPathing>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
     dat_patches: Cached<Option<Rc<DatPatches<'e, E::VirtualAddress>>>>,
     run_triggers: Cached<RunTriggers<E::VirtualAddress>>,
@@ -1170,6 +1175,7 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
                 create_game_dialog_vtbl_on_multiplayer_create: 0,
                 join_param_variant_type_offset: u16::MAX,
                 limits: Default::default(),
+                dynamic_pathing: Default::default(),
                 prism_shaders: Default::default(),
                 dat_patches: Default::default(),
                 run_triggers: Default::default(),
@@ -1458,6 +1464,10 @@ impl<'e, E: ExecutionState<'e>> Analysis<'e, E> {
 
     pub fn limits(&mut self) -> Rc<Limits<'e, E::VirtualAddress>> {
         self.enter(AnalysisCache::limits)
+    }
+
+    pub fn dynamic_pathing(&mut self) -> pathing::DynamicPathing {
+        self.enter(AnalysisCache::dynamic_pathing)
     }
 
     /// Memory allocation function that at least TTF code uses.
@@ -3230,6 +3240,21 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some(([r.ai_attack_prepare, r.ai_attack_clear], []))
             },
         )
+    }
+
+    fn dynamic_pathing(&mut self, actx: &AnalysisCtx<'e, E>) -> pathing::DynamicPathing {
+        if let Some(cached) = self.dynamic_pathing.cached() {
+            return cached;
+        }
+        let result = match self.pathing(actx) {
+            Some(pathing) => {
+                let functions = self.function_finder();
+                pathing::dynamic_pathing(actx, pathing, &functions)
+            }
+            None => Default::default(),
+        };
+        self.dynamic_pathing.cache(&result);
+        result
     }
 
     fn cache_ai_step_frame(&mut self, actx: &AnalysisCtx<'e, E>) {
@@ -5244,6 +5269,20 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some(([r.update_building_placement_state, r.ai_update_building_placement_state,
                     r.find_nearest_unit_in_area_point], []))
             })
+    }
+
+    fn add_to_position_search(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::AddToPositionSearch, |s| s.cache_show_unit(actx))
+    }
+
+    fn cache_unit_position_search_entry_count(&mut self, actx: &AnalysisCtx<'e, E>) {
+        self.cache_single_operand(OperandAnalysis::UnitPositionSearchEntryCount, |s| {
+            let add_to_position_search = s.add_to_position_search(actx)?;
+            units::unit_position_search_entry_count(actx, add_to_position_search)
+        });
     }
 
     fn cache_show_unit(&mut self, actx: &AnalysisCtx<'e, E>) {

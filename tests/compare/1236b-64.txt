@@ -567,6 +567,7 @@ trigger_current_player: Mem32[1410bc698]
 ui_consoles: 1410afec8
 unique_command_user: Mem32[140dd5b34]
 unit_count: Mem32[140e83528]
+unit_position_search_entry_count: Mem32[140e83360]
 unit_should_reveal_area: Mem32[140e835fc]
 unit_skin_map: 140dacac8
 unit_strength: 140ebe130
@@ -647,6 +648,11 @@ limits.units: [(140e6ab50, 0, 0), (140e83368, 0, 2), (140e83380, 0, 2), (140e834
 limits.bullets: [(140e6ab68, 0, 0)]
 limits.orders: [(140e81e28, 0, 0)]
 limits.fow_sprites: [(140e832f8, 0, 0)]
+pathing_dynamic_state: pathing + 0xa1668, 0x48 bytes
+pathing_dynamic_edges[0]: ptr 0x0, count 0x20, capacity 0x28, entry 0x8
+pathing_dynamic_edges[1]: ptr 0x8, count 0x22, capacity 0x2a, entry 0x8
+pathing_dynamic_edges[2]: ptr 0x10, count 0x24, capacity 0x2c, entry 0x8
+pathing_dynamic_edges[3]: ptr 0x18, count 0x26, capacity 0x2e, entry 0x8
 CreateGameScreen.on_multiplayer_create offset: Some(160)
 Prism vertex shader sets: 0x6
 Prism pixel shader sets: 0x2b

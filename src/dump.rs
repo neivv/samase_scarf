@@ -181,6 +181,20 @@ pub fn dump<'e, E: ExecutionState<'e>>(
             out!(&mut out, "limits.{}: {:?}", name, arr);
         }
 
+        let dynamic_pathing = analysis.dynamic_pathing();
+        out!(
+            &mut out, "pathing_dynamic_state: pathing + {:#x}, {:#x} bytes",
+            dynamic_pathing.state_offset, dynamic_pathing.struct_size,
+        );
+        for (i, array) in dynamic_pathing.edge_arrays.iter().enumerate() {
+            out!(
+                &mut out,
+                "pathing_dynamic_edges[{}]: ptr {:#x}, count {:#x}, capacity {:#x}, entry {:#x}",
+                i, array.ptr_offset, array.count_offset, array.capacity_offset,
+                array.entry_size,
+            );
+        }
+
         let offset = analysis.create_game_dialog_vtbl_on_multiplayer_create();
         out!(&mut out, "CreateGameScreen.on_multiplayer_create offset: {:x?}", offset);
 

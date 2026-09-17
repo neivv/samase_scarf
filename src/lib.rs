@@ -87,6 +87,7 @@ pub use crate::game::{Limits};
 pub use crate::inline_hook::InlineHookState;
 pub use crate::iscript::StepIscriptHook;
 pub use crate::network::{SnpDefinitions};
+pub use crate::pathing::{DynamicPathing, DynamicPathingEdgeArray};
 pub use crate::renderer::{PrismShaders};
 pub use crate::step_order::{SecondaryOrderHook, StepOrderHiddenHook};
 pub use crate::util::test_assertions;
