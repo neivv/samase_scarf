@@ -1693,7 +1693,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 FirstFreePlacementImage | LastFreePlacementImage | FirstFreePlacementRect |
                 LastFreePlacementRect | TilesetIndexedMapTiles | Vx4MapTiles | RepulseState |
                 TerrainFramebuf | StatportVideos | StatportTalkingPortraitActive |
-                StatportVideoId | NgdpEnabled | MinimapColorMode =>
+                StatportVideoId | NgdpEnabled | MinimapColorMode |
+                IsCyclingColorTable =>
             {
                 check_global_opt(result, binary, op.name());
             }

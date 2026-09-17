@@ -591,6 +591,11 @@ results! {
             cache_check_resources_for_building,
         CancelUnit => cancel_unit => cache_cancel_unit_finding,
         RandSynced => rand_synced => cache_rng,
+        // palette *RGBA[0x100], rgb_color; index of the palette entry closest to rgb_color.
+        // Skips indices which are used by tileset color cycling. Used to resolve UI colors to
+        // palette indices when the tileset palette is (re)loaded.
+        FindNearestPaletteColor => find_nearest_palette_color =>
+            cache_find_nearest_palette_color,
     }
 }
 
@@ -839,6 +844,9 @@ results! {
         GameLobby => game_lobby => cache_player_colors,
         // "In a game", but not necessarily in a started game.
         InLobbyOrGame => in_lobby_or_game => cache_player_colors,
+        // u8[0x100] *; per palette index "takes part in tileset color cycling" flags. Allocated
+        // when the tileset is loaded and freed with the terrain, so it is null outside a game.
+        IsCyclingColorTable => is_cycling_color_table => cache_find_nearest_palette_color,
         GameScreenRectWinPx => game_screen_rect_winpx => cache_game_screen_lclick,
         OnClipCursorEnd => on_clip_cursor_end => cache_game_screen_lclick,
         SelectStartX => select_start_x => cache_game_screen_lclick,
@@ -4736,6 +4744,25 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 let r = commands::player_colors(actx, &switch);
                 Some(([], [r.use_rgb, r.rgb_colors, r.disable_choice, r.use_map_set_rgb,
                     r.game_lobby, r.in_lobby_or_game]))
+            })
+    }
+
+    fn main_palette(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::MainPalette, |s| s.cache_game_loop(actx))
+    }
+
+    fn cache_find_nearest_palette_color(&mut self, actx: &AnalysisCtx<'e, E>) {
+        self.cache_many(
+            &[AddressAnalysis::FindNearestPaletteColor],
+            &[OperandAnalysis::IsCyclingColorTable],
+            |s| {
+                let main_palette = s.main_palette(actx)?;
+                let r = players::find_nearest_palette_color(
+                    actx,
+                    &s.function_finder(),
+                    main_palette,
+                );
+                Some(([r.find_nearest_palette_color], [r.is_cycling_color_table]))
             })
     }
 

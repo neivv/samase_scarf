@@ -6,12 +6,13 @@ use scarf::operand::{MemAccessSize};
 
 use scarf::exec_state::{ExecutionState, VirtualAddress};
 
+use crate::analysis_find::FunctionFinder;
 use crate::analysis_state::{AnalysisState, StateEnum, LocalPlayerState};
 use crate::switch::CompleteSwitch;
 use crate::analysis::{AnalysisCtx, ArgCache};
 use crate::util::{
-    ControlExt, OptionExt, OperandExt, bumpvec_with_capacity, seems_assertion_call, ExecStateExt,
-    single_result_assign,
+    ControlExt, MemAccessExt, OptionExt, OperandExt, bumpvec_with_capacity, seems_assertion_call,
+    ExecStateExt, single_result_assign,
 };
 
 pub struct NetPlayers<'e, Va: VirtualAddress> {
@@ -319,4 +320,172 @@ pub(crate) fn net_players<'e, E: ExecutionState<'e>>(
         result.net_players = analyzer.result;
     }
     result
+}
+
+pub(crate) struct PaletteColorLookup<'e, Va: VirtualAddress> {
+    pub find_nearest_palette_color: Option<Va>,
+    pub is_cycling_color_table: Option<Operand<'e>>,
+}
+
+/// Finds `find_nearest_palette_color(palette, rgb_color)` -- which returns the index of the
+/// palette entry closest to `rgb_color` -- and `is_cycling_color_table`, the `u8[0x100]` of
+/// "palette index is used by tileset color cycling" flags that it skips entries by.
+///
+/// The function is never called directly; it is passed as a callback next to `main_palette` to
+/// the helper which resolves the UI colors to palette indices, so the candidates are the
+/// `main_palette` users' calls that also pass a .text address. A candidate is confirmed by the
+/// shape of the function body: it reads single bytes both through a word-sized global pointer
+/// (the cycling color table, which is allocated when the tileset is loaded and freed with it)
+/// and through its own first argument (the palette being searched).
+pub(crate) fn find_nearest_palette_color<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+    main_palette: Operand<'e>,
+) -> PaletteColorLookup<'e, E::VirtualAddress> {
+    let mut result = PaletteColorLookup {
+        find_nearest_palette_color: None,
+        is_cycling_color_table: None,
+    };
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let Some(palette) = main_palette.if_constant() else {
+        return result;
+    };
+    let palette_addr = E::VirtualAddress::from_u64(palette);
+    let global_refs = functions.find_functions_using_global(actx, palette_addr);
+    let mut checked_funcs = bumpvec_with_capacity(8, &actx.bump);
+    let mut checked_candidates = bumpvec_with_capacity(8, &actx.bump);
+    for global_ref in &global_refs {
+        let entry = global_ref.func_entry;
+        if checked_funcs.contains(&entry) {
+            continue;
+        }
+        checked_funcs.push(entry);
+        let mut analyzer = PaletteCallbackAnalyzer::<E> {
+            palette,
+            text: actx.binary_sections.text,
+            candidates: bumpvec_with_capacity(4, &actx.bump),
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+        analysis.analyze(&mut analyzer);
+        for &candidate in analyzer.candidates.iter() {
+            if checked_candidates.contains(&candidate) {
+                continue;
+            }
+            checked_candidates.push(candidate);
+            if let Some(table) = cycling_color_table(actx, candidate) {
+                result.find_nearest_palette_color = Some(candidate);
+                result.is_cycling_color_table = Some(table);
+                return result;
+            }
+        }
+    }
+    result
+}
+
+/// Collects the .text addresses that are passed as an argument of a call which also passes
+/// main_palette.
+struct PaletteCallbackAnalyzer<'acx, 'e, E: ExecutionState<'e>> {
+    palette: u64,
+    text: &'e scarf::BinarySection<E::VirtualAddress>,
+    candidates: BumpVec<'acx, E::VirtualAddress>,
+}
+
+impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    PaletteCallbackAnalyzer<'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(_) = *op {
+            let args = [0, 1, 2].map(|i| ctrl.resolve_arg(i).if_constant());
+            if !args.contains(&Some(self.palette)) {
+                return;
+            }
+            for &arg in args.iter().flatten() {
+                if arg == self.palette {
+                    continue;
+                }
+                let addr = E::VirtualAddress::from_u64(arg);
+                if self.text.contains(addr) && !self.candidates.contains(&addr) {
+                    self.candidates.push(addr);
+                }
+            }
+        }
+    }
+}
+
+/// Returns the cycling color table global if `func` is find_nearest_palette_color.
+fn cycling_color_table<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    func: E::VirtualAddress,
+) -> Option<Operand<'e>> {
+    let mut analyzer = CyclingColorTableAnalyzer::<E> {
+        result: None,
+        table: None,
+        palette_read: false,
+        arg1: actx.arg_cache.on_entry(0),
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::new(actx.binary, actx.ctx, func);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct CyclingColorTableAnalyzer<'e, E: ExecutionState<'e>> {
+    result: Option<Operand<'e>>,
+    table: Option<Operand<'e>>,
+    palette_read: bool,
+    arg1: Operand<'e>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CyclingColorTableAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Jump { condition, .. } => {
+                let condition = ctrl.resolve(condition);
+                self.check_byte_reads(condition);
+            }
+            Operation::Move(_, value) => {
+                let value = ctrl.resolve(value);
+                self.check_byte_reads(value);
+            }
+            _ => (),
+        }
+        if self.palette_read {
+            if let Some(table) = self.table {
+                self.result = Some(table);
+                ctrl.end_analysis();
+            }
+        }
+    }
+}
+
+impl<'e, E: ExecutionState<'e>> CyclingColorTableAnalyzer<'e, E> {
+    /// Records `Mem8[palette + x]` reads and `Mem8[global_pointer + x]` reads, the latter being
+    /// the cycling color table.
+    fn check_byte_reads(&mut self, value: Operand<'e>) {
+        for part in value.iter() {
+            let Some(mem) = part.if_memory() else {
+                continue;
+            };
+            if mem.size != MemAccessSize::Mem8 {
+                continue;
+            }
+            for term in mem.address().0.iter() {
+                if term == self.arg1 {
+                    self.palette_read = true;
+                } else if self.table.is_none() {
+                    if let Some(inner) = term.if_memory() {
+                        if inner.size == E::WORD_SIZE && inner.is_global() {
+                            self.table = Some(term);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
