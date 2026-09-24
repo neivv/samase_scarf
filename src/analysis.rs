@@ -471,6 +471,24 @@ results! {
         // Returns ui_consoles, but may end up initializing the global
         // if it hasn't been called yet.
         GetUiConsoles => get_ui_consoles => cache_init_ingame_ui,
+        // Returns observer_ui.
+        GetObserverUi => get_observer_ui => cache_observer_ui_sim_funcs,
+        // Methods of observer_ui which unit simulation calls, all thiscall with unit as the
+        // first argument.
+        // (this, unit, force); records a unit under construction. Does nothing if the unit
+        // is already completed, unless force is set.
+        ObserverUiTrackBuildingUnit => observer_ui_track_building_unit =>
+            cache_observer_ui_sim_funcs,
+        // (this, unit); records a started research or upgrade.
+        ObserverUiTrackResearchOrUpgrade => observer_ui_track_research_or_upgrade =>
+            cache_observer_ui_sim_funcs,
+        // (this, unit); removes the record added by track_building_unit.
+        ObserverUiRemoveBuildingUnitRecord => observer_ui_remove_building_unit_record =>
+            cache_observer_ui_sim_funcs,
+        // (this, unit, completed); marks the research or upgrade record as completed
+        // or cancelled.
+        ObserverUiFinishResearchOrUpgrade => observer_ui_finish_research_or_upgrade =>
+            cache_observer_ui_sim_funcs,
         StopTargeting => stop_targeting => cache_game_screen_lclick,
         PlaceBuilding => place_building => cache_game_screen_lclick,
         SelectMouseUp => select_mouse_up => cache_game_screen_lclick,
@@ -4722,6 +4740,34 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some(([r.init_ingame_ui, r.init_obs_ui, r.load_consoles, r.init_consoles,
                     r.get_ui_consoles],
                     [r.ui_consoles, r.observer_ui]))
+            })
+    }
+
+    fn cache_observer_ui_sim_funcs(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_many(
+            &[GetObserverUi, ObserverUiTrackBuildingUnit, ObserverUiTrackResearchOrUpgrade,
+                ObserverUiRemoveBuildingUnitRecord, ObserverUiFinishResearchOrUpgrade],
+            &[],
+            |s| {
+                let observer_ui = s.cache_many_op(
+                    OperandAnalysis::ObserverUi,
+                    |s| s.cache_init_ingame_ui(actx),
+                )?;
+                let finish_unit_pre = s.finish_unit_pre(actx)?;
+                let order_building_morph = s.order_function(0x2b, actx)?;
+                let order_research_tech = s.order_function(0x4b, actx)?;
+                let switch = s.process_commands_switch(actx)?;
+                let r = units::observer_ui_sim_funcs(
+                    actx,
+                    observer_ui,
+                    finish_unit_pre,
+                    order_building_morph,
+                    order_research_tech,
+                    &switch,
+                );
+                Some(([r.get_observer_ui, r.track_building_unit, r.track_research_or_upgrade,
+                    r.remove_building_unit_record, r.finish_research_or_upgrade], []))
             })
     }
 
