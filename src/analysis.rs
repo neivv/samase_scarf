@@ -186,6 +186,10 @@ results! {
         SendCommand => send_command,
         PrintText => print_text => cache_print_text,
         AddToReplayData => add_to_replay_data => cache_print_text,
+        // (text, duration); adds a line to the in-game message area without player name
+        // formatting. The second argument is a display time in milliseconds, most callers
+        // pass 0.
+        ShowGameMessage => show_game_message => cache_show_game_message,
         StepOrder => step_order,
         PrepareDrawImage => prepare_draw_image => cache_draw_game_layer,
         DrawImage => draw_image => cache_draw_game_layer,
@@ -794,6 +798,31 @@ results! {
         Renderer => renderer => cache_render_screen,
         DrawCommands => draw_commands => cache_render_screen,
         TriggerCurrentPlayer => trigger_current_player => cache_center_view_action,
+        // Frames until the triggers are run again; on the frame this reaches 0 the
+        // triggers are run and this is reset to 0x1e.
+        TriggerExecutionTimer => trigger_execution_timer => cache_trigger_execution_timer,
+        // Trigger runtime state that step_triggers advances every frame.
+        // `{ next, prev, count }[8]` list headers of each player's runtime triggers,
+        // each field word-sized.
+        PlayerTriggerLists => player_trigger_lists => cache_step_triggers_state,
+        // u16 countdown of frames until the elapsed game seconds are incremented;
+        // reset to 0xf.
+        TriggerElapsedTimeTickTimer => trigger_elapsed_time_tick_timer =>
+            cache_step_triggers_state,
+        // u16 countdown of frames until leaderboard rankings are refreshed; reset to 0xf.
+        LeaderboardRefreshTimer => leaderboard_refresh_timer => cache_step_triggers_state,
+        // u8[8], nonzero if the player's triggers are waiting on player_trigger_wait_timers.
+        PlayerTriggerWaitActiveFlags => player_trigger_wait_active_flags =>
+            cache_step_triggers_state,
+        // u32[8] remaining wait time, reduced by the elapsed time step_triggers receives.
+        // u32::MAX is never reduced.
+        PlayerTriggerWaitTimers => player_trigger_wait_timers => cache_step_triggers_state,
+        // u8[8] victory/defeat states set by trigger actions, cleared before each
+        // trigger run.
+        PlayerTriggerVictoryStates => player_trigger_victory_states =>
+            cache_step_triggers_state,
+        // u8[8], nonzero for players that run triggers.
+        PlayerTriggerActiveFlags => player_trigger_active_flags => cache_step_triggers_state,
         // Game screen size in "BW pixels"
         //      - 1:1 with actual pixels in SD 640x480, and the coordinates used by gameplay logic.
         // Affected by zoom: zooming out => more pixels shown on screen => w/h grow
@@ -904,6 +933,10 @@ results! {
         SnetPlayerList => snet_player_list => cache_snet_recv_packets,
         CursorScaleFactor => cursor_scale_factor,
         MinimapColorMode => minimap_color_mode => cache_minimap_event_handler,
+        // u32 round robin cursor of the player whose AI towns the expansion planner
+        // checks next.
+        AiExpansionPlayerCursor => ai_expansion_player_cursor =>
+            cache_ai_expansion_player_cursor,
     }
 }
 
@@ -947,7 +980,7 @@ pub struct AnalysisCache<'e, E: ExecutionState<'e>> {
     limits: Cached<Rc<Limits<'e, E::VirtualAddress>>>,
     prism_shaders: Cached<PrismShaders<E::VirtualAddress>>,
     dat_patches: Cached<Option<Rc<DatPatches<'e, E::VirtualAddress>>>>,
-    run_triggers: Cached<RunTriggers<E::VirtualAddress>>,
+    run_triggers: Cached<RunTriggers<'e, E::VirtualAddress>>,
     trigger_unit_count_caches: Cached<TriggerUnitCountCaches<'e>>,
     replay_minimap_unexplored_fog_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
     deserialize_lone_sprite_patch: Cached<Option<Rc<Patch<E::VirtualAddress>>>>,
@@ -3498,7 +3531,7 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         )
     }
 
-    fn run_triggers(&mut self, actx: &AnalysisCtx<'e, E>) -> RunTriggers<E::VirtualAddress> {
+    fn run_triggers(&mut self, actx: &AnalysisCtx<'e, E>) -> RunTriggers<'e, E::VirtualAddress> {
         if let Some(cached) = self.run_triggers.cached() {
             return cached;
         }
@@ -3517,6 +3550,58 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
 
     pub fn trigger_actions(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.run_triggers(actx).actions
+    }
+
+    fn cache_trigger_execution_timer(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::TriggerExecutionTimer;
+        self.cache_single_operand(TriggerExecutionTimer, |s| {
+            s.run_triggers(actx).trigger_execution_timer
+        });
+    }
+
+    fn cache_step_triggers_state(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_many(
+            &[],
+            &[PlayerTriggerLists, TriggerElapsedTimeTickTimer, LeaderboardRefreshTimer,
+                PlayerTriggerWaitActiveFlags, PlayerTriggerWaitTimers,
+                PlayerTriggerVictoryStates, PlayerTriggerActiveFlags],
+            |s| {
+                let step_triggers = s.run_triggers(actx).step_triggers?;
+                let trigger_execution_timer = s.cache_many_op(
+                    TriggerExecutionTimer,
+                    |s| s.cache_trigger_execution_timer(actx),
+                )?;
+                let game = s.game(actx)?;
+                let r = map::step_triggers_state(
+                    actx,
+                    step_triggers,
+                    trigger_execution_timer,
+                    game,
+                );
+                Some(([], [r.player_trigger_lists, r.trigger_elapsed_time_tick_timer,
+                    r.leaderboard_refresh_timer, r.player_trigger_wait_active_flags,
+                    r.player_trigger_wait_timers, r.player_trigger_victory_states,
+                    r.player_trigger_active_flags]))
+            })
+    }
+
+    fn cache_show_game_message(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        self.cache_single_address(ShowGameMessage, |s| {
+            let process_commands = s.process_commands(actx)?;
+            let switch = s.process_commands_switch(actx)?;
+            commands::show_game_message(actx, process_commands, &switch)
+        });
+    }
+
+    fn cache_ai_expansion_player_cursor(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_single_operand(AiExpansionPlayerCursor, |s| {
+            let player_ai_towns = s.player_ai_towns(actx)?.if_constant()?;
+            let player_ai_towns = E::VirtualAddress::from_u64(player_ai_towns);
+            ai::ai_expansion_player_cursor(actx, player_ai_towns, &s.function_finder())
+        });
     }
 
     pub fn trigger_unit_count_caches(

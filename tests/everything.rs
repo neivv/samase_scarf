@@ -1676,7 +1676,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 StatusScreen | MapMpq | ReplayScenarioChk | ReplayScenarioChkSize |
                 GameScreenLClickCallback | GameScreenRClickCallback | TargetedOrderFow |
                 TargetedOrderGround | TargetedOrderUnit | MinimapCursorType | TeamGameTeams |
-                Renderer | TriggerCurrentPlayer | GameScreenWidthBwpx | GameScreenHeightBwPx |
+                Renderer | TriggerCurrentPlayer | TriggerExecutionTimer |
+                GameScreenWidthBwpx | GameScreenHeightBwPx |
                 ZoomActionActive | ZoomActionMode | ZoomActionStart | ZoomActionTarget |
                 ZoomActionCompletion | FlingyFlagsTmp | FlingyXOld | FlingyYOld | FlingyXNew |
                 FlingyYNew | FlingyExactXNew | FlingyExactYNew | FlingyFlagsNew |
@@ -1693,7 +1694,8 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 FirstFreePlacementImage | LastFreePlacementImage | FirstFreePlacementRect |
                 LastFreePlacementRect | TilesetIndexedMapTiles | Vx4MapTiles | RepulseState |
                 TerrainFramebuf | StatportVideos | StatportTalkingPortraitActive |
-                StatportVideoId | NgdpEnabled | MinimapColorMode =>
+                StatportVideoId | NgdpEnabled | MinimapColorMode | TriggerElapsedTimeTickTimer |
+                LeaderboardRefreshTimer | AiExpansionPlayerCursor =>
             {
                 check_global_opt(result, binary, op.name());
             }
@@ -1710,7 +1712,9 @@ fn test_nongeneric<'e, E: ExecutionState<'e>>(
                 DcreepListBegin | DcreepListSize | ReplayHeader | GameScreenRectWinPx |
                 RunDialogStack | LurkerHits | ResourceAreas | HpBarImages | HpBarState |
                 SelectionCircles | PlacementImages | PlacementRects | ShieldOverlays | ImagesRel |
-                SnetLocalPlayerList | SnetPlayerList | NgdpInstance =>
+                SnetLocalPlayerList | SnetPlayerList | NgdpInstance | PlayerTriggerLists |
+                PlayerTriggerWaitActiveFlags | PlayerTriggerWaitTimers |
+                PlayerTriggerVictoryStates | PlayerTriggerActiveFlags =>
             {
                 check_global_struct_opt(result, binary, op.name());
             }

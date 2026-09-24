@@ -237,6 +237,7 @@ sfile_close_file: 00938440
 sfile_open_file_ex: 00939760
 sfile_read_file_ex: 00939b60
 show_finished_unit_notification: 006defe0
+show_game_message: 007108e0
 show_info_message_with_sound: 006dc1f0
 show_mission_glue: 006789e0
 show_portrait: 00796200
@@ -327,6 +328,7 @@ update_visibility_point: 00578090
 active_iscript_bullet: Mem32[f83470]
 active_iscript_flingy: Mem32[f8346c]
 active_iscript_unit: Mem32[f83468]
+ai_expansion_player_cursor: Mem32[fa0134]
 ai_military_update_counter: Mem32[fb6120]
 ai_regions: fbff74
 ai_target_ignore_request_reset: Mem32[fb612c]
@@ -450,6 +452,7 @@ last_free_unit: Mem32[f91000]
 last_hidden_unit: Mem32[f9105c]
 last_lone_sprite: Mem32[f90e8c]
 last_revealer: Mem32[f91060]
+leaderboard_refresh_timer: Mem16[11a5c24]
 loaded_save: Mem32[f12bdc]
 lobby_state: Mem8[118ca15]
 local_game_result: Mem32[1166fb8]
@@ -496,6 +499,11 @@ placement_rects: f86fe0
 player_ai: f97c20
 player_ai_towns: fb60d8
 player_skins: 118cc80
+player_trigger_active_flags: 11a5c58
+player_trigger_lists: 11a5bb8
+player_trigger_victory_states: 11a5c28
+player_trigger_wait_active_flags: 11a5c30
+player_trigger_wait_timers: 11a5c38
 player_turns: 118e6b0
 player_turns_size: 118e6e0
 player_unit_skins: 119d200
@@ -564,6 +572,8 @@ tooltip_draw_func: Mem32[f9131c]
 tranwire_ddsgrp: 119ea40
 tranwire_grp: Mem32[119ea28]
 trigger_current_player: Mem32[11a5bb4]
+trigger_elapsed_time_tick_timer: Mem16[11a5c1c]
+trigger_execution_timer: Mem16[11a5bb0]
 ui_consoles: 119f524
 unique_command_user: Mem32[f11d30]
 unit_count: Mem32[f91040]

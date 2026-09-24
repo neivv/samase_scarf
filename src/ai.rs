@@ -3197,3 +3197,119 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for PlaceBuildingAnal
         }
     }
 }
+
+/// Finds `ai_expansion_player_cursor`, the player index that the AI expansion planner
+/// advances by one (wrapping at 8) on each call before looking at
+/// player_ai_towns[cursor]. Checks functions referring to player_ai_towns or its
+/// first-town field for the cursor being both written and compared against wrapping
+/// (`Mem32[cursor] + 1 == 8`) near the function start.
+pub(crate) fn ai_expansion_player_cursor<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    player_ai_towns: E::VirtualAddress,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> Option<Operand<'e>> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let bump = &actx.bump;
+    let mut checked = bumpvec_with_capacity(0x10, bump);
+    let first_town = player_ai_towns + E::VirtualAddress::SIZE;
+    let mut result = None;
+    for &addr in &[player_ai_towns, first_town] {
+        let global_refs = functions.find_functions_using_global(actx, addr);
+        for global_ref in global_refs.iter() {
+            let func = global_ref.func_entry;
+            if checked.contains(&func) {
+                continue;
+            }
+            checked.push(func);
+            let mut analyzer = AiExpansionCursorAnalyzer::<E> {
+                result: None,
+                compared: None,
+                written: None,
+                ops_left: 100,
+                phantom: Default::default(),
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, func);
+            analysis.analyze(&mut analyzer);
+            if analyzer.result.is_some() {
+                single_result_assign(analyzer.result, &mut result);
+                if !crate::util::test_assertions() {
+                    return result;
+                }
+            }
+        }
+    }
+    result
+}
+
+struct AiExpansionCursorAnalyzer<'e, E: ExecutionState<'e>> {
+    result: Option<Operand<'e>>,
+    /// Global that was compared against wrapping (`x + 1 == 8`, simplified to `x == 7`).
+    compared: Option<Operand<'e>>,
+    /// Global that was written to.
+    written: Option<Operand<'e>>,
+    ops_left: u16,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for AiExpansionCursorAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.ops_left == 0 {
+            ctrl.end_analysis();
+            return;
+        }
+        self.ops_left -= 1;
+        let ctx = ctrl.ctx();
+        let condition = match *op {
+            Operation::Jump { condition, .. } => condition,
+            // Wrapping may be done with cmov instead of a jump.
+            Operation::ConditionalMove(_, _, condition) => condition,
+            Operation::Move(DestOperand::Memory(ref mem), _) => {
+                if mem.size == MemAccessSize::Mem32 {
+                    let mem = ctrl.resolve_mem(mem);
+                    if mem.is_global() {
+                        self.written = Some(ctx.memory(&mem));
+                        self.check_result(ctrl);
+                    }
+                }
+                return;
+            }
+            Operation::Call(..) => {
+                ctrl.end_analysis();
+                return;
+            }
+            _ => return,
+        };
+        let condition = ctrl.resolve(condition);
+        let condition = match condition.if_arithmetic_eq_neq_zero(ctx) {
+            Some((x, _)) if x.if_arithmetic_eq().is_some() => x,
+            _ => condition,
+        };
+        let cursor = condition.if_arithmetic_eq_neq()
+            .map(|(l, r, _)| (l, r))
+            .and_either(|x| x.if_constant().filter(|&c| c == 7 || c == 8))
+            .and_then(|(c, x)| {
+                let x = Operand::and_masked(x).0;
+                match c {
+                    7 => Some(x),
+                    _ => x.if_arithmetic_add_const(1),
+                }
+            })
+            .filter(|x| x.if_mem32().is_some_and(|mem| mem.is_global()));
+        if let Some(cursor) = cursor {
+            self.compared = Some(cursor);
+            self.check_result(ctrl);
+        }
+    }
+}
+
+impl<'e, E: ExecutionState<'e>> AiExpansionCursorAnalyzer<'e, E> {
+    fn check_result(&mut self, ctrl: &mut Control<'e, '_, '_, Self>) {
+        if self.compared.is_some() && self.compared == self.written {
+            self.result = self.compared;
+            ctrl.end_analysis();
+        }
+    }
+}

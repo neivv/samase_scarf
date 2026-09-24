@@ -154,6 +154,95 @@ pub(crate) fn print_text<'e, E: ExecutionState<'e>>(
     result
 }
 
+/// show_game_message(text, duration) adds a message line to the in-game message area,
+/// without any player name formatting that print_text does. duration is a display time in
+/// milliseconds, most callers pass 0.
+///
+/// The resume command (0x11) handler formats "<player> has resumed the game" with
+/// `snprintf(buffer, 0x80, ...)` and then calls show_game_message(buffer, 0).
+/// The handler may be inlined in the process_commands switch case or a separate function.
+pub(crate) fn show_game_message<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    process_commands: E::VirtualAddress,
+    process_commands_switch: &CompleteSwitch<'e>,
+) -> Option<E::VirtualAddress> {
+    struct Analyzer<'e, E: ExecutionState<'e>> {
+        result: Option<E::VirtualAddress>,
+        case_branch: E::VirtualAddress,
+        before_switch: bool,
+        inline_depth: u8,
+        format_buffer: Option<Operand<'e>>,
+    }
+
+    impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for Analyzer<'e, E> {
+        type State = analysis::DefaultState;
+        type Exec = E;
+        fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+            match *op {
+                Operation::Call(dest) => {
+                    if self.before_switch {
+                        return;
+                    }
+                    let Some(dest) = ctrl.resolve_va(dest) else { return };
+                    let arg1 = ctrl.resolve_arg(0);
+                    let arg2 = ctrl.resolve_arg_u32(1);
+                    if arg2.if_constant() == Some(0x80) {
+                        self.format_buffer = Some(arg1);
+                        return;
+                    }
+                    if arg2 == ctrl.ctx().const_0() && Some(arg1) == self.format_buffer {
+                        self.result = Some(dest);
+                        ctrl.end_analysis();
+                        return;
+                    }
+                    if self.inline_depth == 0 {
+                        self.inline_depth += 1;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inline_depth -= 1;
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+                Operation::Jump { to, .. } => {
+                    if to.if_constant().is_none() {
+                        if self.before_switch {
+                            self.before_switch = false;
+                            ctrl.clear_all_branches();
+                            ctrl.end_branch();
+                            ctrl.add_branch_with_current_state(self.case_branch);
+                        } else {
+                            ctrl.end_branch();
+                        }
+                    }
+                }
+                _ => (),
+            }
+        }
+    }
+
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let case_branch = process_commands_switch.branch(binary, ctx, 0x11)?;
+    let mut analyzer = Analyzer::<E> {
+        result: None,
+        case_branch,
+        before_switch: true,
+        inline_depth: 0,
+        format_buffer: None,
+    };
+    let mut exec_state = E::initial_state(ctx, binary);
+    // Set arg3 to 1 so the replay-specific switch will be skipped
+    exec_state.move_resolved(
+        &DestOperand::from_oper(actx.arg_cache.on_entry(2)),
+        ctx.const_1(),
+    );
+    let mut analysis =
+        FuncAnalysis::custom_state(binary, ctx, process_commands, exec_state, Default::default());
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
 pub(crate) fn command_lengths<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
 ) -> Vec<u32> {
