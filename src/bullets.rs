@@ -21,6 +21,7 @@ pub(crate) struct BulletCreation<'e, Va: VirtualAddress> {
     pub last_free_bullet: Option<Operand<'e>>,
     pub create_bullet: Option<Va>,
     pub active_iscript_unit: Option<Operand<'e>>,
+    pub active_bullet_count: Option<Operand<'e>>,
 }
 
 pub(crate) struct StepBulletFrame<Va: VirtualAddress> {
@@ -170,6 +171,7 @@ struct FindBulletLists<'acx, 'e, E: ExecutionState<'e>> {
     list_add_tracker: DetectListAdd<'e, E>,
     first_free: Option<Operand<'e>>,
     last_free: Option<Operand<'e>>,
+    active_count: Option<Operand<'e>>,
     // Since last ptr for free lists (removing) is detected as
     // *last = (*first).prev
     // If this pattern is seen before first is confirmed, store (first, last) here.
@@ -183,18 +185,21 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
         self.list_add_tracker.operation(ctrl, op);
         match *op {
             Operation::Call(to) => {
-                if !self.is_inlining {
+                if !self.is_inlining && self.active_bullets.is_none() {
                     if let Some(dest) = ctrl.resolve_va(to) {
                         self.is_inlining = true;
                         ctrl.analyze_with_current_state(self, dest);
                         self.is_inlining = false;
-                        if self.active_bullets.is_some() {
+                        if self.active_bullets.is_some() && self.active_count.is_some() {
                             ctrl.end_analysis();
                         }
                     }
                 }
             }
             Operation::Move(DestOperand::Memory(ref mem), value) => {
+                if mem.size == MemAccessSize::Mem32 && !self.is_inlining {
+                    self.check_active_count_increment(ctrl, mem, value);
+                }
                 if mem.size != E::WORD_SIZE {
                     return;
                 }
@@ -252,6 +257,28 @@ impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for FindBulletLists<'a
 }
 
 impl<'acx, 'e, E: ExecutionState<'e>> FindBulletLists<'acx, 'e, E> {
+    // create_bullet increments a u32 count of active bullets after moving the new
+    // bullet to the active list, e.g. `inc dword [active_bullet_count]`
+    fn check_active_count_increment(
+        &mut self,
+        ctrl: &mut Control<'e, '_, '_, Self>,
+        mem: &MemAccess<'e>,
+        value: Operand<'e>,
+    ) {
+        let dest = ctrl.resolve_mem(mem);
+        if !dest.is_global() {
+            return;
+        }
+        let dest_value = ctrl.ctx().memory(&dest);
+        let value = ctrl.resolve(value).unwrap_and_mask();
+        if value.if_arithmetic_add_const(1) == Some(dest_value) {
+            self.active_count = Some(dest_value);
+            if self.active_bullets.is_some() {
+                ctrl.end_analysis();
+            }
+        }
+    }
+
     fn last_ptr_first_known(&self, first: Operand<'e>) -> Option<Operand<'e>> {
         self.last_ptr_candidates.iter().find(|x| x.0 == first).map(|x| x.1)
     }
@@ -278,6 +305,7 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
         last_free_bullet: None,
         create_bullet: None,
         active_iscript_unit: None,
+        active_bullet_count: None,
     };
     let binary = analysis.binary;
     let ctx = analysis.ctx;
@@ -316,6 +344,7 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
             list_add_tracker: DetectListAdd::new(None),
             first_free: None,
             last_free: None,
+            active_count: None,
             last_ptr_candidates: bumpvec_with_capacity(8, bump),
         };
         let mut analysis = FuncAnalysis::new(binary, ctx, create_bullet);
@@ -326,6 +355,7 @@ pub(crate) fn bullet_creation<'e, E: ExecutionState<'e>>(
         }
         result.first_free_bullet = analyzer.first_free;
         result.last_free_bullet = analyzer.last_free;
+        result.active_bullet_count = analyzer.active_count;
     }
     result
 }
