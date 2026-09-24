@@ -1679,3 +1679,92 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for SplashLurkerAnalyzer
         }
     }
 }
+
+// Finds the u32 global that selects the side a spinning bullet is launched towards.
+//
+// initialize_bullet (called from create_bullet) does, for weapons with nonzero launch spin:
+//     if parent == last_bullet_spawner {
+//         dir = spin_direction == 0;
+//     } else {
+//         dir = rand_synced() & 1;
+//     }
+//     spin_direction = dir;
+//     last_bullet_spawner = parent;
+// Following the equal branch of the `last_bullet_spawner` comparison makes the global
+// recognizable as the Mem32 that gets assigned `Mem32[x] == 0` of itself.
+pub(crate) fn last_bullet_spin_direction<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    create_bullet: E::VirtualAddress,
+    last_bullet_spawner: Operand<'e>,
+) -> Option<Operand<'e>> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = LastBulletSpinDirAnalyzer::<E> {
+        result: None,
+        last_bullet_spawner,
+        inlining: false,
+        spawner_cmp_seen: false,
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, create_bullet);
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct LastBulletSpinDirAnalyzer<'e, E: ExecutionState<'e>> {
+    result: Option<Operand<'e>>,
+    last_bullet_spawner: Operand<'e>,
+    inlining: bool,
+    spawner_cmp_seen: bool,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for LastBulletSpinDirAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match *op {
+            Operation::Call(dest) => {
+                if !self.inlining {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.inlining = true;
+                        ctrl.analyze_with_current_state(self, dest);
+                        self.inlining = false;
+                        self.spawner_cmp_seen = false;
+                        if self.result.is_some() {
+                            ctrl.end_analysis();
+                        }
+                    }
+                }
+            }
+            Operation::Jump { condition, to } => {
+                let condition = ctrl.resolve(condition);
+                let spawner = self.last_bullet_spawner;
+                let is_spawner_cmp = condition.if_arithmetic_eq_neq()
+                    .filter(|x| x.0 == spawner || x.1 == spawner);
+                if let Some((_, _, is_eq)) = is_spawner_cmp {
+                    self.spawner_cmp_seen = true;
+                    ctrl.continue_at_eq_address(is_eq, to);
+                }
+            }
+            Operation::Move(DestOperand::Memory(ref mem), value) => {
+                if !self.spawner_cmp_seen || mem.size != MemAccessSize::Mem32 {
+                    return;
+                }
+                let dest = ctrl.resolve_mem(mem);
+                if !dest.is_global() {
+                    return;
+                }
+                let dest_op = ctx.memory(&dest);
+                let value = ctrl.resolve(value);
+                let is_toggle = value.if_arithmetic_eq_neq_zero(ctx) == Some((dest_op, true));
+                if is_toggle {
+                    self.result = Some(dest_op);
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
+        }
+    }
+}
