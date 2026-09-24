@@ -1,3 +1,4 @@
+use bumpalo::collections::Vec as BumpVec;
 use scarf::{MemAccess, Operand, OperandCtx, Operation, DestOperand, Rva};
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
@@ -5,7 +6,9 @@ use scarf::exec_state::{ExecutionState, VirtualAddress};
 use crate::add_terms::collect_arith_add_terms;
 use crate::analysis::{AnalysisCtx, ArgCache, Patch};
 use crate::analysis_find::{EntryOf, FunctionFinder, entry_of_until};
-use crate::util::{single_result_assign, bumpvec_with_capacity, ControlExt, OperandExt};
+use crate::util::{
+    single_result_assign, bumpvec_with_capacity, ControlExt, ExecStateExt, OperandExt,
+};
 
 #[derive(Clone)]
 pub struct SpriteSerialization<Va: VirtualAddress> {
@@ -401,6 +404,216 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DoSaveAnalyzer<'a, '
             } else {
                 self.serialize_images_candidate = None;
             }
+        }
+    }
+}
+
+pub(crate) struct SaveSelectionVisuals<Va: VirtualAddress> {
+    pub clear_transient_sprite_state_for_save: Option<Va>,
+    pub rebuild_selection_visuals_after_save: Option<Va>,
+}
+
+/// do_save removes selection circles and health bars from sprites before serializing
+/// them, and recreates the local player's selection visuals once the game objects
+/// have been saved:
+///
+/// - clear_transient_sprite_state_for_save() is called between the last file-taking
+///   call and serialize_images(file). It is recognized by looping over the sprite array,
+///   starting with checks for flags 0x8 and 0x1 of the first sprite.
+/// - rebuild_selection_visuals_after_save() is called after serialize_sprites(file).
+///   It is recognized by calling `set_client_selection_visual(local_selection[0], 0)`
+///   (thiscall) as one of its first calls.
+pub(crate) fn save_selection_visuals<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    do_save: E::VirtualAddress,
+    serialize_images: E::VirtualAddress,
+    serialize_sprites: E::VirtualAddress,
+    sprite_array: Operand<'e>,
+    local_selection: Operand<'e>,
+) -> SaveSelectionVisuals<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let bump = &actx.bump;
+    let mut result = SaveSelectionVisuals {
+        clear_transient_sprite_state_for_save: None,
+        rebuild_selection_visuals_after_save: None,
+    };
+    let first_sprite_flags = ctx.mem8(sprite_array, E::struct_layouts().sprite_flags());
+    let first_selected_unit = ctx.mem_any(E::WORD_SIZE, local_selection, 0);
+    let mut analyzer = SaveSelectionVisualsAnalyzer::<E> {
+        actx,
+        result: &mut result,
+        serialize_images,
+        serialize_sprites,
+        first_sprite_flags,
+        first_selected_unit,
+        clear_candidates: bumpvec_with_capacity(8, bump),
+        checked: bumpvec_with_capacity(0x20, bump),
+        serialize_sprites_seen: false,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, do_save);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct SaveSelectionVisualsAnalyzer<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    actx: &'acx AnalysisCtx<'e, E>,
+    result: &'a mut SaveSelectionVisuals<E::VirtualAddress>,
+    serialize_images: E::VirtualAddress,
+    serialize_sprites: E::VirtualAddress,
+    first_sprite_flags: Operand<'e>,
+    first_selected_unit: Operand<'e>,
+    /// Functions called without the save file since the last call that took it.
+    clear_candidates: BumpVec<'acx, E::VirtualAddress>,
+    /// Functions already checked for being rebuild_selection_visuals_after_save.
+    checked: BumpVec<'acx, E::VirtualAddress>,
+    serialize_sprites_seen: bool,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    SaveSelectionVisualsAnalyzer<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let Operation::Call(dest) = *op else { return };
+        let Some(dest) = ctrl.resolve_va(dest) else { return };
+        if ctrl.resolve_arg(0) == self.actx.arg_cache.on_entry(0) {
+            if dest == self.serialize_images {
+                if self.result.clear_transient_sprite_state_for_save.is_none() {
+                    for i in (0..self.clear_candidates.len()).rev() {
+                        let func = self.clear_candidates[i];
+                        if self.is_clear_transient_sprite_state(func) {
+                            self.result.clear_transient_sprite_state_for_save = Some(func);
+                            break;
+                        }
+                    }
+                }
+            } else if dest == self.serialize_sprites {
+                self.serialize_sprites_seen = true;
+            }
+            self.clear_candidates.clear();
+            // Assume that any call that takes in the save file returns nonzero
+            // to follow the successful save path.
+            let ctx = ctrl.ctx();
+            ctrl.do_call_with_result(ctx.const_1());
+            return;
+        }
+        if self.serialize_sprites_seen {
+            if self.result.rebuild_selection_visuals_after_save.is_none() &&
+                !self.checked.contains(&dest)
+            {
+                self.checked.push(dest);
+                if self.is_rebuild_selection_visuals(dest) {
+                    self.result.rebuild_selection_visuals_after_save = Some(dest);
+                }
+            }
+        } else if !self.clear_candidates.contains(&dest) {
+            self.clear_candidates.push(dest);
+        }
+        if self.result.clear_transient_sprite_state_for_save.is_some() &&
+            self.result.rebuild_selection_visuals_after_save.is_some()
+        {
+            ctrl.end_analysis();
+        }
+    }
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> SaveSelectionVisualsAnalyzer<'a, 'acx, 'e, E> {
+    fn is_clear_transient_sprite_state(&self, func: E::VirtualAddress) -> bool {
+        let mut analyzer = IsClearTransientSpriteState::<E> {
+            first_sprite_flags: self.first_sprite_flags,
+            flag_checks_seen: 0,
+            ops_left: 200,
+            phantom: Default::default(),
+        };
+        let mut analysis = FuncAnalysis::new(self.actx.binary, self.actx.ctx, func);
+        analysis.analyze(&mut analyzer);
+        analyzer.flag_checks_seen == 3
+    }
+
+    fn is_rebuild_selection_visuals(&self, func: E::VirtualAddress) -> bool {
+        let mut analyzer = IsRebuildSelectionVisuals::<E> {
+            first_selected_unit: self.first_selected_unit,
+            result: false,
+            calls_left: 4,
+            ops_left: 200,
+            phantom: Default::default(),
+        };
+        let mut analysis = FuncAnalysis::new(self.actx.binary, self.actx.ctx, func);
+        analysis.analyze(&mut analyzer);
+        analyzer.result
+    }
+}
+
+/// Checks for jumps on both `first_sprite_flags & 8` and `first_sprite_flags & 1`.
+struct IsClearTransientSpriteState<'e, E: ExecutionState<'e>> {
+    first_sprite_flags: Operand<'e>,
+    /// Bit 0 is set once the flag 0x8 check is seen, bit 1 for flag 0x1.
+    flag_checks_seen: u8,
+    ops_left: u16,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsClearTransientSpriteState<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.ops_left == 0 {
+            ctrl.end_analysis();
+            return;
+        }
+        self.ops_left -= 1;
+        if let Operation::Jump { condition, .. } = *op {
+            let ctx = ctrl.ctx();
+            let condition = ctrl.resolve(condition);
+            let flag_check = condition.if_arithmetic_eq_neq_zero(ctx)
+                .and_then(|(x, _)| {
+                    x.if_arithmetic_and_const(8).map(|x| (x, 1))
+                        .or_else(|| x.if_arithmetic_and_const(1).map(|x| (x, 2)))
+                })
+                .filter(|&(x, _)| x == self.first_sprite_flags);
+            if let Some((_, bit)) = flag_check {
+                self.flag_checks_seen |= bit;
+                if self.flag_checks_seen == 3 {
+                    ctrl.end_analysis();
+                }
+            }
+        }
+    }
+}
+
+/// Checks for a thiscall `func(first_selected_unit, 0)` among the first few calls.
+struct IsRebuildSelectionVisuals<'e, E: ExecutionState<'e>> {
+    first_selected_unit: Operand<'e>,
+    result: bool,
+    calls_left: u8,
+    ops_left: u16,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for IsRebuildSelectionVisuals<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.ops_left == 0 {
+            ctrl.end_analysis();
+            return;
+        }
+        self.ops_left -= 1;
+        if let Operation::Call(..) = *op {
+            if ctrl.resolve_register(1) == self.first_selected_unit &&
+                ctrl.resolve_arg_thiscall_u8(0).if_constant() == Some(0)
+            {
+                self.result = true;
+                ctrl.end_analysis();
+                return;
+            }
+            if self.calls_left == 0 {
+                ctrl.end_analysis();
+                return;
+            }
+            self.calls_left -= 1;
         }
     }
 }

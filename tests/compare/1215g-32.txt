@@ -54,6 +54,7 @@ choose_snp: 00695460
 clamp_zoom: 005a6d90
 clear_build_queue: 00548a90
 clear_render_target: 008a63f0
+clear_transient_sprite_state_for_save: 00540c00
 clip_cursor: 00686eb0
 command_lobby_map_p2p: 00632280
 config_vsync_value: 006ff890
@@ -205,6 +206,7 @@ process_lobby_commands: 00699f80
 rand_synced: 006a38b0
 read_whole_mpq_file: None
 read_whole_mpq_file2: None
+rebuild_selection_visuals_after_save: 00540c80
 receive_storm_turns: 006936c0
 refresh_ui: 006f1920
 remove_from_client_selection: 0056d0f0
@@ -455,6 +457,7 @@ lobby_state: Mem8[ed4161]
 local_game_result: Mem32[eae21c]
 local_player_id: Mem32[c93508]
 local_player_name: ed4268
+local_selection: ee45e0
 local_storm_player_id: Mem32[c93510]
 local_unique_player_id: Mem32[c9350c]
 local_visions: Mem32[ed422c]

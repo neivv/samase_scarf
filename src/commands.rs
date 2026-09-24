@@ -1867,3 +1867,107 @@ pub(crate) fn cancel_unit<'e, E: ExecutionState<'e>>(
     }
     result
 }
+
+/// Finds `local_selection` from the function that clears both selection arrays: it zeroes
+/// `selections` and one array that is an exact fraction of its size, which is the single
+/// player row that the local selection is.
+pub(crate) fn local_selection<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    selections: Operand<'e>,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> Option<Operand<'e>> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let selections_address = selections.if_constant()?;
+    let funcs = functions.functions();
+    let global_refs = functions.find_functions_using_global(
+        actx,
+        E::VirtualAddress::from_u64(selections_address),
+    );
+    let mut result = None;
+    for global_ref in &global_refs {
+        let new = entry_of_until(binary, &funcs, global_ref.use_address, |entry| {
+            let mut analyzer = ClearSelectionsAnalyzer::<E> {
+                selections_address,
+                result: None,
+                clears: [(0, 0, 0); 4],
+                clear_count: 0,
+                phantom: Default::default(),
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            match analyzer.result {
+                Some(s) => EntryOf::Ok(ctx.constant(s)),
+                None => EntryOf::Retry,
+            }
+        }).into_option();
+        if single_result_assign(new, &mut result) {
+            break;
+        }
+    }
+    result
+}
+
+struct ClearSelectionsAnalyzer<'e, E: ExecutionState<'e>> {
+    selections_address: u64,
+    result: Option<u64>,
+    /// (callee, address, byte size) of the zeroing calls seen so far.
+    clears: [(u64, u64, u64); 4],
+    clear_count: u8,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ClearSelectionsAnalyzer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let Operation::Call(dest) = *op else {
+            return;
+        };
+        let ctx = ctrl.ctx();
+        // Both arrays are zeroed by the same memset; requiring that keeps unrelated calls
+        // whose first argument happens to resolve to a constant out of the pairing.
+        let callee = match ctrl.resolve_va(dest) {
+            Some(s) => s.as_u64(),
+            None => return,
+        };
+        if ctrl.resolve_arg(1) != ctx.const_0() {
+            return;
+        }
+        let address = match ctrl.resolve_arg(0).if_constant() {
+            Some(s) if s > 0x1000 => s,
+            _ => return,
+        };
+        let size = match ctrl.resolve_arg(2).if_constant() {
+            Some(s) if s != 0 => s,
+            _ => return,
+        };
+        let index = self.clear_count as usize;
+        if index < self.clears.len() {
+            self.clears[index] = (callee, address, size);
+            self.clear_count += 1;
+        }
+        for &(other_callee, other_address, other_size) in self.clears.iter().take(index) {
+            if other_callee != callee {
+                continue;
+            }
+            let pair = [(address, size, other_address, other_size),
+                (other_address, other_size, address, size)];
+            for &(row, row_size, all, all_size) in &pair {
+                let players = all_size.checked_div(row_size).unwrap_or(0);
+                // Both arrays are part of the same statically allocated selection storage,
+                // so they cannot be far apart; without that an argument that only happens to
+                // resolve to a constant can pair up with the real clear.
+                let near = row >= all.saturating_sub(all_size.saturating_mul(2)) &&
+                    row <= all.saturating_add(all_size.saturating_mul(2));
+                if all == self.selections_address && row != all && near &&
+                    players >= 2 && players <= 0x10 && all_size % row_size == 0
+                {
+                    self.result = Some(row);
+                    ctrl.end_analysis();
+                    return;
+                }
+            }
+        }
+    }
+}
