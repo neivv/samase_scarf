@@ -437,56 +437,15 @@ impl<'a, 'e, E: ExecutionState<'e>> SpriteAnalyzer<'a, 'e, E> {
                 _ => c,
             },
         };
-        let binary = self.binary;
-        let addr = binary.base + func_addr.0;
-        let ctx = self.ctx;
-        let return_addr = required_return_addr::<E>(ctx, binary, addr);
-
-        let mut exec_state = E::initial_state(ctx, binary);
-        let state = Default::default();
-        if let Some(ret) = return_addr {
-            exec_state.write_memory(
-                &ctx.mem_access(ctx.register(4), 0, E::WORD_SIZE),
-                ctx.constant(ret.as_u64()),
-            );
-            exec_state.write_memory(
-                &ctx.mem_access16(ctx.const_0(), ret.as_u64() - 2),
-                ctx.constant(0xd0ff),
-            );
-        }
-        if let Some(arg1) = arg1 {
-            exec_state.write_memory(
-                &ctx.mem_access(ctx.custom(0), 0, E::WORD_SIZE),
-                ctx.constant(arg1),
-            );
-            exec_state.move_resolved(
-                &DestOperand::from_oper(self.arg_cache.on_entry(0)),
-                ctx.custom(0),
-            );
-        }
-        if let Some(arg2) = arg2 {
-            exec_state.write_memory(
-                &ctx.mem_access(ctx.custom(1), 0, E::WORD_SIZE),
-                ctx.constant(arg2),
-            );
-            exec_state.move_resolved(
-                &DestOperand::from_oper(self.arg_cache.on_entry(1)),
-                ctx.custom(1),
-            );
-        }
-        let mut analyzer = ResolveCustom::<E> {
-            ret: ResolveCustomResult::None,
-            arg1: ResolveCustomResult::None,
-            arg2: ResolveCustomResult::None,
-            arg1_loc: E::operand_mem_word(ctx, ctx.custom(0), 0),
-            arg2_loc: E::operand_mem_word(ctx, ctx.custom(1), 0),
-            phantom: Default::default(),
-        };
-        let mut analysis = FuncAnalysis::custom_state(binary, ctx, addr, exec_state, state);
-        analysis.analyze(&mut analyzer);
-        let a = analyzer.ret.to_option();
-        let b = analyzer.arg1.to_option();
-        let c = analyzer.arg2.to_option();
+        let addr = self.binary.base + func_addr.0;
+        let (a, b, c) = resolve_key_function::<E>(
+            self.ctx,
+            self.binary,
+            self.arg_cache,
+            addr,
+            arg1,
+            arg2,
+        );
         self.custom_to_function_map[index as usize] = ChildFunctionFormula::Done(a, b, c);
         match id & 0xf {
             0 => a,
@@ -621,6 +580,66 @@ impl<'e> ResolveCustomResult<'e> {
             _ => None,
         }
     }
+}
+
+/// Executes `func(&arg1, &arg2)`, where the pointed values are initialized to constants
+/// (if known), and returns the return value and the values written to arg1 / arg2.
+///
+/// Used for functions which derive keys for encoded values, and may verify that
+/// they were called from a legitimate return address.
+fn resolve_key_function<'e, E: ExecutionState<'e>>(
+    ctx: OperandCtx<'e>,
+    binary: &'e BinaryFile<E::VirtualAddress>,
+    arg_cache: &ArgCache<'e, E>,
+    addr: E::VirtualAddress,
+    arg1: Option<u64>,
+    arg2: Option<u64>,
+) -> (Option<Operand<'e>>, Option<Operand<'e>>, Option<Operand<'e>>) {
+    let return_addr = required_return_addr::<E>(ctx, binary, addr);
+
+    let mut exec_state = E::initial_state(ctx, binary);
+    let state = Default::default();
+    if let Some(ret) = return_addr {
+        exec_state.write_memory(
+            &ctx.mem_access(ctx.register(4), 0, E::WORD_SIZE),
+            ctx.constant(ret.as_u64()),
+        );
+        exec_state.write_memory(
+            &ctx.mem_access16(ctx.const_0(), ret.as_u64() - 2),
+            ctx.constant(0xd0ff),
+        );
+    }
+    if let Some(arg1) = arg1 {
+        exec_state.write_memory(
+            &ctx.mem_access(ctx.custom(0), 0, E::WORD_SIZE),
+            ctx.constant(arg1),
+        );
+        exec_state.move_resolved(
+            &DestOperand::from_oper(arg_cache.on_entry(0)),
+            ctx.custom(0),
+        );
+    }
+    if let Some(arg2) = arg2 {
+        exec_state.write_memory(
+            &ctx.mem_access(ctx.custom(1), 0, E::WORD_SIZE),
+            ctx.constant(arg2),
+        );
+        exec_state.move_resolved(
+            &DestOperand::from_oper(arg_cache.on_entry(1)),
+            ctx.custom(1),
+        );
+    }
+    let mut analyzer = ResolveCustom::<E> {
+        ret: ResolveCustomResult::None,
+        arg1: ResolveCustomResult::None,
+        arg2: ResolveCustomResult::None,
+        arg1_loc: E::operand_mem_word(ctx, ctx.custom(0), 0),
+        arg2_loc: E::operand_mem_word(ctx, ctx.custom(1), 0),
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::custom_state(binary, ctx, addr, exec_state, state);
+    analysis.analyze(&mut analyzer);
+    (analyzer.ret.to_option(), analyzer.arg1.to_option(), analyzer.arg2.to_option())
 }
 
 struct ResolveCustom<'e, E: ExecutionState<'e>> {
@@ -1052,6 +1071,167 @@ impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
                     self.result.sprites = Some((base, offset));
                     ctrl.end_analysis();
                     return;
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+pub(crate) struct SpritePositionFuncs<Va: VirtualAddress> {
+    pub get_sprite_x: Option<Va>,
+    pub get_sprite_y: Option<Va>,
+}
+
+/// Finds the functions that decode sprite x/y position.
+///
+/// prepare_draw_image calls them with `image.parent` as the only argument (in ecx/rcx,
+/// 32-bit builds use fastcall). Builds that store the position unencoded read the
+/// sprite fields directly and don't have these functions.
+pub(crate) fn sprite_position_funcs<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    prepare_draw_image: E::VirtualAddress,
+    sprite_x_position: (Operand<'e>, u32, MemAccessSize),
+    sprite_y_position: (Operand<'e>, u32, MemAccessSize),
+) -> SpritePositionFuncs<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = SpritePositionFuncs {
+        get_sprite_x: None,
+        get_sprite_y: None,
+    };
+    let mut analyzer = FindSpritePositionFuncs::<E> {
+        result: &mut result,
+        actx,
+        sprite_x_position,
+        sprite_y_position,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, prepare_draw_image);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct FindSpritePositionFuncs<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    result: &'a mut SpritePositionFuncs<E::VirtualAddress>,
+    actx: &'acx AnalysisCtx<'e, E>,
+    sprite_x_position: (Operand<'e>, u32, MemAccessSize),
+    sprite_y_position: (Operand<'e>, u32, MemAccessSize),
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for
+    FindSpritePositionFuncs<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            let ctx = ctrl.ctx();
+            let image = ctx.register(1);
+            let parent_offset = E::struct_layouts().image_parent();
+            let ecx = ctrl.resolve_register(1);
+            if ctrl.if_mem_word_offset(ecx, parent_offset) == Some(image) {
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    if self.result.get_sprite_x.is_none() &&
+                        decodes_sprite_position(self.actx, dest, self.sprite_x_position)
+                    {
+                        self.result.get_sprite_x = Some(dest);
+                    } else if self.result.get_sprite_y.is_none() &&
+                        decodes_sprite_position(self.actx, dest, self.sprite_y_position)
+                    {
+                        self.result.get_sprite_y = Some(dest);
+                    }
+                    if self.result.get_sprite_x.is_some() && self.result.get_sprite_y.is_some() {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Checks that `func(sprite)` returns the 16-bit coordinate that `position`
+/// (the encoding of `Custom_0` stored at `sprite + offset`) was created from.
+fn decodes_sprite_position<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    func: E::VirtualAddress,
+    position: (Operand<'e>, u32, MemAccessSize),
+) -> bool {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let (encoded, offset, size) = position;
+    let mut exec_state = E::initial_state(ctx, binary);
+    let sprite = ctx.register(1);
+    exec_state.write_memory(&ctx.mem_access(sprite, offset.into(), size), encoded);
+    let mut analyzer = DecodesSpritePosition::<E> {
+        result: false,
+        expected: ctx.and_const(ctx.custom(0), 0xffff),
+        actx,
+    };
+    let mut analysis = FuncAnalysis::custom_state(
+        binary,
+        ctx,
+        func,
+        exec_state,
+        Default::default(),
+    );
+    analysis.analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct DecodesSpritePosition<'acx, 'e, E: ExecutionState<'e>> {
+    result: bool,
+    expected: Operand<'e>,
+    actx: &'acx AnalysisCtx<'e, E>,
+}
+
+impl<'acx, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for DecodesSpritePosition<'acx, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                // The decoding keys are derived by a child function
+                // `key_fn(&mut key1, &mut key2)`, where both keys start as constants.
+                // Resolve it the same way as the encoding in sprites() does, so that
+                // both sides end up with equal key operands.
+                if let Some(dest) = ctrl.resolve_va(dest) {
+                    let ctx = ctrl.ctx();
+                    let arg1 = ctrl.resolve_arg(0);
+                    let arg2 = ctrl.resolve_arg(1);
+                    let arg1_mem = ctx.mem_access(arg1, 0, E::WORD_SIZE);
+                    let arg2_mem = ctx.mem_access(arg2, 0, E::WORD_SIZE);
+                    let arg1_c = ctrl.read_memory(&arg1_mem).if_constant();
+                    let arg2_c = ctrl.read_memory(&arg2_mem).if_constant();
+                    let (ret, key1, key2) = match (arg1_c, arg2_c) {
+                        (Some(a), Some(b)) => resolve_key_function::<E>(
+                            ctx,
+                            self.actx.binary,
+                            &self.actx.arg_cache,
+                            dest,
+                            Some(a),
+                            Some(b),
+                        ),
+                        _ => return,
+                    };
+                    let (Some(key1), Some(key2)) = (key1, key2) else {
+                        ctrl.end_analysis();
+                        return;
+                    };
+                    let state = ctrl.exec_state();
+                    state.set_register(0, ret.unwrap_or_else(|| ctx.new_undef()));
+                    state.set_register(1, ctx.new_undef());
+                    state.set_register(2, ctx.new_undef());
+                    state.write_memory(&arg1_mem, key1);
+                    state.write_memory(&arg2_mem, key2);
+                    ctrl.skip_operation();
+                }
+            }
+            Operation::Return(..) => {
+                let ctx = ctrl.ctx();
+                let ret = ctx.and_const(ctrl.resolve_register(0), 0xffff);
+                if ret == self.expected {
+                    self.result = true;
+                    ctrl.end_analysis();
                 }
             }
             _ => (),
