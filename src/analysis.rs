@@ -739,6 +739,10 @@ results! {
         NetworkReady => network_ready => cache_step_network,
         NetUserLatency => net_user_latency,
         LastBulletSpawner => last_bullet_spawner => cache_do_attack,
+        // u32, nonzero if the last bullet with launch spin was turned by +spin, zero if by
+        // -spin. Consecutive spinning bullets from last_bullet_spawner alternate sides.
+        LastBulletSpinDirection => last_bullet_spin_direction =>
+            cache_last_bullet_spin_direction,
         CmdIconsDdsGrp => cmdicons_ddsgrp => cache_cmdicons,
         CmdBtnsDdsGrp => cmdbtns_ddsgrp => cache_cmdicons,
         DatRequirementError => dat_requirement_error => cache_unit_requirements,
@@ -3329,6 +3333,19 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                     result.update_attack_target],
                     [result.last_bullet_spawner]))
             })
+    }
+
+    fn cache_last_bullet_spin_direction(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::*;
+        self.cache_single_operand(LastBulletSpinDirection, |s| {
+            let create_bullet = s.cache_many_addr(
+                AddressAnalysis::CreateBullet,
+                |s| s.cache_bullet_creation(actx),
+            )?;
+            let last_bullet_spawner =
+                s.cache_many_op(LastBulletSpawner, |s| s.cache_do_attack(actx))?;
+            bullets::last_bullet_spin_direction(actx, create_bullet, last_bullet_spawner)
+        });
     }
 
     fn smem_alloc(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
