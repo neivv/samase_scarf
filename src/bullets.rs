@@ -923,11 +923,10 @@ pub(crate) fn analyze_do_missile_damage<'e, E: ExecutionState<'e>>(
     };
     let mut analysis = FuncAnalysis::new(binary, ctx, do_missile_damage);
     analysis.analyze(&mut analyzer);
-    // Note: This switch is a bit fragile, requiring BinaryFile to not contain
-    // zero-inited mutable bytes.
-    // As the switch is on weapons_dat_behaviour[x], CompleteSwitch::branch confuses
-    // it with u8-packed cases if weapons_dat_behaviour array is readable by
-    // BinaryFile.
+    // This switch is on weapons_dat_behaviour[x], not on a packed secondary
+    // switch table. The behaviour array may be readable when analyzing a
+    // loaded image, so use the case value directly instead of treating that
+    // memory lookup as another switch index.
     if let Some((switch, exec)) = analyzer.switch.take() {
         let branches = [
             (1, MissileDamageState::Type1Branch),
@@ -938,7 +937,7 @@ pub(crate) fn analyze_do_missile_damage<'e, E: ExecutionState<'e>>(
             (0xe, MissileDamageState::KillUnit),
         ];
         for (branch, state) in branches {
-            if let Some(addr) = switch.branch(binary, ctx, branch) {
+            if let Some(addr) = switch.branch_case_value(binary, ctx, branch) {
                 let mut analysis = FuncAnalysis::with_state(binary, ctx, addr, exec.clone());
                 analyzer.state = state;
                 analysis.analyze(&mut analyzer);

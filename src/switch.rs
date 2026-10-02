@@ -200,6 +200,30 @@ impl<'e> CompleteSwitch<'e> {
         Some(Va::from_u64(value))
     }
 
+    /// Returns a branch when the switch index is already the case value.
+    ///
+    /// Unlike [`Self::branch`], this does not interpret a memory-backed index
+    /// as a packed secondary switch table. This is needed for switches over
+    /// mutable lookup-table values when the lookup table happens to be
+    /// readable in the analyzed binary.
+    pub fn branch_case_value<Va: VirtualAddress>(
+        &self,
+        binary: &'e BinaryFile<Va>,
+        ctx: OperandCtx<'e>,
+        branch: u32,
+    ) -> Option<Va> {
+        if branch < self.low || branch > self.high {
+            return None;
+        }
+        let (table, _index) = extract_table_first_index(ctx, &self.table)?;
+        let size = self.table.size;
+        let bytes = size.bits() / 8;
+        let value = self.base.wrapping_add(
+            binary.read_u64(Va::from_u64(table) + branch.checked_mul(bytes)?).ok()? & size.mask()
+        );
+        Some(Va::from_u64(value))
+    }
+
     pub fn base(&self) -> u64 {
         self.base
     }
@@ -249,4 +273,42 @@ pub fn simple_switch_branch<Va: VirtualAddress>(
     } else {
         Some(binary.base + binary.read_u32(switch + 4 * branch).ok()?)
     }
+}
+
+#[test]
+fn branch_case_value_does_not_read_memory_backed_index() {
+    const SECTION: u32 = 0x1000;
+    const LOOKUP: u32 = 0x1100;
+    const TABLE: u32 = 0x1800;
+    let mut data = vec![0u8; 0x1000];
+    data[(TABLE - SECTION) as usize..][..4].copy_from_slice(&0x2000u32.to_le_bytes());
+    data[(TABLE - SECTION + 4) as usize..][..4].copy_from_slice(&0x3000u32.to_le_bytes());
+    data[(LOOKUP - SECTION + 1) as usize] = 0;
+    let binary = scarf::raw_bin(
+        scarf::VirtualAddress(SECTION),
+        vec![scarf::BinarySection {
+            name: *b".data\0\0\0",
+            virtual_address: scarf::VirtualAddress(SECTION),
+            virtual_size: data.len() as u32,
+            data,
+        }],
+    );
+    let ctx = &scarf::OperandContext::new();
+    let lookup = ctx.mem8(ctx.register(0), LOOKUP as u64);
+    let table = ctx.mem32(ctx.mul_const(lookup, 4), TABLE as u64);
+    let switch = CompleteSwitch {
+        base: 0,
+        table: *table.if_memory().unwrap(),
+        low: 0,
+        high: 1,
+    };
+
+    assert_eq!(
+        switch.branch(&binary, ctx, 1),
+        Some(scarf::VirtualAddress(0x2000)),
+    );
+    assert_eq!(
+        switch.branch_case_value(&binary, ctx, 1),
+        Some(scarf::VirtualAddress(0x3000)),
+    );
 }
