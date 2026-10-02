@@ -34,6 +34,7 @@ ai_try_return_home: 005c6e90
 ai_unit_was_hit: 005c2a90
 ai_update_attack_target: 00553e30
 ai_update_building_placement_state: 006c5c40
+alliances_allowed: 00657db0
 anim_asset_change_cb: 00539780
 attack_unit: 00554b50
 building_placement_lclick: 006b2c20
@@ -468,6 +469,8 @@ map_history: None
 map_mpq: Mem32[e690f0]
 map_tile_flags: Mem32[ca596c]
 map_width_pixels: Mem16[cde9b4]
+matchmaker_session_count: Mem32[eb55b8]
+matchmaker_string: c54268
 menu_screen_id: (((((Mem16[c80925] << 14) | ((Mem32[c80926] >> 4) & fffff)) ^ Mem32[e660b4]) ^ 3e0c9299) & ffffffff)
 minimap_color_mode: Mem8[e6b728]
 minimap_cursor_type: Mem16[e629b0]

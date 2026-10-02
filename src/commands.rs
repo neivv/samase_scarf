@@ -436,6 +436,232 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CommandUserAnalyzer<'
     }
 }
 
+pub(crate) struct AllianceGate<'e, Va: VirtualAddressTrait> {
+    pub alliances_allowed: Option<Va>,
+    pub matchmaker_session_count: Option<Operand<'e>>,
+    pub matchmaker_string: Option<Operand<'e>>,
+}
+
+// alliances_allowed() is the SC:R matchmaking diplomacy gate: `bool __cdecl`, reads only globals,
+// returning 1 only when four conditions all hold (each failure jumps to a shared
+// `xor eax,eax; ret`):
+//   1. game_data.template.allies_enabled  (Mem8[game_data + 0x7c]) == 1
+//   2. game_data.template.tournament_mode (Mem8[game_data + 0x7f]) == 0
+//   3. matchmaker_session_count (signed Mem32 refcount) <= 0
+//   4. is_matchmaker_string_set() == 0   (a real call; returns Mem[matchmaker_string.length] != 0)
+// It is called near the top of the process_commands case 0xe handler (cmd_alliance), guarding an
+// early `if (!alliances_allowed()) return;`. switch.branch(0xe) may land directly in cmd_alliance
+// or in a stub that first `call`s it, so we descend through calls (depth <= 2) and verify each
+// call target structurally (condition 1's game_data+0x7c read + condition 3's dword global compare
+// + the single call) rather than assuming a fixed call position.
+//
+// matchmaker_session_count is grabbed straight from condition 3's signed `Mem32 > 0` compare (the
+// only dword global compare in the body). matchmaker_string is the BwString whose length field
+// condition 4's callee reads: BwString is { char* ptr; usize length; usize capacity; .. } so the
+// struct base is (length_field_addr - pointer_width). 0x7c/0x7f are serialized BwGameTemplate
+// file-format offsets, identical on 32/64-bit.
+pub(crate) fn alliances_allowed<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    process_commands_switch: &CompleteSwitch<'e>,
+    game_data: Operand<'e>,
+) -> AllianceGate<'e, E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = AllianceGate {
+        alliances_allowed: None,
+        matchmaker_session_count: None,
+        matchmaker_string: None,
+    };
+    let Some(branch) = process_commands_switch.branch(binary, ctx, 0xe) else {
+        return result;
+    };
+    let mut analyzer = FindAlliancesAllowed::<E> {
+        actx,
+        alliances_allowed: None,
+        session_count: None,
+        string_leaf: None,
+        game_data,
+        inline_depth: 0,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, branch);
+    analysis.analyze(&mut analyzer);
+    let Some(func) = analyzer.alliances_allowed else {
+        return result;
+    };
+    result.alliances_allowed = Some(func);
+    result.matchmaker_session_count = analyzer.session_count;
+    if let Some(leaf) = analyzer.string_leaf {
+        // is_matchmaker_string_set reads the BwString length field; expose the struct base.
+        let mut analyzer = FindMatchmakerString::<E> {
+            result: None,
+            phantom: Default::default(),
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, leaf);
+        analysis.analyze(&mut analyzer);
+        result.matchmaker_string = analyzer.result;
+    }
+    result
+}
+
+// Verify `func` is alliances_allowed by its condition 1 + 3 + 4 signature; on success return
+// (matchmaker_session_count, is_matchmaker_string_set). Uses a plain (non-inlining) pass so the
+// cost of rejecting a non-matching candidate is bounded to that single function body.
+fn check_alliances_allowed<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    func: E::VirtualAddress,
+    game_data: Operand<'e>,
+) -> Option<(Operand<'e>, E::VirtualAddress)> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = CheckAlliancesAllowed::<E> {
+        game_data,
+        allies_enabled_seen: false,
+        session_count: None,
+        call: None,
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, func);
+    analysis.analyze(&mut analyzer);
+    if analyzer.allies_enabled_seen {
+        if let (Some(session), Some(call)) = (analyzer.session_count, analyzer.call) {
+            return Some((session, call));
+        }
+    }
+    None
+}
+
+struct FindAlliancesAllowed<'a, 'e, E: ExecutionState<'e>> {
+    actx: &'a AnalysisCtx<'e, E>,
+    alliances_allowed: Option<E::VirtualAddress>,
+    session_count: Option<Operand<'e>>,
+    string_leaf: Option<E::VirtualAddress>,
+    game_data: Operand<'e>,
+    inline_depth: u8,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindAlliancesAllowed<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Call(dest) => {
+                let Some(dest) = ctrl.resolve_va(dest) else {
+                    return;
+                };
+                if let Some((session, leaf)) =
+                    check_alliances_allowed(self.actx, dest, self.game_data)
+                {
+                    self.alliances_allowed = Some(dest);
+                    self.session_count = Some(session);
+                    self.string_leaf = Some(leaf);
+                    ctrl.end_analysis();
+                    return;
+                }
+                if self.inline_depth < 2 {
+                    self.inline_depth += 1;
+                    ctrl.analyze_with_current_state(self, dest);
+                    self.inline_depth -= 1;
+                    if self.alliances_allowed.is_some() {
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+            Operation::Jump { to, .. } => {
+                // Don't follow the switch dispatch loop back on itself at the top level.
+                if self.inline_depth == 0 && to.if_constant().is_none() {
+                    ctrl.end_branch();
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+struct CheckAlliancesAllowed<'e, E: ExecutionState<'e>> {
+    game_data: Operand<'e>,
+    allies_enabled_seen: bool,
+    session_count: Option<Operand<'e>>,
+    call: Option<E::VirtualAddress>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for CheckAlliancesAllowed<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Jump { condition, .. } => {
+                let condition = ctrl.resolve(condition);
+                let ctx = ctrl.ctx();
+                if !self.allies_enabled_seen {
+                    // Condition 1: cmp byte [game_data + 0x7c], 1
+                    let target = ctx.add_const(self.game_data, 0x7c);
+                    let seen = condition.iter().any(|part| {
+                        part.if_mem8().map(|m| m.address_op(ctx) == target).unwrap_or(false)
+                    });
+                    if seen {
+                        self.allies_enabled_seen = true;
+                    }
+                }
+                if self.session_count.is_none() {
+                    // Condition 3 is the signed `matchmaker_session_count <= 0`; scarf lowers the
+                    // signed dword compare to `(Mem32[g] == 0) | (Mem8[g + 3] & 0x80)`, so the
+                    // refcount global is the only Mem32 constant-global read in the body's
+                    // conditions (conditions 1/2 are Mem8, condition 4 is the call result).
+                    let session = condition.iter().find_map(|part| {
+                        let mem = part.if_mem32()?;
+                        mem.if_constant_address().map(|_| mem)
+                    });
+                    if let Some(mem) = session {
+                        self.session_count = Some(ctx.memory(&mem));
+                    }
+                }
+            }
+            Operation::Call(dest) => {
+                // Condition 4's is_matchmaker_string_set is the function's single call.
+                if self.call.is_none() {
+                    if let Some(dest) = ctrl.resolve_va(dest) {
+                        self.call = Some(dest);
+                    }
+                }
+            }
+            _ => (),
+        }
+        if self.allies_enabled_seen && self.session_count.is_some() && self.call.is_some() {
+            ctrl.end_analysis();
+        }
+    }
+}
+
+struct FindMatchmakerString<'e, E: ExecutionState<'e>> {
+    result: Option<Operand<'e>>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindMatchmakerString<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        // is_matchmaker_string_set is `return Mem[matchmaker_string.length] != 0` -- catch the
+        // read of that constant-global length field (in a compare or a setne value) and expose the
+        // BwString base = length_addr - pointer_width (length follows the char* in the struct).
+        let val = match *op {
+            Operation::Jump { condition, .. } => ctrl.resolve(condition),
+            Operation::Move(_, val) => ctrl.resolve(val),
+            _ => return,
+        };
+        let word = E::VirtualAddress::SIZE as u64;
+        let base = val.iter().find_map(|part| {
+            let addr = part.if_memory()?.if_constant_address()?;
+            addr.checked_sub(word)
+        });
+        if let Some(base) = base {
+            self.result = Some(ctrl.ctx().constant(base));
+            ctrl.end_analysis();
+        }
+    }
+}
+
 pub(crate) fn selections<'e, E: ExecutionState<'e>>(
     analysis: &AnalysisCtx<'e, E>,
     process_commands_switch: &CompleteSwitch<'e>,

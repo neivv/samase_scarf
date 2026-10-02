@@ -591,6 +591,7 @@ results! {
             cache_check_resources_for_building,
         CancelUnit => cancel_unit => cache_cancel_unit_finding,
         RandSynced => rand_synced => cache_rng,
+        AlliancesAllowed => alliances_allowed => cache_alliances_allowed,
     }
 }
 
@@ -907,6 +908,10 @@ results! {
         SnetPlayerList => snet_player_list => cache_snet_recv_packets,
         CursorScaleFactor => cursor_scale_factor,
         MinimapColorMode => minimap_color_mode => cache_minimap_event_handler,
+        // Signed i32 refcount; alliances_allowed gates diplomacy off while it is > 0.
+        MatchmakerSessionCount => matchmaker_session_count => cache_alliances_allowed,
+        // BwString struct base (char* ptr; usize length; ..); nonempty => matchmaking active.
+        MatchmakerString => matchmaker_string => cache_alliances_allowed,
     }
 }
 
@@ -2392,6 +2397,10 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         })
     }
 
+    fn game_data(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<Operand<'e>> {
+        self.cache_many_op(OperandAnalysis::GameData, |s| s.cache_single_player_start(actx))
+    }
+
     fn cache_game_screen_rclick(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(&[GameScreenRClick], &[OperandAnalysis::ClientSelection], |s| {
@@ -3177,6 +3186,22 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                         result.mde_load_replay, result.mde_load_save], []))
             },
         );
+    }
+
+    fn cache_alliances_allowed(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::AlliancesAllowed;
+        use OperandAnalysis::{MatchmakerSessionCount, MatchmakerString};
+        self.cache_many(
+            &[AlliancesAllowed],
+            &[MatchmakerSessionCount, MatchmakerString],
+            |s| {
+                let switch = s.process_commands_switch(actx)?;
+                let game_data = s.game_data(actx)?;
+                let result = commands::alliances_allowed(actx, &switch, game_data);
+                Some(([result.alliances_allowed],
+                    [result.matchmaker_session_count, result.matchmaker_string]))
+            },
+        )
     }
 
     fn cache_tooltip_related(&mut self, actx: &AnalysisCtx<'e, E>) {
