@@ -3,7 +3,7 @@ use fxhash::FxHashMap;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, OperandCtxExtX86, VirtualAddress};
-use scarf::operand::{ArithOpType, MemAccessSize};
+use scarf::operand::{ArithOpType, MemAccessSize, OperandType};
 use scarf::{BinaryFile, BinarySection, DestOperand, MemAccess, Operation, Operand, OperandCtx};
 
 use crate::analysis::{AnalysisCtx, ArgCache};
@@ -2500,5 +2500,135 @@ impl<'a, 'e, E: ExecutionState<'e>> scarf::Analyzer<'e> for RunDialogChildAnalyz
                 }
             }
         }
+    }
+}
+
+// chat_box_mode is the byte global holding the in-game chat send-scope: 0 = chat box closed,
+// 1 = single-player local, 2 = everyone (InGameAll), 3 = allies (InGameAllies), 4 = a specific
+// player (InGameSpecificPlayer), 5 = observers (InGameObservers). toggle_chat_box reads the byte
+// and selects which InGame* channel-name string labels the chat target based on its value.
+//
+// The mode-selection arms do not reference the channel-name strings directly: each arm loads an
+// entry of a pointer table (in .rdata) whose slots hold the string addresses. So the anchor is a
+// two-hop reloc chase -- take an InGame* string literal, find the pointer-table slot holding its
+// address (string_refs resolves a string to the global that points at it, so its `use_address` is
+// that slot), then find the code referencing that slot, which is a toggle_chat_box arm. From that
+// function, the byte global driving the mode dispatch is chat_box_mode. 32-bit compiles the
+// dispatch as a jump table (byte global read, minus 2, switch on the result); 64-bit compiles it
+// as an if-else chain comparing the byte global against the mode constants 2..=5. Either lowering
+// of the byte-global-drives-mode-selection dataflow is the version-independent discriminator; the
+// raw addresses, the pointer table's layout and the jump table are not.
+pub(crate) fn chat_box_mode<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+) -> Option<Operand<'e>> {
+    let binary = actx.binary;
+    // InGameSpecificPlayer is the most distinctive of the four channel names (no other channel
+    // name is a prefix of it), so it uniquely lands on the chat-scope pointer table.
+    let str_refs = functions.string_refs(actx, b"InGameSpecificPlayer\0");
+    let funcs = functions.functions();
+    let mut result = None;
+    for str_ref in &str_refs {
+        // use_address is the .rdata pointer-table slot whose value is the string address; the code
+        // that references that slot as an absolute address is a toggle_chat_box chat-scope arm.
+        let slot = str_ref.use_address;
+        let code_refs = functions.find_functions_using_global(actx, slot);
+        for code_ref in &code_refs {
+            let val = entry_of_until(binary, &funcs, code_ref.use_address, |entry| {
+                match find_chat_box_mode(actx, entry) {
+                    Some(op) => EntryOf::Ok(op),
+                    None => EntryOf::Retry,
+                }
+            }).into_option();
+            if single_result_assign(val, &mut result) {
+                return result;
+            }
+        }
+    }
+    result
+}
+
+fn find_chat_box_mode<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    entry: E::VirtualAddress,
+) -> Option<Operand<'e>> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = None;
+    let mut analyzer = ChatBoxModeAnalyzer::<E> {
+        result: &mut result,
+        phantom: Default::default(),
+    };
+    FuncAnalysis::new(binary, ctx, entry).analyze(&mut analyzer);
+    result
+}
+
+struct ChatBoxModeAnalyzer<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut Option<Operand<'e>>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ChatBoxModeAnalyzer<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Jump { condition, to } = *op {
+            let ctx = ctrl.ctx();
+            if condition == ctx.const_1() && to.if_constant().is_none() {
+                // 32-bit lowers the chat-scope dispatch to a jump table: an unconditional switch
+                // jump whose resolved target is `Mem32[(chat_box_mode(byte) * 4) + table_base]`
+                // (scarf folds the `- 2` into the base). CompleteSwitch::index_operand mis-reads a
+                // direct byte-global index as a secondary-table lookup, so instead confirm it is a
+                // switch and walk the target for the byte-sized global load driving it.
+                let to = ctrl.resolve(to);
+                if CompleteSwitch::new(to, ctx, ctrl.exec_state()).is_some() {
+                    if let Some(mode) = direct_byte_global_in(to) {
+                        *self.result = Some(mode);
+                        ctrl.end_analysis();
+                    }
+                }
+            } else if let Some((l, r, _)) = ctrl.resolve(condition).if_arithmetic_eq_neq() {
+                // 64-bit lowers the same dispatch to an if-else chain that compares the byte global
+                // against the mode constants (2 = InGameAll, 3 = InGameAllies, 4 =
+                // InGameSpecificPlayer, 5 = InGameObservers). The byte global equality-tested
+                // against one of those mode values is chat_box_mode.
+                let mode = [(l, r), (r, l)].into_iter().find_map(|(g, c)| {
+                    match c.if_constant() {
+                        Some(2..=5) => direct_byte_global(g),
+                        _ => None,
+                    }
+                });
+                if let Some(mode) = mode {
+                    *self.result = Some(mode);
+                    ctrl.end_analysis();
+                }
+            }
+        }
+    }
+}
+
+/// Returns `op` if it is a byte-sized memory load from a fixed (constant) global address.
+fn direct_byte_global<'e>(op: Operand<'e>) -> Option<Operand<'e>> {
+    let mem = op.if_memory()?;
+    if mem.size == MemAccessSize::Mem8 && mem.if_constant_address().filter(|&c| c > 0x1000).is_some()
+    {
+        Some(op)
+    } else {
+        None
+    }
+}
+
+/// Returns the first fixed-address byte global found within `op`'s expression tree, recursing
+/// through both arithmetic operands and memory-access address expressions.
+fn direct_byte_global_in<'e>(op: Operand<'e>) -> Option<Operand<'e>> {
+    if let Some(found) = direct_byte_global(op) {
+        return Some(found);
+    }
+    match *op.ty() {
+        OperandType::Arithmetic(ref arith) => {
+            direct_byte_global_in(arith.left).or_else(|| direct_byte_global_in(arith.right))
+        }
+        OperandType::Memory(ref mem) => direct_byte_global_in(mem.address().0),
+        _ => None,
     }
 }

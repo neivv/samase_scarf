@@ -907,6 +907,11 @@ results! {
         SnetPlayerList => snet_player_list => cache_snet_recv_packets,
         CursorScaleFactor => cursor_scale_factor,
         MinimapColorMode => minimap_color_mode => cache_minimap_event_handler,
+        // Mem8 in-game chat send-scope. 0 = chat box closed, 1 = single-player local,
+        // 2 = everyone (InGameAll), 3 = allies (InGameAllies), 4 = specific player
+        // (InGameSpecificPlayer), 5 = observers (InGameObservers). toggle_chat_box reads it,
+        // subtracts 2, and switches on the result to pick the InGame* channel-name label.
+        ChatBoxMode => chat_box_mode => cache_chat_box_mode,
     }
 }
 
@@ -3285,6 +3290,13 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_single_address(AddressAnalysis::SnetInitializeProvider, |s| {
             game_init::snet_initialize_provider(actx, s.choose_snp(actx)?)
         })
+    }
+
+    fn cache_chat_box_mode(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use OperandAnalysis::ChatBoxMode;
+        self.cache_single_operand(ChatBoxMode, |s| {
+            dialog::chat_box_mode(actx, &s.function_finder())
+        });
     }
 
     fn set_status_screen_tooltip(
