@@ -345,15 +345,14 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for RunTriggersAnalyz
                 }
                 // run_triggers counts trigger_execution_timer down every frame, and once it
                 // reaches zero it runs the triggers and reloads the timer with 0x1e.
-                // Nearby sibling timers are stepped with the exact same read-subtract-store
-                // shape, so the reload constant is what separates them from this one;
-                // require the countdown store and the 0x1e store to be for the same global.
+                // There's another timer that also has similar countdown shape, 
+                // so use the constant 0x1e store to confirm this be trigger_execution_timer.
                 if self.rng_enabled && self.inline_depth == 1 &&
                     dest.size == MemAccessSize::Mem16 && dest.is_global()
                 {
                     let val = ctrl.resolve(val);
-                    // The old timer value may have been made undefined by an unrelated call
-                    // in between the load and the store.
+                    // Depending on inlining, the timer value may have been written earlier on,
+                    // which makes it undefined at the decrement we are using, so accept undefined values too.
                     let is_countdown = Operand::and_masked(val).0
                         .if_arithmetic_sub_const(1)
                         .is_some_and(|x| x.if_memory() == Some(&dest) || x.is_undefined());
