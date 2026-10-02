@@ -370,6 +370,7 @@ results! {
         InitStatusScreen => init_status_screen,
         StatusScreenEventHandler => status_screen_event_handler => cache_multi_wireframes,
         NetFormatTurnRate => net_format_turn_rate,
+        NetPlayerCount => net_player_count => cache_net_player_count,
         LoadReplayScenarioChk => load_replay_scenario_chk => cache_init_map_from_path,
         SfileCloseArchive => sfile_close_archive => cache_init_map_from_path,
         OpenMapMpq => open_map_mpq => cache_init_map_from_path,
@@ -541,6 +542,8 @@ results! {
         ProcessAsyncLobbyCommand => process_async_lobby_command => cache_step_lobby_state,
         // a1 data, a2 len, a3 player
         CommandLobbyMapP2p => command_lobby_map_p2p => cache_step_lobby_state,
+        // __cdecl(record /*0x3F-byte body*/, guard); the async lobby class 0x4A handler
+        ApplyLobbyForceCmd => apply_lobby_force_cmd => cache_apply_lobby_force_cmd,
         // a1 dir, a2 wildcard_str, a3 callback, a4, a5 recurse, a6 callback_ctx, a7 ctx2
         // callback: a1 dir_name, a2 file_entry, a3 ctx, a4 ctx2
         ForFilesInDir => for_files_in_dir => cache_find_file_with_crc,
@@ -591,6 +594,18 @@ results! {
             cache_check_resources_for_building,
         CancelUnit => cancel_unit => cache_cancel_unit_finding,
         RandSynced => rand_synced => cache_rng,
+        StormReceiveTurns => storm_receive_turns => cache_storm_turn_globals,
+        ApplyPendingPlayerLeaves => apply_pending_player_leaves =>
+            cache_apply_pending_player_leaves,
+        FindGameTypeTemplate => find_game_type_template => cache_game_type_templates,
+        StormJoinGame => storm_join_game => cache_storm_join_game,
+        StormSessionPlayerLookupOrCreate => storm_session_player_lookup_or_create =>
+            cache_storm_join_game,
+        GetLocalStormSessionPlayer => get_local_storm_session_player => cache_storm_join_game,
+        StormRegisterSlotName => storm_register_slot_name => cache_storm_join_game,
+        SnetDrainDeferredQueue => snet_drain_deferred_queue => cache_storm_join_game,
+        StormCreateGame => storm_create_game => cache_storm_create_game,
+        FindStormSessionPlayer => find_storm_session_player => cache_find_storm_session_player,
     }
 }
 
@@ -907,6 +922,15 @@ results! {
         SnetPlayerList => snet_player_list => cache_snet_recv_packets,
         CursorScaleFactor => cursor_scale_factor,
         MinimapColorMode => minimap_color_mode => cache_minimap_event_handler,
+        StormTurnBase => storm_turn_base => cache_storm_turn_globals,
+        StormTurnMinInterval => storm_turn_min_interval => cache_storm_turn_globals,
+        StormTurnLagThreshold => storm_turn_lag_threshold => cache_storm_turn_globals,
+        // int32[0xc] indexed by storm player id; nonzero = leave/drop reason that
+        // apply_pending_player_leaves applies and clears on the next synced turn.
+        PendingLeaveReason => pending_leave_reason => cache_apply_pending_player_leaves,
+        GameTypeTemplates => game_type_templates => cache_game_type_templates,
+        // Mem8 storm session slot (0xff = not in a game); storm_join_game requires 0xff at entry.
+        StormLocalPlayerSlot => storm_local_player_slot => cache_storm_join_game,
     }
 }
 
@@ -2483,6 +2507,15 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                              |s| s.cache_net_format_turn_rate(actx))
     }
 
+    fn cache_net_player_count(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::NetPlayerCount;
+        self.cache_single_address(NetPlayerCount, |s| {
+            let game = s.game(actx)?;
+            let funcs = s.function_finder();
+            network::net_player_count(actx, &funcs, game)
+        });
+    }
+
     fn process_commands(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
         self.cache_many_addr(AddressAnalysis::ProcessCommands, |s| s.cache_step_network(actx))
     }
@@ -3179,6 +3212,23 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         );
     }
 
+    fn create_game_multiplayer(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::CreateGameMultiplayer,
+            |s| s.cache_select_map_entry_children(actx),
+        )
+    }
+
+    fn cache_game_type_templates(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::GameTypeTemplates;
+        self.cache_many(&[FindGameTypeTemplate], &[GameTypeTemplates], |s| {
+            let create_game_multiplayer = s.create_game_multiplayer(actx)?;
+            let result = game_init::game_type_templates(actx, create_game_multiplayer);
+            Some(([result.find_game_type_template], [result.game_type_templates]))
+        })
+    }
+
     fn cache_tooltip_related(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         use OperandAnalysis::*;
@@ -3285,6 +3335,38 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
         self.cache_single_address(AddressAnalysis::SnetInitializeProvider, |s| {
             game_init::snet_initialize_provider(actx, s.choose_snp(actx)?)
         })
+    }
+
+    fn cache_storm_create_game(&mut self, actx: &AnalysisCtx<'e, E>) {
+        self.cache_single_address(AddressAnalysis::StormCreateGame, |s| {
+            let single_player_start = s.single_player_start(actx)?;
+            game_init::storm_create_game(actx, single_player_start)
+        });
+    }
+
+    fn cache_storm_join_game(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::StormLocalPlayerSlot;
+        self.cache_many(
+            &[StormJoinGame, StormSessionPlayerLookupOrCreate, GetLocalStormSessionPlayer,
+                StormRegisterSlotName, SnetDrainDeferredQueue],
+            &[StormLocalPlayerSlot],
+            |s| {
+                let join_game = s.join_game(actx)?;
+                let result = game_init::storm_join_game(actx, join_game);
+                Some(([result.storm_join_game, result.storm_session_player_lookup_or_create,
+                    result.get_local_storm_session_player, result.storm_register_slot_name,
+                    result.snet_drain_deferred_queue],
+                    [result.storm_local_player_slot]))
+            })
+    }
+
+    fn cache_find_storm_session_player(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::FindStormSessionPlayer;
+        self.cache_single_address(FindStormSessionPlayer, |s| {
+            let storm_receive_turns = s.storm_receive_turns(actx)?;
+            network::find_storm_session_player(actx, storm_receive_turns)
+        });
     }
 
     fn set_status_screen_tooltip(
@@ -5139,6 +5221,24 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
             })
     }
 
+    fn process_async_lobby_command(
+        &mut self,
+        actx: &AnalysisCtx<'e, E>,
+    ) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(
+            AddressAnalysis::ProcessAsyncLobbyCommand,
+            |s| s.cache_step_lobby_state(actx),
+        )
+    }
+
+    fn cache_apply_lobby_force_cmd(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::ApplyLobbyForceCmd;
+        self.cache_single_address(ApplyLobbyForceCmd, |s| {
+            let process_async_lobby_command = s.process_async_lobby_command(actx)?;
+            network::apply_lobby_force_cmd(actx, process_async_lobby_command)
+        });
+    }
+
     fn cache_find_file_with_crc(&mut self, actx: &AnalysisCtx<'e, E>) {
         use AddressAnalysis::*;
         self.cache_many(
@@ -5346,6 +5446,43 @@ impl<'e, E: ExecutionState<'e>> AnalysisCache<'e, E> {
                 Some(([result.cancel_unit], []))
             })
     }
+    fn receive_storm_turns(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::ReceiveStormTurns, |s| s.cache_step_network(actx))
+    }
+
+    fn storm_receive_turns(&mut self, actx: &AnalysisCtx<'e, E>) -> Option<E::VirtualAddress> {
+        self.cache_many_addr(AddressAnalysis::StormReceiveTurns, |s| {
+            s.cache_storm_turn_globals(actx)
+        })
+    }
+
+    fn cache_storm_turn_globals(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::*;
+        self.cache_many(&[StormReceiveTurns],
+            &[StormTurnBase, StormTurnMinInterval, StormTurnLagThreshold],
+            |s| {
+                let receive_storm_turns = s.receive_storm_turns(actx)?;
+                let result = commands::storm_turn_globals(actx, receive_storm_turns);
+                Some(([result.storm_receive_turns],
+                    [result.storm_turn_base, result.storm_turn_min_interval,
+                     result.storm_turn_lag_threshold]))
+            })
+    }
+
+    fn cache_apply_pending_player_leaves(&mut self, actx: &AnalysisCtx<'e, E>) {
+        use AddressAnalysis::*;
+        use OperandAnalysis::PendingLeaveReason;
+        self.cache_many(&[ApplyPendingPlayerLeaves], &[PendingLeaveReason],
+            |s| {
+                let receive_storm_turns = s.receive_storm_turns(actx)?;
+                let func = commands::apply_pending_player_leaves(actx, receive_storm_turns);
+                let pending_leave_reason =
+                    func.and_then(|x| commands::pending_leave_reason(actx, x));
+                Some(([func], [pending_leave_reason]))
+            })
+    }
+
 }
 
 pub struct DatPatchesDebug<'e, Va: VirtualAddress> {

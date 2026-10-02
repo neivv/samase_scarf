@@ -13,7 +13,8 @@ use crate::switch::CompleteSwitch;
 use crate::struct_layouts;
 use crate::util::{
     ControlExt, MemAccessExt, OptionExt, OperandExt, read_u32_at,
-    if_arithmetic_eq_neq, is_global, bumpvec_with_capacity, single_result_assign, ExecStateExt,
+    if_arithmetic_eq_neq, is_global, bumpvec_with_capacity, seems_assertion_call,
+    single_result_assign, ExecStateExt,
 };
 
 #[derive(Clone, Debug)]
@@ -37,6 +38,13 @@ pub struct StepNetwork<'e, Va: VirtualAddressTrait> {
 pub(crate) struct StepReplayCommands<'e, Va: VirtualAddressTrait> {
     pub replay_end: Option<Va>,
     pub replay_header: Option<Operand<'e>>,
+}
+
+pub(crate) struct StormTurnGlobals<'e, Va: VirtualAddressTrait> {
+    pub storm_receive_turns: Option<Va>,
+    pub storm_turn_base: Option<Operand<'e>>,
+    pub storm_turn_min_interval: Option<Operand<'e>>,
+    pub storm_turn_lag_threshold: Option<Operand<'e>>,
 }
 
 pub(crate) struct PrintText<Va: VirtualAddressTrait> {
@@ -270,6 +278,255 @@ impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindSendCommand<'e, E
                 }
             }
             _ => (),
+        }
+    }
+}
+
+/// Finds `storm_receive_turns` and the three turn-throttle globals it reads.
+///
+/// `receive_storm_turns` calls `storm_receive_turns` with a literal `4` as its final (8th) argument.
+/// Inside, the readiness pass reads:
+///   storm_turn_base       : `local_turn = arg3 - storm_turn_base`
+///   storm_turn_min_interval: throttled when `tick - last < storm_turn_min_interval`; also `>> 1`
+///   storm_turn_lag_threshold: dropped when `tick - last >= storm_turn_lag_threshold` (paired with
+///                            a `<= 0x7fffffff` non-negative guard).
+pub(crate) fn storm_turn_globals<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    receive_storm_turns: E::VirtualAddress,
+) -> StormTurnGlobals<'e, E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = StormTurnGlobals {
+        storm_receive_turns: None,
+        storm_turn_base: None,
+        storm_turn_min_interval: None,
+        storm_turn_lag_threshold: None,
+    };
+
+    // storm_receive_turns: the call in receive_storm_turns whose 8th argument is the literal 4.
+    let mut finder = FindStormReceiveTurns::<E> { result: None };
+    FuncAnalysis::new(binary, ctx, receive_storm_turns).analyze(&mut finder);
+    let storm_receive_turns = match finder.result {
+        Some(s) => s,
+        None => return result,
+    };
+    result.storm_receive_turns = Some(storm_receive_turns);
+
+    let mut analyzer = FindStormTurnGlobals::<E> {
+        result: &mut result,
+        lag_diffs: bumpvec_with_capacity(4, &actx.bump),
+        lag_candidates: bumpvec_with_capacity(4, &actx.bump),
+    };
+    FuncAnalysis::new(binary, ctx, storm_receive_turns).analyze(&mut analyzer);
+    result
+}
+
+struct FindStormReceiveTurns<'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindStormReceiveTurns<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        // receive_storm_turns is a thin wrapper: its first non-assertion call is
+        // storm_receive_turns, whose result gates the synced player-leave pass. (Some builds emit
+        // a debug assert call first.)
+        if let Operation::Call(dest) = *op {
+            if seems_assertion_call(ctrl) {
+                return;
+            }
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                self.result = Some(dest);
+                ctrl.end_analysis();
+            }
+        }
+    }
+}
+
+struct FindStormTurnGlobals<'a, 'b, 'e, E: ExecutionState<'e>> {
+    result: &'a mut StormTurnGlobals<'e, E::VirtualAddress>,
+    // `diff` operands seen in a `diff > 0x7fffffff` non-negative guard
+    lag_diffs: BumpVec<'b, Operand<'e>>,
+    // (global, diff) seen in a `Mem32[global] > diff` throttle/lag comparison
+    lag_candidates: BumpVec<'b, (Operand<'e>, Operand<'e>)>,
+}
+
+impl<'a, 'b, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    FindStormTurnGlobals<'a, 'b, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        match *op {
+            Operation::Move(_, val) => {
+                let val = ctrl.resolve(val);
+                // storm_turn_base: local_turn = arg - storm_turn_base (the only global subtracted)
+                if self.result.storm_turn_base.is_none() {
+                    if let Some((_, r)) = val.if_arithmetic_sub() {
+                        if r.if_mem32().filter(|m| m.is_global()).is_some() {
+                            self.result.storm_turn_base = Some(r);
+                        }
+                    }
+                }
+                // storm_turn_min_interval: storm_turn_min_interval >> 1 (the half-interval)
+                if self.result.storm_turn_min_interval.is_none() {
+                    let min_interval = val.iter().find_map(|x| {
+                        x.if_arithmetic_rsh_const(1)
+                            .filter(|inner| {
+                                inner.if_mem32().filter(|m| m.is_global()).is_some()
+                            })
+                    });
+                    if let Some(min_interval) = min_interval {
+                        self.result.storm_turn_min_interval = Some(min_interval);
+                    }
+                }
+            }
+            Operation::Jump { condition, .. } => {
+                // storm_turn_lag_threshold: the global G in `G > diff` where the same `diff` is also
+                // bounds-checked `diff > 0x7fffffff`. The two comparisons are separate jumps.
+                if self.result.storm_turn_lag_threshold.is_none() {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((l, r)) = condition.if_arithmetic(ArithOpType::GreaterThan) {
+                        if r.if_constant() == Some(0x7fff_ffff) {
+                            if let Some((g, _)) =
+                                self.lag_candidates.iter().copied().find(|&(_, d)| d == l)
+                            {
+                                self.result.storm_turn_lag_threshold = Some(g);
+                            } else {
+                                self.lag_diffs.push(l);
+                            }
+                        } else if l.if_mem32().filter(|m| m.is_global()).is_some() {
+                            if self.lag_diffs.contains(&r) {
+                                self.result.storm_turn_lag_threshold = Some(l);
+                            } else {
+                                self.lag_candidates.push((l, r));
+                            }
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+        if self.result.storm_turn_base.is_some() &&
+            self.result.storm_turn_min_interval.is_some() &&
+            self.result.storm_turn_lag_threshold.is_some()
+        {
+            ctrl.end_analysis();
+        }
+    }
+}
+
+/// Finds `apply_pending_player_leaves`.
+///
+/// `receive_storm_turns`, on a successful receive, opens the synced-RNG window and runs the leave
+/// pass:
+///   orig = set_rng_enable(1);
+///   apply_pending_player_leaves();
+///   set_rng_enable(orig);
+/// So it is the call immediately after the `set_rng_enable(1)` call (the only call there taking a
+/// literal 1), which is a version-stable position.
+pub(crate) fn apply_pending_player_leaves<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    receive_storm_turns: E::VirtualAddress,
+) -> Option<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = None;
+    let mut analyzer = FindApplyPendingLeaves::<E> {
+        result: &mut result,
+        after_rng_enable: false,
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, receive_storm_turns);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct FindApplyPendingLeaves<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut Option<E::VirtualAddress>,
+    after_rng_enable: bool,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindApplyPendingLeaves<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if self.after_rng_enable {
+                // The call right after set_rng_enable(1); set_rng_enable(orig) follows it.
+                *self.result = ctrl.resolve_va(dest);
+                ctrl.end_analysis();
+            } else if ctrl.resolve_arg(0).if_constant() == Some(1) {
+                self.after_rng_enable = true;
+            }
+        }
+    }
+}
+
+/// Finds `pending_leave_reason`, int32[0xc] indexed by storm player id; a nonzero value is the
+/// server-coordinated leave/drop reason applied (and cleared) on the next synced turn.
+///
+/// `apply_pending_player_leaves` either loops over the slots calling
+/// `apply_player_leave_if_pending(&pending_leave_reason[i], player_id)`, so on the first
+/// iteration (i = 0, player_id = 0) arg1 resolves to the array base constant, or (some 32bit
+/// builds) has the loops factored into helper calls taking the array base in ecx, or has
+/// everything inlined, in which case the base is found from the pending_leave_reason[0] == 0
+/// slot check instead.
+pub(crate) fn pending_leave_reason<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    apply_pending_player_leaves: E::VirtualAddress,
+) -> Option<Operand<'e>> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = None;
+    let mut analyzer = FindPendingLeaveReason::<E> {
+        result: &mut result,
+        phantom: Default::default(),
+    };
+    let mut analysis = FuncAnalysis::new(binary, ctx, apply_pending_player_leaves);
+    analysis.analyze(&mut analyzer);
+    result
+}
+
+struct FindPendingLeaveReason<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut Option<Operand<'e>>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindPendingLeaveReason<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(..) = *op {
+            let arg1 = ctrl.resolve_arg(0);
+            let base = if arg1.if_constant().is_some() && is_global(arg1) &&
+                ctrl.resolve_arg(1).if_constant() == Some(0)
+            {
+                Some(arg1)
+            } else {
+                // Some 32bit builds factor the loops into one or two helper calls taking
+                // the array base in ecx instead. (The inline shape has a stack local in ecx
+                // at the call, so this doesn't misfire there.)
+                Some(ctrl.resolve_register(1))
+                    .filter(|&x| x.if_constant().is_some() && is_global(x))
+            };
+            if let Some(base) = base {
+                *self.result = Some(base);
+                ctrl.end_analysis();
+            }
+        } else if let Operation::Jump { condition, .. } = *op {
+            // Other builds inline everything; the first slot check
+            // pending_leave_reason[0] == 0 is then the first Mem32 jump, reached with i = 0
+            // before any call. (The is_multiplayer check before it is a Mem8 compare.)
+            let condition = ctrl.resolve(condition);
+            let base = condition.if_arithmetic_eq_neq_zero(ctrl.ctx())
+                .and_then(|x| x.0.if_mem32()?.if_constant_address())
+                .map(|x| ctrl.ctx().constant(x))
+                .filter(|&x| is_global(x));
+            if let Some(base) = base {
+                *self.result = Some(base);
+                ctrl.end_analysis();
+            }
         }
     }
 }

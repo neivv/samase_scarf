@@ -2,7 +2,7 @@ use bumpalo::collections::Vec as BumpVec;
 
 use scarf::analysis::{self, Control, FuncAnalysis};
 use scarf::exec_state::{ExecutionState, VirtualAddress};
-use scarf::{MemAccessSize, Operand, OperandCtx, Operation, BinarySection, BinaryFile};
+use scarf::{DestOperand, MemAccessSize, Operand, OperandCtx, Operation, BinarySection, BinaryFile};
 
 use crate::analysis::{AnalysisCtx};
 use crate::analysis_find::{FunctionFinder, find_bytes, entry_of_until, EntryOf};
@@ -573,6 +573,95 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsNetUserLatency<
     }
 }
 
+// net_player_count() @ SC:R: `int __cdecl`, no args. Counts the active networked players in the
+// Storm session (local player included) via storm_get_session_player_range(&min,&max,&count),
+// stores the count as a byte into game+0xf1, and returns byte[game+0xf1]. A peerless session
+// yields 1; BW's minimap dialog / MP-button code classifies a game as multiplayer with
+// `is_multiplayer != 0 && net_player_count() > 1`. Anchored on the error string
+// "strERROR_GENERAL_NETWORK" it references on the Storm failure path (a bounded candidate set).
+// game+0xf1 also gets written by the (unrelated, much larger) player-leave handler as a side
+// effect, so a bare write match isn't unique; discriminate on shape instead: this is the only
+// candidate whose containing function writes to game+0xf1 and to *no other* global memory
+// location at all. game+0xf1 is width-stable.
+pub(crate) fn net_player_count<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    functions: &FunctionFinder<'_, 'e, E>,
+    game: Operand<'e>,
+) -> Option<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let funcs = functions.functions();
+    let str_refs = functions.string_refs(actx, b"strERROR_GENERAL_NETWORK");
+    let mut result = None;
+    for str_ref in &str_refs {
+        let val = entry_of_until(binary, &funcs, str_ref.use_address, |entry| {
+            let mut analyzer = FindNetPlayerCount::<E> {
+                game,
+                game_field_write: false,
+                other_global_write: false,
+                phantom: Default::default(),
+            };
+            let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+            analysis.analyze(&mut analyzer);
+            if analyzer.game_field_write {
+                if analyzer.other_global_write {
+                    // Reached the right function for this string ref, but it isn't the
+                    // one we want (e.g. the player-leave handler) -- no need to keep
+                    // walking further back for an earlier entry candidate.
+                    EntryOf::Stop
+                } else {
+                    EntryOf::Ok(())
+                }
+            } else {
+                EntryOf::Retry
+            }
+        }).into_option_with_entry().map(|x| x.0);
+        if single_result_assign(val, &mut result) {
+            break;
+        }
+    }
+    result
+}
+
+struct FindNetPlayerCount<'e, E: ExecutionState<'e>> {
+    game: Operand<'e>,
+    // Set once a `Mem8[game + 0xf1] = _` store is seen.
+    game_field_write: bool,
+    // Set if the function stores to any *other* global memory location. net_player_count's
+    // real body only ever touches game+0xf1; the player-leave handler that also happens to
+    // write game+0xf1 touches many other globals (storm_command_user, per-player state, ...),
+    // so this tells the two apart.
+    other_global_write: bool,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for FindNetPlayerCount<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Move(DestOperand::Memory(ref mem), _) = *op {
+            let resolved = ctrl.resolve_mem(mem);
+            if resolved.is_global() {
+                let (base, offset) = resolved.address();
+                if offset == 0xf1 && base == self.game {
+                    self.game_field_write = true;
+                } else {
+                    self.other_global_write = true;
+                }
+                // Once both are set the verdict is locked to EntryOf::Stop (game+0xf1 plus
+                // another global rules out net_player_count, which writes only game+0xf1), so
+                // stop walking early -- this cuts short the large player-leave handler. Non-
+                // matching candidates must still return Retry (not Stop) via the full walk, so
+                // entry_of_until keeps iterating toward net_player_count's own entry; only this
+                // provably-terminal case may bail.
+                if self.game_field_write && self.other_global_write {
+                    ctrl.end_analysis();
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn step_lobby_network<'e, E: ExecutionState<'e>>(
     actx: &AnalysisCtx<'e, E>,
     step_network: E::VirtualAddress,
@@ -873,6 +962,112 @@ impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for StepLobbyStateAna
     }
 }
 
+// apply_lobby_force_cmd is the handler for async lobby command class 0x4A (the per-slot
+// force/alliance/vision apply). Its only caller is the async lobby command dispatcher
+// (process_async_lobby_command), which switches on (class_byte - 0x3A) through a byte lookup
+// table into a dword jump table. The 0x4A case checks the record length == 0x3F (== 63, the
+// serialized body size) and then directly calls apply_lobby_force_cmd(record, guard). We locate
+// the dispatcher's switch the same way command_lobby_map_p2p does for class 0x4F, branch to the
+// 0x4A case, steer onto the length == 0x3F branch to confirm the case, and take the following
+// call. The switch-case shape and the 0x3F length check survive recompiles even though the raw
+// addresses and the record layout do not.
+pub(crate) fn apply_lobby_force_cmd<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    process_async_lobby_command: E::VirtualAddress,
+) -> Option<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut result = None;
+    let mut analyzer = ApplyLobbyForceCmd::<E> {
+        result: &mut result,
+        state: ApplyLobbyForceCmdState::FindSwitch,
+        limit: 0,
+    };
+    FuncAnalysis::new(binary, ctx, process_async_lobby_command).analyze(&mut analyzer);
+    result
+}
+
+struct ApplyLobbyForceCmd<'a, 'e, E: ExecutionState<'e>> {
+    result: &'a mut Option<E::VirtualAddress>,
+    state: ApplyLobbyForceCmdState,
+    limit: u8,
+}
+
+#[derive(Eq, PartialEq, Copy, Clone)]
+enum ApplyLobbyForceCmdState {
+    /// Find the dispatcher switch jump, branch to the 0x4A case.
+    FindSwitch,
+    /// In the 0x4A case, steer onto the record-length == 0x3F branch.
+    FindLenCheck,
+    /// The next resolved call is apply_lobby_force_cmd.
+    FindCall,
+}
+
+impl<'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for ApplyLobbyForceCmd<'a, 'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let ctx = ctrl.ctx();
+        match self.state {
+            ApplyLobbyForceCmdState::FindSwitch => {
+                if let Operation::Jump { condition, to } = *op {
+                    if condition == ctx.const_1() && to.if_constant().is_none() {
+                        let to = ctrl.resolve(to);
+                        let exec_state = ctrl.exec_state();
+                        if let Some(switch) = CompleteSwitch::new(to, ctx, exec_state) {
+                            let binary = ctrl.binary();
+                            if let Some(branch) = switch.branch(binary, ctx, 0x4a) {
+                                ctrl.clear_unchecked_branches();
+                                ctrl.continue_at_address(branch);
+                                self.state = ApplyLobbyForceCmdState::FindLenCheck;
+                                self.limit = 8;
+                            }
+                        }
+                    }
+                }
+            }
+            ApplyLobbyForceCmdState::FindLenCheck => {
+                if let Operation::Jump { condition, to } = *op {
+                    let condition = ctrl.resolve(condition);
+                    if let Some((l, r, is_eq)) = condition.if_arithmetic_eq_neq() {
+                        if l.if_constant() == Some(0x3f) || r.if_constant() == Some(0x3f) {
+                            // Continue on the record-length == 0x3F side; the apply call follows.
+                            ctrl.clear_unchecked_branches();
+                            ctrl.continue_at_eq_address(is_eq, to);
+                            self.state = ApplyLobbyForceCmdState::FindCall;
+                            self.limit = 8;
+                            return;
+                        }
+                    }
+                    if self.limit == 0 {
+                        ctrl.end_analysis();
+                    } else {
+                        self.limit -= 1;
+                    }
+                }
+            }
+            ApplyLobbyForceCmdState::FindCall => {
+                match *op {
+                    Operation::Call(dest) => {
+                        if let Some(dest) = ctrl.resolve_va(dest) {
+                            *self.result = Some(dest);
+                            ctrl.end_analysis();
+                        }
+                    }
+                    Operation::Jump { .. } => {
+                        if self.limit == 0 {
+                            ctrl.end_analysis();
+                        } else {
+                            self.limit -= 1;
+                        }
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn analyze_snet_recv_packets<'e, E: ExecutionState<'e>>(
     actx: &AnalysisCtx<'e, E>,
     snet_recv_packets: E::VirtualAddress,
@@ -1027,6 +1222,115 @@ impl<'acx, 'a, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+// find_storm_session_player scans the session-player list for the node whose slot field
+// ([node + 0x21a]) equals the requested slot, returning that node or null. storm_receive_turns
+// calls it (in several places) passing a slot value. The callee is recognised by a jump whose
+// condition compares the +0x21a slot field of a list node against the function's own first
+// argument (masked to slot width). Comparing the slot field against the *argument* -- rather than
+// against a constant -- is what distinguishes it from sibling scan helpers, and 0x21a is a
+// serialized struct field offset that survives recompiles.
+pub(crate) fn find_storm_session_player<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    storm_receive_turns: E::VirtualAddress,
+) -> Option<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = FindStormSessionPlayerCaller::<E> {
+        result: None,
+        checked: BumpVec::new_in(&actx.bump),
+        actx,
+    };
+    FuncAnalysis::new(binary, ctx, storm_receive_turns).analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct FindStormSessionPlayerCaller<'acx, 'e, E: ExecutionState<'e>> {
+    result: Option<E::VirtualAddress>,
+    checked: BumpVec<'acx, E::VirtualAddress>,
+    actx: &'acx AnalysisCtx<'e, E>,
+}
+
+impl<'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    FindStormSessionPlayerCaller<'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if let Operation::Call(dest) = *op {
+            if let Some(dest) = ctrl.resolve_va(dest) {
+                if !self.checked.contains(&dest) {
+                    self.checked.push(dest);
+                    if is_find_storm_session_player(self.actx, dest) {
+                        self.result = Some(dest);
+                        ctrl.end_analysis();
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn is_find_storm_session_player<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    func: E::VirtualAddress,
+) -> bool {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let mut analyzer = IsFindStormSessionPlayer::<E> {
+        result: false,
+        budget: 0x1000,
+        arg1: actx.arg_cache.on_entry(0),
+        phantom: Default::default(),
+    };
+    FuncAnalysis::new(binary, ctx, func).analyze(&mut analyzer);
+    analyzer.result
+}
+
+struct IsFindStormSessionPlayer<'e, E: ExecutionState<'e>> {
+    result: bool,
+    budget: u32,
+    arg1: Operand<'e>,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsFindStormSessionPlayer<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.budget == 0 {
+            ctrl.end_analysis();
+            return;
+        }
+        self.budget -= 1;
+        if let Operation::Jump { condition, .. } = *op {
+            let condition = ctrl.resolve(condition);
+            if let Some((l, r, _)) = condition.if_arithmetic_eq_neq() {
+                let slot_offset = crate::game_init::session_player_slot_offset::<E>();
+                // One side reads a node slot field; the other is arg1 (the slot the caller asked
+                // for), read from the arg location at whatever width.
+                let field = [(l, r), (r, l)].into_iter().find_map(|(field, other)| {
+                    let mem = field.if_mem8().or_else(|| field.if_mem16())?;
+                    if mem.address().1 != slot_offset {
+                        return None;
+                    }
+                    let same_arg_addr = match (other.if_memory(), self.arg1.if_memory()) {
+                        (Some(a), Some(b)) => a.address() == b.address(),
+                        _ => false,
+                    };
+                    let matches = other == self.arg1 ||
+                        other.unwrap_and_mask() == self.arg1 ||
+                        same_arg_addr;
+                    matches.then_some(())
+                });
+                if field.is_some() {
+                    self.result = true;
+                    ctrl.end_analysis();
                 }
             }
         }
