@@ -3609,3 +3609,197 @@ fn seems_int_div_by_32<'e>(op: Operand<'e>) -> bool {
         .and_either_other(|x| x.if_arithmetic_and_const(0x1f))
         .is_some()
 }
+
+pub(crate) struct ObserverUiSimFuncs<Va: VirtualAddress> {
+    pub get_observer_ui: Option<Va>,
+    pub track_building_unit: Option<Va>,
+    pub track_research_or_upgrade: Option<Va>,
+    pub remove_building_unit_record: Option<Va>,
+    pub finish_research_or_upgrade: Option<Va>,
+}
+
+/// Finds `get_observer_ui` and the ObserverUI methods that the unit simulation calls
+/// as `method(get_observer_ui(), unit, ...)`.
+///
+/// Each method is the first call with `this == observer_ui` in a function that makes only
+/// one such call:
+/// - `remove_building_unit_record(ui, unit)` in `finish_unit_pre`.
+/// - `track_building_unit(ui, unit, force = 0)` at the end of the zerg building morph order
+///   (0x2b), which may be a tail call.
+/// - `finish_research_or_upgrade(ui, unit, completed = 1)` in the research tech order (0x4b).
+/// - `track_research_or_upgrade(ui, unit)` in `start_research`, which the research command
+///   handler (process_commands case 0x30) calls through `recv_research`.
+///
+/// `get_observer_ui` is recognized as a callee whose body just returns `observer_ui`;
+/// its result is then the `this` that identifies the method calls.
+pub(crate) fn observer_ui_sim_funcs<'e, E: ExecutionState<'e>>(
+    actx: &AnalysisCtx<'e, E>,
+    observer_ui: Operand<'e>,
+    finish_unit_pre: E::VirtualAddress,
+    order_building_morph: E::VirtualAddress,
+    order_research_tech: E::VirtualAddress,
+    process_commands_switch: &CompleteSwitch<'e>,
+) -> ObserverUiSimFuncs<E::VirtualAddress> {
+    let binary = actx.binary;
+    let ctx = actx.ctx;
+    let bump = &actx.bump;
+    let mut result = ObserverUiSimFuncs {
+        get_observer_ui: None,
+        track_building_unit: None,
+        track_research_or_upgrade: None,
+        remove_building_unit_record: None,
+        finish_research_or_upgrade: None,
+    };
+    let mut not_getters = bumpvec_with_capacity(0x40, bump);
+    let mut find = |entry: E::VirtualAddress, flag: Option<u64>, max_inline_depth: u8| {
+        let mut analyzer = FindObserverUiCall::<E> {
+            actx,
+            observer_ui,
+            get_observer_ui: &mut result.get_observer_ui,
+            not_getters: &mut not_getters,
+            expected_flag: flag,
+            result: None,
+            entry_esp: ctx.register(4),
+            inline_depth: 0,
+            max_inline_depth,
+        };
+        let mut analysis = FuncAnalysis::new(binary, ctx, entry);
+        analysis.analyze(&mut analyzer);
+        analyzer.result
+    };
+    let remove_building_unit_record = find(finish_unit_pre, None, 0);
+    let track_building_unit = find(order_building_morph, Some(0), 0);
+    let finish_research_or_upgrade = find(order_research_tech, Some(1), 0);
+    let track_research_or_upgrade = process_commands_switch.branch(binary, ctx, 0x30)
+        .and_then(|branch| find(branch, None, 2));
+    result.remove_building_unit_record = remove_building_unit_record;
+    result.track_building_unit = track_building_unit;
+    result.finish_research_or_upgrade = finish_research_or_upgrade;
+    result.track_research_or_upgrade = track_research_or_upgrade;
+    result
+}
+
+struct FindObserverUiCall<'a, 'acx, 'e, E: ExecutionState<'e>> {
+    actx: &'acx AnalysisCtx<'e, E>,
+    observer_ui: Operand<'e>,
+    get_observer_ui: &'a mut Option<E::VirtualAddress>,
+    not_getters: &'a mut BumpVec<'acx, E::VirtualAddress>,
+    /// If set, the call's first argument after the unit must be this constant.
+    expected_flag: Option<u64>,
+    result: Option<E::VirtualAddress>,
+    entry_esp: Operand<'e>,
+    inline_depth: u8,
+    max_inline_depth: u8,
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for
+    FindObserverUiCall<'a, 'acx, 'e, E>
+{
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        let Some((dest, is_tail_call)) = ctrl.call_or_tail_call(op, self.entry_esp) else {
+            return;
+        };
+        if ctrl.resolve_register(1) == self.observer_ui {
+            let flag_ok = match self.expected_flag {
+                Some(flag) => ctrl.resolve_arg_thiscall_u8(1).if_constant() == Some(flag),
+                None => true,
+            };
+            if flag_ok {
+                self.result = Some(dest);
+                ctrl.end_analysis();
+            }
+            return;
+        }
+        if is_tail_call {
+            return;
+        }
+        if self.is_get_observer_ui(dest) {
+            ctrl.skip_operation();
+            ctrl.set_register(0, self.observer_ui);
+            return;
+        }
+        if self.inline_depth < self.max_inline_depth {
+            let old_esp = self.entry_esp;
+            self.entry_esp = ctrl.get_new_esp_for_call();
+            self.inline_depth += 1;
+            ctrl.analyze_with_current_state(self, dest);
+            self.inline_depth -= 1;
+            self.entry_esp = old_esp;
+            if self.result.is_some() {
+                ctrl.end_analysis();
+            }
+        }
+    }
+}
+
+impl<'a, 'acx, 'e, E: ExecutionState<'e>> FindObserverUiCall<'a, 'acx, 'e, E> {
+    fn is_get_observer_ui(&mut self, func: E::VirtualAddress) -> bool {
+        if let Some(getter) = *self.get_observer_ui {
+            return getter == func;
+        }
+        if self.not_getters.contains(&func) {
+            return false;
+        }
+        let mut analyzer = IsGlobalGetter::<E> {
+            global: self.observer_ui,
+            returns: false,
+            failed: false,
+            ops_left: 32,
+            phantom: Default::default(),
+        };
+        let mut analysis = FuncAnalysis::new(self.actx.binary, self.actx.ctx, func);
+        analysis.analyze(&mut analyzer);
+        let is_getter = analyzer.returns && !analyzer.failed;
+        if is_getter {
+            *self.get_observer_ui = Some(func);
+        } else {
+            self.not_getters.push(func);
+        }
+        is_getter
+    }
+}
+
+/// Accepts a function that returns `global` on every path and makes no calls, e.g.
+/// `mov eax, [global]; ret`. Some builds report an assertion failure if the global is null
+/// (before returning it anyway), so assertion calls are allowed.
+struct IsGlobalGetter<'e, E: ExecutionState<'e>> {
+    global: Operand<'e>,
+    returns: bool,
+    failed: bool,
+    ops_left: u8,
+    phantom: std::marker::PhantomData<(*const E, &'e ())>,
+}
+
+impl<'e, E: ExecutionState<'e>> analysis::Analyzer<'e> for IsGlobalGetter<'e, E> {
+    type State = analysis::DefaultState;
+    type Exec = E;
+    fn operation(&mut self, ctrl: &mut Control<'e, '_, '_, Self>, op: &Operation<'e>) {
+        if self.ops_left == 0 {
+            self.failed = true;
+            ctrl.end_analysis();
+            return;
+        }
+        self.ops_left -= 1;
+        match *op {
+            Operation::Return(..) => {
+                if ctrl.resolve_register(0) == self.global {
+                    self.returns = true;
+                } else {
+                    self.failed = true;
+                    ctrl.end_analysis();
+                }
+            }
+            Operation::Call(..) => {
+                if seems_assertion_call(ctrl) {
+                    ctrl.end_branch();
+                } else {
+                    self.failed = true;
+                    ctrl.end_analysis();
+                }
+            }
+            _ => (),
+        }
+    }
+}
